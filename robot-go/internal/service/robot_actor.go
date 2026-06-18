@@ -281,9 +281,9 @@ func (a *robotActor) tick(now time.Time) {
 		if rc.AutoStoreProbabilityPercent > 0 && a.runtime.manager.randIntn(100) < rc.AutoStoreProbabilityPercent {
 			var res RobotActionResult
 			a.runBusy("store", func() {
+				defer a.clearOnlineAttempt()
 				res = a.runtime.AutoStore(uid, a.releaseRequestedValue)
 			})
-			a.clearOnlineAttempt()
 			if res.OK {
 				a.storeUntil = time.Now().Add(time.Duration(rc.AutoStoreDurationSec) * time.Second)
 			} else if res.State == "store_failed" {
@@ -492,7 +492,7 @@ func (a *robotActor) status(now time.Time, rc robotRuntimeConfig) robotActorStat
 		status.RecycleUID = true
 		return status
 	}
-	if s.State == robotActorOnline && !s.LastOnlineTry.IsZero() {
+	if s.State == robotActorOnline && !s.LastOnlineTry.IsZero() && !s.FirstFailureAt.IsZero() {
 		timeout := time.Duration(rc.OnlineConfirmTimeoutMS) * time.Millisecond
 		if timeout <= 0 {
 			timeout = 60 * time.Second

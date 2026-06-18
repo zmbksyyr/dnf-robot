@@ -459,6 +459,15 @@ func TestRobotActorStoreFailedCooldownDoesNotPoisonHealth(t *testing.T) {
 	}
 }
 
+func TestRobotActorOnlineAttemptWithoutPendingDoesNotRecycle(t *testing.T) {
+	now := time.Now()
+	a := &robotActor{mode: robotActorAuto, uid: 1001, state: robotActorOnline, lastOnlineTry: now.Add(-2 * time.Minute)}
+	status := a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
+	if status.RecycleUID {
+		t.Fatalf("online attempt without pending marker should not recycle, reason=%q", status.HealthReason)
+	}
+}
+
 func testRobotManagerWithStackableCatalog(t *testing.T, catalog []equipmentCatalogItem) *RobotManager {
 	t.Helper()
 	configDir := t.TempDir()
