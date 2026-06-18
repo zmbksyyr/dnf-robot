@@ -424,15 +424,22 @@ func TestRobotActorBadByRecoveryWindow(t *testing.T) {
 	if status.RecycleUID {
 		t.Fatalf("actor should not recycle before recovery window expires")
 	}
+
+	a.failures = 0
+	a.firstFailureAt = now.Add(-61 * time.Second)
+	status = a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60})
+	if status.RecycleUID {
+		t.Fatalf("actor should not recycle by failure window without failures, reason=%q", status.HealthReason)
+	}
 }
 
-func TestRobotActorPendingOnlineUsesRecoveryWindow(t *testing.T) {
+func TestRobotActorPendingOnlineUsesConfirmTimeout(t *testing.T) {
 	now := time.Now()
-	a := &robotActor{mode: robotActorAuto, uid: 1001}
+	a := &robotActor{mode: robotActorAuto, uid: 1001, state: robotActorOnline, lastOnlineTry: now.Add(-61 * time.Second)}
 	a.markOnlinePending(now.Add(-61 * time.Second))
-	status := a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60})
-	if !status.RecycleUID || status.HealthReason != "failure_window" {
-		t.Fatalf("pending actor status got recycle=%v reason=%q, want failure_window recycle", status.RecycleUID, status.HealthReason)
+	status := a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
+	if !status.RecycleUID || status.HealthReason != "online_confirm_timeout" {
+		t.Fatalf("pending actor status got recycle=%v reason=%q, want online_confirm_timeout recycle", status.RecycleUID, status.HealthReason)
 	}
 }
 
