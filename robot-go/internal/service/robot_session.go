@@ -35,7 +35,7 @@ func (m *RobotManager) online(req RobotCommandRequest, store bool, confirm bool)
 		alreadyRunning := 0
 		status := m.runtimeStatusMap()
 		for _, r := range robots {
-			if st, ok := status[r.UID]; ok && st.StateName == "running" {
+			if st, ok := status[r.UID]; ok && activeRuntimeStatus(st) {
 				alreadyRunning++
 			}
 		}
@@ -99,7 +99,7 @@ func (m *RobotManager) online(req RobotCommandRequest, store bool, confirm bool)
 		confirmed := 0
 		status = m.runtimeStatusMap()
 		for _, robot := range result.Robots {
-			if st, ok := status[robot.UID]; ok && st.StateName == "running" {
+			if st, ok := status[robot.UID]; ok && activeRuntimeStatus(st) {
 				confirmed++
 			}
 		}
@@ -110,7 +110,7 @@ func (m *RobotManager) online(req RobotCommandRequest, store bool, confirm bool)
 	}
 	status = m.runtimeStatusMap()
 	for i := range result.Robots {
-		if st, ok := status[result.Robots[i].UID]; ok && st.StateName == "running" {
+		if st, ok := status[result.Robots[i].UID]; ok && activeRuntimeStatus(st) {
 			result.Robots[i].OK = true
 			result.Robots[i].State = st.StateName
 			result.Confirmed++

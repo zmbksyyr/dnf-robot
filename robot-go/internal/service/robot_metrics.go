@@ -13,11 +13,15 @@ func (m *RobotManager) runtimeStatusMap() map[int]RuntimeRobotStatus {
 func (m *RobotManager) countRuntimeRunning() int {
 	n := 0
 	for _, st := range m.doll.RuntimeStatus() {
-		if st.StateName == "running" && st.DisconnectReason == 0 {
+		if activeRuntimeStatus(st) {
 			n++
 		}
 	}
 	return n
+}
+
+func activeRuntimeStatus(st RuntimeRobotStatus) bool {
+	return st.StateName == "running" && st.DisconnectReason == 0
 }
 
 func (m *RobotManager) addAutoCreated(n int) {

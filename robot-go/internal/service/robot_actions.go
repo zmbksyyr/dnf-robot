@@ -27,7 +27,7 @@ func (m *RobotManager) Move(req RobotCommandRequest) (RobotCommandResult, error)
 	}
 	var plans []movePlan
 	for _, r := range robots {
-		if st, ok := status[r.UID]; ok && st.StateName == "running" {
+		if st, ok := status[r.UID]; ok && activeRuntimeStatus(st) {
 			r.Village, r.Area, r.X, r.Y = st.Village, st.Area, st.X, st.Y
 			if st.RobotType == 2 || st.RobotType == 3 {
 				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: true, State: "store", Message: "skip moving store robot"})
@@ -72,7 +72,7 @@ func (m *RobotManager) Move(req RobotCommandRequest) (RobotCommandResult, error)
 	time.Sleep(time.Duration(waitMS) * time.Millisecond)
 	status = m.runtimeStatusMap()
 	for i := range result.Robots {
-		if st, ok := status[result.Robots[i].UID]; ok && st.StateName == "running" && st.DisconnectReason == 0 {
+		if st, ok := status[result.Robots[i].UID]; ok && activeRuntimeStatus(st) {
 			result.Robots[i].OK = true
 			result.Robots[i].State = st.StateName
 			result.Confirmed++
@@ -125,7 +125,7 @@ func (m *RobotManager) Shout(req RobotCommandRequest) (RobotCommandResult, error
 		if !strings.EqualFold(result.Robots[i].State, "accepted") {
 			continue
 		}
-		if st, ok := status[result.Robots[i].UID]; ok && st.StateName == "running" && st.DisconnectReason == 0 {
+		if st, ok := status[result.Robots[i].UID]; ok && activeRuntimeStatus(st) {
 			result.Robots[i].OK = true
 			result.Robots[i].State = "sent"
 			result.Confirmed++
@@ -174,7 +174,7 @@ func (m *RobotManager) ShoutOne(req RobotCommandRequest, world bool) (RobotComma
 		if !strings.EqualFold(result.Robots[i].State, "accepted") {
 			continue
 		}
-		if st, ok := status[result.Robots[i].UID]; ok && st.StateName == "running" && st.DisconnectReason == 0 {
+		if st, ok := status[result.Robots[i].UID]; ok && activeRuntimeStatus(st) {
 			result.Robots[i].OK = true
 			result.Robots[i].State = "sent"
 			result.Confirmed++
@@ -290,7 +290,7 @@ func (m *RobotManager) currentFollowTarget(rc robotRuntimeConfig, maps []mapCata
 		if len(uids) > 0 {
 			status := m.runtimeStatusMap()
 			for _, uid := range uids {
-				if st, ok := status[uid]; ok && st.StateName == "running" && st.DisconnectReason == 0 {
+				if st, ok := status[uid]; ok && activeRuntimeStatus(st) {
 					return followTarget{UID: uid, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y}, true
 				}
 			}

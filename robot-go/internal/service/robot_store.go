@@ -21,7 +21,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 		if err := m.ensureStoreInventoryAndStall(r, rc); err != nil {
 			return RobotCommandResult{}, err
 		}
-		if st, ok := status[r.UID]; ok && st.StateName == "running" && st.DisconnectReason == 0 {
+		if st, ok := status[r.UID]; ok && activeRuntimeStatus(st) {
 			logoutResult, err := m.Logout(RobotCommandRequest{UIDs: []int{r.UID}})
 			if err != nil || logoutResult.Confirmed == 0 {
 				msg := fmt.Sprintf("logout before store failed: err=%v confirmed=%d", err, logoutResult.Confirmed)
@@ -88,7 +88,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 		if result.Robots[i].OK || result.Robots[i].State != "accepted" {
 			continue
 		}
-		if st, ok := status[result.Robots[i].UID]; ok && st.StateName == "running" && st.DisconnectReason == 0 && st.StoreDisplayAck {
+		if st, ok := status[result.Robots[i].UID]; ok && activeRuntimeStatus(st) && st.StoreDisplayAck {
 			result.Robots[i].OK = true
 			result.Robots[i].State = "store"
 			result.Confirmed++

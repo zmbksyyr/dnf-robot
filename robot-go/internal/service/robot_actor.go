@@ -310,7 +310,11 @@ func (a *robotActor) ensureOnline(now time.Time) {
 		return
 	}
 	rc := a.runtime.Config()
-	if now.Sub(a.lastOnlineTry) < time.Duration(rc.ReconnectDelayMS)*time.Millisecond {
+	if a.onlineConfirmPending(uid, now, rc) {
+		a.markOnlinePending(now)
+		return
+	}
+	if now.Sub(a.lastOnlineTryValue()) < time.Duration(rc.ReconnectDelayMS)*time.Millisecond {
 		return
 	}
 	a.lastOnlineTry = now
@@ -393,6 +397,31 @@ func (a *robotActor) markOnlinePending(now time.Time) {
 		a.firstFailureAt = now
 	}
 	a.mu.Unlock()
+}
+
+func (a *robotActor) onlineConfirmPending(uid int, now time.Time, rc robotRuntimeConfig) bool {
+	lastOnlineTry := a.lastOnlineTryValue()
+	if lastOnlineTry.IsZero() {
+		return false
+	}
+	timeout := time.Duration(rc.OnlineConfirmTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if now.Sub(lastOnlineTry) >= timeout {
+		return false
+	}
+	st, ok := a.runtime.Status(uid)
+	if !ok {
+		return true
+	}
+	return st.DisconnectReason == 0 && (st.StateName == "init" || st.StateName == "login")
+}
+
+func (a *robotActor) lastOnlineTryValue() time.Time {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.lastOnlineTry
 }
 
 func (a *robotActor) recordFailure(now time.Time) int {

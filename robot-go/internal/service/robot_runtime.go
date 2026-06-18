@@ -28,7 +28,7 @@ func (r *RobotRuntime) IsActive(uid int) bool {
 	if !ok {
 		return false
 	}
-	return st.DisconnectReason == 0 && st.StateName == "running"
+	return activeRuntimeStatus(st)
 }
 
 func (r *RobotRuntime) Online(uid int, store bool) RobotActionResult {

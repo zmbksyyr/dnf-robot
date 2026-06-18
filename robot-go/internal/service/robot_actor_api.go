@@ -211,7 +211,7 @@ func (m *RobotManager) waitManagedConfirm(result *RobotCommandResult, timeout ti
 		confirmed := 0
 		status := m.runtimeStatusMap()
 		for _, robot := range result.Robots {
-			if st, ok := status[robot.UID]; ok && st.StateName == "running" && st.DisconnectReason == 0 {
+			if st, ok := status[robot.UID]; ok && activeRuntimeStatus(st) {
 				confirmed++
 			}
 		}
@@ -230,7 +230,7 @@ func (m *RobotManager) waitManagedConfirm(result *RobotCommandResult, timeout ti
 			}
 			continue
 		}
-		if st, ok := status[result.Robots[i].UID]; ok && st.StateName == "running" && st.DisconnectReason == 0 {
+		if st, ok := status[result.Robots[i].UID]; ok && activeRuntimeStatus(st) {
 			result.Robots[i].OK = true
 			result.Robots[i].State = "running"
 			result.Confirmed++

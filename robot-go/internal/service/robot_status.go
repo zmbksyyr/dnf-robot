@@ -78,7 +78,7 @@ ORDER BY r.uid` + limit
 		if st, ok := runtime[item.UID]; ok {
 			item.State = st.State
 			item.StateName = st.StateName
-			item.Online = st.StateName == "running" && st.DisconnectReason == 0
+			item.Online = activeRuntimeStatus(st)
 			item.DisconnectReason = st.DisconnectReason
 			item.Reconnects = st.Reconnects
 			item.RobotType = st.RobotType

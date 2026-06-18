@@ -78,6 +78,25 @@ func TestSummarizeRuntimeStatus(t *testing.T) {
 	}
 }
 
+func TestActiveRuntimeStatusRequiresNoDisconnect(t *testing.T) {
+	tests := []struct {
+		name string
+		st   RuntimeRobotStatus
+		want bool
+	}{
+		{name: "running", st: RuntimeRobotStatus{StateName: "running", DisconnectReason: 0}, want: true},
+		{name: "running disconnected", st: RuntimeRobotStatus{StateName: "running", DisconnectReason: 8}, want: false},
+		{name: "login", st: RuntimeRobotStatus{StateName: "login", DisconnectReason: 0}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := activeRuntimeStatus(tt.st); got != tt.want {
+				t.Fatalf("activeRuntimeStatus() got %v want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSchedulerOnlineStartRate(t *testing.T) {
 	tests := []struct {
 		name string
