@@ -445,6 +445,20 @@ func TestRobotActorHealthyClearsOnlineConfirmTimer(t *testing.T) {
 	}
 }
 
+func TestRobotActorStoreFailedCooldownDoesNotPoisonHealth(t *testing.T) {
+	now := time.Now()
+	a := &robotActor{mode: robotActorAuto, uid: 1001, lastOnlineTry: now.Add(-2 * time.Minute), firstFailureAt: now.Add(-2 * time.Minute), failures: 1}
+	a.markOnlineHealthy()
+	a.nextStore = now.Add(60 * time.Second)
+	status := a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
+	if status.RecycleUID {
+		t.Fatalf("store failure cooldown should not recycle actor, reason=%q", status.HealthReason)
+	}
+	if !status.LastOnlineTry.IsZero() || !status.FirstFailureAt.IsZero() || status.Failures != 0 {
+		t.Fatalf("store failure cooldown should clear health timers, got last=%s first=%s failures=%d", status.LastOnlineTry, status.FirstFailureAt, status.Failures)
+	}
+}
+
 func testRobotManagerWithStackableCatalog(t *testing.T, catalog []equipmentCatalogItem) *RobotManager {
 	t.Helper()
 	configDir := t.TempDir()

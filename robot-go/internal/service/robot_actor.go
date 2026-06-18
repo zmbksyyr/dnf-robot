@@ -283,8 +283,12 @@ func (a *robotActor) tick(now time.Time) {
 			a.runBusy("store", func() {
 				res = a.runtime.AutoStore(uid, a.releaseRequestedValue)
 			})
+			a.clearOnlineAttempt()
 			if res.OK {
 				a.storeUntil = time.Now().Add(time.Duration(rc.AutoStoreDurationSec) * time.Second)
+			} else if res.State == "store_failed" {
+				a.markOnlineHealthy()
+				a.nextStore = time.Now().Add(time.Duration(rc.AutoStoreFailCooldownSec) * time.Second)
 			} else if res.State != "cancelled" {
 				a.recordFailure(time.Now())
 			}
@@ -391,6 +395,12 @@ func (a *robotActor) markOnlineHealthy() {
 	a.mu.Unlock()
 }
 
+func (a *robotActor) clearOnlineAttempt() {
+	a.mu.Lock()
+	a.lastOnlineTry = time.Time{}
+	a.mu.Unlock()
+}
+
 func (a *robotActor) markOnlinePending(now time.Time) {
 	a.mu.Lock()
 	if a.firstFailureAt.IsZero() {
@@ -482,7 +492,7 @@ func (a *robotActor) status(now time.Time, rc robotRuntimeConfig) robotActorStat
 		status.RecycleUID = true
 		return status
 	}
-	if !s.LastOnlineTry.IsZero() {
+	if s.State == robotActorOnline && !s.LastOnlineTry.IsZero() {
 		timeout := time.Duration(rc.OnlineConfirmTimeoutMS) * time.Millisecond
 		if timeout <= 0 {
 			timeout = 60 * time.Second
