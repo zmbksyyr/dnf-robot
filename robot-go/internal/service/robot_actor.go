@@ -324,7 +324,7 @@ func (a *robotActor) ensureOnline(now time.Time) {
 		a.runtime.manager.addAutoOnline(1, 0)
 		return
 	}
-	if res.State == "accepted" {
+	if res.State == "accepted" || res.State == "init" || res.State == "login" {
 		a.markOnlinePending(now)
 		return
 	}
@@ -459,7 +459,7 @@ func (a *robotActor) status(now time.Time, rc robotRuntimeConfig) robotActorStat
 			timeout = 60 * time.Second
 		}
 		if now.Sub(s.LastOnlineTry) > timeout {
-			if st, ok := a.runtime.Status(s.UID); !ok || st.DisconnectReason != 0 || (st.StateName != "running" && st.StateName != "init" && st.StateName != "login") {
+			if st, ok := a.runtime.Status(s.UID); !ok || st.StateName != "running" || st.DisconnectReason != 0 {
 				status.Health = robotActorHealthUnhealthy
 				status.HealthReason = "online_confirm_timeout"
 				status.RecycleUID = true

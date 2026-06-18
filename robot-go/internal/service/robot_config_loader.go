@@ -38,7 +38,7 @@ func (m *RobotManager) loadRobotConfig() robotRuntimeConfig {
 		FollowRadiusX:          120, FollowRadiusY: 30, ShoutDelayMS: 1000, ShoutSendEnabled: true,
 		AutoActions: true, AutoTargetOnlineCount: 20,
 		AutoMoveIntervalMinSec: 6, AutoMoveIntervalMaxSec: 18, AutoShoutIntervalMinSec: 45, AutoShoutIntervalMaxSec: 120,
-		AutoStoreProbabilityPercent: 20, AutoStoreIntervalMinSec: 60, AutoStoreIntervalMaxSec: 180, AutoStoreDurationSec: 120, AutoStoreTickSec: 10, AutoStoreMaxPositionTries: 10, AutoStoreFailCooldownSec: 60,
+		AutoStoreProbabilityPercent: 5, AutoStoreIntervalMinSec: 60, AutoStoreIntervalMaxSec: 180, AutoStoreDurationSec: 120, AutoStoreTickSec: 10, AutoStoreMaxPositionTries: 10, AutoStoreFailCooldownSec: 60,
 		AutoGamePortStableSec: 15, AutoGamePortCheckTimeoutMS: 800,
 		SchedulerBadRecoverSec: 60, SchedulerBadFailures: 3, SchedulerMetricsIntervalSec: 10, SchedulerStoreConcurrent: 30, SchedulerOnlineBatchSize: 120, SchedulerOnlineStartRate: 20, SchedulerOnlineFillTimeout: 60,
 		SystemActorPollMS: 1000, SystemManualActionTimeoutSec: 60, SystemPacketRatePerSec: 20,

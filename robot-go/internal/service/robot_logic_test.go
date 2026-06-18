@@ -155,8 +155,8 @@ func TestLoadRobotConfigSchedulerOnlineDefaults(t *testing.T) {
 	if rc.EquipIntensifyMin != 7 || rc.EquipIntensifyMax != 10 {
 		t.Fatalf("EquipIntensify got %d..%d want 7..10", rc.EquipIntensifyMin, rc.EquipIntensifyMax)
 	}
-	if !rc.AutoActions || rc.AutoTargetOnlineCount != 20 || rc.AutoStoreProbabilityPercent != 20 {
-		t.Fatalf("auto defaults got enabled=%v target=%d store_probability=%d, want true/20/20", rc.AutoActions, rc.AutoTargetOnlineCount, rc.AutoStoreProbabilityPercent)
+	if !rc.AutoActions || rc.AutoTargetOnlineCount != 20 || rc.AutoStoreProbabilityPercent != 5 {
+		t.Fatalf("auto defaults got enabled=%v target=%d store_probability=%d, want true/20/5", rc.AutoActions, rc.AutoTargetOnlineCount, rc.AutoStoreProbabilityPercent)
 	}
 	assertIntSlice(t, rc.StoreItemAllowIDs, []int{3037, 3031, 3032, 3034, 3035})
 }

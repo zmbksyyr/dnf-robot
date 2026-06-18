@@ -634,6 +634,9 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
 		if err == nil && len(decData) >= 4 {
 			r.DisconReason = DisconnectReason(binary.LittleEndian.Uint32(decData[0:4]))
+			if r.DisconReason != NoDisconnect {
+				go r.RefishConnect()
+			}
 		}
 		if r.IsRefishUser == 1 && r.DB != nil {
 			_, _ = r.DB.Exec("update taiwan_cain_2nd.inventory set money=2000000000,inventory='' where charac_no in(select b.charac_no from d_taiwan.accounts a left join taiwan_cain.charac_info b on a.uid=b.m_id where a.uid=? and a.login_Mac='');", r.UID)
@@ -1277,6 +1280,14 @@ func (r *RobotVo) CheckUserState() bool {
 	defer r.mu.Unlock()
 
 	if r.State == StateStop {
+		return false
+	}
+	if r.DisconReason != NoDisconnect {
+		if r.Conn != nil {
+			r.Conn.Close()
+			r.Conn = nil
+		}
+		r.State = StateStop
 		return false
 	}
 	if r.State != StateRun {
