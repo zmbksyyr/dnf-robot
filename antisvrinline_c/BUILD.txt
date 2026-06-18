@@ -1,0 +1,14 @@
+Build instructions for libantisvrinline.so
+
+Environment: CentOS 7 VM, GCC with 32-bit support.
+
+== Build ==
+
+gcc -std=c99 -Wall -Wpedantic -m32 -shared -fPIC -fvisibility=hidden -s -lpthread \
+    -o libantisvrinline.so libantisvrinline.c
+
+== Notes ==
+
+- The SO only loads the real anti-bot interface and installs the active runtime patches.
+- SendChatMsg converts robot extended message type 80 to the server horn path.
+- Offline replay, msgOnLine JSON, private-store recall, and diagnostic hooks are intentionally removed.
