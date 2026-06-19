@@ -242,7 +242,10 @@ func (m *RobotManager) batchDeleteRobotData(uids, cids []int) error {
 
 func (m *RobotManager) batchDeleteByInts(tx *sql.Tx, table, col string, ids []int) error {
 	cols, err := m.tableColumns(table)
-	if err != nil || !cols[col] {
+	if err != nil {
+		return err
+	}
+	if !cols[col] {
 		return nil
 	}
 	for i := 0; i < len(ids); i += 500 {
@@ -265,7 +268,10 @@ func (m *RobotManager) batchDeleteByInts(tx *sql.Tx, table, col string, ids []in
 
 func (m *RobotManager) batchDeleteByStrings(tx *sql.Tx, table, col string, values []string) error {
 	cols, err := m.tableColumns(table)
-	if err != nil || !cols[col] {
+	if err != nil {
+		return err
+	}
+	if !cols[col] {
 		return nil
 	}
 	for i := 0; i < len(values); i += 500 {

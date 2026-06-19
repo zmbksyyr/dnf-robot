@@ -1,7 +1,9 @@
 package dnf
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 )
@@ -55,37 +57,7 @@ func MakeShift(ptrn []byte) []int {
 }
 
 func BMSearch(buf []byte, ptrn []byte, skip []int, shift []int) int {
-	blen := len(buf)
-	plen := len(ptrn)
-	if plen == 0 {
-		return 0
-	}
-	bIdx := plen
-	for bIdx <= blen {
-		pIdx := plen
-		for {
-			bIdx--
-			pIdx--
-			if bIdx < 0 {
-				return -1
-			}
-			if pIdx < 0 || buf[bIdx] != ptrn[pIdx] {
-				break
-			}
-			if pIdx == 0 {
-				return bIdx
-			}
-		}
-		skipStride := skip[buf[bIdx]]
-		shiftStride := shift[pIdx]
-		if skipStride > shiftStride {
-			bIdx += skipStride
-		} else {
-			bIdx += shiftStride
-		}
-		bIdx++
-	}
-	return -1
+	return bytes.Index(buf, ptrn)
 }
 
 func createBackup(filePath string) error {
@@ -132,19 +104,17 @@ func patchFile(filePath string, origSig []byte, patchBytes []byte, patchName str
 		return fmt.Errorf("file too small")
 	}
 
-	skip := MakeSkip(patchBytes)
-	shift := MakeShift(patchBytes)
-	alreadyPatched := BMSearch(data, patchBytes, skip, shift)
+	alreadyPatched := bytes.Index(data, patchBytes)
 	if alreadyPatched != -1 {
 		PrintfGreen("\n[Patch] Already patched - skipping.\n")
 		return nil
 	}
 
-	skip2 := MakeSkip(origSig)
-	shift2 := MakeShift(origSig)
-	ret := BMSearch(data, origSig, skip2, shift2)
+	ret := bytes.Index(data, origSig)
 	if ret != -1 {
-		createBackup(filePath)
+		if err := createBackup(filePath); err != nil {
+			return err
+		}
 		copy(data[ret:], patchBytes)
 		if err := writeFileReplace(filePath, data); err == nil {
 			PrintfBlue("\n[Patch] Patch applied. Please restart the service.\n")
@@ -190,7 +160,9 @@ func replaceBytesOnce(filePath string, fromBytes []byte, toBytes []byte, patchNa
 		return nil
 	}
 
-	createBackup(filePath)
+	if err := createBackup(filePath); err != nil {
+		return err
+	}
 	copy(data[ret:], toBytes)
 	if err := writeFileReplace(filePath, data); err == nil {
 		fmt.Printf("\033[1;36m\n[Patch] Restore applied: %s. Please restart the service.\n\033[0m", patchName)
@@ -294,22 +266,40 @@ func RestoreLibantisvrimportJump(dfGamePath string) error {
 		return err
 	}
 	current := make([]byte, 5)
-	f.Seek(offset, 0)
-	f.Read(current)
-	f.Close()
+	if _, err := f.Seek(offset, 0); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := io.ReadFull(f, current); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
 	if current[0] != 0xE8 {
 		PrintfGreen("\n[Patch] Fixed jump restore target not found - already clean.\n")
 		return nil
 	}
-	createBackup(dfGamePath)
+	if err := createBackup(dfGamePath); err != nil {
+		return err
+	}
 	f, err = os.OpenFile(dfGamePath, os.O_RDWR, 0)
 	if err != nil {
 		PrintfRed("\n[Patch] Target file open failed!\n")
 		return err
 	}
-	f.Seek(offset, 0)
-	f.Write(origSig)
-	f.Close()
+	if _, err := f.Seek(offset, 0); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(origSig); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
 	PrintfBlue("\n[Patch] Fixed jump restore applied. Please restart the service.\n")
 	return nil
 }

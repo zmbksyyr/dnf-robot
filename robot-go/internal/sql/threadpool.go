@@ -8,6 +8,9 @@ type ThreadPool struct {
 	jobQueue chan func()
 	wg       sync.WaitGroup
 	quit     chan struct{}
+	mu       sync.Mutex
+	closed   bool
+	once     sync.Once
 }
 
 func NewThreadPool(numWorkers int) *ThreadPool {
@@ -45,15 +48,25 @@ func (tp *ThreadPool) worker() {
 }
 
 func (tp *ThreadPool) AddWork(fn func()) {
+	tp.mu.Lock()
+	if tp.closed {
+		tp.mu.Unlock()
+		return
+	}
 	select {
 	case tp.jobQueue <- fn:
 	default:
 		go fn()
 	}
+	tp.mu.Unlock()
 }
 
 func (tp *ThreadPool) Close() {
-	close(tp.quit)
-	close(tp.jobQueue)
+	tp.once.Do(func() {
+		tp.mu.Lock()
+		tp.closed = true
+		close(tp.quit)
+		tp.mu.Unlock()
+	})
 	tp.wg.Wait()
 }

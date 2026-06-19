@@ -66,10 +66,10 @@ func InitializeDatabase(db *sql.DB) error {
 	return nil
 }
 
-func columnExists(db *sql.DB, tableName, columnName string) (bool, error) {
+func columnExists(db *sql.DB, schemaName, tableName, columnName string) (bool, error) {
 	rows, err := Select(db,
-		"SELECT TABLE_SCHEMA FROM information_schema.COLUMNS WHERE TABLE_NAME=? AND COLUMN_NAME=?",
-		tableName, columnName)
+		"SELECT TABLE_SCHEMA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?",
+		schemaName, tableName, columnName)
 	if err != nil {
 		return false, err
 	}
@@ -100,7 +100,7 @@ func migrateAccountsTable(db *sql.DB) error {
 		{"seal_accountname", "int(11) not null"},
 	}
 	for _, a := range alterations {
-		exists, err := columnExists(db, "accounts", a.col)
+		exists, err := columnExists(db, "d_taiwan", "accounts", a.col)
 		if err != nil {
 			return fmt.Errorf("check accounts.%s: %w", a.col, err)
 		}
@@ -444,7 +444,7 @@ func migrateStarskyDatabase(db *sql.DB) error {
 }
 
 func migrateZhanliTable(db *sql.DB) error {
-	exists, err := columnExists(db, "zhanli", "CID")
+	exists, err := columnExists(db, "d_starsky", "zhanli", "CID")
 	if err != nil {
 		return fmt.Errorf("check zhanli.CID: %w", err)
 	}
@@ -457,7 +457,7 @@ func migrateZhanliTable(db *sql.DB) error {
 }
 
 func migrateNewConfigV4(db *sql.DB) error {
-	exists, err := columnExists(db, "new_config", "v4_diaoluo_texiao")
+	exists, err := columnExists(db, "d_starsky", "new_config", "v4_diaoluo_texiao")
 	if err != nil {
 		return fmt.Errorf("check new_config.v4_diaoluo_texiao: %w", err)
 	}
@@ -473,7 +473,7 @@ func migrateNewConfigV4(db *sql.DB) error {
 }
 
 func migrateNewConfigV5(db *sql.DB) error {
-	exists, err := columnExists(db, "new_config", "is_open_up_pwd")
+	exists, err := columnExists(db, "d_starsky", "new_config", "is_open_up_pwd")
 	if err != nil {
 		return fmt.Errorf("check new_config.is_open_up_pwd: %w", err)
 	}
@@ -499,7 +499,7 @@ func migrateNewConfigV5(db *sql.DB) error {
 }
 
 func migrateGiftTask(db *sql.DB) error {
-	exists, err := columnExists(db, "gift_task", "time_check_type")
+	exists, err := columnExists(db, "d_starsky", "gift_task", "time_check_type")
 	if err != nil {
 		return fmt.Errorf("check gift_task.time_check_type: %w", err)
 	}
@@ -816,7 +816,7 @@ func migrateMapTask(db *sql.DB) error {
 }
 
 func migrateRobotAlter(db *sql.DB) error {
-	exists, err := columnExists(db, "Robot", "aiState")
+	exists, err := columnExists(db, "d_starsky", "Robot", "aiState")
 	if err != nil {
 		return fmt.Errorf("check Robot.aiState: %w", err)
 	}
@@ -829,7 +829,7 @@ func migrateRobotAlter(db *sql.DB) error {
 }
 
 func migrateDummylistAlter(db *sql.DB) error {
-	exists, err := columnExists(db, "Dummylist", "ip")
+	exists, err := columnExists(db, "d_starsky", "Dummylist", "ip")
 	if err != nil {
 		return fmt.Errorf("check Dummylist.ip: %w", err)
 	}

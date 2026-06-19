@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 )
@@ -117,38 +118,20 @@ func nextArr(m []byte) []int {
 }
 
 func KMP(pattern, text []byte) int {
-	mm := len(pattern)
-	tt := len(text)
-	if mm == 0 || tt == 0 {
-		return -1
-	}
-	next := nextArr(pattern)
-	i, j := 0, 0
-	for i < tt {
-		if pattern[j] == text[i] {
-			j++
-			i++
-		} else {
-			j = next[j]
-		}
-		if j == mm-1 {
-			break
-		}
-	}
-	if j == mm-1 {
-		return i - mm + 1
-	}
-	return -1
+	return bytes.Index(text, pattern)
 }
 
 func FindPackHead(buff []byte, startPos int) (pos int, headLen int) {
 	length := len(buff)
-	for i := startPos; i < length-10; i++ {
+	if startPos < 0 {
+		startPos = 0
+	}
+	for i := startPos; i <= length-len(packHead); i++ {
 		if string(buff[i:i+10]) == string(packHead) {
 			return i, 10
 		}
 	}
-	for i := length - 9; i < length; i++ {
+	for i := maxInt(0, length-len(packHead)+1); i < length; i++ {
 		a := 0
 		for j := 0; j < length-i; j++ {
 			if buff[i+j] == packHead[j] {
@@ -167,12 +150,15 @@ func FindPackHead(buff []byte, startPos int) (pos int, headLen int) {
 
 func FindPackTailPos(buff []byte, startPos int) (pos int, tailLen int) {
 	length := len(buff)
-	for i := startPos; i < length; i++ {
+	if startPos < 0 {
+		startPos = 0
+	}
+	for i := startPos; i <= length-len(tailPos); i++ {
 		if string(buff[i:i+10]) == string(tailPos) {
 			return i, 10
 		}
 	}
-	for i := length - 9; i < length; i++ {
+	for i := maxInt(0, length-len(tailPos)+1); i < length; i++ {
 		a := 0
 		for j := 0; j < length-i; j++ {
 			if buff[i+j] == tailPos[j] {
@@ -187,6 +173,13 @@ func FindPackTailPos(buff []byte, startPos int) (pos int, tailLen int) {
 		}
 	}
 	return -1, 0
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func CharToInt(buff []byte, offset int) int {

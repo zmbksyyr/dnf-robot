@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,7 +38,7 @@ type TCPServer struct {
 	clientsMu    sync.RWMutex
 	onMessage    func(clientID string, data []byte)
 	onClose      func(clientID string)
-	running      bool
+	running      atomic.Bool
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
 	maxClients   int
@@ -99,17 +100,17 @@ func (s *TCPServer) Start() error {
 	if err != nil {
 		return fmt.Errorf("TCPServer listen %s: %w", s.addr, err)
 	}
-	s.running = true
+	s.running.Store(true)
 
 	go s.acceptLoop()
 	return nil
 }
 
 func (s *TCPServer) acceptLoop() {
-	for s.running {
+	for s.running.Load() {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			if !s.running {
+			if !s.running.Load() {
 				return
 			}
 			continue
@@ -313,7 +314,9 @@ func (s *TCPServer) GetClient(clientID string) *ClientInfo {
 }
 
 func (s *TCPServer) Close() error {
-	s.running = false
+	if !s.running.Swap(false) {
+		return nil
+	}
 	close(s.stopCh)
 	if s.listener != nil {
 		s.listener.Close()
@@ -329,5 +332,5 @@ func (s *TCPServer) Close() error {
 }
 
 func (s *TCPServer) IsRunning() bool {
-	return s.running
+	return s.running.Load()
 }

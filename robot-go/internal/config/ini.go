@@ -59,16 +59,8 @@ func parseINI(r interface {
 	for scanner.Scan() {
 		raw := scanner.Text()
 
-		// strip comment: discard from comment char onward, also handle ';' as comment
-		if idx := strings.IndexByte(raw, '#'); idx >= 0 {
-			raw = raw[:idx]
-		}
-		if idx := strings.IndexByte(raw, ';'); idx >= 0 {
-			raw = raw[:idx]
-		}
-
 		raw = strings.TrimSpace(raw)
-		if raw == "" || raw[0] == '\r' || raw[0] == '\n' {
+		if raw == "" || raw[0] == '\r' || raw[0] == '\n' || raw[0] == cfg.comment || raw[0] == ';' {
 			continue
 		}
 
@@ -79,7 +71,7 @@ func parseINI(r interface {
 			continue
 		}
 
-		if idx := strings.IndexByte(raw, '='); idx >= 0 {
+		if idx := strings.IndexByte(raw, cfg.separator); idx >= 0 {
 			key := strings.TrimSpace(raw[:idx])
 			value := strings.TrimSpace(raw[idx+1:])
 			if section != "" && key != "" {

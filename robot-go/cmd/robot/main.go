@@ -262,55 +262,90 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		return wrapResult(map[string]interface{}{"ok": true, "message": "sys ok"})
 	case "createRobots":
 		var req service.RobotCreateRequest
-		_ = json.Unmarshal([]byte(extractPayload(pkt)), &req)
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		robots, err := manager.CreateRobots(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "robots": robots})
 	case "robotsOnline":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.OnlineManaged(req, false)
 		return wrapResult(map[string]interface{}{"ok": err == nil && res.Failed == 0, "error": errString(err), "result": res})
 	case "robotsOnlineAsync":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		return queueRobotAction("robotsOnlineAsync", func() {
 			res, err := manager.OnlineManaged(req, false)
 			logRobotCommandResult("robotsOnlineAsync", res, err)
 		})
 	case "robotsMove":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.MoveManaged(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil && res.Failed == 0, "error": errString(err), "result": res})
 	case "robotsShout":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.ShoutBothManaged(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil && res.Failed == 0, "error": errString(err), "result": res})
 	case "robotsShoutWorld":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.ShoutManaged(req, true)
 		return wrapResult(map[string]interface{}{"ok": err == nil && res.Failed == 0, "error": errString(err), "result": res})
 	case "robotsShoutLocal":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.ShoutManaged(req, false)
 		return wrapResult(map[string]interface{}{"ok": err == nil && res.Failed == 0, "error": errString(err), "result": res})
 	case "robotsStore":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.StoreManaged(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil && res.Failed == 0, "error": errString(err), "result": res})
 	case "robotsStoreAsync":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		return queueRobotAction("robotsStoreAsync", func() {
 			res, err := manager.StoreManaged(req)
 			logRobotCommandResult("robotsStoreAsync", res, err)
 		})
 	case "robotsStatus":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.RobotsStatus(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "robotsLogout":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.LogoutManaged(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil && res.Failed == 0, "error": errString(err), "result": res})
 	case "robotsLogoutAsync":
-		req := parseRobotCommand(pkt)
+		req, err := parseRobotCommand(pkt)
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		return queueRobotAction("robotsLogoutAsync", func() {
 			res, err := manager.LogoutManaged(req)
 			logRobotCommandResult("robotsLogoutAsync", res, err)
@@ -337,17 +372,23 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "robotConfigUpdate":
 		var req service.RobotConfigUpdateRequest
-		_ = json.Unmarshal([]byte(extractPayload(pkt)), &req)
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.UpdateRobotConfig(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "cleanupRobots":
 		var req service.RobotCleanupRequest
-		_ = json.Unmarshal([]byte(extractPayload(pkt)), &req)
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		res, err := manager.CleanupRobots(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "cleanupRobotsAsync":
 		var req service.RobotCleanupRequest
-		_ = json.Unmarshal([]byte(extractPayload(pkt)), &req)
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
 		return queueRobotAction("cleanupRobotsAsync", func() {
 			res, err := manager.CleanupRobots(req)
 			if err != nil {
@@ -426,10 +467,23 @@ func logRobotActionf(format string, args ...interface{}) {
 	dnf.LogString(dnf.LogLevelIndispensable, msg)
 }
 
-func parseRobotCommand(pkt string) service.RobotCommandRequest {
+func parseRobotCommand(pkt string) (service.RobotCommandRequest, error) {
 	var req service.RobotCommandRequest
-	_ = json.Unmarshal([]byte(extractPayload(pkt)), &req)
-	return req
+	if err := decodePayload(pkt, &req); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func decodePayload(pkt string, dst interface{}) error {
+	payload := strings.TrimSpace(extractPayload(pkt))
+	if payload == "" {
+		payload = "{}"
+	}
+	if err := json.Unmarshal([]byte(payload), dst); err != nil {
+		return fmt.Errorf("invalid json payload: %w", err)
+	}
+	return nil
 }
 
 func extractPayload(pkt string) string {

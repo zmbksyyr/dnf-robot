@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -17,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"robot/internal/config"
@@ -26,6 +29,7 @@ type Server struct {
 	cfg       *config.SysConfig
 	robotAddr string
 	webAddr   string
+	tokenMu   sync.RWMutex
 	token     string
 }
 
@@ -96,7 +100,7 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 		cfg:       cfg,
 		robotAddr: robotAddr,
 		webAddr:   webAddr,
-		token:     fmt.Sprintf("%x", time.Now().UnixNano()),
+		token:     randomToken(),
 	}
 }
 
@@ -113,6 +117,9 @@ func (s *Server) ListenAndServe() error {
 		Addr:              s.webAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	fmt.Printf("[WebAdmin] listening on %s, robot=%s\n", s.webAddr, s.robotAddr)
 	return server.ListenAndServe()
@@ -143,8 +150,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.ParseForm()
 	password := r.Form.Get("password")
-	if s.cfg.WebPassword == "" || subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.WebPassword)) == 1 {
-		http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: s.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	if strings.TrimSpace(s.cfg.WebPassword) == "" {
+		s.writeLogin(w, "web password is not configured")
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.WebPassword)) == 1 {
+		token := randomToken()
+		s.tokenMu.Lock()
+		s.token = token
+		s.tokenMu.Unlock()
+		http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -174,14 +189,17 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) authed(r *http.Request) bool {
-	if s.cfg.WebPassword == "" {
-		return true
+	if strings.TrimSpace(s.cfg.WebPassword) == "" {
+		return false
 	}
 	c, err := r.Cookie("tw_web_token")
 	if err != nil {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.token)) == 1
+	s.tokenMu.RLock()
+	token := s.token
+	s.tokenMu.RUnlock()
+	return token != "" && subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) == 1
 }
 
 func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
@@ -281,12 +299,10 @@ func gameConfigNameForPort(port int) (string, bool) {
 }
 
 func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "/root/robot.log"
-		if _, err := os.Stat(path); err != nil {
-			path = filepath.Join(s.cfg.ConfigDir, "log_robot")
-		}
+	path, err := s.resolveLogPath(r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	lines := tailFile(path, 220)
 	writeJSON(w, map[string]interface{}{"ok": true, "path": path, "text": strings.Join(lines, "\n")})
@@ -317,7 +333,6 @@ func (s *Server) handleKeypairDownload(w http.ResponseWriter, _ *http.Request) {
 		name string
 		path string
 	}{
-		{name: "privatekey.pem", path: filepath.Join(gameDir, "privatekey.pem")},
 		{name: "publickey.pem", path: filepath.Join(gameDir, "publickey.pem")},
 	}
 	var buf bytes.Buffer
@@ -346,9 +361,39 @@ func (s *Server) handleKeypairDownload(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="tw_game_keypair.zip"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="tw_game_public_key.zip"`)
 	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	_, _ = w.Write(buf.Bytes())
+}
+
+func randomToken() string {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+func (s *Server) resolveLogPath(raw string) (string, error) {
+	defaultPath := "/root/robot.log"
+	if _, err := os.Stat(defaultPath); err != nil {
+		defaultPath = filepath.Join(s.cfg.ConfigDir, "log_robot")
+	}
+	if strings.TrimSpace(raw) == "" {
+		return defaultPath, nil
+	}
+	want, err := filepath.Abs(filepath.Clean(raw))
+	if err != nil {
+		return "", err
+	}
+	allowed := []string{defaultPath, filepath.Join(s.cfg.ConfigDir, "log_robot")}
+	for _, path := range allowed {
+		abs, err := filepath.Abs(filepath.Clean(path))
+		if err == nil && want == abs {
+			return want, nil
+		}
+	}
+	return "", fmt.Errorf("log path is not allowed")
 }
 
 func callRobot(addr, command string, payload map[string]interface{}, timeout time.Duration, maxResponseBytes int) (string, error) {

@@ -123,14 +123,15 @@ func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRunt
 	}
 	m.autoStoreBusy[info.UID] = true
 	m.autoMu.Unlock()
-	if !m.acquireAutoStoreSlot(rc) {
+	slot, ok := m.acquireAutoStoreSlot(rc)
+	if !ok {
 		m.autoMu.Lock()
 		delete(m.autoStoreBusy, info.UID)
 		m.autoMu.Unlock()
 		return false
 	}
 	defer func() {
-		m.releaseAutoStoreSlot()
+		m.releaseAutoStoreSlot(slot)
 		m.autoMu.Lock()
 		delete(m.autoStoreBusy, info.UID)
 		m.autoMu.Unlock()
@@ -166,7 +167,7 @@ func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRunt
 	return false
 }
 
-func (m *RobotManager) acquireAutoStoreSlot(rc robotRuntimeConfig) bool {
+func (m *RobotManager) acquireAutoStoreSlot(rc robotRuntimeConfig) (chan struct{}, bool) {
 	limit := rc.SchedulerStoreConcurrent
 	if limit <= 0 {
 		limit = 30
@@ -180,17 +181,14 @@ func (m *RobotManager) acquireAutoStoreSlot(rc robotRuntimeConfig) bool {
 	m.storeSlotMu.Unlock()
 	select {
 	case slots <- struct{}{}:
-		return true
+		return slots, true
 	default:
 		robotLogf("[AutoStore] store_concurrent_limit limit=%d\n", limit)
-		return false
+		return nil, false
 	}
 }
 
-func (m *RobotManager) releaseAutoStoreSlot() {
-	m.storeSlotMu.Lock()
-	slots := m.autoStoreSlots
-	m.storeSlotMu.Unlock()
+func (m *RobotManager) releaseAutoStoreSlot(slots chan struct{}) {
 	if slots == nil {
 		return
 	}
