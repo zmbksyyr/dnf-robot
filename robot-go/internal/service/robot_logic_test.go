@@ -1,6 +1,8 @@
 package service
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"math/rand"
 	"os"
@@ -384,16 +386,63 @@ func TestSelectStoreItemsFallbacksToAllowIDs(t *testing.T) {
 	}
 }
 
-func TestRandomStorePositionNearUsesSpawnFixedAreas(t *testing.T) {
-	m := testRobotManagerWithConfig(t, "")
-	for i := 0; i < 100; i++ {
-		village, area, x, y := m.randomStorePositionNear(RobotInfo{Village: 3, Area: 0, X: 10, Y: 10}, robotRuntimeConfig{})
-		if village != 3 || area != 0 {
-			t.Fatalf("location got village=%d area=%d want 3/0", village, area)
-		}
-		if !inAnyStoreArea(x, y) {
-			t.Fatalf("coordinate got x=%d y=%d outside fixed store areas", x, y)
-		}
+func TestStorePointCoordinatorCachesSourceMD5(t *testing.T) {
+	configDir := t.TempDir()
+	data := writeStoreMapCatalog(t, configDir, []mapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 160, YMin: 0, YMax: 80, Use: true}})
+	c := newStorePointCoordinator(configDir)
+	if len(c.points) == 0 {
+		t.Fatalf("expected generated store points")
+	}
+	cacheData, err := os.ReadFile(filepath.Join(configDir, storePointCacheFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cache storePointCache
+	if err := json.Unmarshal(cacheData, &cache); err != nil {
+		t.Fatal(err)
+	}
+	sum := md5.Sum(data)
+	if cache.SourceMD5 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("cache md5 got %q want source md5", cache.SourceMD5)
+	}
+}
+
+func TestStorePointCoordinatorDoesNotReuseFailedPointAfterRestart(t *testing.T) {
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []mapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 160, YMin: 0, YMax: 0, Use: true}})
+	c := newStorePointCoordinator(configDir)
+	first, ok := c.claim(1001)
+	if !ok {
+		t.Fatalf("first claim failed")
+	}
+	c.report(1001, first, 1, false, "test_failed")
+	c.flush()
+
+	reloaded := newStorePointCoordinator(configDir)
+	next, ok := reloaded.claim(1002)
+	if !ok {
+		t.Fatalf("second claim failed")
+	}
+	if next.PointID == first.PointID {
+		t.Fatalf("failed point was reused after restart: %s", next.PointID)
+	}
+}
+
+func TestStorePointCoordinatorExploresUnknownBeforeReusingSuccess(t *testing.T) {
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []mapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 160, YMin: 0, YMax: 0, Use: true}})
+	c := newStorePointCoordinator(configDir)
+	first, ok := c.claim(1001)
+	if !ok {
+		t.Fatalf("first claim failed")
+	}
+	c.report(1001, first, 1, true, "test_success")
+	second, ok := c.claim(1002)
+	if !ok {
+		t.Fatalf("second claim failed")
+	}
+	if second.PointID == first.PointID {
+		t.Fatalf("success point reused before unknown points were tried: %s", second.PointID)
 	}
 }
 
@@ -496,22 +545,14 @@ func storeItemIDSet(items []equipmentCatalogItem) map[int]bool {
 	return out
 }
 
-func inAnyStoreArea(x, y int) bool {
-	areas := []struct {
-		xMin int
-		xMax int
-		yMin int
-		yMax int
-	}{
-		{xMin: 250, xMax: 600, yMin: 180, yMax: 260},
-		{xMin: 800, xMax: 1150, yMin: 220, yMax: 270},
-		{xMin: 1300, xMax: 1600, yMin: 240, yMax: 320},
-		{xMin: 320, xMax: 520, yMin: 390, yMax: 450},
+func writeStoreMapCatalog(t *testing.T, configDir string, maps []mapCatalogItem) []byte {
+	t.Helper()
+	data, err := json.Marshal(maps)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, area := range areas {
-		if x >= area.xMin && x <= area.xMax && y >= area.yMin && y <= area.yMax {
-			return true
-		}
+	if err := os.WriteFile(filepath.Join(configDir, "pvf_map_catalog.json"), data, 0644); err != nil {
+		t.Fatal(err)
 	}
-	return false
+	return data
 }

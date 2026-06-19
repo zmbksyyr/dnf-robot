@@ -13,40 +13,41 @@ import (
 )
 
 type RobotManager struct {
-	db             *sql.DB
-	cfg            *config.SysConfig
-	doll           *DollService
-	mu             sync.Mutex
-	autoMu         sync.Mutex
-	cacheMu        sync.Mutex
-	randMu         sync.Mutex
-	storeSlotMu    sync.Mutex
-	colCache       map[string]map[string]bool
-	rand           *rand.Rand
-	autoStoreBusy  map[int]bool
-	autoStoreSlots chan struct{}
-	autoStoreCap   int
-	autoEnabled    bool
-	autoPortSince  time.Time
-	autoPortReady  bool
-	autoPortLog    time.Time
-	autoStats      RobotAutoStatus
-	configCache    robotRuntimeConfig
-	configMod      time.Time
-	configCached   bool
-	shoutCache     shoutTemplates
-	shoutMod       time.Time
-	shoutCached    bool
-	mapCache       []mapCatalogItem
-	mapMod         time.Time
-	mapCached      bool
-	equipCache     []equipmentCatalogItem
-	equipMod       time.Time
-	equipCached    bool
-	stackCache     []equipmentCatalogItem
-	stackMod       time.Time
-	stackCached    bool
-	supervisor     *RobotSupervisor
+	db               *sql.DB
+	cfg              *config.SysConfig
+	doll             *DollService
+	mu               sync.Mutex
+	autoMu           sync.Mutex
+	cacheMu          sync.Mutex
+	randMu           sync.Mutex
+	storeSlotMu      sync.Mutex
+	colCache         map[string]map[string]bool
+	rand             *rand.Rand
+	autoStoreBusy    map[int]bool
+	autoStoreSlots   chan struct{}
+	autoStoreCap     int
+	autoEnabled      bool
+	autoPortSince    time.Time
+	autoPortReady    bool
+	autoPortLog      time.Time
+	autoStats        RobotAutoStatus
+	configCache      robotRuntimeConfig
+	configMod        time.Time
+	configCached     bool
+	shoutCache       shoutTemplates
+	shoutMod         time.Time
+	shoutCached      bool
+	mapCache         []mapCatalogItem
+	mapMod           time.Time
+	mapCached        bool
+	equipCache       []equipmentCatalogItem
+	equipMod         time.Time
+	equipCached      bool
+	stackCache       []equipmentCatalogItem
+	stackMod         time.Time
+	stackCached      bool
+	supervisor       *RobotSupervisor
+	storePointsCoord *storePointCoordinator
 }
 
 func NewRobotManager(db *sql.DB, cfg *config.SysConfig, doll *DollService) *RobotManager {

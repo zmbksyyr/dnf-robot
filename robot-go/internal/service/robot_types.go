@@ -26,6 +26,8 @@ type storePosition struct {
 	X       int
 	Y       int
 	Source  string
+	PointID string
+	Region  string
 }
 
 type followTarget struct {

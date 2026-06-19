@@ -135,20 +135,28 @@ func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRunt
 		delete(m.autoStoreBusy, info.UID)
 		m.autoMu.Unlock()
 	}()
-	positions := m.storeAttemptPositions(info, rc, tries)
-	for try, pos := range positions {
+	points := m.storePoints()
+	for try := 1; try <= tries; try++ {
 		if shouldStop != nil && shouldStop() {
-			robotLogf("[AutoStore] uid=%d cancelled_before_try=%d\n", info.UID, try+1)
+			robotLogf("[AutoStore] uid=%d cancelled_before_try=%d\n", info.UID, try)
 			return false
 		}
+		pos, ok := points.claim(info.UID)
+		if !ok {
+			robotLogf("[AutoStore] uid=%d no_store_point try=%d/%d\n", info.UID, try, tries)
+			break
+		}
 		info.Village, info.Area, info.X, info.Y = pos.Village, pos.Area, pos.X, pos.Y
-		robotLogf("[AutoStore] uid=%d try=%d/%d source=%s pos=%d/%d/%d/%d\n", info.UID, try+1, len(positions), pos.Source, info.Village, info.Area, info.X, info.Y)
-		if m.tryAutoStorePosition(info, rc, try+1, shouldStop) {
-			m.recordStoreSuccessPoint(info, try+1, pos.Source)
+		robotLogf("[AutoStore] uid=%d try=%d/%d source=%s point=%s region=%s pos=%d/%d/%d/%d\n", info.UID, try, tries, pos.Source, pos.PointID, pos.Region, info.Village, info.Area, info.X, info.Y)
+		if m.tryAutoStorePosition(info, rc, try, shouldStop) {
+			points.report(info.UID, pos, try, true, "store_ack")
+			robotLogf("[StoreSuccessPoint] uid=%d point=%s region=%s village=%d area=%d x=%d y=%d try=%d source=%s\n", info.UID, pos.PointID, pos.Region, info.Village, info.Area, info.X, info.Y, try, pos.Source)
 			m.addAutoStore(1, 0, 0)
 			return true
 		}
+		points.report(info.UID, pos, try, false, "store_failed")
 	}
+	points.flush()
 	_, _ = m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
 	_ = m.revokeStorePermission(info.UID, info.CID)
 	m.doll.ResetPrivateStore(info.UID)
@@ -192,20 +200,6 @@ func (m *RobotManager) releaseAutoStoreSlot() {
 	}
 }
 
-func (m *RobotManager) storeAttemptPositions(info RobotInfo, rc robotRuntimeConfig, maxTries int) []storePosition {
-	if maxTries <= 0 {
-		maxTries = 10
-	}
-	out := make([]storePosition, 0, maxTries)
-	success := m.storeSuccessPositions(info.Village, info.Area, minInt(4, maxTries))
-	out = append(out, success...)
-	for i := len(out); i < maxTries; i++ {
-		village, area, x, y := m.randomStorePositionNear(info, rc)
-		out = append(out, storePosition{Village: village, Area: area, X: x, Y: y, Source: "random"})
-	}
-	return out
-}
-
 func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfig, try int, shouldStop func() bool) bool {
 	if shouldStop != nil && shouldStop() {
 		return false
@@ -239,37 +233,6 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 	_, _ = m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
 	m.doll.ResetPrivateStore(info.UID)
 	return false
-}
-
-func (m *RobotManager) recordStoreSuccessPoint(info RobotInfo, try int, source string) {
-	_, _ = m.db.Exec(`INSERT INTO d_starsky.robot_store_success_point (village,area,x,y,uid,success_count,updated_at)
-VALUES (?,?,?,?,?,1,NOW())
-ON DUPLICATE KEY UPDATE uid=VALUES(uid),success_count=success_count+1,updated_at=NOW()`,
-		info.Village, info.Area, info.X, info.Y, info.UID)
-	robotLogf("[StoreSuccessPoint] uid=%d village=%d area=%d x=%d y=%d try=%d source=%s\n", info.UID, info.Village, info.Area, info.X, info.Y, try, source)
-}
-
-func (m *RobotManager) storeSuccessPositions(village, area, limit int) []storePosition {
-	if limit <= 0 {
-		limit = 4
-	}
-	rows, err := m.db.Query(`SELECT village,area,x,y FROM d_starsky.robot_store_success_point
-WHERE village=? AND area=?
-ORDER BY success_count DESC, updated_at DESC
-LIMIT ?`, village, area, limit)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []storePosition
-	for rows.Next() {
-		var pos storePosition
-		if rows.Scan(&pos.Village, &pos.Area, &pos.X, &pos.Y) == nil {
-			pos.Source = "success"
-			out = append(out, pos)
-		}
-	}
-	return out
 }
 
 func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shouldStop func() bool) bool {
@@ -342,34 +305,6 @@ func (m *RobotManager) randomNormalPosition(info RobotInfo, rc robotRuntimeConfi
 	}
 	m.applyConfiguredLocation(&normal, rc, maps)
 	return normal
-}
-
-func (m *RobotManager) randomStorePositionNear(info RobotInfo, rc robotRuntimeConfig) (int, int, int, int) {
-	xMin, xMax := maxInt(0, info.X-260), info.X+260
-	yMin, yMax := maxInt(0, info.Y-70), info.Y+70
-	if info.Village == 3 && info.Area == 0 {
-		type storeArea struct {
-			xMin int
-			xMax int
-			yMin int
-			yMax int
-		}
-		areas := []storeArea{
-			{xMin: 250, xMax: 600, yMin: 180, yMax: 260},
-			{xMin: 800, xMax: 1150, yMin: 220, yMax: 270},
-			{xMin: 1300, xMax: 1600, yMin: 240, yMax: 320},
-			{xMin: 320, xMax: 520, yMin: 390, yMax: 450},
-		}
-		a := areas[m.randIntn(len(areas))]
-		return info.Village, info.Area, m.randBetween(a.xMin, a.xMax), m.randBetween(a.yMin, a.yMax)
-	}
-	if xMax <= xMin {
-		xMin, xMax = rc.SpawnXMin, rc.SpawnXMax
-	}
-	if yMax <= yMin {
-		yMin, yMax = rc.SpawnYMin, rc.SpawnYMax
-	}
-	return info.Village, info.Area, m.randBetween(xMin, xMax), m.randBetween(yMin, yMax)
 }
 
 func (m *RobotManager) populateStoreInventory(info RobotInfo, rc robotRuntimeConfig) error {
