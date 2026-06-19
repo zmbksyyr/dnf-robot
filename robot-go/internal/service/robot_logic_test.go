@@ -609,6 +609,7 @@ func TestSupervisorLeaseUIDSkipsDuplicatesAndBlocked(t *testing.T) {
 func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
 	a1 := newRobotActor(1, robotActorAuto, s.runtime)
 	a2 := newRobotActor(2, robotActorAuto, s.runtime)
 	a1.start()
@@ -619,7 +620,7 @@ func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
 	s.ledger.tryLeaseUID(102, a2)
 	s.ledger.blockUID(101)
 
-	if got := s.StopUIDs([]int{101, 102, 102}, false); got != 2 {
+	if got := registry.StopUIDs([]int{101, 102, 102}, false); got != 2 {
 		t.Fatalf("StopUIDs got %d want 2", got)
 	}
 	if actors, leases := ledgerActorCount(t, &s.ledger), ledgerLeaseCount(t, &s.ledger); actors != 0 || leases != 0 {
@@ -634,7 +635,8 @@ func TestSupervisorStopUIDsWithoutLogoutSkipsDetachedRuntime(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	runtime := NewRobotRuntime(m)
 	s := NewRobotSupervisor(m, runtime)
-	if got := s.StopUIDs([]int{999}, false); got != 0 {
+	registry := newSupervisorActorRegistry(s)
+	if got := registry.StopUIDs([]int{999}, false); got != 0 {
 		t.Fatalf("StopUIDs got %d want 0 for missing uid", got)
 	}
 	if _, ok := runtime.locks.Load(999); ok {
@@ -662,21 +664,22 @@ func TestRobotActorOfflineKeepsUIDAttached(t *testing.T) {
 func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
 	a := newRobotActor(1, robotActorAuto, s.runtime)
 	a.start()
 	defer a.stopAndWait(time.Second)
 	addLedgerActor(t, &s.ledger, a)
 
-	if !s.AttachUID(101, time.Second) {
+	if !registry.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should use empty actor")
 	}
-	if !s.HasUID(101) {
+	if !registry.HasUID(101) {
 		t.Fatalf("attached uid should be leased")
 	}
 	if snap := a.snapshot(); snap.UID != 101 || snap.State != robotActorAssigned {
 		t.Fatalf("actor snapshot uid=%d state=%s", snap.UID, snap.State)
 	}
-	if s.AttachUID(102, time.Second) {
+	if registry.AttachUID(102, time.Second) {
 		t.Fatalf("AttachUID should fail when no empty actor remains")
 	}
 }
@@ -684,19 +687,20 @@ func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
 func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
 	a := newRobotActor(1, robotActorAuto, s.runtime)
 	a.start()
 	defer a.stopAndWait(time.Second)
 	addLedgerActor(t, &s.ledger, a)
 
-	if !s.AttachUID(101, time.Second) {
+	if !registry.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should attach uid")
 	}
-	if !s.AttachUID(101, time.Second) {
+	if !registry.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should be idempotent for leased uid")
 	}
 	s.ledger.blockUID(102)
-	if s.AttachUID(102, time.Second) {
+	if registry.AttachUID(102, time.Second) {
 		t.Fatalf("AttachUID should reject blocked uid")
 	}
 }

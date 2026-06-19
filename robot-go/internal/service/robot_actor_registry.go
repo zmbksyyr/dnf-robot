@@ -3,8 +3,7 @@ package service
 import "time"
 
 // actorRegistry is the narrow ownership surface used by Web/API and cleanup
-// flows. RobotSupervisor implements it today; keeping callers on this interface
-// makes a later ActorRegistry extraction mechanical.
+// flows.
 type actorRegistry interface {
 	AttachUID(uid int, timeout time.Duration) bool
 	Command(uid int, cmd robotActorCommand, timeout time.Duration) (RobotActionResult, bool)
@@ -15,11 +14,23 @@ type actorRegistry interface {
 	actorSnapshots() []robotActorSnapshot
 }
 
-var _ actorRegistry = (*RobotSupervisor)(nil)
+type supervisorActorRegistry struct {
+	supervisor *RobotSupervisor
+}
+
+var _ actorRegistry = (*supervisorActorRegistry)(nil)
+
+func newSupervisorActorRegistry(supervisor *RobotSupervisor) *supervisorActorRegistry {
+	if supervisor == nil {
+		return nil
+	}
+	return &supervisorActorRegistry{supervisor: supervisor}
+}
 
 // Actor ownership and command routing.
 
-func (s *RobotSupervisor) Command(uid int, cmd robotActorCommand, timeout time.Duration) (RobotActionResult, bool) {
+func (r *supervisorActorRegistry) Command(uid int, cmd robotActorCommand, timeout time.Duration) (RobotActionResult, bool) {
+	s := r.supervisor
 	actor := s.ledger.actorForUID(uid)
 	if actor == nil {
 		return RobotActionResult{UID: uid, OK: false, State: "missing_actor"}, false
@@ -29,13 +40,14 @@ func (s *RobotSupervisor) Command(uid int, cmd robotActorCommand, timeout time.D
 
 // LogoutUID is an actor command: it logs the UID out but keeps it attached to
 // its actor. Detach/release remains a scheduler ownership operation.
-func (s *RobotSupervisor) LogoutUID(uid int, timeout time.Duration) (RobotActionResult, bool) {
-	return s.Command(uid, robotActorCmdLogout, timeout)
+func (r *supervisorActorRegistry) LogoutUID(uid int, timeout time.Duration) (RobotActionResult, bool) {
+	return r.Command(uid, robotActorCmdLogout, timeout)
 }
 
 // AttachUID binds an unmanaged UID to an empty actor slot. It does not perform
 // login directly; callers should send robotActorCmdOnline through Command.
-func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
+func (r *supervisorActorRegistry) AttachUID(uid int, timeout time.Duration) bool {
+	s := r.supervisor
 	actor, existing, ok := s.ledger.reserveEmptyAutoActor(uid)
 	if !ok {
 		return false
@@ -50,13 +62,14 @@ func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
 	return false
 }
 
-func (s *RobotSupervisor) HasUID(uid int) bool {
-	return s.ledger.hasUID(uid)
+func (r *supervisorActorRegistry) HasUID(uid int) bool {
+	return r.supervisor.ledger.hasUID(uid)
 }
 
 // actorSnapshots is the read model for UI/status surfaces. Callers get a copy
 // of actor pointers first so actor.snapshot() is never called while ledger is held.
-func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
+func (r *supervisorActorRegistry) actorSnapshots() []robotActorSnapshot {
+	s := r.supervisor
 	actors := s.ledger.actorPointers()
 	out := make([]robotActorSnapshot, 0, len(actors))
 	for _, actor := range actors {
@@ -67,7 +80,8 @@ func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
 
 // StopUID detaches the UID from supervisor ownership. With logout=true the
 // actor performs release/logout before its slot is removed.
-func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
+func (r *supervisorActorRegistry) StopUID(uid int, logout bool) bool {
+	s := r.supervisor
 	actor := s.ledger.detachUID(uid)
 	if actor != nil {
 		if logout {
@@ -83,7 +97,8 @@ func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
 }
 
 // StopUIDs is the bulk ownership detach path used before cleanup/delete.
-func (s *RobotSupervisor) StopUIDs(uids []int, logout bool) int {
+func (r *supervisorActorRegistry) StopUIDs(uids []int, logout bool) int {
+	s := r.supervisor
 	actors, missing := s.ledger.detachUIDs(uids)
 	if logout && s.runtime != nil {
 		for _, uid := range missing {
@@ -94,8 +109,8 @@ func (s *RobotSupervisor) StopUIDs(uids []int, logout bool) int {
 	return len(actors)
 }
 
-func (s *RobotSupervisor) EnsureActorSlots(rc robotRuntimeConfig, target int) {
-	s.ensureAutoActorSlots(rc, target)
+func (r *supervisorActorRegistry) EnsureActorSlots(rc robotRuntimeConfig, target int) {
+	r.supervisor.ensureAutoActorSlots(rc, target)
 }
 
 func (m *RobotManager) currentActorRegistry() actorRegistry {
@@ -104,5 +119,5 @@ func (m *RobotManager) currentActorRegistry() actorRegistry {
 	if m.supervisor == nil {
 		return nil
 	}
-	return m.supervisor
+	return newSupervisorActorRegistry(m.supervisor)
 }

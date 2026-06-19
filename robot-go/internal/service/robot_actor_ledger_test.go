@@ -85,7 +85,8 @@ func TestActorLedgerDetachSomeAutoActorsHonorsFloor(t *testing.T) {
 
 func TestSupervisorStopUIDWithoutRuntimeDoesNotPanic(t *testing.T) {
 	s := NewRobotSupervisor(nil, nil)
-	if s.StopUID(101, true) {
+	registry := newSupervisorActorRegistry(s)
+	if registry.StopUID(101, true) {
 		t.Fatalf("StopUID should report false when uid is not attached")
 	}
 }
