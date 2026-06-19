@@ -394,7 +394,7 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		if err := decodePayload(pkt, &req); err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
-		return queueRobotActionNoOperation("cleanupRobotsAsync", func() {
+		return queueExclusiveAction("cleanupRobotsAsync", func() {
 			res, err := manager.CleanupRobots(req)
 			if err != nil {
 				logRobotActionf("[WebAction] cleanupRobotsAsync failed err=%v\n", err)
@@ -459,7 +459,7 @@ func queueRobotAction(manager *service.RobotManager, name, scope string, fn func
 	return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "queued", "operation": op}})
 }
 
-func queueRobotActionNoOperation(name string, fn func()) string {
+func queueExclusiveAction(name string, fn func()) string {
 	if _, loaded := asyncActions.LoadOrStore(name, true); loaded {
 		return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "running"}})
 	}
