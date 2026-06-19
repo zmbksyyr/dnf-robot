@@ -150,8 +150,8 @@ func applyAdaptiveSchedulerConfig(rc *robotRuntimeConfig, sig adaptiveSchedulerS
 	target := normalizedTarget(*rc)
 	scale := targetScale(target)
 
-	rc.SchedulerOnlineBatchSize = clampInt(target/4, 20, 120)
-	rc.SchedulerOnlineStartRate = clampInt(target/30, 8, 60)
+	rc.SchedulerOnlineBatchSize = clampInt(target/10, 10, 60)
+	rc.SchedulerOnlineStartRate = clampInt(target/40, 4, 30)
 	rc.SchedulerOnlineFillTimeout = clampInt(target/10, 45, 180)
 
 	rc.SchedulerStoreConcurrent = clampInt(target/20, 5, 50)
@@ -184,9 +184,18 @@ func applyLiveSchedulerFeedback(rc *robotRuntimeConfig, target int, sig adaptive
 	storeRoom := sig.StoreRunning < rc.SchedulerStoreConcurrent*7/10
 	idleRoom := sig.Idle >= clampInt(target/50, 2, 20)
 	resourcePressure := sig.CPUPercent >= 85 || sig.MemoryMB >= 4096 || sig.Goroutines >= 20000
-	pressure := sig.BreakerActive || !sig.GamePortReady || resourcePressure || sig.Running < target*85/100 || sig.Connecting > clampInt(target/10, 3, 60)
+	pendingPressure := sig.Idle >= schedulerPendingActorLimit(target, *rc)
+	connectionPressure := sig.Connecting > clampInt(target/10, 3, 60)
+	pressure := sig.BreakerActive || !sig.GamePortReady || resourcePressure || connectionPressure || pendingPressure
 
 	if pressure {
+		if pendingPressure && sig.GamePortReady && !sig.BreakerActive && !resourcePressure && !connectionPressure {
+			rc.SchedulerOnlineBatchSize = -1
+			rc.SchedulerOnlineStartRate = clampInt(rc.SchedulerOnlineStartRate/2, 1, 10)
+			rc.SchedulerStoreConcurrent = clampInt(rc.SchedulerStoreConcurrent/2, 2, 25)
+			rc.AutoStoreProbabilityPercent = clampInt(rc.AutoStoreProbabilityPercent/3, 1, 15)
+			return schedulerPolicyDecision{Mode: schedulerPolicyPressure, Reason: fmt.Sprintf("pending_backlog idle=%d actors=%d running=%d target=%d", sig.Idle, sig.Actors, sig.Running, target)}
+		}
 		rc.SchedulerOnlineBatchSize = clampInt(rc.SchedulerOnlineBatchSize/2, 5, 60)
 		rc.SchedulerOnlineStartRate = clampInt(rc.SchedulerOnlineStartRate/2, 4, 30)
 		rc.SchedulerOnlineFillTimeout = clampInt(rc.SchedulerOnlineFillTimeout*2, 60, 300)

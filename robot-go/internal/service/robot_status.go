@@ -27,6 +27,7 @@ type RobotStatusItem struct {
 	X                int    `json:"x"`
 	Y                int    `json:"y"`
 	UptimeSeconds    int    `json:"uptime_seconds"`
+	MissingCore      bool   `json:"missing_core,omitempty"`
 }
 
 type RobotStatusResult struct {
@@ -57,9 +58,10 @@ func (m *RobotManager) RobotsStatus(req RobotCommandRequest) (RobotStatusResult,
 	}
 	query := `
 SELECT r.uid,r.cid,IFNULL(r.charac_name,''),IFNULL(r.account,''),IFNULL(c.lev,0),IFNULL(c.job,0),IFNULL(c.grow_type,0),
+       IF(c.charac_no IS NULL,0,1),
        IFNULL(d.curvill,0),IFNULL(d.curarea,0),IFNULL(d.curx,0),IFNULL(d.cury,0)
 FROM d_starsky.robot_registry r
-LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid
+LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.delete_flag=0
 LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid
 ` + where + `
 ORDER BY r.uid` + limit
@@ -72,10 +74,14 @@ ORDER BY r.uid` + limit
 	out := RobotStatusResult{UpdatedAt: time.Now()}
 	for rows.Next() {
 		var item RobotStatusItem
-		if err := rows.Scan(&item.UID, &item.CID, &item.Name, &item.Account, &item.Level, &item.Job, &item.Grow, &item.Village, &item.Area, &item.X, &item.Y); err != nil {
+		var coreAlive int
+		if err := rows.Scan(&item.UID, &item.CID, &item.Name, &item.Account, &item.Level, &item.Job, &item.Grow, &coreAlive, &item.Village, &item.Area, &item.X, &item.Y); err != nil {
 			return RobotStatusResult{}, err
 		}
-		if st, ok := runtime[item.UID]; ok {
+		if coreAlive == 0 {
+			item.MissingCore = true
+			item.StateName = "broken"
+		} else if st, ok := runtime[item.UID]; ok {
 			item.State = st.State
 			item.StateName = st.StateName
 			item.Online = activeRuntimeStatus(st)

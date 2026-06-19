@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,6 +130,7 @@ func (s *RobotSupervisor) tick(now time.Time) {
 		return
 	}
 	s.maintainTarget(rc)
+	s.releaseBrokenLeases()
 	s.recycleUnhealthyActors(now, rc)
 	s.assignIdleAutoActors(rc)
 	s.updateMetrics(rc)
@@ -172,13 +174,22 @@ func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int
 	status := s.manager.runtimeStatusMap()
 	s.mu.Lock()
 	current := 0
+	pending := 0
 	for _, actor := range s.actors {
 		if actor.modeValue() == robotActorAuto {
 			current++
+			snap := actor.snapshot()
+			if snap.UID <= 0 || snap.State == robotActorIdle || snap.State == robotActorAssigned || snap.State == robotActorOnline || snap.State == robotActorReleasing {
+				pending++
+			}
 		}
 	}
 	addCount := target - current
 	if addCount < 0 {
+		addCount = 0
+	}
+	pendingLimit := schedulerPendingActorLimit(target, rc)
+	if pending >= pendingLimit {
 		addCount = 0
 	}
 	if addCount > schedulerScaleUpBatch(rc) {
@@ -225,6 +236,9 @@ func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int
 
 func schedulerScaleUpBatch(rc robotRuntimeConfig) int {
 	batch := rc.SchedulerOnlineBatchSize
+	if batch < 0 {
+		return 0
+	}
 	if batch <= 0 {
 		batch = 20
 	}
@@ -232,6 +246,23 @@ func schedulerScaleUpBatch(rc robotRuntimeConfig) int {
 		batch = 120
 	}
 	return batch
+}
+
+func schedulerPendingActorLimit(target int, rc robotRuntimeConfig) int {
+	if target <= 0 {
+		return 1
+	}
+	limit := schedulerOnlineStartRate(rc) * 8
+	if limit < target/10 {
+		limit = target / 10
+	}
+	if limit < 5 {
+		limit = 5
+	}
+	if limit > 120 {
+		limit = 120
+	}
+	return limit
 }
 
 func schedulerScaleDownBatch(current, target int) int {
@@ -326,6 +357,78 @@ func (s *RobotSupervisor) recycleUnhealthyActors(now time.Time, rc robotRuntimeC
 	for _, item := range unhealthy {
 		s.recycleActorUID(item.actor, item.status)
 	}
+}
+
+func (s *RobotSupervisor) releaseBrokenLeases() {
+	type lease struct {
+		uid   int
+		actor *robotActor
+	}
+	var leases []lease
+	s.mu.Lock()
+	for uid, actor := range s.uidActors {
+		if uid > 0 && actor != nil {
+			leases = append(leases, lease{uid: uid, actor: actor})
+		}
+	}
+	s.mu.Unlock()
+	if len(leases) == 0 {
+		return
+	}
+	uids := make([]int, 0, len(leases))
+	for _, item := range leases {
+		uids = append(uids, item.uid)
+	}
+	alive, err := s.manager.aliveRobotUIDs(uids)
+	if err != nil {
+		robotLogf("[RobotSupervisor] lease_health_check_failed err=%v\n", err)
+		return
+	}
+	for _, item := range leases {
+		if alive[item.uid] {
+			continue
+		}
+		s.mu.Lock()
+		if s.uidActors[item.uid] != item.actor {
+			s.mu.Unlock()
+			continue
+		}
+		delete(s.uidActors, item.uid)
+		s.blockedUID[item.uid] = struct{}{}
+		s.mu.Unlock()
+		robotLogf("[RobotSupervisor] broken_lease uid=%d slot=%d action=release_block\n", item.uid, item.actor.slotID)
+		go func(actor *robotActor, uid int) {
+			released := actor.releaseAndWait(10 * time.Second)
+			if released != uid && released > 0 {
+				s.unleaseUID(released, actor)
+			}
+		}(item.actor, item.uid)
+	}
+}
+
+func (m *RobotManager) aliveRobotUIDs(uids []int) (map[int]bool, error) {
+	alive := make(map[int]bool, len(uids))
+	if len(uids) == 0 {
+		return alive, nil
+	}
+	holders := strings.TrimRight(strings.Repeat("?,", len(uids)), ",")
+	args := make([]interface{}, len(uids))
+	for i, uid := range uids {
+		args[i] = uid
+	}
+	rows, err := m.db.Query("SELECT m_id FROM taiwan_cain.charac_info WHERE delete_flag=0 AND m_id IN ("+holders+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uid int
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		alive[uid] = true
+	}
+	return alive, rows.Err()
 }
 
 func (s *RobotSupervisor) recycleActorUID(actor *robotActor, status robotActorStatus) {
@@ -469,6 +572,9 @@ func (s *RobotSupervisor) unleaseUID(uid int, actor *robotActor) {
 
 func schedulerOnlineStartRate(rc robotRuntimeConfig) int {
 	rate := rc.SchedulerOnlineStartRate
+	if rate < 0 {
+		return 0
+	}
 	if rate <= 0 {
 		rate = 20
 	}
@@ -480,6 +586,9 @@ func schedulerOnlineStartRate(rc robotRuntimeConfig) int {
 
 func schedulerOnlineStartRateForNeed(need int, rc robotRuntimeConfig) int {
 	rate := schedulerOnlineStartRate(rc)
+	if rate <= 0 {
+		return 0
+	}
 	if need <= 0 {
 		return rate
 	}
@@ -577,7 +686,11 @@ func breakerActorFloor(rc robotRuntimeConfig) int {
 	if floorPct > 100 {
 		floorPct = 100
 	}
-	return target * floorPct / 100
+	floor := target * floorPct / 100
+	if target <= 50 && floor < target {
+		return target
+	}
+	return floor
 }
 
 func (s *RobotSupervisor) stopAll(logout bool) {
@@ -614,6 +727,7 @@ func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 	}
 	s.nextMetrics = now.Add(time.Duration(rc.SchedulerMetricsIntervalSec) * time.Second)
 	status := s.manager.runtimeStatusMap()
+	s.filterBlockedRuntimeStatus(status)
 	running, connecting, stores := summarizeRuntimeStatusMap(status)
 	s.manager.updateAutoSnapshot(rc, running, connecting, stores)
 	counts := s.actorCounts(now, rc)
@@ -637,6 +751,17 @@ func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 		stats.StoreSuccess, stats.StoreFailed, stats.StoreExpired)
 	fmt.Print(line)
 	dnf.LogString(dnf.LogLevelIndispensable, line)
+}
+
+func (s *RobotSupervisor) filterBlockedRuntimeStatus(status map[int]RuntimeRobotStatus) {
+	if len(status) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for uid := range s.blockedUID {
+		delete(status, uid)
+	}
 }
 
 type supervisorActorCounts struct {

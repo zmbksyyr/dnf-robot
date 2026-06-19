@@ -127,9 +127,7 @@ func (m *RobotManager) updateAutoBreaker(now time.Time, rc robotRuntimeConfig, c
 
 	stats := m.autoStats
 	reason := ""
-	if readyForBreaker && target-running >= threshold {
-		reason = fmt.Sprintf("running_below_%dpct target=%d running=%d", 100-abnormalPct, target, running)
-	} else if readyForBreaker && connecting >= threshold {
+	if readyForBreaker && connecting >= threshold {
 		reason = fmt.Sprintf("connecting_over_%dpct target=%d connecting=%d", abnormalPct, target, connecting)
 	}
 

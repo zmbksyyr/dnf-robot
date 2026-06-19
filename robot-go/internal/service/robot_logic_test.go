@@ -135,7 +135,7 @@ func TestSchedulerOnlineStartRate(t *testing.T) {
 		{name: "default", rate: 0, want: 20},
 		{name: "configured", rate: 8, want: 8},
 		{name: "hard cap", rate: 99, want: 60},
-		{name: "negative default", rate: -1, want: 20},
+		{name: "frozen", rate: -1, want: 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -181,6 +181,9 @@ func TestSchedulerScaleBatches(t *testing.T) {
 	if got := schedulerScaleUpBatch(robotRuntimeConfig{SchedulerOnlineBatchSize: 999}); got != 120 {
 		t.Fatalf("scale up cap got %d want 120", got)
 	}
+	if got := schedulerScaleUpBatch(robotRuntimeConfig{SchedulerOnlineBatchSize: -1}); got != 0 {
+		t.Fatalf("scale up frozen got %d want 0", got)
+	}
 	if got := schedulerScaleDownBatch(600, 20); got != 24 {
 		t.Fatalf("scale down 600->20 got %d want 24", got)
 	}
@@ -225,11 +228,11 @@ func TestSortActorsForStopByPolicy(t *testing.T) {
 func TestLoadRobotConfigSchedulerOnlineDefaults(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	rc := m.loadRobotConfig()
-	if rc.SchedulerOnlineBatchSize != 20 {
-		t.Fatalf("SchedulerOnlineBatchSize got %d want 20", rc.SchedulerOnlineBatchSize)
+	if rc.SchedulerOnlineBatchSize != 10 {
+		t.Fatalf("SchedulerOnlineBatchSize got %d want 10", rc.SchedulerOnlineBatchSize)
 	}
-	if rc.SchedulerOnlineStartRate != 8 {
-		t.Fatalf("SchedulerOnlineStartRate got %d want 8", rc.SchedulerOnlineStartRate)
+	if rc.SchedulerOnlineStartRate != 4 {
+		t.Fatalf("SchedulerOnlineStartRate got %d want 4", rc.SchedulerOnlineStartRate)
 	}
 	if rc.SchedulerOnlineFillTimeout != 45 {
 		t.Fatalf("SchedulerOnlineFillTimeout got %d want 45", rc.SchedulerOnlineFillTimeout)
@@ -262,11 +265,11 @@ func TestLoadRobotConfigSchedulerOnlineDefaults(t *testing.T) {
 func TestLoadRobotConfigSchedulerValuesAreAdaptive(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "[auto]\nauto_target_online_count = 600\nauto_store_probability_percent = 99\nauto_store_interval_min_sec = 1\nauto_store_interval_max_sec = 2\n[scheduler]\nstore_concurrent = 1\nonline_batch_size = 30\nonline_start_rate = 8\nonline_fill_timeout_sec = 90\nbreaker_abnormal_percent = 25\nbreaker_pause_sec = 120\nbreaker_release_batch = 10\nbreaker_floor_percent = 80\nport_down_release_batch = 15\n")
 	rc := m.loadRobotConfig()
-	if rc.SchedulerOnlineBatchSize != 120 {
-		t.Fatalf("SchedulerOnlineBatchSize got %d want 120", rc.SchedulerOnlineBatchSize)
+	if rc.SchedulerOnlineBatchSize != 60 {
+		t.Fatalf("SchedulerOnlineBatchSize got %d want 60", rc.SchedulerOnlineBatchSize)
 	}
-	if rc.SchedulerOnlineStartRate != 20 {
-		t.Fatalf("SchedulerOnlineStartRate got %d want 20", rc.SchedulerOnlineStartRate)
+	if rc.SchedulerOnlineStartRate != 15 {
+		t.Fatalf("SchedulerOnlineStartRate got %d want 15", rc.SchedulerOnlineStartRate)
 	}
 	if rc.SchedulerOnlineFillTimeout != 60 {
 		t.Fatalf("SchedulerOnlineFillTimeout got %d want 60", rc.SchedulerOnlineFillTimeout)
@@ -323,11 +326,11 @@ func TestParseJobsRecognizesMultiWordJobs(t *testing.T) {
 func TestLoadRobotConfigSchedulerAdaptiveCaps(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "[auto]\nauto_target_online_count = 2000\n[scheduler]\nonline_batch_size = 999\nonline_start_rate = 999\nonline_fill_timeout_sec = -1\nbreaker_abnormal_percent = 999\nbreaker_pause_sec = 9999\nbreaker_release_batch = 999\nbreaker_floor_percent = 999\nport_down_release_batch = 999\n")
 	rc := m.loadRobotConfig()
-	if rc.SchedulerOnlineBatchSize != 120 {
-		t.Fatalf("SchedulerOnlineBatchSize got %d want 120", rc.SchedulerOnlineBatchSize)
+	if rc.SchedulerOnlineBatchSize != 60 {
+		t.Fatalf("SchedulerOnlineBatchSize got %d want 60", rc.SchedulerOnlineBatchSize)
 	}
-	if rc.SchedulerOnlineStartRate != 33 {
-		t.Fatalf("SchedulerOnlineStartRate got %d want 33", rc.SchedulerOnlineStartRate)
+	if rc.SchedulerOnlineStartRate != 25 {
+		t.Fatalf("SchedulerOnlineStartRate got %d want 25", rc.SchedulerOnlineStartRate)
 	}
 	if rc.SchedulerOnlineFillTimeout != 100 {
 		t.Fatalf("SchedulerOnlineFillTimeout got %d want 100", rc.SchedulerOnlineFillTimeout)
@@ -382,11 +385,11 @@ func TestAdaptiveSchedulerLiveFeedbackReducesPressure(t *testing.T) {
 		Idle:          0,
 		GamePortReady: true,
 	})
-	if rc.SchedulerOnlineBatchSize != 60 {
-		t.Fatalf("SchedulerOnlineBatchSize got %d want 60", rc.SchedulerOnlineBatchSize)
+	if rc.SchedulerOnlineBatchSize != 30 {
+		t.Fatalf("SchedulerOnlineBatchSize got %d want 30", rc.SchedulerOnlineBatchSize)
 	}
-	if rc.SchedulerOnlineStartRate != 10 {
-		t.Fatalf("SchedulerOnlineStartRate got %d want 10", rc.SchedulerOnlineStartRate)
+	if rc.SchedulerOnlineStartRate != 7 {
+		t.Fatalf("SchedulerOnlineStartRate got %d want 7", rc.SchedulerOnlineStartRate)
 	}
 	if rc.SchedulerStoreConcurrent != 15 {
 		t.Fatalf("SchedulerStoreConcurrent got %d want 15", rc.SchedulerStoreConcurrent)
@@ -410,8 +413,47 @@ func TestAdaptiveSchedulerLiveFeedbackSpeedsFillWhenConnectionRoom(t *testing.T)
 		Idle:          0,
 		GamePortReady: true,
 	})
-	if rc.SchedulerOnlineStartRate != 26 {
-		t.Fatalf("SchedulerOnlineStartRate got %d want 26", rc.SchedulerOnlineStartRate)
+	if rc.SchedulerOnlineStartRate != 21 {
+		t.Fatalf("SchedulerOnlineStartRate got %d want 21", rc.SchedulerOnlineStartRate)
+	}
+}
+
+func TestAdaptiveSchedulerMissingTargetFillsInsteadOfPressure(t *testing.T) {
+	rc := robotRuntimeConfig{AutoTargetOnlineCount: 20, MaxOnlineRobots: 1000}
+	decision := applyAdaptiveSchedulerConfig(&rc, adaptiveSchedulerSignals{
+		Live:          true,
+		Running:       14,
+		Connecting:    0,
+		Actors:        14,
+		Idle:          0,
+		GamePortReady: true,
+	})
+	if decision.Mode != schedulerPolicyFill {
+		t.Fatalf("mode got %s want %s reason=%s", decision.Mode, schedulerPolicyFill, decision.Reason)
+	}
+	if rc.SchedulerOnlineBatchSize <= 0 {
+		t.Fatalf("SchedulerOnlineBatchSize got %d want positive fill batch", rc.SchedulerOnlineBatchSize)
+	}
+}
+
+func TestAdaptiveSchedulerFreezesScaleUpOnPendingBacklog(t *testing.T) {
+	rc := robotRuntimeConfig{AutoTargetOnlineCount: 600, MaxOnlineRobots: 1000}
+	decision := applyAdaptiveSchedulerConfig(&rc, adaptiveSchedulerSignals{
+		Live:          true,
+		Running:       130,
+		Connecting:    0,
+		Actors:        420,
+		Idle:          290,
+		GamePortReady: true,
+	})
+	if decision.Mode != schedulerPolicyPressure {
+		t.Fatalf("mode got %s want %s reason=%s", decision.Mode, schedulerPolicyPressure, decision.Reason)
+	}
+	if rc.SchedulerOnlineBatchSize != -1 {
+		t.Fatalf("SchedulerOnlineBatchSize got %d want frozen -1", rc.SchedulerOnlineBatchSize)
+	}
+	if got := schedulerScaleUpBatch(rc); got != 0 {
+		t.Fatalf("schedulerScaleUpBatch got %d want 0", got)
 	}
 }
 
@@ -423,6 +465,10 @@ func TestBreakerActorFloorUsesSchedulerPercent(t *testing.T) {
 	got = breakerActorFloor(robotRuntimeConfig{AutoTargetOnlineCount: 600, MaxOnlineRobots: 500, SchedulerBreakerFloorPct: 80})
 	if got != 400 {
 		t.Fatalf("breakerActorFloor capped target got %d want 400", got)
+	}
+	got = breakerActorFloor(robotRuntimeConfig{AutoTargetOnlineCount: 20, MaxOnlineRobots: 1000, SchedulerBreakerFloorPct: 70})
+	if got != 20 {
+		t.Fatalf("breakerActorFloor small target got %d want 20", got)
 	}
 }
 
