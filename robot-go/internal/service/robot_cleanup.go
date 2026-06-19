@@ -3,7 +3,6 @@ package service
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -109,7 +108,7 @@ func (m *RobotManager) cleanupCandidates(req RobotCleanupRequest) ([]RobotCleanu
 	var rows *sql.Rows
 	var err error
 	if len(req.UIDs) > 0 {
-		holders := strings.TrimRight(strings.Repeat("?,", len(req.UIDs)), ",")
+		holders := sqlPlaceholders(len(req.UIDs))
 		args := make([]interface{}, len(req.UIDs))
 		for i, uid := range req.UIDs {
 			args[i] = uid
@@ -308,7 +307,7 @@ func (m *RobotManager) batchDeleteByInts(tx *sql.Tx, table, col string, ids []in
 			end = len(ids)
 		}
 		chunk := ids[i:end]
-		holders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		holders := sqlPlaceholders(len(chunk))
 		args := make([]interface{}, len(chunk))
 		for j, id := range chunk {
 			args[j] = id
@@ -334,7 +333,7 @@ func (m *RobotManager) batchDeleteByStrings(tx *sql.Tx, table, col string, value
 			end = len(values)
 		}
 		chunk := values[i:end]
-		holders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		holders := sqlPlaceholders(len(chunk))
 		args := make([]interface{}, len(chunk))
 		for j, v := range chunk {
 			args[j] = v

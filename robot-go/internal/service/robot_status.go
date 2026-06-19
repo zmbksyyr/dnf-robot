@@ -1,9 +1,6 @@
 package service
 
-import (
-	"strings"
-	"time"
-)
+import "time"
 
 type RobotStatusItem struct {
 	UID              int    `json:"uid"`
@@ -55,7 +52,7 @@ func (m *RobotManager) RobotsStatus(req RobotCommandRequest) (RobotStatusResult,
 	where := ""
 	limit := ""
 	if len(req.UIDs) > 0 {
-		holders := strings.TrimRight(strings.Repeat("?,", len(req.UIDs)), ",")
+		holders := sqlPlaceholders(len(req.UIDs))
 		where = "WHERE r.uid IN (" + holders + ")"
 		for _, uid := range req.UIDs {
 			args = append(args, uid)

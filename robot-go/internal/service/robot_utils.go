@@ -1,6 +1,9 @@
 package service
 
-import "math/rand"
+import (
+	"math/rand"
+	"strings"
+)
 
 func (m *RobotManager) randIntn(n int) int {
 	if n <= 0 {
@@ -79,4 +82,11 @@ func robotUIDs(robots []RobotInfo) []int {
 
 func newCommandResult(requested int) RobotCommandResult {
 	return RobotCommandResult{Requested: requested, Robots: make([]RobotActionResult, 0, requested)}
+}
+
+func sqlPlaceholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.TrimRight(strings.Repeat("?,", n), ",")
 }

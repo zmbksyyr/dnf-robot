@@ -11,7 +11,7 @@ func (m *RobotManager) selectRobots(req RobotCommandRequest) ([]RobotInfo, error
 	var rows *sql.Rows
 	var err error
 	if len(req.UIDs) > 0 {
-		holders := strings.TrimRight(strings.Repeat("?,", len(req.UIDs)), ",")
+		holders := sqlPlaceholders(len(req.UIDs))
 		args := make([]interface{}, len(req.UIDs))
 		for i, uid := range req.UIDs {
 			args[i] = uid

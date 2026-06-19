@@ -1,9 +1,6 @@
 package service
 
-import (
-	"strings"
-	"time"
-)
+import "time"
 
 // Lease health, broken UID cleanup, and recycle paths.
 
@@ -83,7 +80,7 @@ func (m *RobotManager) aliveRobotUIDs(uids []int) (map[int]bool, error) {
 	if len(uids) == 0 {
 		return alive, nil
 	}
-	holders := strings.TrimRight(strings.Repeat("?,", len(uids)), ",")
+	holders := sqlPlaceholders(len(uids))
 	args := make([]interface{}, len(uids))
 	for i, uid := range uids {
 		args[i] = uid
