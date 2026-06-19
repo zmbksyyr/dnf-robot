@@ -106,9 +106,3 @@ func (m *RobotManager) currentActorRegistry() actorRegistry {
 	}
 	return m.supervisor
 }
-
-func (m *RobotManager) currentSupervisor() *RobotSupervisor {
-	m.autoMu.Lock()
-	defer m.autoMu.Unlock()
-	return m.supervisor
-}
