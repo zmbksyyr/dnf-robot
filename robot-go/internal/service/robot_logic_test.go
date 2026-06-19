@@ -630,6 +630,18 @@ func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
 	}
 }
 
+func TestSupervisorStopUIDsWithoutLogoutSkipsDetachedRuntime(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	runtime := NewRobotRuntime(m)
+	s := NewRobotSupervisor(m, runtime)
+	if got := s.StopUIDs([]int{999}, false); got != 0 {
+		t.Fatalf("StopUIDs got %d want 0 for missing uid", got)
+	}
+	if _, ok := runtime.locks.Load(999); ok {
+		t.Fatalf("StopUIDs logout=false should not call runtime logout for detached uid")
+	}
+}
+
 func TestRobotActorOfflineKeepsUIDAttached(t *testing.T) {
 	a := &robotActor{slotID: 1, mode: robotActorAuto}
 	a.resetForUID(101)

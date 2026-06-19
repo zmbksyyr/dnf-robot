@@ -85,7 +85,7 @@ func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
 // StopUIDs is the bulk ownership detach path used before cleanup/delete.
 func (s *RobotSupervisor) StopUIDs(uids []int, logout bool) int {
 	actors, missing := s.ledger.detachUIDs(uids)
-	if s.runtime != nil {
+	if logout && s.runtime != nil {
 		for _, uid := range missing {
 			s.runtime.Logout(uid)
 		}
