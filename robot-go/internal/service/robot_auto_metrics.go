@@ -44,14 +44,7 @@ func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 }
 
 func (s *RobotSupervisor) filterBlockedRuntimeStatus(status map[int]RuntimeRobotStatus) {
-	if len(status) == 0 {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for uid := range s.blockedUID {
-		delete(status, uid)
-	}
+	s.actorLedger.filterBlockedRuntimeStatus(status)
 }
 
 func (s *RobotSupervisor) filterMissingRuntimeStatus(status map[int]RuntimeRobotStatus) {

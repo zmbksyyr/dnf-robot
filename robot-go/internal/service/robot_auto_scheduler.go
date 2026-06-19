@@ -91,69 +91,8 @@ func (s *RobotSupervisor) maintainTarget(rc robotRuntimeConfig) {
 }
 
 func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int) {
-	if target < 0 {
-		target = 0
-	}
 	status := s.manager.runtimeStatusMap()
-	s.mu.Lock()
-	current := 0
-	pending := 0
-	for _, actor := range s.actors {
-		if actor.modeValue() == robotActorAuto {
-			current++
-			snap := actor.snapshot()
-			if snap.schedulerPending() {
-				pending++
-			}
-		}
-	}
-	addCount := target - current
-	if addCount < 0 {
-		addCount = 0
-	}
-	pendingLimit := schedulerPendingActorLimit(target, rc)
-	if pending >= pendingLimit {
-		addCount = 0
-	}
-	if addCount > schedulerScaleUpBatch(rc) {
-		addCount = schedulerScaleUpBatch(rc)
-	}
-	added := addCount
-	for addCount > 0 {
-		slotID := s.nextSlotLocked()
-		actor := newRobotActor(slotID, robotActorAuto, s.runtime)
-		s.actors[slotID] = actor
-		actor.start()
-		addCount--
-	}
-	current += added
-	if current <= target {
-		s.mu.Unlock()
-		return
-	}
-	var candidates []*robotActor
-	for _, actor := range s.actors {
-		if actor.modeValue() != robotActorAuto {
-			continue
-		}
-		candidates = append(candidates, actor)
-	}
-	sortActorsForStopByPolicy(candidates, status)
-	removeCount := current - target
-	if removeCount > schedulerScaleDownBatch(current, target) {
-		removeCount = schedulerScaleDownBatch(current, target)
-	}
-	if removeCount > len(candidates) {
-		removeCount = len(candidates)
-	}
-	extra := candidates[:removeCount]
-	for _, actor := range extra {
-		delete(s.actors, actor.slotID)
-		if uid := actor.uidValue(); uid > 0 {
-			delete(s.uidActors, uid)
-		}
-	}
-	s.mu.Unlock()
+	extra := s.actorLedger.ensureAutoActorSlots(s.runtime, rc, target, status)
 	stopActorsConcurrent(extra, true)
 }
 
@@ -174,9 +113,4 @@ func (s *RobotSupervisor) recycleUnhealthyActors(now time.Time, rc robotRuntimeC
 	for _, item := range unhealthy {
 		s.recycleActorUID(item.actor, item.status)
 	}
-}
-
-func (s *RobotSupervisor) nextSlotLocked() int {
-	s.nextSlotID++
-	return s.nextSlotID
 }
