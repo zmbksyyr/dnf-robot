@@ -20,7 +20,7 @@ func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 	s.filterMissingRuntimeStatus(status)
 	running, connecting, stores := summarizeRuntimeStatusMap(status)
 	s.manager.updateAutoSnapshot(rc, running, connecting, stores)
-	counts := s.actorCounts(now, rc)
+	counts := s.ledger.counts(now, rc)
 	s.manager.updateAutoActorSnapshot(counts)
 	s.manager.updateAutoBreaker(now, rc, counts, running, connecting)
 	cpu, mem, threads := robotResourceSnapshot()
@@ -67,49 +67,6 @@ func (s *RobotSupervisor) filterMissingRuntimeStatus(status map[int]RuntimeRobot
 	}
 }
 
-type supervisorActorCounts struct {
-	auto           int
-	leased         int
-	idle           int
-	releasing      int
-	blocked        int
-	stateIdle      int
-	stateAssigned  int
-	stateOnline    int
-	stateRunning   int
-	stateBusy      int
-	stateReleasing int
-}
-
 func (s *RobotSupervisor) actorCounts(now time.Time, rc robotRuntimeConfig) supervisorActorCounts {
-	counts := supervisorActorCounts{blocked: s.ledger.blockedCount()}
-	for _, actor := range s.ledger.autoActorPointers() {
-		status := actor.status(now, rc)
-		counts.auto++
-		if status.UID > 0 {
-			counts.leased++
-		} else {
-			counts.idle++
-		}
-		if status.State == robotActorReleasing {
-			counts.releasing++
-		}
-		switch status.State {
-		case robotActorIdle:
-			counts.stateIdle++
-		case robotActorOffline:
-			counts.stateAssigned++
-		case robotActorAssigned:
-			counts.stateAssigned++
-		case robotActorOnline:
-			counts.stateOnline++
-		case robotActorRunning:
-			counts.stateRunning++
-		case robotActorBusy:
-			counts.stateBusy++
-		case robotActorReleasing:
-			counts.stateReleasing++
-		}
-	}
-	return counts
+	return s.ledger.counts(now, rc)
 }
