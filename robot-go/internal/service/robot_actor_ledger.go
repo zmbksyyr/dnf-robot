@@ -38,6 +38,39 @@ func (l *actorLedger) leaseSnapshots() []actorLeaseSnapshot {
 	return leases
 }
 
+func (l *actorLedger) actorPointers() []*robotActor {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	actors := make([]*robotActor, 0, len(l.actors))
+	for _, actor := range l.actors {
+		actors = append(actors, actor)
+	}
+	return actors
+}
+
+func (l *actorLedger) autoActorPointers() []*robotActor {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	actors := make([]*robotActor, 0, len(l.actors))
+	for _, actor := range l.actors {
+		if actor.modeValue() == robotActorAuto {
+			actors = append(actors, actor)
+		}
+	}
+	return actors
+}
+
+func (l *actorLedger) idleAutoActors() []*robotActor {
+	actors := l.autoActorPointers()
+	out := make([]*robotActor, 0, len(actors))
+	for _, actor := range actors {
+		if actor.snapshot().empty() {
+			out = append(out, actor)
+		}
+	}
+	return out
+}
+
 func (l *actorLedger) blockLeaseIfCurrent(uid int, actor *robotActor) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

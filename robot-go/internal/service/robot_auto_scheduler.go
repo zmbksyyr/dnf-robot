@@ -165,14 +165,12 @@ func (s *RobotSupervisor) recycleUnhealthyActors(now time.Time, rc robotRuntimeC
 		status robotActorStatus
 	}
 	var unhealthy []recycleCandidate
-	s.mu.Lock()
-	for _, actor := range s.actors {
+	for _, actor := range s.actorLedger.autoActorPointers() {
 		status := actor.status(now, rc)
 		if status.RecycleUID {
 			unhealthy = append(unhealthy, recycleCandidate{actor: actor, status: status})
 		}
 	}
-	s.mu.Unlock()
 	for _, item := range unhealthy {
 		s.recycleActorUID(item.actor, item.status)
 	}

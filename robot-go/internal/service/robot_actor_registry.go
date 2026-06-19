@@ -84,12 +84,7 @@ func (s *RobotSupervisor) HasUID(uid int) bool {
 // actorSnapshots is the read model for UI/status surfaces. Callers get a copy
 // of actor pointers first so actor.snapshot() is never called while s.mu is held.
 func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
-	s.mu.Lock()
-	actors := make([]*robotActor, 0, len(s.actors))
-	for _, actor := range s.actors {
-		actors = append(actors, actor)
-	}
-	s.mu.Unlock()
+	actors := s.actorLedger.actorPointers()
 	out := make([]robotActorSnapshot, 0, len(actors))
 	for _, actor := range actors {
 		out = append(out, actor.snapshot())

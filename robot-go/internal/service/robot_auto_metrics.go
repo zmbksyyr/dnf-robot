@@ -89,14 +89,9 @@ type supervisorActorCounts struct {
 }
 
 func (s *RobotSupervisor) actorCounts(now time.Time, rc robotRuntimeConfig) supervisorActorCounts {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	counts := supervisorActorCounts{blocked: len(s.blockedUID)}
-	for _, actor := range s.actors {
+	counts := supervisorActorCounts{blocked: s.actorLedger.blockedCount()}
+	for _, actor := range s.actorLedger.autoActorPointers() {
 		status := actor.status(now, rc)
-		if status.Mode != robotActorAuto {
-			continue
-		}
 		counts.auto++
 		if status.UID > 0 {
 			counts.leased++

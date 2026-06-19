@@ -30,16 +30,7 @@ func (s *RobotSupervisor) assignIdleAutoActors(rc robotRuntimeConfig) {
 }
 
 func (s *RobotSupervisor) idleAutoActors() []*robotActor {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := []*robotActor{}
-	for _, actor := range s.actors {
-		snap := actor.snapshot()
-		if snap.Mode == robotActorAuto && snap.empty() {
-			out = append(out, actor)
-		}
-	}
-	return out
+	return s.actorLedger.idleAutoActors()
 }
 
 type robotActorLease struct {
