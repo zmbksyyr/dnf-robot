@@ -321,6 +321,8 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SchedulerStatus()})
 	case "systemStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SystemStatus()})
+	case "databaseStatus":
+		return wrapResult(map[string]interface{}{"ok": true, "result": manager.DatabaseStatus()})
 	case "keypairStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.KeypairStatus()})
 	case "keypairReleaseDefault":

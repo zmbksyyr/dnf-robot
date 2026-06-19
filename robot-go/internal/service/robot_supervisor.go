@@ -396,14 +396,34 @@ func (s *RobotSupervisor) releaseBrokenLeases() {
 		delete(s.uidActors, item.uid)
 		s.blockedUID[item.uid] = struct{}{}
 		s.mu.Unlock()
-		robotLogf("[RobotSupervisor] broken_lease uid=%d slot=%d action=release_block\n", item.uid, item.actor.slotID)
+		robotLogf("[RobotSupervisor] broken_lease uid=%d slot=%d action=release_cleanup\n", item.uid, item.actor.slotID)
 		go func(actor *robotActor, uid int) {
 			released := actor.releaseAndWait(10 * time.Second)
 			if released != uid && released > 0 {
 				s.unleaseUID(released, actor)
 			}
+			s.cleanupBrokenUID(uid)
 		}(item.actor, item.uid)
 	}
+}
+
+func (s *RobotSupervisor) cleanupBrokenUID(uid int) {
+	if uid <= 0 {
+		return
+	}
+	result, err := s.manager.CleanupRobots(RobotCleanupRequest{UIDs: []int{uid}, Force: true, InternalConfirmedBroken: true})
+	if err != nil {
+		robotLogf("[RobotSupervisor] broken_cleanup_failed uid=%d err=%v\n", uid, err)
+		return
+	}
+	if result.Deleted <= 0 {
+		robotLogf("[RobotSupervisor] broken_cleanup_skipped uid=%d requested=%d skipped=%d\n", uid, result.Requested, result.Skipped)
+		return
+	}
+	s.mu.Lock()
+	delete(s.blockedUID, uid)
+	s.mu.Unlock()
+	robotLogf("[RobotSupervisor] broken_cleanup_done uid=%d deleted=%d skipped=%d\n", uid, result.Deleted, result.Skipped)
 }
 
 func (m *RobotManager) aliveRobotUIDs(uids []int) (map[int]bool, error) {

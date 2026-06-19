@@ -108,7 +108,7 @@ func (m *RobotManager) cleanupCandidates(req RobotCleanupRequest) ([]RobotCleanu
 		if accountName != expected {
 			c.Protected = true
 			c.Reason = "accountname does not equal uid"
-		} else if dummyUID == "" {
+		} else if dummyUID == "" && !req.InternalConfirmedBroken {
 			c.Protected = true
 			c.Reason = "missing Dummylist row"
 		} else if c.Account != expected {

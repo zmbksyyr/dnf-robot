@@ -44,10 +44,11 @@ type RobotCommandRequest struct {
 }
 
 type RobotCleanupRequest struct {
-	UIDs   []int `json:"uids"`
-	MinUID int   `json:"uid_min"`
-	MaxUID int   `json:"uid_max"`
-	Force  bool  `json:"force"`
+	UIDs                    []int `json:"uids"`
+	MinUID                  int   `json:"uid_min"`
+	MaxUID                  int   `json:"uid_max"`
+	Force                   bool  `json:"force"`
+	InternalConfirmedBroken bool  `json:"-"`
 }
 
 type RobotActionResult struct {
