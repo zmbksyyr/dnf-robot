@@ -29,13 +29,13 @@ func (s *RobotSupervisor) releaseBrokenLeases() {
 			continue
 		}
 		robotLogf("[RobotSupervisor] broken_lease uid=%d slot=%d action=release_cleanup\n", item.uid, item.actor.slotID)
-		go func(actor *robotActor, uid int) {
-			released := actor.releaseAndWait(10 * time.Second)
-			if released != uid && released > 0 {
-				s.ledger.unleaseUID(released, actor)
-			}
-			s.cleanupBrokenUID(uid)
-		}(item.actor, item.uid)
+		released := item.actor.releaseAndWait(10 * time.Second)
+		if released != item.uid && released > 0 {
+			s.ledger.unleaseUID(released, item.actor)
+		}
+		if released == item.uid || !s.actorOwnsUID(item.uid) {
+			s.cleanupBrokenUID(item.uid)
+		}
 	}
 }
 
@@ -58,8 +58,24 @@ func (s *RobotSupervisor) cleanupBrokenUID(uid int) {
 
 func (s *RobotSupervisor) cleanupBlockedUIDs(limit int) {
 	for _, uid := range s.ledger.blockedUIDs(limit) {
+		if s.actorOwnsUID(uid) {
+			robotLogf("[RobotSupervisor] blocked_cleanup_deferred uid=%d reason=actor_still_attached\n", uid)
+			continue
+		}
 		s.cleanupBrokenUID(uid)
 	}
+}
+
+func (s *RobotSupervisor) actorOwnsUID(uid int) bool {
+	if uid <= 0 {
+		return false
+	}
+	for _, actor := range s.ledger.actorPointers() {
+		if actor.uidValue() == uid {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *RobotManager) aliveRobotUIDs(uids []int) (map[int]bool, error) {

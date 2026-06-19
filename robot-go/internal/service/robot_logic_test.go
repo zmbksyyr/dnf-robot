@@ -644,6 +644,20 @@ func TestSupervisorStopUIDsWithoutLogoutSkipsDetachedRuntime(t *testing.T) {
 	}
 }
 
+func TestSupervisorActorOwnsUIDWithoutLease(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	a := newRobotActor(1, robotActorAuto, s.runtime)
+	a.resetForUID(101)
+	addLedgerActor(t, &s.ledger, a)
+	if !s.actorOwnsUID(101) {
+		t.Fatalf("actorOwnsUID should see uid held by actor even without lease")
+	}
+	if s.actorOwnsUID(202) {
+		t.Fatalf("actorOwnsUID should reject uid not held by actor")
+	}
+}
+
 func TestRobotActorOfflineKeepsUIDAttached(t *testing.T) {
 	a := &robotActor{slotID: 1, mode: robotActorAuto}
 	a.resetForUID(101)
