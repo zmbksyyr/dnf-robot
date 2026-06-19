@@ -60,13 +60,13 @@ Windows 上同样优先用 Python 设置环境变量并调用 Go。
 
 ## 打包
 
-交付 zip 放到桌面，命名：
+交付 zip 放到桌面，命名例子：
 
 ```text
 dofrobot-main_YYYYMMDD-HHMMSS_收敛调度_清理文档_重新编译.zip
 ```
 
-包内包含源码、`doc`、`bin/robot-linux`、`bin/libantisvrinline.so` 和默认资源；不包含 `.git`、临时脚本、旧基线产物、旧压测摘要。
+包内包含源码、`doc`、`bin/robot` 和默认资源；不包含 `.git`、临时脚本、旧基线产物、旧压测摘要。
 
 ## 代码检查
 
