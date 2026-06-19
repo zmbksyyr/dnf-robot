@@ -76,7 +76,7 @@ func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
 		actor.stopAndWait(5 * time.Second)
 		return true
 	}
-	if logout {
+	if logout && s.runtime != nil {
 		s.runtime.Logout(uid)
 	}
 	return false
