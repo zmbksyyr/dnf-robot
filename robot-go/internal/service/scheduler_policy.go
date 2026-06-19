@@ -112,9 +112,13 @@ func (m *RobotManager) updateSchedulerStatus(rc robotRuntimeConfig, sig adaptive
 	if opActive {
 		decision = schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "structural_op=" + op}
 	}
+	recent := m.RecentOperation()
 	status := SchedulerStatus{
 		Mode:                    string(decision.Mode),
 		Reason:                  decision.Reason,
+		RecentOperation:         recent.Type,
+		RecentOperationState:    recent.State,
+		RecentOperationSummary:  recentOperationSummary(recent),
 		TargetOnline:            target,
 		Running:                 sig.Running,
 		Connecting:              sig.Connecting,
@@ -152,6 +156,16 @@ func (m *RobotManager) updateSchedulerStatus(rc robotRuntimeConfig, sig adaptive
 	m.autoMu.Lock()
 	m.schedulerStatus = status
 	m.autoMu.Unlock()
+}
+
+func recentOperationSummary(op RobotOperationStatus) string {
+	if op.ID <= 0 {
+		return ""
+	}
+	if op.Error != "" {
+		return op.Error
+	}
+	return op.Summary
 }
 
 func applyAdaptiveSchedulerConfig(rc *robotRuntimeConfig, sig adaptiveSchedulerSignals) schedulerPolicyDecision {

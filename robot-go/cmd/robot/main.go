@@ -279,9 +279,10 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		if err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
-		return queueRobotAction("robotsOnlineAsync", func() {
+		return queueRobotAction(manager, "robotsOnlineAsync", requestScope(req), func() (string, error) {
 			res, err := manager.OnlineManaged(req, false)
 			logRobotCommandResult("robotsOnlineAsync", res, err)
+			return service.CommandOperationSummary(res, err), err
 		})
 	case "robotsMove":
 		req, err := parseRobotCommand(pkt)
@@ -323,9 +324,10 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		if err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
-		return queueRobotAction("robotsStoreAsync", func() {
+		return queueRobotAction(manager, "robotsStoreAsync", requestScope(req), func() (string, error) {
 			res, err := manager.StoreManaged(req)
 			logRobotCommandResult("robotsStoreAsync", res, err)
+			return service.CommandOperationSummary(res, err), err
 		})
 	case "robotsStatus":
 		req, err := parseRobotCommand(pkt)
@@ -346,14 +348,17 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		if err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
-		return queueRobotAction("robotsLogoutAsync", func() {
+		return queueRobotAction(manager, "robotsLogoutAsync", requestScope(req), func() (string, error) {
 			res, err := manager.LogoutManaged(req)
 			logRobotCommandResult("robotsLogoutAsync", res, err)
+			return service.CommandOperationSummary(res, err), err
 		})
 	case "autoStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.AutoStatus()})
 	case "schedulerStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SchedulerStatus()})
+	case "operationStatus":
+		return wrapResult(map[string]interface{}{"ok": true, "result": manager.OperationStatus()})
 	case "systemStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SystemStatus()})
 	case "databaseStatus":
@@ -389,14 +394,15 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		if err := decodePayload(pkt, &req); err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
-		return queueRobotAction("cleanupRobotsAsync", func() {
+		return queueRobotAction(manager, "cleanupRobotsAsync", cleanupScope(req), func() (string, error) {
 			res, err := manager.CleanupRobots(req)
 			if err != nil {
 				logRobotActionf("[WebAction] cleanupRobotsAsync failed err=%v\n", err)
-				return
+				return service.CleanupOperationSummary(res, err), err
 			}
 			logRobotActionf("[WebAction] cleanupRobotsAsync done candidates=%d deleted=%d skipped=%d\n",
 				len(res.Candidates), res.Deleted, res.Skipped)
+			return service.CleanupOperationSummary(res, err), err
 		})
 	default:
 		dnf.PrintfBlue("unknown command: %s\n", cmd)
@@ -441,15 +447,17 @@ func requiresValidKeypair(cmd string) bool {
 	}
 }
 
-func queueRobotAction(name string, fn func()) string {
+func queueRobotAction(manager *service.RobotManager, name, scope string, fn func() (string, error)) string {
 	if _, loaded := asyncActions.LoadOrStore(name, true); loaded {
 		return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "running"}})
 	}
+	op := manager.BeginOperation(name, scope)
 	go func() {
 		defer asyncActions.Delete(name)
-		fn()
+		summary, err := fn()
+		manager.CompleteOperation(op.ID, summary, err)
 	}()
-	return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "queued"}})
+	return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "queued", "operation": op}})
 }
 
 func logRobotCommandResult(name string, res service.RobotCommandResult, err error) {
@@ -465,6 +473,23 @@ func logRobotActionf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Print(msg)
 	dnf.LogString(dnf.LogLevelIndispensable, msg)
+}
+
+func requestScope(req service.RobotCommandRequest) string {
+	if len(req.UIDs) > 0 {
+		return fmt.Sprintf("uids=%d", len(req.UIDs))
+	}
+	return fmt.Sprintf("count=%d", req.Count)
+}
+
+func cleanupScope(req service.RobotCleanupRequest) string {
+	if len(req.UIDs) > 0 {
+		return fmt.Sprintf("uids=%d force=%v", len(req.UIDs), req.Force)
+	}
+	if req.MinUID > 0 || req.MaxUID > 0 {
+		return fmt.Sprintf("range=%d-%d force=%v", req.MinUID, req.MaxUID, req.Force)
+	}
+	return fmt.Sprintf("all force=%v", req.Force)
 }
 
 func parseRobotCommand(pkt string) (service.RobotCommandRequest, error) {

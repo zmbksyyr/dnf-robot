@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 
 	"robot/internal/config"
 )
+
+var errTestOperation = errors.New("operation failed")
 
 func TestRobotStateName(t *testing.T) {
 	tests := map[int]string{
@@ -655,6 +658,28 @@ func TestRobotActorSnapshotHelpers(t *testing.T) {
 		if got := tc.snap.empty(); got != tc.empty {
 			t.Fatalf("%s empty got %v want %v", tc.name, got, tc.empty)
 		}
+	}
+}
+
+func TestRobotOperationsTrackRecentStatus(t *testing.T) {
+	m := &RobotManager{}
+	op := m.BeginOperation("cleanup", "uids=2")
+	if op.ID != 1 || op.State != "running" || op.Type != "cleanup" {
+		t.Fatalf("begin op got id=%d state=%s type=%s", op.ID, op.State, op.Type)
+	}
+	done := m.CompleteOperation(op.ID, "deleted=2", nil)
+	if done.State != "done" || done.Summary != "deleted=2" || done.FinishedAt.IsZero() {
+		t.Fatalf("done op got state=%s summary=%q finished=%s", done.State, done.Summary, done.FinishedAt)
+	}
+	recent := m.RecentOperation()
+	if recent.ID != op.ID || recent.State != "done" {
+		t.Fatalf("recent op got id=%d state=%s", recent.ID, recent.State)
+	}
+	failed := m.BeginOperation("online", "count=1")
+	m.CompleteOperation(failed.ID, "", errTestOperation)
+	recent = m.RecentOperation()
+	if recent.ID != failed.ID || recent.State != "failed" || recent.Error == "" {
+		t.Fatalf("failed recent got id=%d state=%s err=%q", recent.ID, recent.State, recent.Error)
 	}
 }
 

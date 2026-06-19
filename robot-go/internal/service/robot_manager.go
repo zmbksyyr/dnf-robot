@@ -22,6 +22,7 @@ type RobotManager struct {
 	cacheMu                         sync.Mutex
 	randMu                          sync.Mutex
 	storeSlotMu                     sync.Mutex
+	operationMu                     sync.Mutex
 	colCache                        map[string]map[string]bool
 	rand                            *rand.Rand
 	autoStoreBusy                   map[int]bool
@@ -43,6 +44,8 @@ type RobotManager struct {
 	autoPolicyLastMode              schedulerPolicyMode
 	autoPolicyLastReason            string
 	schedulerStatus                 SchedulerStatus
+	nextOperationID                 int64
+	operations                      []RobotOperationStatus
 	structuralOp                    string
 	structuralOpStarted             time.Time
 	configCache                     robotRuntimeConfig

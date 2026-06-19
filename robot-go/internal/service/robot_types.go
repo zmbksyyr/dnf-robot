@@ -124,6 +124,9 @@ type RobotAutoStatus struct {
 type SchedulerStatus struct {
 	Mode                    string    `json:"mode"`
 	Reason                  string    `json:"reason"`
+	RecentOperation         string    `json:"recent_operation,omitempty"`
+	RecentOperationState    string    `json:"recent_operation_state,omitempty"`
+	RecentOperationSummary  string    `json:"recent_operation_summary,omitempty"`
 	TargetOnline            int       `json:"target_online"`
 	Running                 int       `json:"running"`
 	Connecting              int       `json:"connecting"`
@@ -157,6 +160,18 @@ type SchedulerStatus struct {
 	Operation               string    `json:"operation,omitempty"`
 	OperationStartedAt      time.Time `json:"operation_started_at,omitempty"`
 	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+type RobotOperationStatus struct {
+	ID         int64     `json:"id"`
+	Type       string    `json:"type"`
+	Scope      string    `json:"scope,omitempty"`
+	State      string    `json:"state"`
+	Summary    string    `json:"summary,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type RobotConfigUpdateRequest struct {
