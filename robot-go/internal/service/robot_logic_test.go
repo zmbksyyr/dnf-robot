@@ -624,6 +624,26 @@ func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
 	}
 }
 
+func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	a := newRobotActor(1, robotActorAuto, s.runtime)
+	a.start()
+	defer a.stopAndWait(time.Second)
+	s.actors[1] = a
+
+	if !s.AttachUID(101, time.Second) {
+		t.Fatalf("AttachUID should attach uid")
+	}
+	if !s.AttachUID(101, time.Second) {
+		t.Fatalf("AttachUID should be idempotent for leased uid")
+	}
+	s.blockedUID[102] = struct{}{}
+	if s.AttachUID(102, time.Second) {
+		t.Fatalf("AttachUID should reject blocked uid")
+	}
+}
+
 func TestActorStatusFieldsDeriveLedgerState(t *testing.T) {
 	actor := robotActorSnapshot{State: robotActorOffline, OnlineDesired: false}
 	if got := actorOperation(actor); got != "offline" {

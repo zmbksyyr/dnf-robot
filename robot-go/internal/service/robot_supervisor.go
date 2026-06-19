@@ -26,6 +26,9 @@ type RobotSupervisor struct {
 	nextKeyLog  time.Time
 }
 
+// RobotSupervisor currently owns two responsibilities:
+// actor ownership/command routing, and automatic scheduling. Keep methods in
+// those groups so a future ActorRegistry split can be mechanical.
 func NewRobotSupervisor(manager *RobotManager, runtime *RobotRuntime) *RobotSupervisor {
 	return &RobotSupervisor{
 		manager:    manager,
@@ -38,6 +41,8 @@ func NewRobotSupervisor(manager *RobotManager, runtime *RobotRuntime) *RobotSupe
 	}
 }
 
+// Lifecycle.
+
 func (s *RobotSupervisor) Start() {
 	go s.loop()
 }
@@ -46,6 +51,8 @@ func (s *RobotSupervisor) Stop() {
 	close(s.stop)
 	<-s.done
 }
+
+// Actor ownership and command routing.
 
 func (s *RobotSupervisor) Command(uid int, cmd robotActorCommand, timeout time.Duration) (RobotActionResult, bool) {
 	s.mu.Lock()
@@ -57,10 +64,14 @@ func (s *RobotSupervisor) Command(uid int, cmd robotActorCommand, timeout time.D
 	return actor.enqueue(cmd, timeout)
 }
 
+// LogoutUID is an actor command: it logs the UID out but keeps it attached to
+// its actor. Detach/release remains a scheduler ownership operation.
 func (s *RobotSupervisor) LogoutUID(uid int, timeout time.Duration) (RobotActionResult, bool) {
 	return s.Command(uid, robotActorCmdLogout, timeout)
 }
 
+// AttachUID binds an unmanaged UID to an empty actor slot. It does not perform
+// login directly; callers should send robotActorCmdOnline through Command.
 func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
 	if uid <= 0 {
 		return false
@@ -105,6 +116,8 @@ func (s *RobotSupervisor) HasUID(uid int) bool {
 	return s.uidActors[uid] != nil
 }
 
+// actorSnapshots is the read model for UI/status surfaces. Callers get a copy
+// of actor pointers first so actor.snapshot() is never called while s.mu is held.
 func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
 	s.mu.Lock()
 	actors := make([]*robotActor, 0, len(s.actors))
@@ -119,6 +132,8 @@ func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
 	return out
 }
 
+// StopUID detaches the UID from supervisor ownership. With logout=true the
+// actor performs release/logout before its slot is removed.
 func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
 	s.mu.Lock()
 	actor := s.uidActors[uid]
@@ -140,6 +155,7 @@ func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
 	return false
 }
 
+// StopUIDs is the bulk ownership detach path used before cleanup/delete.
 func (s *RobotSupervisor) StopUIDs(uids []int, logout bool) int {
 	if len(uids) == 0 {
 		return 0
@@ -177,6 +193,8 @@ func (s *RobotSupervisor) StopUIDs(uids []int, logout bool) int {
 	stopActorsConcurrent(actors, logout)
 	return len(actors)
 }
+
+// Automatic scheduler loop.
 
 func (s *RobotSupervisor) loop() {
 	defer close(s.done)
@@ -232,6 +250,8 @@ func (s *RobotSupervisor) tick(now time.Time) {
 	s.assignIdleAutoActors(rc)
 	s.updateMetrics(rc)
 }
+
+// Auto scheduling policy and actor scaling.
 
 func (s *RobotSupervisor) logKeyBlocked(now time.Time, rc robotRuntimeConfig, st KeypairStatus) {
 	if !s.nextKeyLog.IsZero() && now.Before(s.nextKeyLog) {
@@ -420,6 +440,8 @@ func actorStopPriority(actor *robotActor, status map[int]RuntimeRobotStatus) int
 	return 3
 }
 
+// Lease health, broken UID cleanup, and recycle paths.
+
 func (s *RobotSupervisor) recycleUnhealthyActors(now time.Time, rc robotRuntimeConfig) {
 	type recycleCandidate struct {
 		actor  *robotActor
@@ -574,6 +596,8 @@ func (s *RobotSupervisor) recycleActorUID(actor *robotActor, status robotActorSt
 	}
 	robotLogf("[RobotSupervisor] recycle_cleanup_done uid=%d deleted=%d skipped=%d\n", released, result.Deleted, result.Skipped)
 }
+
+// Assignment and lease helpers.
 
 func (s *RobotSupervisor) assignIdleAutoActors(rc robotRuntimeConfig) {
 	idle := s.idleAutoActors()
@@ -750,6 +774,8 @@ func (s *RobotSupervisor) nextSlotLocked() int {
 	return s.nextSlotID
 }
 
+// Actor stop/release helpers.
+
 func (s *RobotSupervisor) stopAutoActors(logout bool) {
 	s.mu.Lock()
 	var actors []*robotActor
@@ -858,6 +884,8 @@ func stopActorsConcurrent(actors []*robotActor, logout bool) {
 	}
 	wg.Wait()
 }
+
+// Metrics and status aggregation.
 
 func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 	now := time.Now()
