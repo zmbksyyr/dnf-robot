@@ -87,7 +87,7 @@ func (m *RobotManager) updateAutoSnapshot(rc robotRuntimeConfig, running, connec
 	m.autoMu.Unlock()
 }
 
-func (m *RobotManager) updateAutoActorSnapshot(counts supervisorActorCounts) {
+func (m *RobotManager) updateAutoActorSnapshot(counts actorLedgerCounts) {
 	m.autoMu.Lock()
 	m.autoStats.Actors = counts.auto
 	m.autoStats.Leased = counts.leased
@@ -104,7 +104,7 @@ func (m *RobotManager) updateAutoActorSnapshot(counts supervisorActorCounts) {
 	m.autoMu.Unlock()
 }
 
-func (m *RobotManager) updateAutoBreaker(now time.Time, rc robotRuntimeConfig, counts supervisorActorCounts, running, connecting int) {
+func (m *RobotManager) updateAutoBreaker(now time.Time, rc robotRuntimeConfig, counts actorLedgerCounts, running, connecting int) {
 	target := rc.AutoTargetOnlineCount
 	if target <= 0 {
 		return

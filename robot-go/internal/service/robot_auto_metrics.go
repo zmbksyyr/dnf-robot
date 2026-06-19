@@ -67,6 +67,6 @@ func (s *RobotSupervisor) filterMissingRuntimeStatus(status map[int]RuntimeRobot
 	}
 }
 
-func (s *RobotSupervisor) actorCounts(now time.Time, rc robotRuntimeConfig) supervisorActorCounts {
+func (s *RobotSupervisor) actorCounts(now time.Time, rc robotRuntimeConfig) actorLedgerCounts {
 	return s.ledger.counts(now, rc)
 }

@@ -2,7 +2,7 @@ package service
 
 import "time"
 
-type supervisorActorCounts struct {
+type actorLedgerCounts struct {
 	auto           int
 	leased         int
 	idle           int
@@ -16,8 +16,8 @@ type supervisorActorCounts struct {
 	stateReleasing int
 }
 
-func (l *actorLedger) counts(now time.Time, rc robotRuntimeConfig) supervisorActorCounts {
-	counts := supervisorActorCounts{blocked: l.blockedCount()}
+func (l *actorLedger) counts(now time.Time, rc robotRuntimeConfig) actorLedgerCounts {
+	counts := actorLedgerCounts{blocked: l.blockedCount()}
 	for _, actor := range l.autoActorPointers() {
 		status := actor.status(now, rc)
 		counts.auto++
