@@ -54,6 +54,9 @@ func (m *RobotManager) SchedulerStatus() SchedulerStatus {
 	rc := m.loadRobotConfig()
 	signals := m.adaptiveSchedulerSignals()
 	decision := applyAdaptiveSchedulerConfig(&rc, signals)
+	if !m.autoActionsEnabled(rc) {
+		decision = schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "auto_disabled"}
+	}
 	m.updateSchedulerStatus(rc, signals, decision)
 
 	m.autoMu.Lock()
