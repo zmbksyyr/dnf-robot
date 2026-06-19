@@ -8,20 +8,7 @@ import (
 // Actor stop/release helpers.
 
 func (s *RobotSupervisor) stopAutoActors(logout bool) {
-	s.mu.Lock()
-	var actors []*robotActor
-	for slotID, actor := range s.actors {
-		if actor.modeValue() != robotActorAuto {
-			continue
-		}
-		actors = append(actors, actor)
-		delete(s.actors, slotID)
-		if uid := actor.uidValue(); uid > 0 {
-			delete(s.uidActors, uid)
-		}
-	}
-	s.mu.Unlock()
-	stopActorsConcurrent(actors, logout)
+	stopActorsConcurrent(s.actorLedger.detachAutoActors(), logout)
 }
 
 func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
@@ -29,37 +16,7 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 		return
 	}
 	status := s.manager.runtimeStatusMap()
-	s.mu.Lock()
-	var candidates []*robotActor
-	for _, actor := range s.actors {
-		if actor.modeValue() != robotActorAuto {
-			continue
-		}
-		candidates = append(candidates, actor)
-	}
-	sortActorsForStopByPolicy(candidates, status)
-	if floor < 0 {
-		floor = 0
-	}
-	if len(candidates) <= floor {
-		s.mu.Unlock()
-		return
-	}
-	maxStop := len(candidates) - floor
-	if limit > maxStop {
-		limit = maxStop
-	}
-	if limit > len(candidates) {
-		limit = len(candidates)
-	}
-	actors := candidates[:limit]
-	for _, actor := range actors {
-		delete(s.actors, actor.slotID)
-		if uid := actor.uidValue(); uid > 0 {
-			delete(s.uidActors, uid)
-		}
-	}
-	s.mu.Unlock()
+	actors := s.actorLedger.detachSomeAutoActors(status, limit, floor)
 	if len(actors) == 0 {
 		return
 	}
@@ -68,15 +25,7 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 }
 
 func (s *RobotSupervisor) stopAll(logout bool) {
-	s.mu.Lock()
-	actors := make([]*robotActor, 0, len(s.actors))
-	for slotID, actor := range s.actors {
-		actors = append(actors, actor)
-		delete(s.actors, slotID)
-	}
-	s.uidActors = make(map[int]*robotActor)
-	s.mu.Unlock()
-	stopActorsConcurrent(actors, logout)
+	stopActorsConcurrent(s.actorLedger.detachAllActors(), logout)
 }
 
 func stopActorsConcurrent(actors []*robotActor, logout bool) {

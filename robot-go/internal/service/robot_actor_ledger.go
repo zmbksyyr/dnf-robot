@@ -71,6 +71,72 @@ func (l *actorLedger) idleAutoActors() []*robotActor {
 	return out
 }
 
+func (l *actorLedger) detachAutoActors() []*robotActor {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	actors := make([]*robotActor, 0, len(l.actors))
+	for slotID, actor := range l.actors {
+		if actor.modeValue() != robotActorAuto {
+			continue
+		}
+		actors = append(actors, actor)
+		delete(l.actors, slotID)
+		if uid := actor.uidValue(); uid > 0 {
+			delete(l.uidActors, uid)
+		}
+	}
+	return actors
+}
+
+func (l *actorLedger) detachSomeAutoActors(status map[int]RuntimeRobotStatus, limit, floor int) []*robotActor {
+	if limit <= 0 {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var candidates []*robotActor
+	for _, actor := range l.actors {
+		if actor.modeValue() != robotActorAuto {
+			continue
+		}
+		candidates = append(candidates, actor)
+	}
+	sortActorsForStopByPolicy(candidates, status)
+	if floor < 0 {
+		floor = 0
+	}
+	if len(candidates) <= floor {
+		return nil
+	}
+	maxStop := len(candidates) - floor
+	if limit > maxStop {
+		limit = maxStop
+	}
+	if limit > len(candidates) {
+		limit = len(candidates)
+	}
+	actors := candidates[:limit]
+	for _, actor := range actors {
+		delete(l.actors, actor.slotID)
+		if uid := actor.uidValue(); uid > 0 {
+			delete(l.uidActors, uid)
+		}
+	}
+	return actors
+}
+
+func (l *actorLedger) detachAllActors() []*robotActor {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	actors := make([]*robotActor, 0, len(l.actors))
+	for slotID, actor := range l.actors {
+		actors = append(actors, actor)
+		delete(l.actors, slotID)
+	}
+	l.uidActors = make(map[int]*robotActor)
+	return actors
+}
+
 func (l *actorLedger) blockLeaseIfCurrent(uid int, actor *robotActor) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
