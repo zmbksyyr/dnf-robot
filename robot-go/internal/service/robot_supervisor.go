@@ -131,6 +131,7 @@ func (s *RobotSupervisor) tick(now time.Time) {
 	}
 	s.maintainTarget(rc)
 	s.releaseBrokenLeases()
+	s.cleanupBlockedUIDs(10)
 	s.recycleUnhealthyActors(now, rc)
 	s.assignIdleAutoActors(rc)
 	s.updateMetrics(rc)
@@ -409,6 +410,24 @@ func (s *RobotSupervisor) cleanupBrokenUID(uid int) {
 	robotLogf("[RobotSupervisor] broken_cleanup_done uid=%d deleted=%d skipped=%d\n", uid, result.Deleted, result.Skipped)
 }
 
+func (s *RobotSupervisor) cleanupBlockedUIDs(limit int) {
+	if limit <= 0 {
+		return
+	}
+	var uids []int
+	s.mu.Lock()
+	for uid := range s.blockedUID {
+		uids = append(uids, uid)
+		if len(uids) >= limit {
+			break
+		}
+	}
+	s.mu.Unlock()
+	for _, uid := range uids {
+		s.cleanupBrokenUID(uid)
+	}
+}
+
 func (m *RobotManager) aliveRobotUIDs(uids []int) (map[int]bool, error) {
 	alive := make(map[int]bool, len(uids))
 	if len(uids) == 0 {
@@ -525,6 +544,21 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 	if need <= 0 {
 		return out
 	}
+	target := rc.AutoTargetOnlineCount
+	if target < 0 {
+		target = 0
+	}
+	if rc.MaxOnlineRobots > 0 && target > rc.MaxOnlineRobots {
+		target = rc.MaxOnlineRobots
+	}
+	createRoom := target - len(robots)
+	if createRoom <= 0 {
+		robotLogf("[RobotSupervisor] create_blocked_by_target existing=%d target=%d need=%d blocked=%d\n", len(robots), target, need, s.blockedCount())
+		return out
+	}
+	if need > createRoom {
+		need = createRoom
+	}
 	created, err := s.manager.CreateRobots(RobotCreateRequest{Count: need})
 	if err != nil {
 		robotLogf("[RobotSupervisor] create_failed count=%d err=%v\n", need, err)
@@ -544,6 +578,12 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 		}
 	}
 	return out
+}
+
+func (s *RobotSupervisor) blockedCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.blockedUID)
 }
 
 func (s *RobotSupervisor) tryLeaseUID(uid int, actor *robotActor) bool {
@@ -731,6 +771,7 @@ func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 	s.nextMetrics = now.Add(time.Duration(rc.SchedulerMetricsIntervalSec) * time.Second)
 	status := s.manager.runtimeStatusMap()
 	s.filterBlockedRuntimeStatus(status)
+	s.filterMissingRuntimeStatus(status)
 	running, connecting, stores := summarizeRuntimeStatusMap(status)
 	s.manager.updateAutoSnapshot(rc, running, connecting, stores)
 	counts := s.actorCounts(now, rc)
@@ -764,6 +805,26 @@ func (s *RobotSupervisor) filterBlockedRuntimeStatus(status map[int]RuntimeRobot
 	defer s.mu.Unlock()
 	for uid := range s.blockedUID {
 		delete(status, uid)
+	}
+}
+
+func (s *RobotSupervisor) filterMissingRuntimeStatus(status map[int]RuntimeRobotStatus) {
+	if len(status) == 0 {
+		return
+	}
+	uids := make([]int, 0, len(status))
+	for uid := range status {
+		uids = append(uids, uid)
+	}
+	alive, err := s.manager.aliveRobotUIDs(uids)
+	if err != nil {
+		robotLogf("[RobotSupervisor] runtime_alive_filter_failed err=%v\n", err)
+		return
+	}
+	for uid := range status {
+		if !alive[uid] {
+			delete(status, uid)
+		}
 	}
 }
 

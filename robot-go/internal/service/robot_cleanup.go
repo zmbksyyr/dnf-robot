@@ -45,7 +45,9 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 			}
 		}
 		_, _ = m.Logout(RobotCommandRequest{UIDs: uids})
-		time.Sleep(5 * time.Second)
+		if !req.InternalConfirmedBroken {
+			time.Sleep(5 * time.Second)
+		}
 		m.autoMu.Lock()
 		for _, uid := range uids {
 			delete(m.autoStoreBusy, uid)
@@ -119,6 +121,22 @@ func (m *RobotManager) cleanupCandidates(req RobotCleanupRequest) ([]RobotCleanu
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if req.InternalConfirmedBroken && len(req.UIDs) > 0 {
+		for _, uid := range req.UIDs {
+			if uid <= 0 || seen[uid] {
+				continue
+			}
+			seen[uid] = true
+			account := fmt.Sprintf("%d", uid)
+			out = append(out, RobotCleanupCandidate{
+				UID:     uid,
+				CID:     0,
+				Name:    "confirmed-broken",
+				Account: account,
+				Reason:  "confirmed broken uid without registry row",
+			})
+		}
 	}
 	if req.MinUID > 0 || req.MaxUID > 0 {
 		orphans, err := m.orphanStorePermissionCandidates(req.MinUID, req.MaxUID, seen)

@@ -235,7 +235,7 @@ func (m *RobotManager) sendRobotShout(source string, uid int, tpl shoutTemplates
 
 func (m *RobotManager) prepareShout(_ shoutTemplates, msg string, world bool) (int, string, string) {
 	if world {
-		return 80, "world", msg + "  服务器喇叭()"
+		return 80, "world", msg + "  SERVER_HORN()"
 	}
 	return 3, "local", msg
 }

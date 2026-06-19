@@ -471,7 +471,7 @@ func TestPrepareShoutSeparatesLocalAndWorld(t *testing.T) {
 	if worldType != 80 || worldChannel != "world" {
 		t.Fatalf("world shout got type=%d channel=%s, want type=80 channel=world", worldType, worldChannel)
 	}
-	if !strings.Contains(worldOut, "服务器喇叭()") {
+	if !strings.Contains(worldOut, "SERVER_HORN()") {
 		t.Fatalf("world shout missing server horn marker: %q", worldOut)
 	}
 }
