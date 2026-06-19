@@ -58,7 +58,7 @@ func (m *RobotManager) beginTrackedStructuralOperation(typ, scope string) (Robot
 
 func isStructuralOperation(typ string) bool {
 	switch strings.TrimSpace(typ) {
-	case "create", "cleanup", "createRobots", "cleanupRobots", "cleanupRobotsAsync":
+	case "create", "cleanup":
 		return true
 	default:
 		return false
