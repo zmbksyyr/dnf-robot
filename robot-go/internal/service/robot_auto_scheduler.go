@@ -26,34 +26,7 @@ func (s *RobotSupervisor) loop() {
 
 func (s *RobotSupervisor) tick(now time.Time) {
 	rc := s.manager.loadRobotConfig()
-	s.manager.autoMu.Lock()
-	enabled := s.manager.autoEnabled
-	s.manager.autoMu.Unlock()
-	if !enabled || !rc.AutoActions {
-		s.updateMetrics(rc)
-		return
-	}
-	if st := s.manager.KeypairStatus(); !st.GameValid {
-		s.stopAutoActors(true)
-		s.logKeyBlocked(now, rc, st)
-		s.updateMetrics(rc)
-		return
-	}
-	if op, started, active := s.manager.structuralOperation(); active {
-		s.manager.updateSchedulerStatus(rc, s.manager.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "structural_op=" + op})
-		s.updateMetrics(rc)
-		robotLogf("[RobotSupervisor] paused structural_op=%s started=%s\n", op, started.Format(time.RFC3339))
-		return
-	}
-	if !s.manager.autoGamePortStable(now, rc) {
-		s.stopSomeAutoActors(true, rc.SchedulerPortDownReleaseBatch, 0)
-		s.updateMetrics(rc)
-		return
-	}
-	if s.manager.autoBreakerActive(now) {
-		s.recycleUnhealthyActors(now, rc)
-		s.stopSomeAutoActors(true, rc.SchedulerBreakerReleaseBatch, breakerActorFloor(rc))
-		s.updateMetrics(rc)
+	if s.handleAutoGuards(now, rc) {
 		return
 	}
 	s.maintainTarget(rc)
@@ -62,6 +35,42 @@ func (s *RobotSupervisor) tick(now time.Time) {
 	s.recycleUnhealthyActors(now, rc)
 	s.assignIdleAutoActors(rc)
 	s.updateMetrics(rc)
+}
+
+// Auto scheduling guards.
+
+func (s *RobotSupervisor) handleAutoGuards(now time.Time, rc robotRuntimeConfig) bool {
+	s.manager.autoMu.Lock()
+	enabled := s.manager.autoEnabled
+	s.manager.autoMu.Unlock()
+	if !enabled || !rc.AutoActions {
+		s.updateMetrics(rc)
+		return true
+	}
+	if st := s.manager.KeypairStatus(); !st.GameValid {
+		s.stopAutoActors(true)
+		s.logKeyBlocked(now, rc, st)
+		s.updateMetrics(rc)
+		return true
+	}
+	if op, started, active := s.manager.structuralOperation(); active {
+		s.manager.updateSchedulerStatus(rc, s.manager.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "structural_op=" + op})
+		s.updateMetrics(rc)
+		robotLogf("[RobotSupervisor] paused structural_op=%s started=%s\n", op, started.Format(time.RFC3339))
+		return true
+	}
+	if !s.manager.autoGamePortStable(now, rc) {
+		s.stopSomeAutoActors(true, rc.SchedulerPortDownReleaseBatch, 0)
+		s.updateMetrics(rc)
+		return true
+	}
+	if s.manager.autoBreakerActive(now) {
+		s.recycleUnhealthyActors(now, rc)
+		s.stopSomeAutoActors(true, rc.SchedulerBreakerReleaseBatch, breakerActorFloor(rc))
+		s.updateMetrics(rc)
+		return true
+	}
+	return false
 }
 
 // Auto scheduling policy and actor scaling.
