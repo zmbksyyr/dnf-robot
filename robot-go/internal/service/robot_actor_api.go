@@ -47,12 +47,11 @@ func (m *RobotManager) MoveManaged(req RobotCommandRequest) (RobotCommandResult,
 }
 
 func (m *RobotManager) ShoutManaged(req RobotCommandRequest, world bool) (RobotCommandResult, error) {
+	if world {
+		return m.ShoutOne(req, true)
+	}
 	cmd := robotActorShoutLocal
 	name := "shout_local"
-	if world {
-		cmd = robotActorShoutWorld
-		name = "shout_world"
-	}
 	return m.actorCommandManaged(req, cmd, name, func(single RobotCommandRequest) (RobotCommandResult, error) {
 		return m.ShoutOne(single, world)
 	})
