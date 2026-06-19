@@ -600,6 +600,22 @@ func (a *robotActor) snapshot() robotActorSnapshot {
 	}
 }
 
+func (s robotActorSnapshot) empty() bool {
+	return s.UID <= 0
+}
+
+func (s robotActorSnapshot) schedulerPending() bool {
+	if s.empty() {
+		return true
+	}
+	switch s.State {
+	case robotActorIdle, robotActorOffline, robotActorAssigned, robotActorOnline, robotActorReleasing:
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *robotActor) uidValue() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -635,6 +635,29 @@ func TestActorStatusFieldsDeriveLedgerState(t *testing.T) {
 	}
 }
 
+func TestRobotActorSnapshotHelpers(t *testing.T) {
+	cases := []struct {
+		name    string
+		snap    robotActorSnapshot
+		pending bool
+		empty   bool
+	}{
+		{name: "empty", snap: robotActorSnapshot{}, pending: true, empty: true},
+		{name: "offline attached", snap: robotActorSnapshot{UID: 1, State: robotActorOffline}, pending: true},
+		{name: "online pending", snap: robotActorSnapshot{UID: 1, State: robotActorOnline}, pending: true},
+		{name: "running", snap: robotActorSnapshot{UID: 1, State: robotActorRunning}, pending: false},
+		{name: "busy", snap: robotActorSnapshot{UID: 1, State: robotActorBusy}, pending: false},
+	}
+	for _, tc := range cases {
+		if got := tc.snap.schedulerPending(); got != tc.pending {
+			t.Fatalf("%s pending got %v want %v", tc.name, got, tc.pending)
+		}
+		if got := tc.snap.empty(); got != tc.empty {
+			t.Fatalf("%s empty got %v want %v", tc.name, got, tc.empty)
+		}
+	}
+}
+
 func TestStructuralOperationState(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	done := m.beginStructuralOp("cleanup")

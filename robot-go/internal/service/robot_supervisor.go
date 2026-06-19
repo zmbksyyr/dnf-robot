@@ -276,7 +276,7 @@ func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int
 		if actor.modeValue() == robotActorAuto {
 			current++
 			snap := actor.snapshot()
-			if snap.UID <= 0 || snap.State == robotActorIdle || snap.State == robotActorOffline || snap.State == robotActorAssigned || snap.State == robotActorOnline || snap.State == robotActorReleasing {
+			if snap.schedulerPending() {
 				pending++
 			}
 		}
@@ -603,7 +603,7 @@ func (s *RobotSupervisor) idleAutoActors() []*robotActor {
 	out := []*robotActor{}
 	for _, actor := range s.actors {
 		snap := actor.snapshot()
-		if snap.Mode == robotActorAuto && snap.UID <= 0 {
+		if snap.Mode == robotActorAuto && snap.empty() {
 			out = append(out, actor)
 		}
 	}
