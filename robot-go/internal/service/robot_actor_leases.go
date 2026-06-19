@@ -8,18 +8,7 @@ import (
 // Lease health, broken UID cleanup, and recycle paths.
 
 func (s *RobotSupervisor) releaseBrokenLeases() {
-	type lease struct {
-		uid   int
-		actor *robotActor
-	}
-	var leases []lease
-	s.mu.Lock()
-	for uid, actor := range s.uidActors {
-		if uid > 0 && actor != nil {
-			leases = append(leases, lease{uid: uid, actor: actor})
-		}
-	}
-	s.mu.Unlock()
+	leases := s.actorLedger.leaseSnapshots()
 	if len(leases) == 0 {
 		return
 	}
@@ -36,19 +25,14 @@ func (s *RobotSupervisor) releaseBrokenLeases() {
 		if alive[item.uid] {
 			continue
 		}
-		s.mu.Lock()
-		if s.uidActors[item.uid] != item.actor {
-			s.mu.Unlock()
+		if !s.actorLedger.blockLeaseIfCurrent(item.uid, item.actor) {
 			continue
 		}
-		delete(s.uidActors, item.uid)
-		s.blockedUID[item.uid] = struct{}{}
-		s.mu.Unlock()
 		robotLogf("[RobotSupervisor] broken_lease uid=%d slot=%d action=release_cleanup\n", item.uid, item.actor.slotID)
 		go func(actor *robotActor, uid int) {
 			released := actor.releaseAndWait(10 * time.Second)
 			if released != uid && released > 0 {
-				s.unleaseUID(released, actor)
+				s.actorLedger.unleaseUID(released, actor)
 			}
 			s.cleanupBrokenUID(uid)
 		}(item.actor, item.uid)
@@ -68,26 +52,12 @@ func (s *RobotSupervisor) cleanupBrokenUID(uid int) {
 		robotLogf("[RobotSupervisor] broken_cleanup_skipped uid=%d requested=%d skipped=%d\n", uid, result.Requested, result.Skipped)
 		return
 	}
-	s.mu.Lock()
-	delete(s.blockedUID, uid)
-	s.mu.Unlock()
+	s.actorLedger.unblockUID(uid)
 	robotLogf("[RobotSupervisor] broken_cleanup_done uid=%d deleted=%d skipped=%d\n", uid, result.Deleted, result.Skipped)
 }
 
 func (s *RobotSupervisor) cleanupBlockedUIDs(limit int) {
-	if limit <= 0 {
-		return
-	}
-	var uids []int
-	s.mu.Lock()
-	for uid := range s.blockedUID {
-		uids = append(uids, uid)
-		if len(uids) >= limit {
-			break
-		}
-	}
-	s.mu.Unlock()
-	for _, uid := range uids {
+	for _, uid := range s.actorLedger.blockedUIDs(limit) {
 		s.cleanupBrokenUID(uid)
 	}
 }
@@ -127,51 +97,12 @@ func (s *RobotSupervisor) recycleActorUID(actor *robotActor, status robotActorSt
 	if released <= 0 {
 		released = status.UID
 	}
-	s.mu.Lock()
-	if s.uidActors[released] == actor {
-		delete(s.uidActors, released)
-	}
-	s.mu.Unlock()
+	s.actorLedger.removeLeaseIfActor(released, actor)
 	result, err := s.manager.CleanupRobots(RobotCleanupRequest{UIDs: []int{released}, Force: true})
 	if err != nil {
 		robotLogf("[RobotSupervisor] recycle_cleanup_failed uid=%d err=%v\n", released, err)
-		s.mu.Lock()
-		s.blockedUID[released] = struct{}{}
-		s.mu.Unlock()
+		s.actorLedger.blockUID(released)
 		return
 	}
 	robotLogf("[RobotSupervisor] recycle_cleanup_done uid=%d deleted=%d skipped=%d\n", released, result.Deleted, result.Skipped)
-}
-
-func (s *RobotSupervisor) blockedCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.blockedUID)
-}
-
-func (s *RobotSupervisor) tryLeaseUID(uid int, actor *robotActor) bool {
-	if uid <= 0 {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, blocked := s.blockedUID[uid]; blocked {
-		return false
-	}
-	if _, leased := s.uidActors[uid]; leased {
-		return false
-	}
-	s.uidActors[uid] = actor
-	return true
-}
-
-func (s *RobotSupervisor) unleaseUID(uid int, actor *robotActor) {
-	if uid <= 0 {
-		return
-	}
-	s.mu.Lock()
-	if actor == nil || s.uidActors[uid] == actor || s.uidActors[uid] == nil {
-		delete(s.uidActors, uid)
-	}
-	s.mu.Unlock()
 }

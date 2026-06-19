@@ -68,7 +68,7 @@ func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
 	if actor.assignAndWait(uid, timeout) {
 		return true
 	}
-	s.unleaseUID(uid, actor)
+	s.actorLedger.unleaseUID(uid, actor)
 	return false
 }
 

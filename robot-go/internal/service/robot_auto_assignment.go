@@ -24,7 +24,7 @@ func (s *RobotSupervisor) assignIdleAutoActors(rc robotRuntimeConfig) {
 		if pair.actor.assignAndWait(pair.uid, 10*time.Second) {
 			continue
 		}
-		s.unleaseUID(pair.uid, pair.actor)
+		s.actorLedger.unleaseUID(pair.uid, pair.actor)
 		robotLogf("[RobotSupervisor] assign_failed slot=%d uid=%d\n", pair.actor.slotID, pair.uid)
 	}
 }
@@ -63,7 +63,7 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 			return out
 		}
 		actor := actors[nextActor]
-		if s.tryLeaseUID(robot.UID, actor) {
+		if s.actorLedger.tryLeaseUID(robot.UID, actor) {
 			out = append(out, robotActorLease{actor: actor, uid: robot.UID})
 			nextActor++
 		}
@@ -75,7 +75,7 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 	target := schedulerTargetCapacity(rc)
 	createRoom := schedulerCreateRoom(rc, len(robots))
 	if createRoom <= 0 {
-		robotLogf("[RobotSupervisor] create_blocked_by_target existing=%d target=%d need=%d blocked=%d\n", len(robots), target, need, s.blockedCount())
+		robotLogf("[RobotSupervisor] create_blocked_by_target existing=%d target=%d need=%d blocked=%d\n", len(robots), target, need, s.actorLedger.blockedCount())
 		return out
 	}
 	if need > createRoom {
@@ -94,7 +94,7 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 			break
 		}
 		actor := actors[nextActor]
-		if s.tryLeaseUID(robot.UID, actor) {
+		if s.actorLedger.tryLeaseUID(robot.UID, actor) {
 			out = append(out, robotActorLease{actor: actor, uid: robot.UID})
 			nextActor++
 		}
