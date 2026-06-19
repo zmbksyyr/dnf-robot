@@ -458,7 +458,8 @@ func iniIntList(ini *config.INIConfig, section, key string, fallback []int) []in
 }
 
 func (m *RobotManager) loadShoutTemplates() shoutTemplates {
-	mod := configFileModFallback(m.cfg.ConfigDir, "robot_shout_templates.json", "shout_templates.json")
+	path := filepath.Join(m.cfg.ConfigDir, "robot_shout_templates.json")
+	mod := fileModTime(path)
 	m.cacheMu.Lock()
 	if m.shoutCached && m.shoutMod.Equal(mod) {
 		t := cloneShoutTemplates(m.shoutCache)
@@ -468,7 +469,7 @@ func (m *RobotManager) loadShoutTemplates() shoutTemplates {
 	m.cacheMu.Unlock()
 
 	t := shoutTemplates{Channel: "world", Type: 80, Messages: []string{"hello"}}
-	data, err := readConfigFileFallback(m.cfg.ConfigDir, "robot_shout_templates.json", "shout_templates.json")
+	data, err := os.ReadFile(path)
 	if err == nil {
 		var messages []string
 		if json.Unmarshal(data, &messages) == nil {
@@ -501,7 +502,7 @@ func (m *RobotManager) loadNameTemplates() nameTemplates {
 		NumberMin: 10,
 		NumberMax: 99,
 	}
-	data, err := readConfigFileFallback(m.cfg.ConfigDir, "robot_name_templates.json", "name_templates.json")
+	data, err := os.ReadFile(filepath.Join(m.cfg.ConfigDir, "robot_name_templates.json"))
 	if err == nil {
 		if names := parseStringListJSON(data); len(names) > 0 {
 			t.Names = names
@@ -555,33 +556,12 @@ func (m *RobotManager) loadMapCatalog() []mapCatalogItem {
 	return maps
 }
 
-func readConfigFileFallback(configDir string, names ...string) ([]byte, error) {
-	var lastErr error
-	for _, name := range names {
-		data, err := os.ReadFile(filepath.Join(configDir, name))
-		if err == nil {
-			return data, nil
-		}
-		lastErr = err
-	}
-	return nil, lastErr
-}
-
 func fileModTime(path string) time.Time {
 	st, err := os.Stat(path)
 	if err != nil {
 		return time.Time{}
 	}
 	return st.ModTime()
-}
-
-func configFileModFallback(configDir string, names ...string) time.Time {
-	for _, name := range names {
-		if mod := fileModTime(filepath.Join(configDir, name)); !mod.IsZero() {
-			return mod
-		}
-	}
-	return time.Time{}
 }
 
 func cloneRobotRuntimeConfig(rc robotRuntimeConfig) robotRuntimeConfig {
