@@ -44,12 +44,21 @@ func (s *RobotSupervisor) handleAutoGuards(now time.Time, rc robotRuntimeConfig)
 	enabled := s.manager.autoEnabled
 	s.manager.autoMu.Unlock()
 	if !enabled || !rc.AutoActions {
+		s.updateGuardStatus(rc, schedulerPolicyMaintenance, "auto_disabled")
 		s.updateMetrics(rc)
 		return true
 	}
 	if st := s.manager.KeypairStatus(); !st.GameValid {
 		s.stopAutoActors(true)
 		s.logKeyBlocked(now, rc, st)
+		reason := st.Error
+		if reason == "" {
+			reason = st.KeyReason
+		}
+		if reason == "" {
+			reason = "key_invalid"
+		}
+		s.updateGuardStatus(rc, schedulerPolicyMaintenance, "key_invalid="+reason)
 		s.updateMetrics(rc)
 		return true
 	}
@@ -61,16 +70,22 @@ func (s *RobotSupervisor) handleAutoGuards(now time.Time, rc robotRuntimeConfig)
 	}
 	if !s.manager.autoGamePortStable(now, rc) {
 		s.stopSomeAutoActors(true, rc.SchedulerPortDownReleaseBatch, 0)
+		s.updateGuardStatus(rc, schedulerPolicyPressure, "game_port_unstable")
 		s.updateMetrics(rc)
 		return true
 	}
 	if s.manager.autoBreakerActive(now) {
 		s.recycleUnhealthyActors(now, rc)
 		s.stopSomeAutoActors(true, rc.SchedulerBreakerReleaseBatch, breakerActorFloor(rc))
+		s.updateGuardStatus(rc, schedulerPolicyBreaker, "breaker_active")
 		s.updateMetrics(rc)
 		return true
 	}
 	return false
+}
+
+func (s *RobotSupervisor) updateGuardStatus(rc robotRuntimeConfig, mode schedulerPolicyMode, reason string) {
+	s.manager.updateSchedulerStatus(rc, s.manager.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: mode, Reason: reason})
 }
 
 // Auto scheduling policy and actor scaling.
