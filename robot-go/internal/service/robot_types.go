@@ -153,6 +153,9 @@ type SchedulerStatus struct {
 	ScaleDownBatch          int       `json:"scale_down_batch"`
 	BreakerReleaseBatch     int       `json:"breaker_release_batch"`
 	PortDownReleaseBatch    int       `json:"port_down_release_batch"`
+	OperationActive         bool      `json:"operation_active"`
+	Operation               string    `json:"operation,omitempty"`
+	OperationStartedAt      time.Time `json:"operation_started_at,omitempty"`
 	UpdatedAt               time.Time `json:"updated_at"`
 }
 

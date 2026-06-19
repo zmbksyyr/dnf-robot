@@ -8,12 +8,13 @@ import (
 type schedulerPolicyMode string
 
 const (
-	schedulerPolicyBootstrap schedulerPolicyMode = "bootstrap"
-	schedulerPolicyFill      schedulerPolicyMode = "fill"
-	schedulerPolicyStable    schedulerPolicyMode = "stable"
-	schedulerPolicyStore     schedulerPolicyMode = "store_expand"
-	schedulerPolicyPressure  schedulerPolicyMode = "pressure"
-	schedulerPolicyBreaker   schedulerPolicyMode = "breaker"
+	schedulerPolicyBootstrap   schedulerPolicyMode = "bootstrap"
+	schedulerPolicyFill        schedulerPolicyMode = "fill"
+	schedulerPolicyStable      schedulerPolicyMode = "stable"
+	schedulerPolicyStore       schedulerPolicyMode = "store_expand"
+	schedulerPolicyPressure    schedulerPolicyMode = "pressure"
+	schedulerPolicyBreaker     schedulerPolicyMode = "breaker"
+	schedulerPolicyMaintenance schedulerPolicyMode = "maintenance"
 )
 
 type adaptiveSchedulerSignals struct {
@@ -107,6 +108,10 @@ func (m *RobotManager) logSchedulerPolicyDecision(decision schedulerPolicyDecisi
 
 func (m *RobotManager) updateSchedulerStatus(rc robotRuntimeConfig, sig adaptiveSchedulerSignals, decision schedulerPolicyDecision) {
 	target := normalizedTarget(rc)
+	op, opStarted, opActive := m.structuralOperation()
+	if opActive {
+		decision = schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "structural_op=" + op}
+	}
 	status := SchedulerStatus{
 		Mode:                    string(decision.Mode),
 		Reason:                  decision.Reason,
@@ -139,6 +144,9 @@ func (m *RobotManager) updateSchedulerStatus(rc robotRuntimeConfig, sig adaptive
 		ScaleDownBatch:          schedulerScaleDownBatch(sig.Actors, target),
 		BreakerReleaseBatch:     rc.SchedulerBreakerReleaseBatch,
 		PortDownReleaseBatch:    rc.SchedulerPortDownReleaseBatch,
+		OperationActive:         opActive,
+		Operation:               op,
+		OperationStartedAt:      opStarted,
 		UpdatedAt:               time.Now(),
 	}
 	m.autoMu.Lock()

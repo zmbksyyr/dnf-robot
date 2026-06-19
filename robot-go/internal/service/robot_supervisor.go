@@ -87,6 +87,44 @@ func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
 	return false
 }
 
+func (s *RobotSupervisor) StopUIDs(uids []int, logout bool) int {
+	if len(uids) == 0 {
+		return 0
+	}
+	seen := make(map[int]struct{}, len(uids))
+	actors := make([]*robotActor, 0, len(uids))
+	missing := make([]int, 0)
+	s.mu.Lock()
+	for _, uid := range uids {
+		if uid <= 0 {
+			continue
+		}
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		actor := s.uidActors[uid]
+		if actor == nil {
+			if logout {
+				missing = append(missing, uid)
+			}
+			continue
+		}
+		delete(s.uidActors, uid)
+		delete(s.actors, actor.slotID)
+		delete(s.blockedUID, uid)
+		actors = append(actors, actor)
+	}
+	s.mu.Unlock()
+	if s.runtime != nil {
+		for _, uid := range missing {
+			s.runtime.Logout(uid)
+		}
+	}
+	stopActorsConcurrent(actors, logout)
+	return len(actors)
+}
+
 func (s *RobotSupervisor) loop() {
 	defer close(s.done)
 	ticker := time.NewTicker(time.Second)
@@ -116,6 +154,12 @@ func (s *RobotSupervisor) tick(now time.Time) {
 		s.stopAutoActors(true)
 		s.logKeyBlocked(now, rc, st)
 		s.updateMetrics(rc)
+		return
+	}
+	if op, started, active := s.manager.structuralOperation(); active {
+		s.manager.updateSchedulerStatus(rc, s.manager.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "structural_op=" + op})
+		s.updateMetrics(rc)
+		robotLogf("[RobotSupervisor] paused structural_op=%s started=%s\n", op, started.Format(time.RFC3339))
 		return
 	}
 	if !s.manager.autoGamePortStable(now, rc) {

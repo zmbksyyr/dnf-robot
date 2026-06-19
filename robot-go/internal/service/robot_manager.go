@@ -17,6 +17,7 @@ type RobotManager struct {
 	cfg                             *config.SysConfig
 	doll                            *DollService
 	mu                              sync.Mutex
+	lifecycleMu                     sync.Mutex
 	autoMu                          sync.Mutex
 	cacheMu                         sync.Mutex
 	randMu                          sync.Mutex
@@ -42,6 +43,8 @@ type RobotManager struct {
 	autoPolicyLastMode              schedulerPolicyMode
 	autoPolicyLastReason            string
 	schedulerStatus                 SchedulerStatus
+	structuralOp                    string
+	structuralOpStarted             time.Time
 	configCache                     robotRuntimeConfig
 	configMod                       time.Time
 	configCached                    bool
@@ -59,6 +62,32 @@ type RobotManager struct {
 	stackCached                     bool
 	supervisor                      *RobotSupervisor
 	storePointsCoord                *storePointCoordinator
+}
+
+func (m *RobotManager) beginStructuralOp(op string) func() {
+	if strings.TrimSpace(op) == "" {
+		op = "unknown"
+	}
+	m.autoMu.Lock()
+	m.structuralOp = op
+	m.structuralOpStarted = time.Now()
+	m.autoMu.Unlock()
+	robotLogf("[RobotLifecycle] op=%s state=begin\n", op)
+	return func() {
+		m.autoMu.Lock()
+		if m.structuralOp == op {
+			m.structuralOp = ""
+			m.structuralOpStarted = time.Time{}
+		}
+		m.autoMu.Unlock()
+		robotLogf("[RobotLifecycle] op=%s state=end\n", op)
+	}
+}
+
+func (m *RobotManager) structuralOperation() (string, time.Time, bool) {
+	m.autoMu.Lock()
+	defer m.autoMu.Unlock()
+	return m.structuralOp, m.structuralOpStarted, m.structuralOp != ""
 }
 
 func NewRobotManager(db *sql.DB, cfg *config.SysConfig, doll *DollService) *RobotManager {

@@ -558,6 +558,43 @@ func TestSupervisorLeaseUIDSkipsDuplicatesAndBlocked(t *testing.T) {
 	}
 }
 
+func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	a1 := newRobotActor(1, robotActorAuto, s.runtime)
+	a2 := newRobotActor(2, robotActorAuto, s.runtime)
+	a1.start()
+	a2.start()
+	s.actors[1] = a1
+	s.actors[2] = a2
+	s.uidActors[101] = a1
+	s.uidActors[102] = a2
+	s.blockedUID[101] = struct{}{}
+
+	if got := s.StopUIDs([]int{101, 102, 102}, false); got != 2 {
+		t.Fatalf("StopUIDs got %d want 2", got)
+	}
+	if len(s.actors) != 0 || len(s.uidActors) != 0 {
+		t.Fatalf("StopUIDs should remove actors and leases, actors=%d leases=%d", len(s.actors), len(s.uidActors))
+	}
+	if _, ok := s.blockedUID[101]; ok {
+		t.Fatalf("StopUIDs should clear blocked marker for removed uid")
+	}
+}
+
+func TestStructuralOperationState(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	done := m.beginStructuralOp("cleanup")
+	op, started, active := m.structuralOperation()
+	if !active || op != "cleanup" || started.IsZero() {
+		t.Fatalf("structural op got active=%v op=%q started=%s", active, op, started)
+	}
+	done()
+	if op, _, active := m.structuralOperation(); active || op != "" {
+		t.Fatalf("structural op should clear, active=%v op=%q", active, op)
+	}
+}
+
 func TestRobotActorUnhealthyByFailureCount(t *testing.T) {
 	now := time.Now()
 	a := &robotActor{mode: robotActorAuto, uid: 801, failures: 5, firstFailureAt: now.Add(-10 * time.Second)}

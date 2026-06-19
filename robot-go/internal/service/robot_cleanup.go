@@ -8,6 +8,13 @@ import (
 )
 
 func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResult, error) {
+	var done func()
+	if req.Force {
+		m.lifecycleMu.Lock()
+		defer m.lifecycleMu.Unlock()
+		done = m.beginStructuralOp("cleanup")
+		defer done()
+	}
 	if err := m.ensureSchema(); err != nil {
 		return RobotCleanupResult{}, err
 	}
@@ -40,9 +47,7 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 	}
 	if len(uids) > 0 {
 		if supervisor := m.currentSupervisor(); supervisor != nil {
-			for _, uid := range uids {
-				supervisor.StopUID(uid, false)
-			}
+			supervisor.StopUIDs(uids, false)
 		}
 		_, _ = m.Logout(RobotCommandRequest{UIDs: uids})
 		if !req.InternalConfirmedBroken {

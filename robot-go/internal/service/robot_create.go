@@ -7,6 +7,11 @@ import (
 )
 
 func (m *RobotManager) CreateRobots(req RobotCreateRequest) ([]RobotInfo, error) {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+	done := m.beginStructuralOp("create")
+	defer done()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
