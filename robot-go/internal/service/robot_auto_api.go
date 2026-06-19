@@ -44,7 +44,12 @@ func (m *RobotManager) SetAutoEnabled(enabled bool) RobotAutoStatus {
 	m.autoEnabled = enabled
 	m.autoMu.Unlock()
 	if !enabled && supervisor != nil {
+		rc := m.loadRobotConfig()
 		supervisor.stopAutoActors(true)
+		running, connecting, stores := summarizeRuntimeStatusMap(m.runtimeStatusMap())
+		m.updateAutoSnapshot(rc, running, connecting, stores)
+		m.updateAutoActorSnapshot(supervisor.actorCounts(time.Now(), rc))
+		m.updateSchedulerStatus(rc, m.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "auto_disabled"})
 	}
 	return m.AutoStatus()
 }
