@@ -251,7 +251,8 @@ func (c *storePointCoordinator) clearExpiredClaims(now time.Time) {
 }
 
 func (c *storePointCoordinator) load() error {
-	sourceName, sourceData, err := readConfigFileFallbackNamed(c.configDir, "pvf_map_catalog.json", "map_catalog.json", "store_map.json", "pvf_map.json")
+	sourceName := "pvf_map_catalog.json"
+	sourceData, err := os.ReadFile(filepath.Join(c.configDir, sourceName))
 	if err != nil {
 		return err
 	}
@@ -370,16 +371,4 @@ func storeAreaKey(village, area int) string {
 
 func storeRegionKey(village, area, x, y int) string {
 	return fmt.Sprintf("%d/%d/%d/%d", village, area, x/storePointRegionX, y/storePointRegionY)
-}
-
-func readConfigFileFallbackNamed(configDir string, names ...string) (string, []byte, error) {
-	var lastErr error
-	for _, name := range names {
-		data, err := os.ReadFile(filepath.Join(configDir, name))
-		if err == nil {
-			return name, data, nil
-		}
-		lastErr = err
-	}
-	return "", nil, lastErr
 }

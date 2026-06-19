@@ -529,7 +529,8 @@ func (m *RobotManager) loadNameTemplates() nameTemplates {
 }
 
 func (m *RobotManager) loadMapCatalog() []mapCatalogItem {
-	mod := configFileModFallback(m.cfg.ConfigDir, "pvf_map_catalog.json", "map_catalog.json")
+	path := filepath.Join(m.cfg.ConfigDir, "pvf_map_catalog.json")
+	mod := fileModTime(path)
 	m.cacheMu.Lock()
 	if m.mapCached && m.mapMod.Equal(mod) {
 		maps := m.mapCache
@@ -538,7 +539,7 @@ func (m *RobotManager) loadMapCatalog() []mapCatalogItem {
 	}
 	m.cacheMu.Unlock()
 
-	data, err := readConfigFileFallback(m.cfg.ConfigDir, "pvf_map_catalog.json", "map_catalog.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}

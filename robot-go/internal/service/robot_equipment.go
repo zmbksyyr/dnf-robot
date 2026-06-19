@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"math/rand"
+	"os"
+	"path/filepath"
 )
 
 func (m *RobotManager) rebuildCharacView(uid int) error {
@@ -261,7 +263,8 @@ func safeAvg(total, count int) int {
 }
 
 func (m *RobotManager) loadEquipmentCatalog() []equipmentCatalogItem {
-	mod := configFileModFallback(m.cfg.ConfigDir, "pvf_equipment_catalog.json", "equipment_catalog.json")
+	path := filepath.Join(m.cfg.ConfigDir, "pvf_equipment_catalog.json")
+	mod := fileModTime(path)
 	m.cacheMu.Lock()
 	if m.equipCached && m.equipMod.Equal(mod) {
 		items := m.equipCache
@@ -270,7 +273,7 @@ func (m *RobotManager) loadEquipmentCatalog() []equipmentCatalogItem {
 	}
 	m.cacheMu.Unlock()
 
-	data, err := readConfigFileFallback(m.cfg.ConfigDir, "pvf_equipment_catalog.json", "equipment_catalog.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -287,7 +290,8 @@ func (m *RobotManager) loadEquipmentCatalog() []equipmentCatalogItem {
 }
 
 func (m *RobotManager) loadStackableCatalog() []equipmentCatalogItem {
-	mod := configFileModFallback(m.cfg.ConfigDir, "pvf_stackable_catalog.json", "stackable_catalog.json")
+	path := filepath.Join(m.cfg.ConfigDir, "pvf_stackable_catalog.json")
+	mod := fileModTime(path)
 	m.cacheMu.Lock()
 	if m.stackCached && m.stackMod.Equal(mod) {
 		items := m.stackCache
@@ -296,7 +300,7 @@ func (m *RobotManager) loadStackableCatalog() []equipmentCatalogItem {
 	}
 	m.cacheMu.Unlock()
 
-	data, err := readConfigFileFallback(m.cfg.ConfigDir, "pvf_stackable_catalog.json", "stackable_catalog.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
