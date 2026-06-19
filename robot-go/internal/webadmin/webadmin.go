@@ -2,7 +2,6 @@ package webadmin
 
 import (
 	"archive/zip"
-	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
@@ -111,7 +110,6 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/call", s.requireAuth(s.handleCall))
 	mux.HandleFunc("/api/game-port", s.requireAuth(s.handleGamePort))
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
-	mux.HandleFunc("/api/log", s.requireAuth(s.handleLog))
 	server := &http.Server{
 		Addr:              s.webAddr,
 		Handler:           mux,
@@ -308,16 +306,6 @@ func gameConfigNameForPort(port int) (string, bool) {
 	return "", false
 }
 
-func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
-	path, err := s.resolveLogPath(r.URL.Query().Get("path"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	lines := tailFile(path, 220)
-	writeJSON(w, map[string]interface{}{"ok": true, "path": path, "text": strings.Join(lines, "\n")})
-}
-
 func (s *Server) handleKeypairDownload(w http.ResponseWriter, _ *http.Request) {
 	raw, err := callRobot(s.robotAddr, "keypairStatus", nil, robotCallTimeout("keypairStatus"), s.cfg.MaxResponseBytes)
 	if err != nil {
@@ -384,28 +372,6 @@ func randomToken() string {
 	return hex.EncodeToString(raw[:])
 }
 
-func (s *Server) resolveLogPath(raw string) (string, error) {
-	defaultPath := "/root/robot.log"
-	if _, err := os.Stat(defaultPath); err != nil {
-		defaultPath = filepath.Join(s.cfg.ConfigDir, "log_robot")
-	}
-	if strings.TrimSpace(raw) == "" {
-		return defaultPath, nil
-	}
-	want, err := filepath.Abs(filepath.Clean(raw))
-	if err != nil {
-		return "", err
-	}
-	allowed := []string{defaultPath, filepath.Join(s.cfg.ConfigDir, "log_robot")}
-	for _, path := range allowed {
-		abs, err := filepath.Abs(filepath.Clean(path))
-		if err == nil && want == abs {
-			return want, nil
-		}
-	}
-	return "", fmt.Errorf("log path is not allowed")
-}
-
 func callRobot(addr, command string, payload map[string]interface{}, timeout time.Duration, maxResponseBytes int) (string, error) {
 	if payload == nil {
 		payload = map[string]interface{}{}
@@ -468,24 +434,4 @@ func parseRobotResult(raw string) interface{} {
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-func tailFile(path string, maxLines int) []string {
-	f, err := os.Open(path)
-	if err != nil {
-		return []string{err.Error()}
-	}
-	defer f.Close()
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-		if len(lines) > maxLines {
-			lines = lines[len(lines)-maxLines:]
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		lines = append(lines, err.Error())
-	}
-	return lines
 }
