@@ -28,6 +28,7 @@ func TestRequiresValidKeypair(t *testing.T) {
 		"sys",
 		"robotsStatus",
 		"autoStatus",
+		"schedulerStatus",
 		"systemStatus",
 		"keypairStatus",
 		"keypairReleaseDefault",

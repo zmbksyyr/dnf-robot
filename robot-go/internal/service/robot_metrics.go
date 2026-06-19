@@ -1,6 +1,9 @@
 package service
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 func (m *RobotManager) runtimeStatusMap() map[int]RuntimeRobotStatus {
 	status := map[int]RuntimeRobotStatus{}
@@ -84,15 +87,93 @@ func (m *RobotManager) updateAutoSnapshot(rc robotRuntimeConfig, running, connec
 	m.autoMu.Unlock()
 }
 
-func (m *RobotManager) updateAutoActorSnapshot(actors, leased, idle, recycling, blocked int) {
+func (m *RobotManager) updateAutoActorSnapshot(counts supervisorActorCounts) {
 	m.autoMu.Lock()
-	m.autoStats.Actors = actors
-	m.autoStats.Leased = leased
-	m.autoStats.Idle = idle
-	m.autoStats.Recycling = recycling
-	m.autoStats.BlockedUIDs = blocked
+	m.autoStats.Actors = counts.auto
+	m.autoStats.Leased = counts.leased
+	m.autoStats.Idle = counts.idle
+	m.autoStats.Recycling = counts.releasing
+	m.autoStats.BlockedUIDs = counts.blocked
+	m.autoStats.ActorIdle = counts.stateIdle
+	m.autoStats.ActorAssigned = counts.stateAssigned
+	m.autoStats.ActorOnline = counts.stateOnline
+	m.autoStats.ActorRunning = counts.stateRunning
+	m.autoStats.ActorBusy = counts.stateBusy
+	m.autoStats.ActorReleasing = counts.stateReleasing
 	m.autoStats.UpdatedAt = time.Now()
 	m.autoMu.Unlock()
+}
+
+func (m *RobotManager) updateAutoBreaker(now time.Time, rc robotRuntimeConfig, counts supervisorActorCounts, running, connecting int) {
+	target := rc.AutoTargetOnlineCount
+	if target <= 0 {
+		return
+	}
+	if target > rc.MaxOnlineRobots {
+		target = rc.MaxOnlineRobots
+	}
+	abnormalPct := rc.SchedulerBreakerAbnormalPct
+	if abnormalPct <= 0 {
+		abnormalPct = 30
+	}
+	if abnormalPct > 100 {
+		abnormalPct = 100
+	}
+	threshold := (target*abnormalPct + 99) / 100
+	readyForBreaker := counts.auto >= (target*9+9)/10 || counts.leased >= (target*9+9)/10
+
+	m.autoMu.Lock()
+	defer m.autoMu.Unlock()
+
+	stats := m.autoStats
+	reason := ""
+	if readyForBreaker && target-running >= threshold {
+		reason = fmt.Sprintf("running_below_%dpct target=%d running=%d", 100-abnormalPct, target, running)
+	} else if readyForBreaker && connecting >= threshold {
+		reason = fmt.Sprintf("connecting_over_%dpct target=%d connecting=%d", abnormalPct, target, connecting)
+	}
+
+	if m.autoBreakerLastCheck.IsZero() || now.Sub(m.autoBreakerLastCheck) >= time.Minute {
+		failDelta := (stats.OnlineFailed - m.autoBreakerLastOnlineFailed) +
+			(stats.MoveFailed - m.autoBreakerLastMoveFailed) +
+			(stats.ShoutLocalFailed - m.autoBreakerLastShoutLocalFailed) +
+			(stats.ShoutWorldFailed - m.autoBreakerLastShoutWorldFailed) +
+			(stats.StoreFailed - m.autoBreakerLastStoreFailed)
+		m.autoBreakerLastCheck = now
+		m.autoBreakerLastOnlineFailed = stats.OnlineFailed
+		m.autoBreakerLastMoveFailed = stats.MoveFailed
+		m.autoBreakerLastShoutLocalFailed = stats.ShoutLocalFailed
+		m.autoBreakerLastShoutWorldFailed = stats.ShoutWorldFailed
+		m.autoBreakerLastStoreFailed = stats.StoreFailed
+		if readyForBreaker && failDelta >= threshold {
+			reason = fmt.Sprintf("failures_over_%dpct_per_min target=%d failed_delta=%d", abnormalPct, target, failDelta)
+		}
+	}
+
+	if reason == "" {
+		return
+	}
+	pauseSec := rc.SchedulerBreakerPauseSec
+	if pauseSec <= 0 {
+		pauseSec = 300
+	}
+	until := now.Add(time.Duration(pauseSec) * time.Second)
+	wasActive := now.Before(m.autoBreakerUntil)
+	if until.After(m.autoBreakerUntil) {
+		m.autoBreakerUntil = until
+	}
+	if !wasActive || m.autoBreakerReason != reason {
+		m.autoBreakerReason = reason
+		robotLogf("[AutoBreaker] pause_until=%s reason=%s running=%d connecting=%d actors=%d leased=%d failed online=%d move=%d local=%d world=%d store=%d\n",
+			m.autoBreakerUntil.Format(time.RFC3339), reason, running, connecting, counts.auto, counts.leased,
+			stats.OnlineFailed, stats.MoveFailed, stats.ShoutLocalFailed, stats.ShoutWorldFailed, stats.StoreFailed)
+	}
+}
+
+func (m *RobotManager) autoBreakerActive(now time.Time) bool {
+	m.autoMu.Lock()
+	defer m.autoMu.Unlock()
+	return now.Before(m.autoBreakerUntil)
 }
 
 type runtimeStatusSummary struct {

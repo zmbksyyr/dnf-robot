@@ -317,6 +317,8 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		})
 	case "autoStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.AutoStatus()})
+	case "schedulerStatus":
+		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SchedulerStatus()})
 	case "systemStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SystemStatus()})
 	case "keypairStatus":

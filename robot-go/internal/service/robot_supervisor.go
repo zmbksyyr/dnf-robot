@@ -118,6 +118,13 @@ func (s *RobotSupervisor) tick(now time.Time) {
 		return
 	}
 	if !s.manager.autoGamePortStable(now, rc) {
+		s.stopSomeAutoActors(true, rc.SchedulerPortDownReleaseBatch, 0)
+		s.updateMetrics(rc)
+		return
+	}
+	if s.manager.autoBreakerActive(now) {
+		s.recycleUnhealthyActors(now, rc)
+		s.stopSomeAutoActors(true, rc.SchedulerBreakerReleaseBatch, breakerActorFloor(rc))
 		s.updateMetrics(rc)
 		return
 	}
@@ -155,13 +162,14 @@ func (s *RobotSupervisor) maintainTarget(rc robotRuntimeConfig) {
 	if target > rc.MaxOnlineRobots {
 		target = rc.MaxOnlineRobots
 	}
-	s.ensureAutoActorSlots(target)
+	s.ensureAutoActorSlots(rc, target)
 }
 
-func (s *RobotSupervisor) ensureAutoActorSlots(target int) {
+func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int) {
 	if target < 0 {
 		target = 0
 	}
+	status := s.manager.runtimeStatusMap()
 	s.mu.Lock()
 	current := 0
 	for _, actor := range s.actors {
@@ -169,12 +177,25 @@ func (s *RobotSupervisor) ensureAutoActorSlots(target int) {
 			current++
 		}
 	}
-	for current < target {
+	addCount := target - current
+	if addCount < 0 {
+		addCount = 0
+	}
+	if addCount > schedulerScaleUpBatch(rc) {
+		addCount = schedulerScaleUpBatch(rc)
+	}
+	added := addCount
+	for addCount > 0 {
 		slotID := s.nextSlotLocked()
 		actor := newRobotActor(slotID, robotActorAuto, s.runtime)
 		s.actors[slotID] = actor
 		actor.start()
-		current++
+		addCount--
+	}
+	current += added
+	if current <= target {
+		s.mu.Unlock()
+		return
 	}
 	var candidates []*robotActor
 	for _, actor := range s.actors {
@@ -183,8 +204,11 @@ func (s *RobotSupervisor) ensureAutoActorSlots(target int) {
 		}
 		candidates = append(candidates, actor)
 	}
-	sortActorsForStop(candidates)
+	sortActorsForStopByPolicy(candidates, status)
 	removeCount := current - target
+	if removeCount > schedulerScaleDownBatch(current, target) {
+		removeCount = schedulerScaleDownBatch(current, target)
+	}
 	if removeCount > len(candidates) {
 		removeCount = len(candidates)
 	}
@@ -197,6 +221,38 @@ func (s *RobotSupervisor) ensureAutoActorSlots(target int) {
 	}
 	s.mu.Unlock()
 	stopActorsConcurrent(extra, true)
+}
+
+func schedulerScaleUpBatch(rc robotRuntimeConfig) int {
+	batch := rc.SchedulerOnlineBatchSize
+	if batch <= 0 {
+		batch = 20
+	}
+	if batch > 120 {
+		batch = 120
+	}
+	return batch
+}
+
+func schedulerScaleDownBatch(current, target int) int {
+	delta := current - target
+	if delta <= 0 {
+		return 0
+	}
+	batch := current / 25
+	if current%25 != 0 {
+		batch++
+	}
+	if batch < 5 {
+		batch = 5
+	}
+	if batch > 50 {
+		batch = 50
+	}
+	if batch > delta {
+		batch = delta
+	}
+	return batch
 }
 
 func sortActorsForStop(actors []*robotActor) {
@@ -214,6 +270,43 @@ func sortActorsForStop(actors []*robotActor) {
 		}
 		return actors[i].slotID > actors[j].slotID
 	})
+}
+
+func sortActorsForStopByPolicy(actors []*robotActor, status map[int]RuntimeRobotStatus) {
+	sort.Slice(actors, func(i, j int) bool {
+		leftPriority := actorStopPriority(actors[i], status)
+		rightPriority := actorStopPriority(actors[j], status)
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		leftUID := actors[i].uidValue()
+		rightUID := actors[j].uidValue()
+		if leftUID <= 0 || rightUID <= 0 {
+			if leftUID != rightUID {
+				return leftUID <= 0
+			}
+			return actors[i].slotID > actors[j].slotID
+		}
+		if leftUID != rightUID {
+			return leftUID > rightUID
+		}
+		return actors[i].slotID > actors[j].slotID
+	})
+}
+
+func actorStopPriority(actor *robotActor, status map[int]RuntimeRobotStatus) int {
+	uid := actor.uidValue()
+	if uid <= 0 {
+		return 0
+	}
+	st, ok := status[uid]
+	if !ok || st.DisconnectReason != 0 || st.StateName == "init" || st.StateName == "login" {
+		return 1
+	}
+	if st.RobotType == 2 || st.RobotType == 3 || st.StoreDisplayAck {
+		return 2
+	}
+	return 3
 }
 
 func (s *RobotSupervisor) recycleUnhealthyActors(now time.Time, rc robotRuntimeConfig) {
@@ -426,6 +519,67 @@ func (s *RobotSupervisor) stopAutoActors(logout bool) {
 	stopActorsConcurrent(actors, logout)
 }
 
+func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
+	if limit <= 0 {
+		return
+	}
+	status := s.manager.runtimeStatusMap()
+	s.mu.Lock()
+	var candidates []*robotActor
+	for _, actor := range s.actors {
+		if actor.modeValue() != robotActorAuto {
+			continue
+		}
+		candidates = append(candidates, actor)
+	}
+	sortActorsForStopByPolicy(candidates, status)
+	if floor < 0 {
+		floor = 0
+	}
+	if len(candidates) <= floor {
+		s.mu.Unlock()
+		return
+	}
+	maxStop := len(candidates) - floor
+	if limit > maxStop {
+		limit = maxStop
+	}
+	if limit > len(candidates) {
+		limit = len(candidates)
+	}
+	actors := candidates[:limit]
+	for _, actor := range actors {
+		delete(s.actors, actor.slotID)
+		if uid := actor.uidValue(); uid > 0 {
+			delete(s.uidActors, uid)
+		}
+	}
+	s.mu.Unlock()
+	if len(actors) == 0 {
+		return
+	}
+	robotLogf("[RobotSupervisor] pressure_release actors=%d floor=%d logout=%v\n", len(actors), floor, logout)
+	go stopActorsConcurrent(actors, logout)
+}
+
+func breakerActorFloor(rc robotRuntimeConfig) int {
+	target := rc.AutoTargetOnlineCount
+	if target < 0 {
+		target = 0
+	}
+	if rc.MaxOnlineRobots > 0 && target > rc.MaxOnlineRobots {
+		target = rc.MaxOnlineRobots
+	}
+	floorPct := rc.SchedulerBreakerFloorPct
+	if floorPct < 0 {
+		floorPct = 0
+	}
+	if floorPct > 100 {
+		floorPct = 100
+	}
+	return target * floorPct / 100
+}
+
 func (s *RobotSupervisor) stopAll(logout bool) {
 	s.mu.Lock()
 	actors := make([]*robotActor, 0, len(s.actors))
@@ -463,13 +617,18 @@ func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 	running, connecting, stores := summarizeRuntimeStatusMap(status)
 	s.manager.updateAutoSnapshot(rc, running, connecting, stores)
 	counts := s.actorCounts(now, rc)
-	s.manager.updateAutoActorSnapshot(counts.auto, counts.leased, counts.idle, counts.releasing, counts.blocked)
+	s.manager.updateAutoActorSnapshot(counts)
+	s.manager.updateAutoBreaker(now, rc, counts, running, connecting)
 	cpu, mem, threads := robotResourceSnapshot()
 	s.manager.autoMu.Lock()
 	stats := s.manager.autoStats
+	policy := s.manager.schedulerStatus
 	s.manager.autoMu.Unlock()
-	line := fmt.Sprintf("[RobotMetrics] target=%d actors=%d leased=%d idle=%d running=%d store=%d connecting=%d recycling=%d blocked=%d cpu=%.1f mem_mb=%d goroutines=%d online=%d/%d move=%d/%d shout_local=%d/%d shout_world=%d/%d store=%d/%d expired=%d\n",
-		rc.AutoTargetOnlineCount, counts.auto, counts.leased, counts.idle, running, stores, connecting, counts.releasing, counts.blocked,
+	line := fmt.Sprintf("[RobotMetrics] policy=%s target=%d actors=%d leased=%d idle=%d state idle=%d assigned=%d online=%d running=%d busy=%d releasing=%d runtime running=%d store=%d connecting=%d recycling=%d blocked=%d cpu=%.1f mem_mb=%d goroutines=%d online=%d/%d move=%d/%d shout_local=%d/%d shout_world=%d/%d store=%d/%d expired=%d\n",
+		policy.Mode,
+		rc.AutoTargetOnlineCount, counts.auto, counts.leased, counts.idle,
+		counts.stateIdle, counts.stateAssigned, counts.stateOnline, counts.stateRunning, counts.stateBusy, counts.stateReleasing,
+		running, stores, connecting, counts.releasing, counts.blocked,
 		cpu, mem, threads,
 		stats.OnlineSuccess, stats.OnlineFailed,
 		stats.MoveSuccess, stats.MoveFailed,
@@ -481,11 +640,17 @@ func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 }
 
 type supervisorActorCounts struct {
-	auto      int
-	leased    int
-	idle      int
-	releasing int
-	blocked   int
+	auto           int
+	leased         int
+	idle           int
+	releasing      int
+	blocked        int
+	stateIdle      int
+	stateAssigned  int
+	stateOnline    int
+	stateRunning   int
+	stateBusy      int
+	stateReleasing int
 }
 
 func (s *RobotSupervisor) actorCounts(now time.Time, rc robotRuntimeConfig) supervisorActorCounts {
@@ -505,6 +670,20 @@ func (s *RobotSupervisor) actorCounts(now time.Time, rc robotRuntimeConfig) supe
 		}
 		if status.State == robotActorReleasing {
 			counts.releasing++
+		}
+		switch status.State {
+		case robotActorIdle:
+			counts.stateIdle++
+		case robotActorAssigned:
+			counts.stateAssigned++
+		case robotActorOnline:
+			counts.stateOnline++
+		case robotActorRunning:
+			counts.stateRunning++
+		case robotActorBusy:
+			counts.stateBusy++
+		case robotActorReleasing:
+			counts.stateReleasing++
 		}
 	}
 	return counts

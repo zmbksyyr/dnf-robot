@@ -41,9 +41,11 @@ func (m *RobotManager) loadRobotConfig() robotRuntimeConfig {
 		AutoStoreProbabilityPercent: 5, AutoStoreIntervalMinSec: 60, AutoStoreIntervalMaxSec: 180, AutoStoreDurationSec: 120, AutoStoreTickSec: 10, AutoStoreMaxPositionTries: 10, AutoStoreFailCooldownSec: 60,
 		AutoGamePortStableSec: 15, AutoGamePortCheckTimeoutMS: 800,
 		SchedulerBadRecoverSec: 60, SchedulerBadFailures: 3, SchedulerMetricsIntervalSec: 10, SchedulerStoreConcurrent: 30, SchedulerOnlineBatchSize: 120, SchedulerOnlineStartRate: 20, SchedulerOnlineFillTimeout: 60,
+		SchedulerBreakerAbnormalPct: 30, SchedulerBreakerPauseSec: 300, SchedulerBreakerReleaseBatch: 20, SchedulerBreakerFloorPct: 70, SchedulerPortDownReleaseBatch: 20,
 		SystemActorPollMS: 1000, SystemManualActionTimeoutSec: 60, SystemPacketRatePerSec: 20,
 	}
 	m.loadRobotConfigINI(&rc)
+	m.applyAdaptiveSchedulerConfig(&rc)
 	if rc.MaxOnlineRobots <= 0 {
 		rc.MaxOnlineRobots = 1000
 	}
@@ -215,6 +217,39 @@ func (m *RobotManager) loadRobotConfig() robotRuntimeConfig {
 	if rc.SchedulerOnlineFillTimeout <= 0 {
 		rc.SchedulerOnlineFillTimeout = 60
 	}
+	if rc.SchedulerBreakerAbnormalPct <= 0 {
+		rc.SchedulerBreakerAbnormalPct = 30
+	}
+	if rc.SchedulerBreakerAbnormalPct > 100 {
+		rc.SchedulerBreakerAbnormalPct = 100
+	}
+	if rc.SchedulerBreakerPauseSec <= 0 {
+		rc.SchedulerBreakerPauseSec = 300
+	}
+	if rc.SchedulerBreakerPauseSec < 30 {
+		rc.SchedulerBreakerPauseSec = 30
+	}
+	if rc.SchedulerBreakerPauseSec > 3600 {
+		rc.SchedulerBreakerPauseSec = 3600
+	}
+	if rc.SchedulerBreakerReleaseBatch <= 0 {
+		rc.SchedulerBreakerReleaseBatch = 20
+	}
+	if rc.SchedulerBreakerReleaseBatch > 120 {
+		rc.SchedulerBreakerReleaseBatch = 120
+	}
+	if rc.SchedulerBreakerFloorPct < 0 {
+		rc.SchedulerBreakerFloorPct = 0
+	}
+	if rc.SchedulerBreakerFloorPct > 100 {
+		rc.SchedulerBreakerFloorPct = 100
+	}
+	if rc.SchedulerPortDownReleaseBatch <= 0 {
+		rc.SchedulerPortDownReleaseBatch = 20
+	}
+	if rc.SchedulerPortDownReleaseBatch > 120 {
+		rc.SchedulerPortDownReleaseBatch = 120
+	}
 	if rc.SystemActorPollMS <= 0 {
 		rc.SystemActorPollMS = 1000
 	}
@@ -371,6 +406,11 @@ func (m *RobotManager) loadRobotConfigINI(rc *robotRuntimeConfig) {
 	rc.SchedulerOnlineBatchSize = ini.GetInt("scheduler", "online_batch_size", rc.SchedulerOnlineBatchSize)
 	rc.SchedulerOnlineStartRate = ini.GetInt("scheduler", "online_start_rate", rc.SchedulerOnlineStartRate)
 	rc.SchedulerOnlineFillTimeout = ini.GetInt("scheduler", "online_fill_timeout_sec", rc.SchedulerOnlineFillTimeout)
+	rc.SchedulerBreakerAbnormalPct = ini.GetInt("scheduler", "breaker_abnormal_percent", rc.SchedulerBreakerAbnormalPct)
+	rc.SchedulerBreakerPauseSec = ini.GetInt("scheduler", "breaker_pause_sec", rc.SchedulerBreakerPauseSec)
+	rc.SchedulerBreakerReleaseBatch = ini.GetInt("scheduler", "breaker_release_batch", rc.SchedulerBreakerReleaseBatch)
+	rc.SchedulerBreakerFloorPct = ini.GetInt("scheduler", "breaker_floor_percent", rc.SchedulerBreakerFloorPct)
+	rc.SchedulerPortDownReleaseBatch = ini.GetInt("scheduler", "port_down_release_batch", rc.SchedulerPortDownReleaseBatch)
 
 	rc.SystemActorPollMS = ini.GetInt("system", "actor_poll_ms", rc.SystemActorPollMS)
 	rc.SystemManualActionTimeoutSec = ini.GetInt("system", "manual_action_timeout_sec", rc.SystemManualActionTimeoutSec)

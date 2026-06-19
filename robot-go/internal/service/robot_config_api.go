@@ -15,7 +15,7 @@ func (m *RobotManager) RobotConfig() (RobotConfigResult, error) {
 	if err != nil {
 		return RobotConfigResult{}, err
 	}
-	return RobotConfigResult{Path: path, Text: string(data), Config: m.loadRobotConfig()}, nil
+	return RobotConfigResult{Path: path, Text: publicRobotConfigText(string(data)), Config: m.loadRobotConfig()}, nil
 }
 
 func (m *RobotManager) UpdateRobotConfig(req RobotConfigUpdateRequest) (RobotConfigResult, error) {
@@ -132,4 +132,64 @@ func updateINIText(text string, values map[string]string) string {
 		out += "\n"
 	}
 	return out
+}
+
+func publicRobotConfigText(text string) string {
+	hidden := map[string]bool{
+		"auto.auto_game_port_stable_sec":       true,
+		"auto.auto_game_port_check_timeout_ms": true,
+		"auto.auto_move_interval_min_sec":      true,
+		"auto.auto_move_interval_max_sec":      true,
+		"auto.auto_shout_interval_min_sec":     true,
+		"auto.auto_shout_interval_max_sec":     true,
+		"auto.auto_store_probability_percent":  true,
+		"auto.auto_store_interval_min_sec":     true,
+		"auto.auto_store_interval_max_sec":     true,
+		"auto.auto_store_duration_sec":         true,
+		"auto.auto_store_tick_sec":             true,
+		"auto.auto_store_max_position_tries":   true,
+		"auto.auto_store_fail_cooldown_sec":    true,
+		"scheduler.bad_recover_sec":            true,
+		"scheduler.bad_failures":               true,
+		"scheduler.metrics_interval_sec":       true,
+		"scheduler.store_concurrent":           true,
+		"scheduler.online_batch_size":          true,
+		"scheduler.online_start_rate":          true,
+		"scheduler.online_fill_timeout_sec":    true,
+		"scheduler.breaker_abnormal_percent":   true,
+		"scheduler.breaker_pause_sec":          true,
+		"scheduler.breaker_release_batch":      true,
+		"scheduler.breaker_floor_percent":      true,
+		"scheduler.port_down_release_batch":    true,
+		"system.actor_poll_ms":                 true,
+		"system.manual_action_timeout_sec":     true,
+		"system.packet_rate_per_sec":           true,
+	}
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(lines))
+	section := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			if end := strings.IndexByte(trimmed, ']'); end > 1 {
+				section = strings.TrimSpace(trimmed[1:end])
+			}
+			out = append(out, line)
+			continue
+		}
+		if section != "" && trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";") {
+			if idx := strings.IndexByte(trimmed, '='); idx > 0 {
+				key := strings.TrimSpace(trimmed[:idx])
+				if hidden[section+"."+key] {
+					continue
+				}
+			}
+		}
+		out = append(out, line)
+	}
+	result := strings.Join(out, "\n")
+	if !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+	return result
 }
