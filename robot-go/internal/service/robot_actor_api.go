@@ -1,9 +1,12 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
+
+var errActorRegistryUnavailable = errors.New("actor registry unavailable")
 
 func (m *RobotManager) OnlineManaged(req RobotCommandRequest, store bool) (RobotCommandResult, error) {
 	if store {
@@ -11,7 +14,7 @@ func (m *RobotManager) OnlineManaged(req RobotCommandRequest, store bool) (Robot
 	}
 	registry := m.currentActorRegistry()
 	if registry == nil {
-		return m.Online(req, store)
+		return RobotCommandResult{}, errActorRegistryUnavailable
 	}
 	robots, err := m.selectRobots(req)
 	if err != nil {
@@ -53,28 +56,22 @@ func (m *RobotManager) OnlineManaged(req RobotCommandRequest, store bool) (Robot
 }
 
 func (m *RobotManager) MoveManaged(req RobotCommandRequest) (RobotCommandResult, error) {
-	return m.actorCommandManaged(req, robotActorMove, "move", func(single RobotCommandRequest) (RobotCommandResult, error) {
-		return m.Move(single)
-	})
+	return m.actorCommandManaged(req, robotActorMove, "move")
 }
 
 func (m *RobotManager) ShoutManaged(req RobotCommandRequest, world bool) (RobotCommandResult, error) {
 	if world {
-		return m.actorCommandManaged(req, robotActorShoutWorld, "shout_world", func(single RobotCommandRequest) (RobotCommandResult, error) {
-			return m.ShoutOne(single, true)
-		})
+		return m.actorCommandManaged(req, robotActorShoutWorld, "shout_world")
 	}
 	cmd := robotActorShoutLocal
 	name := "shout_local"
-	return m.actorCommandManaged(req, cmd, name, func(single RobotCommandRequest) (RobotCommandResult, error) {
-		return m.ShoutOne(single, world)
-	})
+	return m.actorCommandManaged(req, cmd, name)
 }
 
 func (m *RobotManager) ShoutBothManaged(req RobotCommandRequest) (RobotCommandResult, error) {
 	registry := m.currentActorRegistry()
 	if registry == nil {
-		return m.Shout(req)
+		return RobotCommandResult{}, errActorRegistryUnavailable
 	}
 	robots, err := m.selectRobots(req)
 	if err != nil {
@@ -115,15 +112,13 @@ func (m *RobotManager) ShoutBothManaged(req RobotCommandRequest) (RobotCommandRe
 }
 
 func (m *RobotManager) StoreManaged(req RobotCommandRequest) (RobotCommandResult, error) {
-	return m.actorCommandManaged(req, robotActorStore, "store", func(single RobotCommandRequest) (RobotCommandResult, error) {
-		return m.Store(single)
-	})
+	return m.actorCommandManaged(req, robotActorStore, "store")
 }
 
 func (m *RobotManager) LogoutManaged(req RobotCommandRequest) (RobotCommandResult, error) {
 	registry := m.currentActorRegistry()
 	if registry == nil {
-		return m.Logout(req)
+		return RobotCommandResult{}, errActorRegistryUnavailable
 	}
 	robots, err := m.selectRobots(req)
 	if err != nil {
@@ -160,10 +155,10 @@ func (m *RobotManager) LogoutManaged(req RobotCommandRequest) (RobotCommandResul
 	return result, nil
 }
 
-func (m *RobotManager) actorCommandManaged(req RobotCommandRequest, cmd robotActorCommand, action string, fallback func(RobotCommandRequest) (RobotCommandResult, error)) (RobotCommandResult, error) {
+func (m *RobotManager) actorCommandManaged(req RobotCommandRequest, cmd robotActorCommand, action string) (RobotCommandResult, error) {
 	registry := m.currentActorRegistry()
 	if registry == nil {
-		return fallback(req)
+		return RobotCommandResult{}, errActorRegistryUnavailable
 	}
 	robots, err := m.selectRobots(req)
 	if err != nil {

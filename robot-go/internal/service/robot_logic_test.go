@@ -749,6 +749,26 @@ func TestManagerCurrentActorRegistry(t *testing.T) {
 	}
 }
 
+func TestManagedRuntimeActionsRequireActorRegistry(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	actions := []struct {
+		name string
+		run  func() (RobotCommandResult, error)
+	}{
+		{name: "online", run: func() (RobotCommandResult, error) { return m.OnlineManaged(RobotCommandRequest{Count: 1}, false) }},
+		{name: "move", run: func() (RobotCommandResult, error) { return m.MoveManaged(RobotCommandRequest{Count: 1}) }},
+		{name: "shout", run: func() (RobotCommandResult, error) { return m.ShoutManaged(RobotCommandRequest{Count: 1}, false) }},
+		{name: "shout_both", run: func() (RobotCommandResult, error) { return m.ShoutBothManaged(RobotCommandRequest{Count: 1}) }},
+		{name: "store", run: func() (RobotCommandResult, error) { return m.StoreManaged(RobotCommandRequest{Count: 1}) }},
+		{name: "logout", run: func() (RobotCommandResult, error) { return m.LogoutManaged(RobotCommandRequest{Count: 1}) }},
+	}
+	for _, action := range actions {
+		if _, err := action.run(); !errors.Is(err, errActorRegistryUnavailable) {
+			t.Fatalf("%s err=%v want actor registry unavailable", action.name, err)
+		}
+	}
+}
+
 func TestActorStatusFieldsDeriveLedgerState(t *testing.T) {
 	actor := robotActorSnapshot{State: robotActorOffline, OnlineDesired: false}
 	if got := actorOperation(actor); got != "offline" {
