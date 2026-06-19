@@ -9,26 +9,43 @@ import (
 
 func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResult, error) {
 	var done func()
+	var op RobotOperationStatus
+	var opErr error
+	var opResult RobotCleanupResult
 	if req.Force {
 		m.lifecycleMu.Lock()
 		defer m.lifecycleMu.Unlock()
+		if !req.InternalConfirmedBroken {
+			var err error
+			op, err = m.BeginOperationGuarded("cleanup", cleanupRequestScope(req), true)
+			if err != nil {
+				return RobotCleanupResult{}, err
+			}
+			defer func() {
+				m.CompleteOperation(op.ID, CleanupOperationSummary(opResult, opErr), opErr)
+			}()
+		}
 		done = m.beginStructuralOp("cleanup")
 		defer done()
 	}
 	if err := m.ensureSchema(); err != nil {
+		opErr = err
 		return RobotCleanupResult{}, err
 	}
 	candidates, err := m.cleanupCandidates(req)
 	if err != nil {
+		opErr = err
 		return RobotCleanupResult{}, err
 	}
 	result := RobotCleanupResult{DryRun: !req.Force, Requested: len(candidates), Candidates: candidates}
+	opResult = result
 	if !req.Force {
 		for _, c := range candidates {
 			if c.Protected {
 				result.Skipped++
 			}
 		}
+		opResult = result
 		return result, nil
 	}
 	deleteIndexes := make([]int, 0, len(candidates))
@@ -65,6 +82,7 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 				result.Candidates[i].Reason = err.Error()
 				result.Skipped++
 			}
+			opResult = result
 			return result, nil
 		}
 		for _, i := range deleteIndexes {
@@ -72,7 +90,18 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 			result.Deleted++
 		}
 	}
+	opResult = result
 	return result, nil
+}
+
+func cleanupRequestScope(req RobotCleanupRequest) string {
+	if len(req.UIDs) > 0 {
+		return fmt.Sprintf("uids=%d force=%v", len(req.UIDs), req.Force)
+	}
+	if req.MinUID > 0 || req.MaxUID > 0 {
+		return fmt.Sprintf("range=%d-%d force=%v", req.MinUID, req.MaxUID, req.Force)
+	}
+	return fmt.Sprintf("all force=%v", req.Force)
 }
 
 func (m *RobotManager) cleanupCandidates(req RobotCleanupRequest) ([]RobotCleanupCandidate, error) {

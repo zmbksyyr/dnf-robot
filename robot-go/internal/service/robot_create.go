@@ -9,6 +9,15 @@ import (
 func (m *RobotManager) CreateRobots(req RobotCreateRequest) ([]RobotInfo, error) {
 	m.lifecycleMu.Lock()
 	defer m.lifecycleMu.Unlock()
+	op, err := m.BeginOperationGuarded("create", fmt.Sprintf("count=%d", req.Count), true)
+	if err != nil {
+		return nil, err
+	}
+	var opErr error
+	var created int
+	defer func() {
+		m.CompleteOperation(op.ID, fmt.Sprintf("created=%d", created), opErr)
+	}()
 	done := m.beginStructuralOp("create")
 	defer done()
 
@@ -24,19 +33,23 @@ func (m *RobotManager) CreateRobots(req RobotCreateRequest) ([]RobotInfo, error)
 	rc := m.loadRobotConfig()
 	maps := m.loadMapCatalog()
 	if err := m.ensureSchema(); err != nil {
+		opErr = err
 		return nil, err
 	}
 
 	accountAutoInc, err := m.accountAutoIncrement()
 	if err != nil {
+		opErr = err
 		return nil, err
 	}
 	uidList, err := m.availableRobotUIDs(req.Count, rc.RobotUIDStart, accountAutoInc)
 	if err != nil {
+		opErr = err
 		return nil, err
 	}
 	nextCID, err := m.nextInt("SELECT charac_no FROM taiwan_cain.charac_info ORDER BY charac_no DESC LIMIT 1", 0)
 	if err != nil {
+		opErr = err
 		return nil, err
 	}
 	nextCID++
@@ -65,9 +78,11 @@ func (m *RobotManager) CreateRobots(req RobotCreateRequest) ([]RobotInfo, error)
 		}
 		m.applyConfiguredLocation(&info, rc, maps)
 		if err := m.createRobot(info, rc); err != nil {
+			opErr = err
 			return robots, err
 		}
 		robots = append(robots, info)
+		created = len(robots)
 	}
 	return robots, nil
 }

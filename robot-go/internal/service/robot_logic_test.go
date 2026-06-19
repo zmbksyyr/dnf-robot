@@ -683,6 +683,21 @@ func TestRobotOperationsTrackRecentStatus(t *testing.T) {
 	}
 }
 
+func TestStructuralOperationGuardRejectsOverlap(t *testing.T) {
+	m := &RobotManager{}
+	first, err := m.BeginOperationGuarded("cleanup", "all", true)
+	if err != nil {
+		t.Fatalf("first structural op failed: %v", err)
+	}
+	if _, err := m.BeginOperationGuarded("create", "count=1", true); err == nil {
+		t.Fatalf("second structural op should conflict")
+	}
+	m.CompleteOperation(first.ID, "done", nil)
+	if _, err := m.BeginOperationGuarded("create", "count=1", true); err != nil {
+		t.Fatalf("structural op after completion should pass: %v", err)
+	}
+}
+
 func TestStructuralOperationState(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	done := m.beginStructuralOp("cleanup")

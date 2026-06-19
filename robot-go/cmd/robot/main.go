@@ -394,15 +394,14 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		if err := decodePayload(pkt, &req); err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
-		return queueRobotAction(manager, "cleanupRobotsAsync", cleanupScope(req), func() (string, error) {
+		return queueRobotActionNoOperation("cleanupRobotsAsync", func() {
 			res, err := manager.CleanupRobots(req)
 			if err != nil {
 				logRobotActionf("[WebAction] cleanupRobotsAsync failed err=%v\n", err)
-				return service.CleanupOperationSummary(res, err), err
+				return
 			}
 			logRobotActionf("[WebAction] cleanupRobotsAsync done candidates=%d deleted=%d skipped=%d\n",
 				len(res.Candidates), res.Deleted, res.Skipped)
-			return service.CleanupOperationSummary(res, err), err
 		})
 	default:
 		dnf.PrintfBlue("unknown command: %s\n", cmd)
@@ -460,6 +459,17 @@ func queueRobotAction(manager *service.RobotManager, name, scope string, fn func
 	return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "queued", "operation": op}})
 }
 
+func queueRobotActionNoOperation(name string, fn func()) string {
+	if _, loaded := asyncActions.LoadOrStore(name, true); loaded {
+		return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "running"}})
+	}
+	go func() {
+		defer asyncActions.Delete(name)
+		fn()
+	}()
+	return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "queued"}})
+}
+
 func logRobotCommandResult(name string, res service.RobotCommandResult, err error) {
 	if err != nil {
 		logRobotActionf("[WebAction] %s failed err=%v\n", name, err)
@@ -480,16 +490,6 @@ func requestScope(req service.RobotCommandRequest) string {
 		return fmt.Sprintf("uids=%d", len(req.UIDs))
 	}
 	return fmt.Sprintf("count=%d", req.Count)
-}
-
-func cleanupScope(req service.RobotCleanupRequest) string {
-	if len(req.UIDs) > 0 {
-		return fmt.Sprintf("uids=%d force=%v", len(req.UIDs), req.Force)
-	}
-	if req.MinUID > 0 || req.MaxUID > 0 {
-		return fmt.Sprintf("range=%d-%d force=%v", req.MinUID, req.MaxUID, req.Force)
-	}
-	return fmt.Sprintf("all force=%v", req.Force)
 }
 
 func parseRobotCommand(pkt string) (service.RobotCommandRequest, error) {

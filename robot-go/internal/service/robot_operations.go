@@ -6,15 +6,32 @@ import (
 	"time"
 )
 
+var errOperationConflict = fmt.Errorf("structural operation already running")
+
 func (m *RobotManager) BeginOperation(typ, scope string) RobotOperationStatus {
+	op, _ := m.BeginOperationGuarded(typ, scope, false)
+	return op
+}
+
+func (m *RobotManager) BeginOperationGuarded(typ, scope string, structural bool) (RobotOperationStatus, error) {
 	now := time.Now()
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
+	typ = strings.TrimSpace(typ)
+	scope = strings.TrimSpace(scope)
+	if structural {
+		for _, existing := range m.operations {
+			if existing.State != "running" || !isStructuralOperation(existing.Type) {
+				continue
+			}
+			return RobotOperationStatus{}, fmt.Errorf("%w: %s %s", errOperationConflict, existing.Type, existing.Scope)
+		}
+	}
 	m.nextOperationID++
 	op := RobotOperationStatus{
 		ID:        m.nextOperationID,
-		Type:      strings.TrimSpace(typ),
-		Scope:     strings.TrimSpace(scope),
+		Type:      typ,
+		Scope:     scope,
 		State:     "running",
 		StartedAt: now,
 		UpdatedAt: now,
@@ -23,7 +40,16 @@ func (m *RobotManager) BeginOperation(typ, scope string) RobotOperationStatus {
 	if len(m.operations) > 20 {
 		m.operations = m.operations[:20]
 	}
-	return op
+	return op, nil
+}
+
+func isStructuralOperation(typ string) bool {
+	switch strings.TrimSpace(typ) {
+	case "create", "cleanup", "createRobots", "cleanupRobots", "cleanupRobotsAsync":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *RobotManager) CompleteOperation(id int64, summary string, err error) RobotOperationStatus {
