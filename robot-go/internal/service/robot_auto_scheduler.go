@@ -88,14 +88,7 @@ func (s *RobotSupervisor) maintainTarget(rc robotRuntimeConfig) {
 		robotLogf("[RobotSupervisor] ensure_schema_failed err=%v\n", err)
 		return
 	}
-	target := rc.AutoTargetOnlineCount
-	if target < 0 {
-		target = 0
-	}
-	if target > rc.MaxOnlineRobots {
-		target = rc.MaxOnlineRobots
-	}
-	s.ensureAutoActorSlots(rc, target)
+	s.ensureAutoActorSlots(rc, schedulerTargetCapacity(rc))
 }
 
 func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int) {

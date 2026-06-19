@@ -198,6 +198,22 @@ func TestSchedulerScaleBatches(t *testing.T) {
 	}
 }
 
+func TestSchedulerCreateRoomRespectsTargetCapacity(t *testing.T) {
+	rc := robotRuntimeConfig{AutoTargetOnlineCount: 200, MaxOnlineRobots: 600}
+	if got := schedulerCreateRoom(rc, 189); got != 11 {
+		t.Fatalf("create room got %d want 11", got)
+	}
+	if got := schedulerCreateRoom(rc, 200); got != 0 {
+		t.Fatalf("create room at target got %d want 0", got)
+	}
+	if got := schedulerCreateRoom(rc, 301); got != 0 {
+		t.Fatalf("create room above target got %d want 0", got)
+	}
+	if got := schedulerTargetCapacity(robotRuntimeConfig{AutoTargetOnlineCount: 600, MaxOnlineRobots: 200}); got != 200 {
+		t.Fatalf("target capacity got %d want max cap 200", got)
+	}
+}
+
 func TestSortActorsForStopByPolicy(t *testing.T) {
 	actors := []*robotActor{
 		{slotID: 1, uid: 17000001},

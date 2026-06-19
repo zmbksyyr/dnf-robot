@@ -72,14 +72,8 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 	if need <= 0 {
 		return out
 	}
-	target := rc.AutoTargetOnlineCount
-	if target < 0 {
-		target = 0
-	}
-	if rc.MaxOnlineRobots > 0 && target > rc.MaxOnlineRobots {
-		target = rc.MaxOnlineRobots
-	}
-	createRoom := target - len(robots)
+	target := schedulerTargetCapacity(rc)
+	createRoom := schedulerCreateRoom(rc, len(robots))
 	if createRoom <= 0 {
 		robotLogf("[RobotSupervisor] create_blocked_by_target existing=%d target=%d need=%d blocked=%d\n", len(robots), target, need, s.blockedCount())
 		return out
@@ -106,6 +100,25 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 		}
 	}
 	return out
+}
+
+func schedulerTargetCapacity(rc robotRuntimeConfig) int {
+	target := rc.AutoTargetOnlineCount
+	if target < 0 {
+		target = 0
+	}
+	if rc.MaxOnlineRobots > 0 && target > rc.MaxOnlineRobots {
+		target = rc.MaxOnlineRobots
+	}
+	return target
+}
+
+func schedulerCreateRoom(rc robotRuntimeConfig, existing int) int {
+	room := schedulerTargetCapacity(rc) - existing
+	if room < 0 {
+		return 0
+	}
+	return room
 }
 
 func schedulerOnlineStartRate(rc robotRuntimeConfig) int {
