@@ -20,9 +20,7 @@ var _ actorRegistry = (*RobotSupervisor)(nil)
 // Actor ownership and command routing.
 
 func (s *RobotSupervisor) Command(uid int, cmd robotActorCommand, timeout time.Duration) (RobotActionResult, bool) {
-	s.mu.Lock()
-	actor := s.uidActors[uid]
-	s.mu.Unlock()
+	actor := s.actorLedger.actorForUID(uid)
 	if actor == nil {
 		return RobotActionResult{UID: uid, OK: false, State: "missing_actor"}, false
 	}
@@ -38,32 +36,12 @@ func (s *RobotSupervisor) LogoutUID(uid int, timeout time.Duration) (RobotAction
 // AttachUID binds an unmanaged UID to an empty actor slot. It does not perform
 // login directly; callers should send robotActorCmdOnline through Command.
 func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
-	if uid <= 0 {
+	actor, existing, ok := s.actorLedger.reserveEmptyAutoActor(uid)
+	if !ok {
 		return false
 	}
-	var actor *robotActor
-	s.mu.Lock()
-	if existing := s.uidActors[uid]; existing != nil {
-		s.mu.Unlock()
+	if existing {
 		return true
-	}
-	if _, blocked := s.blockedUID[uid]; blocked {
-		s.mu.Unlock()
-		return false
-	}
-	for _, candidate := range s.actors {
-		snap := candidate.snapshot()
-		if snap.Mode == robotActorAuto && snap.UID <= 0 {
-			actor = candidate
-			break
-		}
-	}
-	if actor != nil {
-		s.uidActors[uid] = actor
-	}
-	s.mu.Unlock()
-	if actor == nil {
-		return false
 	}
 	if actor.assignAndWait(uid, timeout) {
 		return true
@@ -73,16 +51,11 @@ func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
 }
 
 func (s *RobotSupervisor) HasUID(uid int) bool {
-	if uid <= 0 {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.uidActors[uid] != nil
+	return s.actorLedger.hasUID(uid)
 }
 
 // actorSnapshots is the read model for UI/status surfaces. Callers get a copy
-// of actor pointers first so actor.snapshot() is never called while s.mu is held.
+// of actor pointers first so actor.snapshot() is never called while ledger is held.
 func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
 	actors := s.actorLedger.actorPointers()
 	out := make([]robotActorSnapshot, 0, len(actors))
@@ -95,13 +68,7 @@ func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
 // StopUID detaches the UID from supervisor ownership. With logout=true the
 // actor performs release/logout before its slot is removed.
 func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
-	s.mu.Lock()
-	actor := s.uidActors[uid]
-	if actor != nil {
-		delete(s.uidActors, uid)
-		delete(s.actors, actor.slotID)
-	}
-	s.mu.Unlock()
+	actor := s.actorLedger.detachUID(uid)
 	if actor != nil {
 		if logout {
 			actor.releaseAndWait(10 * time.Second)
@@ -117,34 +84,7 @@ func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
 
 // StopUIDs is the bulk ownership detach path used before cleanup/delete.
 func (s *RobotSupervisor) StopUIDs(uids []int, logout bool) int {
-	if len(uids) == 0 {
-		return 0
-	}
-	seen := make(map[int]struct{}, len(uids))
-	actors := make([]*robotActor, 0, len(uids))
-	missing := make([]int, 0)
-	s.mu.Lock()
-	for _, uid := range uids {
-		if uid <= 0 {
-			continue
-		}
-		if _, ok := seen[uid]; ok {
-			continue
-		}
-		seen[uid] = struct{}{}
-		actor := s.uidActors[uid]
-		if actor == nil {
-			if logout {
-				missing = append(missing, uid)
-			}
-			continue
-		}
-		delete(s.uidActors, uid)
-		delete(s.actors, actor.slotID)
-		delete(s.blockedUID, uid)
-		actors = append(actors, actor)
-	}
-	s.mu.Unlock()
+	actors, missing := s.actorLedger.detachUIDs(uids)
 	if s.runtime != nil {
 		for _, uid := range missing {
 			s.runtime.Logout(uid)

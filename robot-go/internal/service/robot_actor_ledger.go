@@ -48,6 +48,48 @@ func (l *actorLedger) actorPointers() []*robotActor {
 	return actors
 }
 
+func (l *actorLedger) actorForUID(uid int) *robotActor {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.uidActors[uid]
+}
+
+func (l *actorLedger) hasUID(uid int) bool {
+	if uid <= 0 {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.uidActors[uid] != nil
+}
+
+func (l *actorLedger) reserveEmptyAutoActor(uid int) (*robotActor, bool, bool) {
+	if uid <= 0 {
+		return nil, false, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if existing := l.uidActors[uid]; existing != nil {
+		return existing, true, true
+	}
+	if _, blocked := l.blockedUID[uid]; blocked {
+		return nil, false, false
+	}
+	var actor *robotActor
+	for _, candidate := range l.actors {
+		snap := candidate.snapshot()
+		if snap.Mode == robotActorAuto && snap.UID <= 0 {
+			actor = candidate
+			break
+		}
+	}
+	if actor == nil {
+		return nil, false, false
+	}
+	l.uidActors[uid] = actor
+	return actor, false, true
+}
+
 func (l *actorLedger) autoActorPointers() []*robotActor {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -135,6 +177,47 @@ func (l *actorLedger) detachAllActors() []*robotActor {
 	}
 	l.uidActors = make(map[int]*robotActor)
 	return actors
+}
+
+func (l *actorLedger) detachUID(uid int) *robotActor {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	actor := l.uidActors[uid]
+	if actor != nil {
+		delete(l.uidActors, uid)
+		delete(l.actors, actor.slotID)
+	}
+	return actor
+}
+
+func (l *actorLedger) detachUIDs(uids []int) ([]*robotActor, []int) {
+	if len(uids) == 0 {
+		return nil, nil
+	}
+	seen := make(map[int]struct{}, len(uids))
+	actors := make([]*robotActor, 0, len(uids))
+	missing := make([]int, 0)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, uid := range uids {
+		if uid <= 0 {
+			continue
+		}
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		actor := l.uidActors[uid]
+		if actor == nil {
+			missing = append(missing, uid)
+			continue
+		}
+		delete(l.uidActors, uid)
+		delete(l.actors, actor.slotID)
+		delete(l.blockedUID, uid)
+		actors = append(actors, actor)
+	}
+	return actors, missing
 }
 
 func (l *actorLedger) blockLeaseIfCurrent(uid int, actor *robotActor) bool {
