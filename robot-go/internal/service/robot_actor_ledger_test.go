@@ -82,3 +82,10 @@ func TestActorLedgerDetachSomeAutoActorsHonorsFloor(t *testing.T) {
 		t.Fatalf("remaining actors got %d want 3", got)
 	}
 }
+
+func TestSupervisorStopUIDWithoutRuntimeDoesNotPanic(t *testing.T) {
+	s := NewRobotSupervisor(nil, nil)
+	if s.StopUID(101, true) {
+		t.Fatalf("StopUID should report false when uid is not attached")
+	}
+}
