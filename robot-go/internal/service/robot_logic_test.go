@@ -538,6 +538,35 @@ func assertIntSlice(t *testing.T, got, want []int) {
 	}
 }
 
+func addLedgerActor(t *testing.T, ledger *actorLedger, actor *robotActor) {
+	t.Helper()
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	ledger.actors[actor.slotID] = actor
+}
+
+func ledgerActorCount(t *testing.T, ledger *actorLedger) int {
+	t.Helper()
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	return len(ledger.actors)
+}
+
+func ledgerLeaseCount(t *testing.T, ledger *actorLedger) int {
+	t.Helper()
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	return len(ledger.uidActors)
+}
+
+func ledgerIsBlocked(t *testing.T, ledger *actorLedger, uid int) bool {
+	t.Helper()
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	_, ok := ledger.blockedUID[uid]
+	return ok
+}
+
 func containsInt(values []int, want int) bool {
 	for _, v := range values {
 		if v == want {
@@ -562,17 +591,17 @@ func TestSupervisorMaintainsAutoActorSlots(t *testing.T) {
 }
 
 func TestSupervisorLeaseUIDSkipsDuplicatesAndBlocked(t *testing.T) {
-	s := NewRobotSupervisor(nil, nil)
+	ledger := newActorLedger()
 	a := &robotActor{slotID: 1}
-	if !s.tryLeaseUID(101, a) {
+	if !ledger.tryLeaseUID(101, a) {
 		t.Fatalf("first lease should succeed")
 	}
-	if s.tryLeaseUID(101, &robotActor{slotID: 2}) {
+	if ledger.tryLeaseUID(101, &robotActor{slotID: 2}) {
 		t.Fatalf("duplicate lease should fail")
 	}
-	s.unleaseUID(101, a)
-	s.blockedUID[101] = struct{}{}
-	if s.tryLeaseUID(101, a) {
+	ledger.unleaseUID(101, a)
+	ledger.blockUID(101)
+	if ledger.tryLeaseUID(101, a) {
 		t.Fatalf("blocked uid should not lease")
 	}
 }
@@ -584,19 +613,19 @@ func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
 	a2 := newRobotActor(2, robotActorAuto, s.runtime)
 	a1.start()
 	a2.start()
-	s.actors[1] = a1
-	s.actors[2] = a2
-	s.uidActors[101] = a1
-	s.uidActors[102] = a2
-	s.blockedUID[101] = struct{}{}
+	addLedgerActor(t, &s.actorLedger, a1)
+	addLedgerActor(t, &s.actorLedger, a2)
+	s.actorLedger.tryLeaseUID(101, a1)
+	s.actorLedger.tryLeaseUID(102, a2)
+	s.actorLedger.blockUID(101)
 
 	if got := s.StopUIDs([]int{101, 102, 102}, false); got != 2 {
 		t.Fatalf("StopUIDs got %d want 2", got)
 	}
-	if len(s.actors) != 0 || len(s.uidActors) != 0 {
-		t.Fatalf("StopUIDs should remove actors and leases, actors=%d leases=%d", len(s.actors), len(s.uidActors))
+	if actors, leases := ledgerActorCount(t, &s.actorLedger), ledgerLeaseCount(t, &s.actorLedger); actors != 0 || leases != 0 {
+		t.Fatalf("StopUIDs should remove actors and leases, actors=%d leases=%d", actors, leases)
 	}
-	if _, ok := s.blockedUID[101]; ok {
+	if ledgerIsBlocked(t, &s.actorLedger, 101) {
 		t.Fatalf("StopUIDs should clear blocked marker for removed uid")
 	}
 }
@@ -624,7 +653,7 @@ func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
 	a := newRobotActor(1, robotActorAuto, s.runtime)
 	a.start()
 	defer a.stopAndWait(time.Second)
-	s.actors[1] = a
+	addLedgerActor(t, &s.actorLedger, a)
 
 	if !s.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should use empty actor")
@@ -646,7 +675,7 @@ func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
 	a := newRobotActor(1, robotActorAuto, s.runtime)
 	a.start()
 	defer a.stopAndWait(time.Second)
-	s.actors[1] = a
+	addLedgerActor(t, &s.actorLedger, a)
 
 	if !s.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should attach uid")
@@ -654,7 +683,7 @@ func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
 	if !s.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should be idempotent for leased uid")
 	}
-	s.blockedUID[102] = struct{}{}
+	s.actorLedger.blockUID(102)
 	if s.AttachUID(102, time.Second) {
 		t.Fatalf("AttachUID should reject blocked uid")
 	}
