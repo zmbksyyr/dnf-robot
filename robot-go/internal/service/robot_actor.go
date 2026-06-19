@@ -337,7 +337,7 @@ func (a *robotActor) ensureOnline(now time.Time) {
 	}
 	a.lastOnlineTry = now
 	a.setState(robotActorOnline)
-	res := a.runtime.OnlineNoConfirm(uid, false)
+	res := a.runtime.OnlineNoConfirm(uid)
 	if a.releaseRequestedValue() {
 		return
 	}

@@ -755,7 +755,7 @@ func TestManagedRuntimeActionsRequireActorRegistry(t *testing.T) {
 		name string
 		run  func() (RobotCommandResult, error)
 	}{
-		{name: "online", run: func() (RobotCommandResult, error) { return m.OnlineManaged(RobotCommandRequest{Count: 1}, false) }},
+		{name: "online", run: func() (RobotCommandResult, error) { return m.OnlineManaged(RobotCommandRequest{Count: 1}) }},
 		{name: "move", run: func() (RobotCommandResult, error) { return m.MoveManaged(RobotCommandRequest{Count: 1}) }},
 		{name: "shout", run: func() (RobotCommandResult, error) { return m.ShoutManaged(RobotCommandRequest{Count: 1}, false) }},
 		{name: "shout_both", run: func() (RobotCommandResult, error) { return m.ShoutBothManaged(RobotCommandRequest{Count: 1}) }},

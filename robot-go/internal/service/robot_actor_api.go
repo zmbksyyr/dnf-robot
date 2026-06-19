@@ -8,10 +8,7 @@ import (
 
 var errActorRegistryUnavailable = errors.New("actor registry unavailable")
 
-func (m *RobotManager) OnlineManaged(req RobotCommandRequest, store bool) (RobotCommandResult, error) {
-	if store {
-		return m.Online(req, store)
-	}
+func (m *RobotManager) OnlineManaged(req RobotCommandRequest) (RobotCommandResult, error) {
 	registry := m.currentActorRegistry()
 	if registry == nil {
 		return RobotCommandResult{}, errActorRegistryUnavailable

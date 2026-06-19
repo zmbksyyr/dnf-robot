@@ -31,16 +31,9 @@ func (r *RobotRuntime) IsActive(uid int) bool {
 	return activeRuntimeStatus(st)
 }
 
-func (r *RobotRuntime) Online(uid int, store bool) RobotActionResult {
+func (r *RobotRuntime) OnlineNoConfirm(uid int) RobotActionResult {
 	return r.run(uid, func() RobotActionResult {
-		res, err := r.manager.Online(RobotCommandRequest{UIDs: []int{uid}}, store)
-		return firstActionResult(uid, res, err)
-	})
-}
-
-func (r *RobotRuntime) OnlineNoConfirm(uid int, store bool) RobotActionResult {
-	return r.run(uid, func() RobotActionResult {
-		res, err := r.manager.OnlineNoConfirm(RobotCommandRequest{UIDs: []int{uid}}, store)
+		res, err := r.manager.OnlineNoConfirm(RobotCommandRequest{UIDs: []int{uid}}, false)
 		return firstActionResult(uid, res, err)
 	})
 }

@@ -272,7 +272,7 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		if err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
-		res, err := manager.OnlineManaged(req, false)
+		res, err := manager.OnlineManaged(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil && res.Failed == 0, "error": errString(err), "result": res})
 	case "robotsOnlineAsync":
 		req, err := parseRobotCommand(pkt)
@@ -280,7 +280,7 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
 		return queueRobotAction(manager, "robotsOnlineAsync", requestScope(req), func() (string, error) {
-			res, err := manager.OnlineManaged(req, false)
+			res, err := manager.OnlineManaged(req)
 			logRobotCommandResult("robotsOnlineAsync", res, err)
 			return service.CommandOperationSummary(res, err), err
 		})
