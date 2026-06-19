@@ -621,6 +621,20 @@ func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
 	}
 }
 
+func TestActorStatusFieldsDeriveLedgerState(t *testing.T) {
+	actor := robotActorSnapshot{State: robotActorOffline, OnlineDesired: false}
+	if got := actorOperation(actor); got != "offline" {
+		t.Fatalf("offline operation got %q", got)
+	}
+	actor = robotActorSnapshot{State: robotActorBusy, BusyKind: "store", OnlineDesired: true}
+	if got := actorOperation(actor); got != "store" {
+		t.Fatalf("busy operation got %q", got)
+	}
+	if got := actorHealthState("ok", robotActorSnapshot{Failures: 1}); got != "suspect" {
+		t.Fatalf("health got %q want suspect", got)
+	}
+}
+
 func TestStructuralOperationState(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	done := m.beginStructuralOp("cleanup")

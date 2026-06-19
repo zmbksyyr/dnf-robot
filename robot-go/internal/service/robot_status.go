@@ -10,6 +10,11 @@ type RobotStatusItem struct {
 	CID              int    `json:"cid"`
 	Name             string `json:"name"`
 	Account          string `json:"account"`
+	DBState          string `json:"db_state"`
+	RuntimeState     string `json:"runtime_state"`
+	DesiredState     string `json:"desired_state"`
+	HealthState      string `json:"health_state"`
+	Operation        string `json:"operation,omitempty"`
 	ActorAttached    bool   `json:"actor_attached"`
 	ActorSlot        int    `json:"actor_slot,omitempty"`
 	ActorState       string `json:"actor_state,omitempty"`
@@ -84,12 +89,20 @@ ORDER BY r.uid` + limit
 		if err := rows.Scan(&item.UID, &item.CID, &item.Name, &item.Account, &item.Level, &item.Job, &item.Grow, &coreAlive, &item.Village, &item.Area, &item.X, &item.Y); err != nil {
 			return RobotStatusResult{}, err
 		}
+		item.DBState = "exists"
+		item.RuntimeState = "offline"
+		item.DesiredState = "unmanaged"
+		item.HealthState = "ok"
 		if coreAlive == 0 {
 			item.MissingCore = true
+			item.DBState = "missing_core"
+			item.RuntimeState = "unknown"
 			item.StateName = "broken"
+			item.HealthState = "broken"
 		} else if st, ok := runtime[item.UID]; ok {
 			item.State = st.State
 			item.StateName = st.StateName
+			item.RuntimeState = st.StateName
 			item.Online = activeRuntimeStatus(st)
 			item.DisconnectReason = st.DisconnectReason
 			item.Reconnects = st.Reconnects
@@ -104,6 +117,9 @@ ORDER BY r.uid` + limit
 				item.X = st.X
 				item.Y = st.Y
 			}
+			if st.DisconnectReason != 0 {
+				item.HealthState = "disconnected"
+			}
 		} else {
 			item.StateName = "offline"
 		}
@@ -113,6 +129,13 @@ ORDER BY r.uid` + limit
 			item.ActorState = string(actor.State)
 			item.ActorBusy = actor.Busy
 			item.ActorBusyKind = actor.BusyKind
+			if actor.OnlineDesired {
+				item.DesiredState = "online"
+			} else {
+				item.DesiredState = "offline"
+			}
+			item.Operation = actorOperation(actor)
+			item.HealthState = actorHealthState(item.HealthState, actor)
 		}
 		if item.Online {
 			out.Running++
@@ -127,6 +150,32 @@ ORDER BY r.uid` + limit
 	}
 	out.Total = len(out.Robots)
 	return out, nil
+}
+
+func actorOperation(actor robotActorSnapshot) string {
+	if actor.BusyKind != "" {
+		return actor.BusyKind
+	}
+	switch actor.State {
+	case robotActorAssigned, robotActorOnline:
+		return "online"
+	case robotActorReleasing:
+		return "release"
+	case robotActorOffline:
+		return "offline"
+	default:
+		return ""
+	}
+}
+
+func actorHealthState(current string, actor robotActorSnapshot) string {
+	if actor.Failures > 0 {
+		return "suspect"
+	}
+	if current != "" {
+		return current
+	}
+	return "ok"
 }
 
 func (m *RobotManager) actorStatusMap() map[int]robotActorSnapshot {
