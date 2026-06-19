@@ -50,8 +50,9 @@ func (m *RobotManager) beginTrackedStructuralOperation(typ, scope string) (Robot
 	}
 	done := m.beginStructuralOp(typ)
 	return op, func(summary string, opErr error) RobotOperationStatus {
+		status := m.CompleteOperation(op.ID, summary, opErr)
 		done()
-		return m.CompleteOperation(op.ID, summary, opErr)
+		return status
 	}, nil
 }
 
