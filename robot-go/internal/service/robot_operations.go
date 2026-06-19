@@ -43,6 +43,18 @@ func (m *RobotManager) BeginOperationGuarded(typ, scope string, structural bool)
 	return op, nil
 }
 
+func (m *RobotManager) beginTrackedStructuralOperation(typ, scope string) (RobotOperationStatus, func(string, error) RobotOperationStatus, error) {
+	op, err := m.BeginOperationGuarded(typ, scope, true)
+	if err != nil {
+		return RobotOperationStatus{}, nil, err
+	}
+	done := m.beginStructuralOp(typ)
+	return op, func(summary string, opErr error) RobotOperationStatus {
+		done()
+		return m.CompleteOperation(op.ID, summary, opErr)
+	}, nil
+}
+
 func isStructuralOperation(typ string) bool {
 	switch strings.TrimSpace(typ) {
 	case "create", "cleanup", "createRobots", "cleanupRobots", "cleanupRobotsAsync":

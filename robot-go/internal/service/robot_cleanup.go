@@ -9,7 +9,7 @@ import (
 
 func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResult, error) {
 	var done func()
-	var op RobotOperationStatus
+	var finishOperation func(string, error) RobotOperationStatus
 	var opErr error
 	var opResult RobotCleanupResult
 	if req.Force {
@@ -17,16 +17,17 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 		defer m.lifecycleMu.Unlock()
 		if !req.InternalConfirmedBroken {
 			var err error
-			op, err = m.BeginOperationGuarded("cleanup", cleanupRequestScope(req), true)
+			_, finishOperation, err = m.beginTrackedStructuralOperation("cleanup", cleanupRequestScope(req))
 			if err != nil {
 				return RobotCleanupResult{}, err
 			}
 			defer func() {
-				m.CompleteOperation(op.ID, CleanupOperationSummary(opResult, opErr), opErr)
+				finishOperation(CleanupOperationSummary(opResult, opErr), opErr)
 			}()
+		} else {
+			done = m.beginStructuralOp("cleanup")
+			defer done()
 		}
-		done = m.beginStructuralOp("cleanup")
-		defer done()
 	}
 	if err := m.ensureSchema(); err != nil {
 		opErr = err

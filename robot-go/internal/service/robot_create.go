@@ -9,17 +9,15 @@ import (
 func (m *RobotManager) CreateRobots(req RobotCreateRequest) ([]RobotInfo, error) {
 	m.lifecycleMu.Lock()
 	defer m.lifecycleMu.Unlock()
-	op, err := m.BeginOperationGuarded("create", fmt.Sprintf("count=%d", req.Count), true)
+	_, finishOperation, err := m.beginTrackedStructuralOperation("create", fmt.Sprintf("count=%d", req.Count))
 	if err != nil {
 		return nil, err
 	}
 	var opErr error
 	var created int
 	defer func() {
-		m.CompleteOperation(op.ID, fmt.Sprintf("created=%d", created), opErr)
+		finishOperation(fmt.Sprintf("created=%d", created), opErr)
 	}()
-	done := m.beginStructuralOp("create")
-	defer done()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

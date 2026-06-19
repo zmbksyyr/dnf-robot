@@ -788,6 +788,27 @@ func TestStructuralOperationState(t *testing.T) {
 	}
 }
 
+func TestTrackedStructuralOperationMaintainsBothStates(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	op, finish, err := m.beginTrackedStructuralOperation("cleanup", "uids=2")
+	if err != nil {
+		t.Fatalf("begin tracked structural op failed: %v", err)
+	}
+	if op.ID == 0 || op.State != "running" {
+		t.Fatalf("operation got id=%d state=%s", op.ID, op.State)
+	}
+	if activeOp, _, active := m.structuralOperation(); !active || activeOp != "cleanup" {
+		t.Fatalf("structural op got active=%v op=%q", active, activeOp)
+	}
+	done := finish("deleted=2", nil)
+	if done.State != "done" || done.Summary != "deleted=2" {
+		t.Fatalf("finished op got state=%s summary=%q", done.State, done.Summary)
+	}
+	if activeOp, _, active := m.structuralOperation(); active || activeOp != "" {
+		t.Fatalf("structural op should clear, active=%v op=%q", active, activeOp)
+	}
+}
+
 func TestRobotActorUnhealthyByFailureCount(t *testing.T) {
 	now := time.Now()
 	a := &robotActor{mode: robotActorAuto, uid: 801, failures: 5, firstFailureAt: now.Add(-10 * time.Second)}
