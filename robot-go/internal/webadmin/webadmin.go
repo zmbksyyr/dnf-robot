@@ -273,13 +273,24 @@ func (s *Server) gameMaxUserNum() (int, string, string, bool) {
 }
 
 func gameConfigNameForPort(port int) (string, bool) {
-	cmd := exec.Command("sh", "-c", fmt.Sprintf("ss -lntp 2>/dev/null | grep ':%d ' | head -n1", port))
+	cmd := exec.Command("ss", "-lntp")
 	data, err := cmd.Output()
 	if err != nil || len(data) == 0 {
 		return "", false
 	}
+	portPattern := regexp.MustCompile(`:` + regexp.QuoteMeta(strconv.Itoa(port)) + `\s`)
+	var line []byte
+	for _, candidate := range bytes.Split(data, []byte{'\n'}) {
+		if portPattern.Match(candidate) {
+			line = candidate
+			break
+		}
+	}
+	if len(line) == 0 {
+		return "", false
+	}
 	re := regexp.MustCompile(`pid=([0-9]+)`)
-	m := re.FindSubmatch(data)
+	m := re.FindSubmatch(line)
 	if len(m) != 2 {
 		return "", false
 	}
@@ -369,7 +380,7 @@ func (s *Server) handleKeypairDownload(w http.ResponseWriter, _ *http.Request) {
 func randomToken() string {
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		return fmt.Sprintf("%x", time.Now().UnixNano())
+		panic(fmt.Sprintf("webadmin random token: %v", err))
 	}
 	return hex.EncodeToString(raw[:])
 }

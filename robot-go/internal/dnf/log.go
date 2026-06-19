@@ -26,7 +26,6 @@ var (
 	logFile    *os.File
 	logMu      sync.Mutex
 	logLevel   LogLevel = LogLevelIndispensable
-	lastLog    string
 	logName    string
 	logMaxSize int64 = defaultMaxLogSize
 	logBackups       = defaultMaxLogBackups
@@ -77,10 +76,6 @@ func LogString(level LogLevel, msg string) {
 		now.Day(), now.Month(), now.Year()%100,
 		now.Hour(), now.Minute(), now.Second())
 
-	if msg == lastLog {
-		return
-	}
-
 	var needLog bool
 	var prefix string
 
@@ -110,10 +105,15 @@ func LogString(level LogLevel, msg string) {
 
 	if needLog {
 		rotateLogIfNeededLocked()
-		logFile.WriteString(prefix)
-		lastLog = msg
+		if logFile == nil {
+			return
+		}
+		if _, err := logFile.WriteString(prefix); err != nil {
+			fmt.Printf("[Log] write failed path=%s err=%v\n", logName, err)
+			return
+		}
+		_ = logFile.Sync()
 	}
-	logFile.Sync()
 }
 
 func rotateLogIfNeededLocked() {

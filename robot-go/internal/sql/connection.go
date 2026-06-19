@@ -24,37 +24,7 @@ func Select(db *sql.DB, query string, args ...interface{}) ([][]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
-	var result [][]string
-	rawValues := make([]interface{}, len(cols))
-	strValues := make([]sql.NullString, len(cols))
-	for i := range rawValues {
-		rawValues[i] = &strValues[i]
-	}
-
-	for rows.Next() {
-		if err := rows.Scan(rawValues...); err != nil {
-			return nil, err
-		}
-		row := make([]string, len(cols))
-		for i, v := range strValues {
-			if v.Valid {
-				row[i] = v.String
-			} else {
-				row[i] = ""
-			}
-		}
-		result = append(result, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return scanStringRows(rows)
 }
 
 func Exec(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
@@ -77,7 +47,10 @@ func SelectViaStmt(stmt *sql.Stmt, args ...interface{}) ([][]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanStringRows(rows)
+}
 
+func scanStringRows(rows *sql.Rows) ([][]string, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, err
