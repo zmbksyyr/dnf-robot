@@ -9,8 +9,8 @@ func (m *RobotManager) OnlineManaged(req RobotCommandRequest, store bool) (Robot
 	if store {
 		return m.Online(req, store)
 	}
-	supervisor := m.currentSupervisor()
-	if supervisor == nil {
+	registry := m.currentActorRegistry()
+	if registry == nil {
 		return m.Online(req, store)
 	}
 	robots, err := m.selectRobots(req)
@@ -18,18 +18,18 @@ func (m *RobotManager) OnlineManaged(req RobotCommandRequest, store bool) (Robot
 		return RobotCommandResult{}, err
 	}
 	rc := m.loadRobotConfig()
-	supervisor.ensureAutoActorSlots(rc, rc.AutoTargetOnlineCount)
+	registry.EnsureActorSlots(rc, rc.AutoTargetOnlineCount)
 	result := newCommandResult(len(robots))
 	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
 	for _, robot := range robots {
-		if !supervisor.HasUID(robot.UID) {
-			if !supervisor.AttachUID(robot.UID, 10*time.Second) {
+		if !registry.HasUID(robot.UID) {
+			if !registry.AttachUID(robot.UID, 10*time.Second) {
 				result.Failed++
 				result.Robots = append(result.Robots, actorFullResult(robot, "online"))
 				continue
 			}
 		}
-		item, ok := supervisor.Command(robot.UID, robotActorCmdOnline, timeout)
+		item, ok := registry.Command(robot.UID, robotActorCmdOnline, timeout)
 		item.CID = robot.CID
 		if ok && (item.OK || item.State == "accepted" || item.State == "running") {
 			result.Accepted++
@@ -72,8 +72,8 @@ func (m *RobotManager) ShoutManaged(req RobotCommandRequest, world bool) (RobotC
 }
 
 func (m *RobotManager) ShoutBothManaged(req RobotCommandRequest) (RobotCommandResult, error) {
-	supervisor := m.currentSupervisor()
-	if supervisor == nil {
+	registry := m.currentActorRegistry()
+	if registry == nil {
 		return m.Shout(req)
 	}
 	robots, err := m.selectRobots(req)
@@ -83,13 +83,13 @@ func (m *RobotManager) ShoutBothManaged(req RobotCommandRequest) (RobotCommandRe
 	result := newCommandResult(len(robots))
 	timeout := time.Duration(m.loadRobotConfig().SystemManualActionTimeoutSec) * time.Second
 	for _, robot := range robots {
-		if !supervisor.HasUID(robot.UID) {
+		if !registry.HasUID(robot.UID) {
 			result.Failed++
 			result.Robots = append(result.Robots, uidNotAttachedResult(robot, "shout"))
 			continue
 		}
-		local, localOK := supervisor.Command(robot.UID, robotActorShoutLocal, timeout)
-		world, worldOK := supervisor.Command(robot.UID, robotActorShoutWorld, timeout)
+		local, localOK := registry.Command(robot.UID, robotActorShoutLocal, timeout)
+		world, worldOK := registry.Command(robot.UID, robotActorShoutWorld, timeout)
 		if localOK && worldOK && local.OK && world.OK {
 			result.Accepted++
 			result.Confirmed++
@@ -121,8 +121,8 @@ func (m *RobotManager) StoreManaged(req RobotCommandRequest) (RobotCommandResult
 }
 
 func (m *RobotManager) LogoutManaged(req RobotCommandRequest) (RobotCommandResult, error) {
-	supervisor := m.currentSupervisor()
-	if supervisor == nil {
+	registry := m.currentActorRegistry()
+	if registry == nil {
 		return m.Logout(req)
 	}
 	robots, err := m.selectRobots(req)
@@ -132,8 +132,8 @@ func (m *RobotManager) LogoutManaged(req RobotCommandRequest) (RobotCommandResul
 	result := newCommandResult(len(robots))
 	timeout := time.Duration(m.loadRobotConfig().SystemManualActionTimeoutSec) * time.Second
 	for _, robot := range robots {
-		if supervisor.HasUID(robot.UID) {
-			item, ok := supervisor.LogoutUID(robot.UID, timeout)
+		if registry.HasUID(robot.UID) {
+			item, ok := registry.LogoutUID(robot.UID, timeout)
 			item.CID = robot.CID
 			if ok && item.OK {
 				result.Accepted++
@@ -161,8 +161,8 @@ func (m *RobotManager) LogoutManaged(req RobotCommandRequest) (RobotCommandResul
 }
 
 func (m *RobotManager) actorCommandManaged(req RobotCommandRequest, cmd robotActorCommand, action string, fallback func(RobotCommandRequest) (RobotCommandResult, error)) (RobotCommandResult, error) {
-	supervisor := m.currentSupervisor()
-	if supervisor == nil {
+	registry := m.currentActorRegistry()
+	if registry == nil {
 		return fallback(req)
 	}
 	robots, err := m.selectRobots(req)
@@ -172,12 +172,12 @@ func (m *RobotManager) actorCommandManaged(req RobotCommandRequest, cmd robotAct
 	result := newCommandResult(len(robots))
 	timeout := time.Duration(m.loadRobotConfig().SystemManualActionTimeoutSec) * time.Second
 	for _, robot := range robots {
-		if !supervisor.HasUID(robot.UID) {
+		if !registry.HasUID(robot.UID) {
 			result.Failed++
 			result.Robots = append(result.Robots, uidNotAttachedResult(robot, action))
 			continue
 		}
-		item, ok := supervisor.Command(robot.UID, cmd, timeout)
+		item, ok := registry.Command(robot.UID, cmd, timeout)
 		item.CID = robot.CID
 		if ok && item.OK {
 			result.Accepted++
@@ -218,12 +218,6 @@ func actorFullResult(robot RobotInfo, action string) RobotActionResult {
 		State:   "actor_full",
 		Message: fmt.Sprintf("%s requires an empty actor slot", action),
 	}
-}
-
-func (m *RobotManager) currentSupervisor() *RobotSupervisor {
-	m.autoMu.Lock()
-	defer m.autoMu.Unlock()
-	return m.supervisor
 }
 
 func (m *RobotManager) waitManagedConfirm(result *RobotCommandResult, timeout time.Duration) {

@@ -644,6 +644,18 @@ func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
 	}
 }
 
+func TestManagerCurrentActorRegistry(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	if got := m.currentActorRegistry(); got != nil {
+		t.Fatalf("empty manager registry got %#v want nil", got)
+	}
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	m.supervisor = s
+	if got := m.currentActorRegistry(); got == nil {
+		t.Fatalf("manager should expose actor registry when supervisor exists")
+	}
+}
+
 func TestActorStatusFieldsDeriveLedgerState(t *testing.T) {
 	actor := robotActorSnapshot{State: robotActorOffline, OnlineDesired: false}
 	if got := actorOperation(actor); got != "offline" {

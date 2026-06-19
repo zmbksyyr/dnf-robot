@@ -63,8 +63,8 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 		}
 	}
 	if len(uids) > 0 {
-		if supervisor := m.currentSupervisor(); supervisor != nil {
-			supervisor.StopUIDs(uids, true)
+		if registry := m.currentActorRegistry(); registry != nil {
+			registry.StopUIDs(uids, true)
 		} else {
 			_, _ = m.Logout(RobotCommandRequest{UIDs: uids})
 		}

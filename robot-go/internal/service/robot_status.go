@@ -180,11 +180,11 @@ func actorHealthState(current string, actor robotActorSnapshot) string {
 
 func (m *RobotManager) actorStatusMap() map[int]robotActorSnapshot {
 	out := map[int]robotActorSnapshot{}
-	supervisor := m.currentSupervisor()
-	if supervisor == nil {
+	registry := m.currentActorRegistry()
+	if registry == nil {
 		return out
 	}
-	for _, snap := range supervisor.actorSnapshots() {
+	for _, snap := range registry.actorSnapshots() {
 		if snap.UID > 0 {
 			out[snap.UID] = snap
 		}

@@ -284,6 +284,10 @@ func (s *RobotSupervisor) maintainTarget(rc robotRuntimeConfig) {
 	s.ensureAutoActorSlots(rc, target)
 }
 
+func (s *RobotSupervisor) EnsureActorSlots(rc robotRuntimeConfig, target int) {
+	s.ensureAutoActorSlots(rc, target)
+}
+
 func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int) {
 	if target < 0 {
 		target = 0
