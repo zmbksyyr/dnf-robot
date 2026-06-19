@@ -33,19 +33,10 @@ func (m *RobotManager) OnlineManaged(req RobotCommandRequest) (RobotCommandResul
 		item.CID = robot.CID
 		if ok && (item.OK || item.State == "accepted" || item.State == "running") {
 			result.Accepted++
-			result.Robots = append(result.Robots, RobotActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted"})
+			result.Robots = append(result.Robots, robotActionResult(robot, false, "accepted", ""))
 		} else {
 			result.Failed++
-			if item.UID == 0 {
-				item.UID = robot.UID
-			}
-			if item.State == "" {
-				item.State = "failed"
-			}
-			if item.Message == "" {
-				item.Message = "online actor command failed"
-			}
-			result.Robots = append(result.Robots, item)
+			result.Robots = append(result.Robots, failedActorResult(robot, item, "online actor command failed"))
 		}
 	}
 	m.waitManagedConfirm(&result, time.Duration(rc.OnlineConfirmTimeoutMS)*time.Millisecond)
@@ -87,7 +78,7 @@ func (m *RobotManager) ShoutBothManaged(req RobotCommandRequest) (RobotCommandRe
 		if localOK && worldOK && local.OK && world.OK {
 			result.Accepted++
 			result.Confirmed++
-			result.Robots = append(result.Robots, RobotActionResult{UID: robot.UID, CID: robot.CID, OK: true, State: "sent"})
+			result.Robots = append(result.Robots, robotActionResult(robot, true, "sent", ""))
 		} else {
 			result.Failed++
 			msg := "actor command failed"
@@ -102,7 +93,7 @@ func (m *RobotManager) ShoutBothManaged(req RobotCommandRequest) (RobotCommandRe
 					msg = world.State
 				}
 			}
-			result.Robots = append(result.Robots, RobotActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: msg})
+			result.Robots = append(result.Robots, robotActionResult(robot, false, "failed", msg))
 		}
 	}
 	return result, nil
@@ -133,16 +124,7 @@ func (m *RobotManager) LogoutManaged(req RobotCommandRequest) (RobotCommandResul
 				result.Robots = append(result.Robots, item)
 			} else {
 				result.Failed++
-				if item.UID == 0 {
-					item.UID = robot.UID
-				}
-				if item.State == "" {
-					item.State = "failed"
-				}
-				if item.Message == "" {
-					item.Message = "logout actor command failed"
-				}
-				result.Robots = append(result.Robots, item)
+				result.Robots = append(result.Robots, failedActorResult(robot, item, "logout actor command failed"))
 			}
 			continue
 		}
@@ -177,19 +159,30 @@ func (m *RobotManager) actorCommandManaged(req RobotCommandRequest, cmd robotAct
 			result.Robots = append(result.Robots, item)
 		} else {
 			result.Failed++
-			if item.UID == 0 {
-				item.UID = robot.UID
-			}
-			if item.State == "" {
-				item.State = "failed"
-			}
-			if item.Message == "" {
-				item.Message = fmt.Sprintf("%s actor command failed", action)
-			}
-			result.Robots = append(result.Robots, item)
+			result.Robots = append(result.Robots, failedActorResult(robot, item, fmt.Sprintf("%s actor command failed", action)))
 		}
 	}
 	return result, nil
+}
+
+func robotActionResult(robot RobotInfo, ok bool, state, message string) RobotActionResult {
+	return RobotActionResult{UID: robot.UID, CID: robot.CID, OK: ok, State: state, Message: message}
+}
+
+func failedActorResult(robot RobotInfo, item RobotActionResult, fallbackMessage string) RobotActionResult {
+	if item.UID == 0 {
+		item.UID = robot.UID
+	}
+	if item.CID == 0 {
+		item.CID = robot.CID
+	}
+	if item.State == "" {
+		item.State = "failed"
+	}
+	if item.Message == "" {
+		item.Message = fallbackMessage
+	}
+	return item
 }
 
 func uidNotAttachedResult(robot RobotInfo, action string) RobotActionResult {
