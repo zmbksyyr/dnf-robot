@@ -20,7 +20,7 @@ var _ actorRegistry = (*RobotSupervisor)(nil)
 // Actor ownership and command routing.
 
 func (s *RobotSupervisor) Command(uid int, cmd robotActorCommand, timeout time.Duration) (RobotActionResult, bool) {
-	actor := s.actorLedger.actorForUID(uid)
+	actor := s.ledger.actorForUID(uid)
 	if actor == nil {
 		return RobotActionResult{UID: uid, OK: false, State: "missing_actor"}, false
 	}
@@ -36,7 +36,7 @@ func (s *RobotSupervisor) LogoutUID(uid int, timeout time.Duration) (RobotAction
 // AttachUID binds an unmanaged UID to an empty actor slot. It does not perform
 // login directly; callers should send robotActorCmdOnline through Command.
 func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
-	actor, existing, ok := s.actorLedger.reserveEmptyAutoActor(uid)
+	actor, existing, ok := s.ledger.reserveEmptyAutoActor(uid)
 	if !ok {
 		return false
 	}
@@ -46,18 +46,18 @@ func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
 	if actor.assignAndWait(uid, timeout) {
 		return true
 	}
-	s.actorLedger.unleaseUID(uid, actor)
+	s.ledger.unleaseUID(uid, actor)
 	return false
 }
 
 func (s *RobotSupervisor) HasUID(uid int) bool {
-	return s.actorLedger.hasUID(uid)
+	return s.ledger.hasUID(uid)
 }
 
 // actorSnapshots is the read model for UI/status surfaces. Callers get a copy
 // of actor pointers first so actor.snapshot() is never called while ledger is held.
 func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
-	actors := s.actorLedger.actorPointers()
+	actors := s.ledger.actorPointers()
 	out := make([]robotActorSnapshot, 0, len(actors))
 	for _, actor := range actors {
 		out = append(out, actor.snapshot())
@@ -68,7 +68,7 @@ func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
 // StopUID detaches the UID from supervisor ownership. With logout=true the
 // actor performs release/logout before its slot is removed.
 func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
-	actor := s.actorLedger.detachUID(uid)
+	actor := s.ledger.detachUID(uid)
 	if actor != nil {
 		if logout {
 			actor.releaseAndWait(10 * time.Second)
@@ -84,7 +84,7 @@ func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
 
 // StopUIDs is the bulk ownership detach path used before cleanup/delete.
 func (s *RobotSupervisor) StopUIDs(uids []int, logout bool) int {
-	actors, missing := s.actorLedger.detachUIDs(uids)
+	actors, missing := s.ledger.detachUIDs(uids)
 	if s.runtime != nil {
 		for _, uid := range missing {
 			s.runtime.Logout(uid)

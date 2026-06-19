@@ -8,7 +8,7 @@ import (
 // Actor stop/release helpers.
 
 func (s *RobotSupervisor) stopAutoActors(logout bool) {
-	stopActorsConcurrent(s.actorLedger.detachAutoActors(), logout)
+	stopActorsConcurrent(s.ledger.detachAutoActors(), logout)
 }
 
 func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
@@ -16,7 +16,7 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 		return
 	}
 	status := s.manager.runtimeStatusMap()
-	actors := s.actorLedger.detachSomeAutoActors(status, limit, floor)
+	actors := s.ledger.detachSomeAutoActors(status, limit, floor)
 	if len(actors) == 0 {
 		return
 	}
@@ -25,7 +25,7 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 }
 
 func (s *RobotSupervisor) stopAll(logout bool) {
-	stopActorsConcurrent(s.actorLedger.detachAllActors(), logout)
+	stopActorsConcurrent(s.ledger.detachAllActors(), logout)
 }
 
 func stopActorsConcurrent(actors []*robotActor, logout bool) {

@@ -24,13 +24,13 @@ func (s *RobotSupervisor) assignIdleAutoActors(rc robotRuntimeConfig) {
 		if pair.actor.assignAndWait(pair.uid, 10*time.Second) {
 			continue
 		}
-		s.actorLedger.unleaseUID(pair.uid, pair.actor)
+		s.ledger.unleaseUID(pair.uid, pair.actor)
 		robotLogf("[RobotSupervisor] assign_failed slot=%d uid=%d\n", pair.actor.slotID, pair.uid)
 	}
 }
 
 func (s *RobotSupervisor) idleAutoActors() []*robotActor {
-	return s.actorLedger.idleAutoActors()
+	return s.ledger.idleAutoActors()
 }
 
 type robotActorLease struct {
@@ -54,7 +54,7 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 			return out
 		}
 		actor := actors[nextActor]
-		if s.actorLedger.tryLeaseUID(robot.UID, actor) {
+		if s.ledger.tryLeaseUID(robot.UID, actor) {
 			out = append(out, robotActorLease{actor: actor, uid: robot.UID})
 			nextActor++
 		}
@@ -66,7 +66,7 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 	target := schedulerTargetCapacity(rc)
 	createRoom := schedulerCreateRoom(rc, len(robots))
 	if createRoom <= 0 {
-		robotLogf("[RobotSupervisor] create_blocked_by_target existing=%d target=%d need=%d blocked=%d\n", len(robots), target, need, s.actorLedger.blockedCount())
+		robotLogf("[RobotSupervisor] create_blocked_by_target existing=%d target=%d need=%d blocked=%d\n", len(robots), target, need, s.ledger.blockedCount())
 		return out
 	}
 	if need > createRoom {
@@ -85,7 +85,7 @@ func (s *RobotSupervisor) acquireUIDs(rc robotRuntimeConfig, actors []*robotActo
 			break
 		}
 		actor := actors[nextActor]
-		if s.actorLedger.tryLeaseUID(robot.UID, actor) {
+		if s.ledger.tryLeaseUID(robot.UID, actor) {
 			out = append(out, robotActorLease{actor: actor, uid: robot.UID})
 			nextActor++
 		}

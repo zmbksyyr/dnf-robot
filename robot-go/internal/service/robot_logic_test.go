@@ -613,19 +613,19 @@ func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
 	a2 := newRobotActor(2, robotActorAuto, s.runtime)
 	a1.start()
 	a2.start()
-	addLedgerActor(t, &s.actorLedger, a1)
-	addLedgerActor(t, &s.actorLedger, a2)
-	s.actorLedger.tryLeaseUID(101, a1)
-	s.actorLedger.tryLeaseUID(102, a2)
-	s.actorLedger.blockUID(101)
+	addLedgerActor(t, &s.ledger, a1)
+	addLedgerActor(t, &s.ledger, a2)
+	s.ledger.tryLeaseUID(101, a1)
+	s.ledger.tryLeaseUID(102, a2)
+	s.ledger.blockUID(101)
 
 	if got := s.StopUIDs([]int{101, 102, 102}, false); got != 2 {
 		t.Fatalf("StopUIDs got %d want 2", got)
 	}
-	if actors, leases := ledgerActorCount(t, &s.actorLedger), ledgerLeaseCount(t, &s.actorLedger); actors != 0 || leases != 0 {
+	if actors, leases := ledgerActorCount(t, &s.ledger), ledgerLeaseCount(t, &s.ledger); actors != 0 || leases != 0 {
 		t.Fatalf("StopUIDs should remove actors and leases, actors=%d leases=%d", actors, leases)
 	}
-	if ledgerIsBlocked(t, &s.actorLedger, 101) {
+	if ledgerIsBlocked(t, &s.ledger, 101) {
 		t.Fatalf("StopUIDs should clear blocked marker for removed uid")
 	}
 }
@@ -653,7 +653,7 @@ func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
 	a := newRobotActor(1, robotActorAuto, s.runtime)
 	a.start()
 	defer a.stopAndWait(time.Second)
-	addLedgerActor(t, &s.actorLedger, a)
+	addLedgerActor(t, &s.ledger, a)
 
 	if !s.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should use empty actor")
@@ -675,7 +675,7 @@ func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
 	a := newRobotActor(1, robotActorAuto, s.runtime)
 	a.start()
 	defer a.stopAndWait(time.Second)
-	addLedgerActor(t, &s.actorLedger, a)
+	addLedgerActor(t, &s.ledger, a)
 
 	if !s.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should attach uid")
@@ -683,7 +683,7 @@ func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
 	if !s.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should be idempotent for leased uid")
 	}
-	s.actorLedger.blockUID(102)
+	s.ledger.blockUID(102)
 	if s.AttachUID(102, time.Second) {
 		t.Fatalf("AttachUID should reject blocked uid")
 	}

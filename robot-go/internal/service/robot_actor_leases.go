@@ -8,7 +8,7 @@ import (
 // Lease health, broken UID cleanup, and recycle paths.
 
 func (s *RobotSupervisor) releaseBrokenLeases() {
-	leases := s.actorLedger.leaseSnapshots()
+	leases := s.ledger.leaseSnapshots()
 	if len(leases) == 0 {
 		return
 	}
@@ -25,14 +25,14 @@ func (s *RobotSupervisor) releaseBrokenLeases() {
 		if alive[item.uid] {
 			continue
 		}
-		if !s.actorLedger.blockLeaseIfCurrent(item.uid, item.actor) {
+		if !s.ledger.blockLeaseIfCurrent(item.uid, item.actor) {
 			continue
 		}
 		robotLogf("[RobotSupervisor] broken_lease uid=%d slot=%d action=release_cleanup\n", item.uid, item.actor.slotID)
 		go func(actor *robotActor, uid int) {
 			released := actor.releaseAndWait(10 * time.Second)
 			if released != uid && released > 0 {
-				s.actorLedger.unleaseUID(released, actor)
+				s.ledger.unleaseUID(released, actor)
 			}
 			s.cleanupBrokenUID(uid)
 		}(item.actor, item.uid)
@@ -52,12 +52,12 @@ func (s *RobotSupervisor) cleanupBrokenUID(uid int) {
 		robotLogf("[RobotSupervisor] broken_cleanup_skipped uid=%d requested=%d skipped=%d\n", uid, result.Requested, result.Skipped)
 		return
 	}
-	s.actorLedger.unblockUID(uid)
+	s.ledger.unblockUID(uid)
 	robotLogf("[RobotSupervisor] broken_cleanup_done uid=%d deleted=%d skipped=%d\n", uid, result.Deleted, result.Skipped)
 }
 
 func (s *RobotSupervisor) cleanupBlockedUIDs(limit int) {
-	for _, uid := range s.actorLedger.blockedUIDs(limit) {
+	for _, uid := range s.ledger.blockedUIDs(limit) {
 		s.cleanupBrokenUID(uid)
 	}
 }
@@ -97,11 +97,11 @@ func (s *RobotSupervisor) recycleActorUID(actor *robotActor, status robotActorSt
 	if released <= 0 {
 		released = status.UID
 	}
-	s.actorLedger.removeLeaseIfActor(released, actor)
+	s.ledger.removeLeaseIfActor(released, actor)
 	result, err := s.manager.CleanupRobots(RobotCleanupRequest{UIDs: []int{released}, Force: true})
 	if err != nil {
 		robotLogf("[RobotSupervisor] recycle_cleanup_failed uid=%d err=%v\n", released, err)
-		s.actorLedger.blockUID(released)
+		s.ledger.blockUID(released)
 		return
 	}
 	robotLogf("[RobotSupervisor] recycle_cleanup_done uid=%d deleted=%d skipped=%d\n", released, result.Deleted, result.Skipped)

@@ -6,7 +6,7 @@ type RobotSupervisor struct {
 	manager *RobotManager
 	runtime *RobotRuntime
 
-	actorLedger
+	ledger actorLedger
 
 	stop chan struct{}
 	done chan struct{}
@@ -20,11 +20,11 @@ type RobotSupervisor struct {
 // in robot_auto_scheduler.go.
 func NewRobotSupervisor(manager *RobotManager, runtime *RobotRuntime) *RobotSupervisor {
 	return &RobotSupervisor{
-		manager:     manager,
-		runtime:     runtime,
-		actorLedger: newActorLedger(),
-		stop:        make(chan struct{}),
-		done:        make(chan struct{}),
+		manager: manager,
+		runtime: runtime,
+		ledger:  newActorLedger(),
+		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 }
 

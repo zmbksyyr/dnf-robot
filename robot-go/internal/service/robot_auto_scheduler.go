@@ -92,7 +92,7 @@ func (s *RobotSupervisor) maintainTarget(rc robotRuntimeConfig) {
 
 func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int) {
 	status := s.manager.runtimeStatusMap()
-	extra := s.actorLedger.ensureAutoActorSlots(s.runtime, rc, target, status)
+	extra := s.ledger.ensureAutoActorSlots(s.runtime, rc, target, status)
 	stopActorsConcurrent(extra, true)
 }
 
@@ -104,7 +104,7 @@ func (s *RobotSupervisor) recycleUnhealthyActors(now time.Time, rc robotRuntimeC
 		status robotActorStatus
 	}
 	var unhealthy []recycleCandidate
-	for _, actor := range s.actorLedger.autoActorPointers() {
+	for _, actor := range s.ledger.autoActorPointers() {
 		status := actor.status(now, rc)
 		if status.RecycleUID {
 			unhealthy = append(unhealthy, recycleCandidate{actor: actor, status: status})

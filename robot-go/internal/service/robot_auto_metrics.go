@@ -44,7 +44,7 @@ func (s *RobotSupervisor) updateMetrics(rc robotRuntimeConfig) {
 }
 
 func (s *RobotSupervisor) filterBlockedRuntimeStatus(status map[int]RuntimeRobotStatus) {
-	s.actorLedger.filterBlockedRuntimeStatus(status)
+	s.ledger.filterBlockedRuntimeStatus(status)
 }
 
 func (s *RobotSupervisor) filterMissingRuntimeStatus(status map[int]RuntimeRobotStatus) {
@@ -82,8 +82,8 @@ type supervisorActorCounts struct {
 }
 
 func (s *RobotSupervisor) actorCounts(now time.Time, rc robotRuntimeConfig) supervisorActorCounts {
-	counts := supervisorActorCounts{blocked: s.actorLedger.blockedCount()}
-	for _, actor := range s.actorLedger.autoActorPointers() {
+	counts := supervisorActorCounts{blocked: s.ledger.blockedCount()}
+	for _, actor := range s.ledger.autoActorPointers() {
 		status := actor.status(now, rc)
 		counts.auto++
 		if status.UID > 0 {
