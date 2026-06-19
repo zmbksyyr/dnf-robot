@@ -48,13 +48,6 @@ func randomBetween(r *rand.Rand, min, max int) int {
 	return min + r.Intn(max-min+1)
 }
 
-func randomFrom(r *rand.Rand, vals []int) int {
-	if len(vals) == 0 {
-		return 0
-	}
-	return vals[r.Intn(len(vals))]
-}
-
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -74,13 +67,6 @@ func absInt(v int) int {
 		return -v
 	}
 	return v
-}
-
-func randomString(r *rand.Rand, vals []string, fallback string) string {
-	if len(vals) == 0 {
-		return fallback
-	}
-	return vals[r.Intn(len(vals))]
 }
 
 func robotUIDs(robots []RobotInfo) []int {

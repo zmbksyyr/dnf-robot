@@ -3,7 +3,6 @@ package dnf
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -258,7 +257,7 @@ func (t *RobotDnfTask) DeleteByInt(key int) bool {
 		delete(t.robotVoMap, key)
 		return true
 	}
-	return true
+	return false
 }
 
 func (t *RobotDnfTask) GetRobotVoMap() map[int]*RobotVo {
@@ -276,13 +275,6 @@ func (t *RobotDnfTask) Shutdown() {
 		close(t.done)
 		t.messageCond.Broadcast()
 	})
-}
-
-func GetIntRandomFromDev(min, max int) int {
-	if min > max {
-		min, max = max, min
-	}
-	return min + rand.Intn(max-min+1)
 }
 
 func (t *RobotDnfTask) dnfMsgOnLine(_ *RobotDnfTask, voVoid interface{}) bool {

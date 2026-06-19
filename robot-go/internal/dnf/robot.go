@@ -340,22 +340,6 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.LocalIP = "127.0.0.1"
 }
 
-func (r *RobotVo) Close() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.State == StateStop {
-		return
-	}
-	if r.Conn != nil {
-		r.Conn.Close()
-		r.Conn = nil
-	}
-	r.recvBuffer = nil
-	r.recvSize = 0
-	r.State = StateStop
-}
-
 func (r *RobotVo) CloseOut() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
