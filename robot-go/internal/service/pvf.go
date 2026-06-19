@@ -97,7 +97,7 @@ func ensurePVFExports(dfGameR, configDir string) error {
 		return fmt.Errorf("parse pvf: %w", err)
 	}
 	equipment, stackable, maps := extractPVFData(archive)
-	removeLegacyPVFExports(configDir)
+	removeObsoletePVFExports(configDir)
 	if err := writeJSON(filepath.Join(configDir, "pvf_equipment_catalog.json"), equipment); err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 	return got.Version == want.Version && got.Source == want.Source && got.Size == want.Size && got.ModTime == want.ModTime && got.MD5 == want.MD5
 }
 
-func removeLegacyPVFExports(configDir string) {
+func removeObsoletePVFExports(configDir string) {
 	for _, name := range []string{"equipment_catalog.json", "stackable_catalog.json", "map_catalog.json"} {
 		_ = os.Remove(filepath.Join(configDir, name))
 	}

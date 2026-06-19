@@ -15,9 +15,9 @@ type RobotSupervisor struct {
 	nextKeyLog  time.Time
 }
 
-// RobotSupervisor is the runtime coordinator that holds actor ownership state.
-// Ownership commands live in robot_actor_registry.go; automatic scheduling lives
-// in robot_auto_scheduler.go.
+// RobotSupervisor coordinates the runtime loop. Actor ownership is stored in
+// the ledger and exposed through the registry boundary; automatic scheduling
+// lives in robot_auto_scheduler.go.
 func NewRobotSupervisor(manager *RobotManager, runtime *RobotRuntime) *RobotSupervisor {
 	return &RobotSupervisor{
 		manager: manager,
