@@ -463,6 +463,24 @@ func TestAdaptiveSchedulerFreezesScaleUpOnPendingBacklog(t *testing.T) {
 	}
 }
 
+func TestLoadRobotConfigPreservesAdaptiveScaleFreeze(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "[auto]\nauto_target_online_count = 600\n")
+	m.autoMu.Lock()
+	m.autoStats.UpdatedAt = time.Now()
+	m.autoStats.Running = 130
+	m.autoStats.Idle = 150
+	m.autoStats.Actors = 700
+	m.autoStats.GamePortReady = true
+	m.autoMu.Unlock()
+	rc := m.loadRobotConfig()
+	if rc.SchedulerOnlineBatchSize != -1 {
+		t.Fatalf("SchedulerOnlineBatchSize got %d want adaptive freeze -1", rc.SchedulerOnlineBatchSize)
+	}
+	if got := schedulerScaleUpBatch(rc); got != 0 {
+		t.Fatalf("schedulerScaleUpBatch got %d want 0", got)
+	}
+}
+
 func TestBreakerActorFloorUsesSchedulerPercent(t *testing.T) {
 	got := breakerActorFloor(robotRuntimeConfig{AutoTargetOnlineCount: 600, MaxOnlineRobots: 1000, SchedulerBreakerFloorPct: 70})
 	if got != 420 {

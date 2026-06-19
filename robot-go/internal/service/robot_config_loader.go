@@ -202,9 +202,6 @@ func (m *RobotManager) loadRobotConfig() robotRuntimeConfig {
 	if rc.SchedulerStoreConcurrent <= 0 {
 		rc.SchedulerStoreConcurrent = 30
 	}
-	if rc.SchedulerOnlineBatchSize <= 0 {
-		rc.SchedulerOnlineBatchSize = 120
-	}
 	if rc.SchedulerOnlineBatchSize > 120 {
 		rc.SchedulerOnlineBatchSize = 120
 	}
