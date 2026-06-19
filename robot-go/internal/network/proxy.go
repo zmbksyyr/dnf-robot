@@ -158,18 +158,23 @@ func (p *Proxy) acceptWorkThread() {
 		p.fireEvent(AppAcceptOK, remoteAddr.IP.String())
 
 		p.serverConnMu.Lock()
+		if p.serverConn != nil {
+			_ = p.serverConn.Close()
+		}
 		p.serverConn = conn
 		p.serverConnMu.Unlock()
 
 		go p.clientWorkThread()
 		go p.clientBeatThread()
-
-		break
 	}
 }
 
 func (p *Proxy) clientWorkThread() {
 	buf := make([]byte, 1024)
+	var active net.Conn
+	defer func() {
+		p.clearServerConn(active)
+	}()
 	for p.running.Load() {
 		p.serverConnMu.Lock()
 		conn := p.serverConn
@@ -178,6 +183,7 @@ func (p *Proxy) clientWorkThread() {
 		if conn == nil {
 			return
 		}
+		active = conn
 
 		n, err := conn.Read(buf)
 		if err != nil {
@@ -214,12 +220,33 @@ func (p *Proxy) clientBeatThread() {
 			binary.LittleEndian.PutUint32(header[0:4], SystemID)
 			binary.LittleEndian.PutUint32(header[4:8], uint32(CLIENT_BEAT))
 			binary.LittleEndian.PutUint32(header[8:12], msgHeaderSize)
+			if p.currentServerConn() == nil {
+				return
+			}
 			p.serverSocketSend(header)
 
 		case <-p.stopCh:
 			return
 		}
 	}
+}
+
+func (p *Proxy) currentServerConn() net.Conn {
+	p.serverConnMu.Lock()
+	defer p.serverConnMu.Unlock()
+	return p.serverConn
+}
+
+func (p *Proxy) clearServerConn(conn net.Conn) {
+	if conn == nil {
+		return
+	}
+	p.serverConnMu.Lock()
+	if p.serverConn == conn {
+		_ = p.serverConn.Close()
+		p.serverConn = nil
+	}
+	p.serverConnMu.Unlock()
 }
 
 func (p *Proxy) serverSocketSend(data []byte) {

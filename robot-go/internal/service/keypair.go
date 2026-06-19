@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -148,10 +149,10 @@ func ensureGameKeypair(cfg *config.SysConfig) (loadedKeypair, string, error) {
 	if !privExists {
 		if pubExists {
 			reason := "game目录当前密钥缺少 privatekey.pem，无法从 publickey.pem 还原私钥"
-			return loadedKeypair{}, reason, fmt.Errorf(reason)
+			return loadedKeypair{}, reason, errors.New(reason)
 		}
 		reason := "game目录当前密钥缺少 privatekey.pem 和 publickey.pem"
-		return loadedKeypair{}, reason, fmt.Errorf(reason)
+		return loadedKeypair{}, reason, errors.New(reason)
 	}
 	priv, err := parseRSAPrivateFile(gamePriv)
 	if err != nil {
@@ -180,7 +181,7 @@ func ensureGameKeypair(cfg *config.SysConfig) (loadedKeypair, string, error) {
 	}
 	if priv.N.Cmp(pub.N) != 0 || priv.E != pub.E {
 		reason := "game目录当前 privatekey.pem 与 publickey.pem 不是同一对 RSA 密钥"
-		return loadedKeypair{}, reason, fmt.Errorf(reason)
+		return loadedKeypair{}, reason, errors.New(reason)
 	}
 	pair, err := validateKeypair(priv, pub)
 	if err != nil {

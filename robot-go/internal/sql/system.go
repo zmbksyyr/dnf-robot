@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -86,6 +87,24 @@ func tableExists(db *sql.DB, schemaName, tableName string) (bool, error) {
 	return len(rows) > 0, nil
 }
 
+func execStatementsInSchema(db *sql.DB, schemaName string, statements []string) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "USE "+schemaName); err != nil {
+		return fmt.Errorf("use %s: %w", schemaName, err)
+	}
+	for i, stmt := range statements {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("stmt %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
 func migrateAccountsTable(db *sql.DB) error {
 	alterations := []struct {
 		col string
@@ -126,7 +145,13 @@ func migrateStarskyDatabase(db *sql.DB) error {
 	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS d_starsky DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci"); err != nil {
 		return fmt.Errorf("create d_starsky: %w", err)
 	}
-	if _, err := db.Exec("USE d_starsky"); err != nil {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("connect d_starsky migration: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "USE d_starsky"); err != nil {
 		return fmt.Errorf("use d_starsky: %w", err)
 	}
 
@@ -400,19 +425,19 @@ func migrateStarskyDatabase(db *sql.DB) error {
 	}
 
 	for i, stmt := range statements {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("stmt %d: %w", i, err)
 		}
 	}
 
-	if _, err := db.Exec(`UPDATE new_config SET Charactercolor='FFDC64***FF0000***FF8000***00FF00***0080FF***0080FF',switch='0*1*1*1*1*1*0*0*1*1*1*1*1*1*1*1*1*0*0*1*0*0*0*1*0*1*1*1*1*1*0*1*0*1*1*1*1*1*1*1*1*1*1*1*1*1*1*0*1*0*4*',zlbs='10***10***10***10***15***10***',NPCcolor='FFDC64***FFDC64***FFDC64***00FF00***FF80C0***68D5ED***FF00F0***68D5ED***4278223103***4278255360***FFDC64***1'`); err != nil {
+	if _, err := conn.ExecContext(ctx, `UPDATE new_config SET Charactercolor='FFDC64***FF0000***FF8000***00FF00***0080FF***0080FF',switch='0*1*1*1*1*1*0*0*1*1*1*1*1*1*1*1*1*0*0*1*0*0*0*1*0*1*1*1*1*1*0*1*0*1*1*1*1*1*1*1*1*1*1*1*1*1*1*0*1*0*4*',zlbs='10***10***10***10***15***10***',NPCcolor='FFDC64***FFDC64***FFDC64***00FF00***FF80C0***68D5ED***FF00F0***68D5ED***4278223103***4278255360***FFDC64***1'`); err != nil {
 		return fmt.Errorf("update new_config: %w", err)
 	}
-	if _, err := db.Exec("UPDATE new_config SET v4_ani_texiao='1KHOJK普通0---&&1KHOJK高级0---&&1KHOJK稀有0---&&1KHOJK神器0---&&1KHOJK史诗0---&&1KHOJK勇者0++0'"); err != nil {
+	if _, err := conn.ExecContext(ctx, "UPDATE new_config SET v4_ani_texiao='1KHOJK普通0---&&1KHOJK高级0---&&1KHOJK稀有0---&&1KHOJK神器0---&&1KHOJK史诗0---&&1KHOJK勇者0++0'"); err != nil {
 		return fmt.Errorf("update new_config v4_ani_texiao: %w", err)
 	}
 
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS Robot (
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS Robot (
 		robot int(11) UNSIGNED NOT NULL DEFAULT 1,
 		aiState int(11) UNSIGNED NOT NULL DEFAULT 1,
 		speed int(11) UNSIGNED NOT NULL DEFAULT 100
@@ -420,7 +445,7 @@ func migrateStarskyDatabase(db *sql.DB) error {
 		return fmt.Errorf("create Robot (InnoDB): %w", err)
 	}
 
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS dungeonCheck (
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dungeonCheck (
 		ID int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
 		uid int(11) NOT NULL,
 		charactName varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
@@ -520,9 +545,6 @@ func migrateV4Ai(db *sql.DB) error {
 		return fmt.Errorf("check v4_ai: %w", err)
 	}
 	if !exists {
-		if _, err := db.Exec("USE d_starsky"); err != nil {
-			return fmt.Errorf("use d_starsky: %w", err)
-		}
 		v4Statements := []string{
 			`CREATE TABLE v4_ai (
 				id varchar(32) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
@@ -578,10 +600,8 @@ func migrateV4Ai(db *sql.DB) error {
 				PRIMARY KEY USING BTREE(id)
 			) ENGINE=InnoDB CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=Compact`,
 		}
-		for i, stmt := range v4Statements {
-			if _, err := db.Exec(stmt); err != nil {
-				return fmt.Errorf("v4_ai stmt %d: %w", i, err)
-			}
+		if err := execStatementsInSchema(db, "d_starsky", v4Statements); err != nil {
+			return fmt.Errorf("v4_ai: %w", err)
 		}
 	}
 	return nil
@@ -593,18 +613,12 @@ func migrateRobot(db *sql.DB) error {
 		return fmt.Errorf("check Robot: %w", err)
 	}
 	if !exists {
-		if _, err := db.Exec("USE d_starsky"); err != nil {
-			return fmt.Errorf("use d_starsky: %w", err)
-		}
-		if _, err := db.Exec(`CREATE TABLE Robot (
+		if err := execStatementsInSchema(db, "d_starsky", []string{`CREATE TABLE Robot (
 			robot int(11) UNSIGNED NOT NULL DEFAULT 1,
 			aiState int(11) UNSIGNED NOT NULL DEFAULT 1,
 			speed int(11) UNSIGNED NOT NULL DEFAULT 200
-		) ENGINE=InnoDB CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT`); err != nil {
+		) ENGINE=InnoDB CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT`, "INSERT INTO Robot (robot) VALUES (1)"}); err != nil {
 			return fmt.Errorf("create Robot: %w", err)
-		}
-		if _, err := db.Exec("INSERT INTO Robot (robot) VALUES (1)"); err != nil {
-			return fmt.Errorf("insert Robot: %w", err)
 		}
 	}
 	return nil
@@ -616,10 +630,7 @@ func migrateRobotStall(db *sql.DB) error {
 		return fmt.Errorf("check Robot_stall: %w", err)
 	}
 	if !exists {
-		if _, err := db.Exec("USE d_starsky"); err != nil {
-			return fmt.Errorf("use d_starsky: %w", err)
-		}
-		if _, err := db.Exec(`CREATE TABLE Robot_stall (
+		if err := execStatementsInSchema(db, "d_starsky", []string{`CREATE TABLE Robot_stall (
 			id varchar(32) NOT NULL,
 			Trade_name varchar(255) default NULL,
 			Trade_item int(11) default NULL,
@@ -629,7 +640,7 @@ func migrateRobotStall(db *sql.DB) error {
 			state int(11) default NULL,
 			item_number int(11) default NULL,
 			PRIMARY KEY(id)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8`); err != nil {
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8`}); err != nil {
 			return fmt.Errorf("create Robot_stall: %w", err)
 		}
 	}
@@ -642,10 +653,7 @@ func migrateRobotStallConfig(db *sql.DB) error {
 		return fmt.Errorf("check Robot_stall_config: %w", err)
 	}
 	if !exists {
-		if _, err := db.Exec("USE d_starsky"); err != nil {
-			return fmt.Errorf("use d_starsky: %w", err)
-		}
-		if _, err := db.Exec(`CREATE TABLE Robot_stall_config (
+		if err := execStatementsInSchema(db, "d_starsky", []string{`CREATE TABLE Robot_stall_config (
 			id varchar(32) NOT NULL,
 			cfg_content varchar(2000) default NULL,
 			cfg_type int(11) default NULL,
@@ -653,7 +661,7 @@ func migrateRobotStallConfig(db *sql.DB) error {
 			UID int(11) default NULL,
 			state int(11) default NULL,
 			PRIMARY KEY(id)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8`); err != nil {
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8`}); err != nil {
 			return fmt.Errorf("create Robot_stall_config: %w", err)
 		}
 	}
@@ -666,20 +674,14 @@ func migrateTitles(db *sql.DB) error {
 		return fmt.Errorf("check titles: %w", err)
 	}
 	if !exists {
-		if _, err := db.Exec("USE d_starsky"); err != nil {
-			return fmt.Errorf("use d_starsky: %w", err)
-		}
-		if _, err := db.Exec(`CREATE TABLE titles (
+		if err := execStatementsInSchema(db, "d_starsky", []string{`CREATE TABLE titles (
 			seal_ip int(11) UNSIGNED NOT NULL DEFAULT 1,
 			seal_mac int(11) UNSIGNED NOT NULL DEFAULT 1,
 			seal_uid int(11) UNSIGNED NOT NULL DEFAULT 1,
 			seal_announcement int(11) UNSIGNED NOT NULL DEFAULT 1,
 			seal_content varchar(500) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL
-		) ENGINE=InnoDB CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=Compact`); err != nil {
+		) ENGINE=InnoDB CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=Compact`, "INSERT INTO titles (seal_ip, seal_mac, seal_uid, seal_announcement, seal_content) VALUES (1, 1, 1, 1, '255##5##玩家%s使用非法程序，已封号处理！请不要使用第三方程序')"}); err != nil {
 			return fmt.Errorf("create titles: %w", err)
-		}
-		if _, err := db.Exec("INSERT INTO titles (seal_ip, seal_mac, seal_uid, seal_announcement, seal_content) VALUES (1, 1, 1, 1, '255##5##玩家%s使用非法程序，已封号处理！请不要使用第三方程序')"); err != nil {
-			return fmt.Errorf("insert titles: %w", err)
 		}
 	}
 	return nil
@@ -691,9 +693,6 @@ func migrateGiftTaskTables(db *sql.DB) error {
 		return fmt.Errorf("check gift_task: %w", err)
 	}
 	if !exists {
-		if _, err := db.Exec("USE d_starsky"); err != nil {
-			return fmt.Errorf("use d_starsky: %w", err)
-		}
 		taskStatements := []string{
 			`CREATE TABLE gift_task (
 				task_id varchar(32) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
@@ -740,10 +739,8 @@ func migrateGiftTaskTables(db *sql.DB) error {
 				PRIMARY KEY USING BTREE (cid)
 			) ENGINE=InnoDB CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=Compact`,
 		}
-		for i, stmt := range taskStatements {
-			if _, err := db.Exec(stmt); err != nil {
-				return fmt.Errorf("gift_task stmt %d: %w", i, err)
-			}
+		if err := execStatementsInSchema(db, "d_starsky", taskStatements); err != nil {
+			return fmt.Errorf("gift_task: %w", err)
 		}
 	}
 	return nil
@@ -755,9 +752,6 @@ func migrateMapTask(db *sql.DB) error {
 		return fmt.Errorf("check map_task: %w", err)
 	}
 	if !exists {
-		if _, err := db.Exec("USE d_starsky"); err != nil {
-			return fmt.Errorf("use d_starsky: %w", err)
-		}
 		mapStatements := []string{
 			`CREATE TABLE map_task (
 				task_id int(11) NOT NULL AUTO_INCREMENT,
@@ -806,10 +800,8 @@ func migrateMapTask(db *sql.DB) error {
 				PRIMARY KEY USING BTREE (id)
 			) ENGINE=InnoDB AUTO_INCREMENT=2 CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=Compact`,
 		}
-		for i, stmt := range mapStatements {
-			if _, err := db.Exec(stmt); err != nil {
-				return fmt.Errorf("map_task stmt %d: %w", i, err)
-			}
+		if err := execStatementsInSchema(db, "d_starsky", mapStatements); err != nil {
+			return fmt.Errorf("map_task: %w", err)
 		}
 	}
 	return nil

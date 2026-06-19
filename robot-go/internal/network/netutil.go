@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -76,6 +77,9 @@ func HTTPGetV5(rawURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("HTTPGetV5 read body: %w", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTPGetV5 status %d: %s", resp.StatusCode, string(body))
+	}
 
 	return string(body), nil
 }
@@ -109,35 +113,43 @@ func HTTPPostV5(rawURL string, bodyStr string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("HTTPPostV5 read body: %w", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTPPostV5 status %d: %s", resp.StatusCode, string(body))
+	}
 
 	return string(body), nil
 }
 
 func ParseURL(u string) (host string, file string, port int, err error) {
-	u = strings.TrimPrefix(u, "http://")
-	u = strings.TrimPrefix(u, "https://")
-
-	slashIdx := strings.Index(u, "/")
-	if slashIdx >= 0 {
-		hostPart := u[:slashIdx]
-		file = u[slashIdx+1:]
-		if colonIdx := strings.LastIndex(hostPart, ":"); colonIdx >= 0 {
-			host = hostPart[:colonIdx]
-			fmt.Sscanf(hostPart[colonIdx+1:], "%d", &port)
-		} else {
-			host = hostPart
-			port = 80
-		}
-	} else {
-		if colonIdx := strings.LastIndex(u, ":"); colonIdx >= 0 {
-			host = u[:colonIdx]
-			fmt.Sscanf(u[colonIdx+1:], "%d", &port)
-		} else {
-			host = u
-			port = 80
-		}
-		file = ""
+	raw := strings.TrimSpace(u)
+	if raw == "" {
+		return "", "", 0, fmt.Errorf("empty url")
 	}
-
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", "", 0, err
+	}
+	host = parsed.Hostname()
+	if host == "" {
+		return "", "", 0, fmt.Errorf("missing host")
+	}
+	switch p := parsed.Port(); {
+	case p != "":
+		port, err = strconv.Atoi(p)
+		if err != nil || port <= 0 || port > 65535 {
+			return "", "", 0, fmt.Errorf("invalid port %q", p)
+		}
+	case parsed.Scheme == "https":
+		port = 443
+	default:
+		port = 80
+	}
+	file = strings.TrimPrefix(parsed.EscapedPath(), "/")
+	if parsed.RawQuery != "" {
+		file += "?" + parsed.RawQuery
+	}
 	return host, file, port, nil
 }
