@@ -195,19 +195,6 @@ func TestSchedulerScaleBatches(t *testing.T) {
 	}
 }
 
-func TestSortActorsForStopKeepsSmallUIDs(t *testing.T) {
-	actors := []*robotActor{
-		{slotID: 1, uid: 17000001},
-		{slotID: 2, uid: 17000020},
-		{slotID: 3, uid: 0},
-		{slotID: 4, uid: 17000005},
-		{slotID: 5, uid: 17000010},
-	}
-	sortActorsForStop(actors)
-	got := []int{actors[0].uidValue(), actors[1].uidValue(), actors[2].uidValue(), actors[3].uidValue(), actors[4].uidValue()}
-	assertIntSlice(t, got, []int{0, 17000020, 17000010, 17000005, 17000001})
-}
-
 func TestSortActorsForStopByPolicy(t *testing.T) {
 	actors := []*robotActor{
 		{slotID: 1, uid: 17000001},

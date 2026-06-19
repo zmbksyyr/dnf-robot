@@ -3,21 +3,19 @@ package crypto
 import (
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"math/bits"
 	"os"
 )
 
 var globalPrivateKey *rsa.PrivateKey
 
 func swapByte32(v uint32) uint32 {
-	return binary.BigEndian.Uint32(binary.LittleEndian.AppendUint32(nil, v))
-}
-
-func SwapByte32(v uint32) uint32 {
-	return swapByte32(v)
+	return bits.ReverseBytes32(v)
 }
 
 func InitPrivateKey(pemPath string) (*rsa.PrivateKey, error) {
@@ -99,5 +97,5 @@ func GetLoginKey(uid uint32, key *rsa.PrivateKey) (string, error) {
 		return "", err
 	}
 
-	return Base64Encode(encrypted), nil
+	return base64.StdEncoding.EncodeToString(encrypted), nil
 }

@@ -286,23 +286,6 @@ func schedulerScaleDownBatch(current, target int) int {
 	return batch
 }
 
-func sortActorsForStop(actors []*robotActor) {
-	sort.Slice(actors, func(i, j int) bool {
-		leftUID := actors[i].uidValue()
-		rightUID := actors[j].uidValue()
-		if leftUID <= 0 || rightUID <= 0 {
-			if leftUID != rightUID {
-				return leftUID <= 0
-			}
-			return actors[i].slotID > actors[j].slotID
-		}
-		if leftUID != rightUID {
-			return leftUID > rightUID
-		}
-		return actors[i].slotID > actors[j].slotID
-	})
-}
-
 func sortActorsForStopByPolicy(actors []*robotActor, status map[int]RuntimeRobotStatus) {
 	sort.Slice(actors, func(i, j int) bool {
 		leftPriority := actorStopPriority(actors[i], status)

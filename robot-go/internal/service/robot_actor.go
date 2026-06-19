@@ -515,10 +515,6 @@ func (a *robotActor) status(now time.Time, rc robotRuntimeConfig) robotActorStat
 	return status
 }
 
-func (a *robotActor) unhealthy(now time.Time, rc robotRuntimeConfig) bool {
-	return a.status(now, rc).RecycleUID
-}
-
 func (a *robotActor) snapshot() robotActorSnapshot {
 	a.mu.Lock()
 	defer a.mu.Unlock()

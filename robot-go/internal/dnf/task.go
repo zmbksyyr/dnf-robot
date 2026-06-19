@@ -366,5 +366,3 @@ func (t *RobotDnfTask) msgOnLineAsyncTaskVec(_ *RobotDnfTask, moveVoid interface
 	}
 	return true
 }
-
-var _ = time.Now
