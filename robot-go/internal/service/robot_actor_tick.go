@@ -1,0 +1,118 @@
+package service
+
+import (
+	"time"
+)
+
+func (a *robotActor) tick(now time.Time) {
+	uid := a.uidValue()
+	if uid <= 0 {
+		return
+	}
+	if !a.onlineDesiredValue() {
+		if a.stateValue() != robotActorOffline && !a.busyValue() {
+			a.setState(robotActorOffline)
+		}
+		return
+	}
+	rc := a.runtime.Config()
+	if !a.runtime.IsActive(uid) {
+		a.ensureOnline(now)
+		return
+	}
+	st, ok := a.runtime.Status(uid)
+	if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
+		return
+	}
+	if a.stateValue() != robotActorRunning {
+		a.runtime.manager.addAutoOnline(1, 0)
+	}
+	a.markOnlineHealthy()
+	a.setState(robotActorRunning)
+	isStore := st.RobotType == 2 || st.RobotType == 3
+	if isStore && !a.storeUntil.IsZero() && now.After(a.storeUntil) {
+		a.runBusy("store_expire", func() {
+			a.runtime.ExpireStore(uid)
+		})
+		a.storeUntil = time.Time{}
+		return
+	}
+	if a.modeValue() != robotActorAuto {
+		return
+	}
+	if !a.runtime.manager.autoActionsEnabled(rc) {
+		return
+	}
+	if randomizedDue(&a.nextWorldShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec, a.runtime.manager.randBetween) {
+		a.runBusy("shout_world", func() {
+			a.runtime.AutoShout(uid, true)
+		})
+	}
+	if randomizedDue(&a.nextLocalShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec, a.runtime.manager.randBetween) {
+		a.runBusy("shout_local", func() {
+			a.runtime.AutoShout(uid, false)
+		})
+	}
+	if !isStore && randomizedDue(&a.nextStore, now, rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec, a.runtime.manager.randBetween) {
+		if rc.AutoStoreProbabilityPercent > 0 && a.runtime.manager.randIntn(100) < rc.AutoStoreProbabilityPercent {
+			var res RobotActionResult
+			a.runBusy("store", func() {
+				defer a.clearOnlineAttempt()
+				res = a.runtime.AutoStore(uid, a.releaseRequestedValue)
+			})
+			if res.OK {
+				a.storeUntil = time.Now().Add(time.Duration(rc.AutoStoreDurationSec) * time.Second)
+			} else if res.State == "store_failed" {
+				a.markOnlineHealthy()
+				a.nextStore = time.Now().Add(time.Duration(rc.AutoStoreFailCooldownSec) * time.Second)
+			} else if res.State != "cancelled" {
+				a.recordFailure(time.Now())
+			}
+			return
+		}
+	}
+	if !isStore && randomizedDue(&a.nextMove, now, rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec, a.runtime.manager.randBetween) {
+		a.runBusy("move", func() {
+			a.runtime.AutoMove(uid)
+		})
+	}
+}
+
+func (a *robotActor) ensureOnline(now time.Time) {
+	uid := a.uidValue()
+	if uid <= 0 {
+		return
+	}
+	if a.runtime.IsActive(uid) {
+		a.markOnlineHealthy()
+		a.setState(robotActorRunning)
+		a.runtime.manager.addAutoOnline(1, 0)
+		return
+	}
+	rc := a.runtime.Config()
+	if a.onlineConfirmPending(uid, now, rc) {
+		a.markOnlinePending(now)
+		return
+	}
+	if now.Sub(a.lastOnlineTryValue()) < time.Duration(rc.ReconnectDelayMS)*time.Millisecond {
+		return
+	}
+	a.lastOnlineTry = now
+	a.setState(robotActorOnline)
+	res := a.runtime.OnlineNoConfirm(uid)
+	if a.releaseRequestedValue() {
+		return
+	}
+	if res.OK || res.State == "running" {
+		a.markOnlineHealthy()
+		a.runtime.manager.addAutoOnline(1, 0)
+		return
+	}
+	if res.State == "accepted" || res.State == "init" || res.State == "login" {
+		a.markOnlinePending(now)
+		return
+	}
+	failures := a.recordFailure(now)
+	a.runtime.manager.addAutoOnline(0, 1)
+	robotLogf("[RobotActor] online_failed slot=%d uid=%d failures=%d state=%s msg=%s\n", a.slotID, uid, failures, res.State, res.Message)
+}
