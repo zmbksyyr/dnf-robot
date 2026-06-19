@@ -57,6 +57,45 @@ func (s *RobotSupervisor) Command(uid int, cmd robotActorCommand, timeout time.D
 	return actor.enqueue(cmd, timeout)
 }
 
+func (s *RobotSupervisor) LogoutUID(uid int, timeout time.Duration) (RobotActionResult, bool) {
+	return s.Command(uid, robotActorCmdLogout, timeout)
+}
+
+func (s *RobotSupervisor) AttachUID(uid int, timeout time.Duration) bool {
+	if uid <= 0 {
+		return false
+	}
+	var actor *robotActor
+	s.mu.Lock()
+	if existing := s.uidActors[uid]; existing != nil {
+		s.mu.Unlock()
+		return true
+	}
+	if _, blocked := s.blockedUID[uid]; blocked {
+		s.mu.Unlock()
+		return false
+	}
+	for _, candidate := range s.actors {
+		snap := candidate.snapshot()
+		if snap.Mode == robotActorAuto && snap.UID <= 0 {
+			actor = candidate
+			break
+		}
+	}
+	if actor != nil {
+		s.uidActors[uid] = actor
+	}
+	s.mu.Unlock()
+	if actor == nil {
+		return false
+	}
+	if actor.assignAndWait(uid, timeout) {
+		return true
+	}
+	s.unleaseUID(uid, actor)
+	return false
+}
+
 func (s *RobotSupervisor) HasUID(uid int) bool {
 	if uid <= 0 {
 		return false
@@ -64,6 +103,20 @@ func (s *RobotSupervisor) HasUID(uid int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.uidActors[uid] != nil
+}
+
+func (s *RobotSupervisor) actorSnapshots() []robotActorSnapshot {
+	s.mu.Lock()
+	actors := make([]*robotActor, 0, len(s.actors))
+	for _, actor := range s.actors {
+		actors = append(actors, actor)
+	}
+	s.mu.Unlock()
+	out := make([]robotActorSnapshot, 0, len(actors))
+	for _, actor := range actors {
+		out = append(out, actor.snapshot())
+	}
+	return out
 }
 
 func (s *RobotSupervisor) StopUID(uid int, logout bool) bool {
@@ -146,7 +199,6 @@ func (s *RobotSupervisor) tick(now time.Time) {
 	enabled := s.manager.autoEnabled
 	s.manager.autoMu.Unlock()
 	if !enabled || !rc.AutoActions {
-		s.stopAutoActors(true)
 		s.updateMetrics(rc)
 		return
 	}
@@ -224,7 +276,7 @@ func (s *RobotSupervisor) ensureAutoActorSlots(rc robotRuntimeConfig, target int
 		if actor.modeValue() == robotActorAuto {
 			current++
 			snap := actor.snapshot()
-			if snap.UID <= 0 || snap.State == robotActorIdle || snap.State == robotActorAssigned || snap.State == robotActorOnline || snap.State == robotActorReleasing {
+			if snap.UID <= 0 || snap.State == robotActorIdle || snap.State == robotActorOffline || snap.State == robotActorAssigned || snap.State == robotActorOnline || snap.State == robotActorReleasing {
 				pending++
 			}
 		}
@@ -907,6 +959,8 @@ func (s *RobotSupervisor) actorCounts(now time.Time, rc robotRuntimeConfig) supe
 		switch status.State {
 		case robotActorIdle:
 			counts.stateIdle++
+		case robotActorOffline:
+			counts.stateAssigned++
 		case robotActorAssigned:
 			counts.stateAssigned++
 		case robotActorOnline:

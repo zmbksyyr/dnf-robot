@@ -47,9 +47,10 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 	}
 	if len(uids) > 0 {
 		if supervisor := m.currentSupervisor(); supervisor != nil {
-			supervisor.StopUIDs(uids, false)
+			supervisor.StopUIDs(uids, true)
+		} else {
+			_, _ = m.Logout(RobotCommandRequest{UIDs: uids})
 		}
-		_, _ = m.Logout(RobotCommandRequest{UIDs: uids})
 		if !req.InternalConfirmedBroken {
 			time.Sleep(5 * time.Second)
 		}

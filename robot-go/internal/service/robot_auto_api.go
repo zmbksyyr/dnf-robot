@@ -65,6 +65,13 @@ func (m *RobotManager) AutoStatus() RobotAutoStatus {
 	return out
 }
 
+func (m *RobotManager) autoActionsEnabled(rc robotRuntimeConfig) bool {
+	m.autoMu.Lock()
+	enabled := m.autoEnabled
+	m.autoMu.Unlock()
+	return enabled && rc.AutoActions
+}
+
 func (m *RobotManager) autoGamePortStable(now time.Time, rc robotRuntimeConfig) bool {
 	addr := m.robotGamePortAddress()
 	timeout := time.Duration(rc.AutoGamePortCheckTimeoutMS) * time.Millisecond

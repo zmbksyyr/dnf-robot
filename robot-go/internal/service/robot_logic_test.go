@@ -582,6 +582,45 @@ func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
 	}
 }
 
+func TestRobotActorOfflineKeepsUIDAttached(t *testing.T) {
+	a := &robotActor{slotID: 1, mode: robotActorAuto}
+	a.resetForUID(101)
+	if snap := a.snapshot(); snap.UID != 101 || !snap.OnlineDesired || snap.State != robotActorAssigned {
+		t.Fatalf("assigned snapshot uid=%d desired=%v state=%s", snap.UID, snap.OnlineDesired, snap.State)
+	}
+	a.setOnlineDesired(false)
+	a.tick(time.Now())
+	if snap := a.snapshot(); snap.UID != 101 || snap.OnlineDesired || snap.State != robotActorOffline {
+		t.Fatalf("offline snapshot uid=%d desired=%v state=%s", snap.UID, snap.OnlineDesired, snap.State)
+	}
+	a.setOnlineDesired(true)
+	if snap := a.snapshot(); snap.UID != 101 || !snap.OnlineDesired {
+		t.Fatalf("online desired should re-open without detaching uid, uid=%d desired=%v", snap.UID, snap.OnlineDesired)
+	}
+}
+
+func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	a := newRobotActor(1, robotActorAuto, s.runtime)
+	a.start()
+	defer a.stopAndWait(time.Second)
+	s.actors[1] = a
+
+	if !s.AttachUID(101, time.Second) {
+		t.Fatalf("AttachUID should use empty actor")
+	}
+	if !s.HasUID(101) {
+		t.Fatalf("attached uid should be leased")
+	}
+	if snap := a.snapshot(); snap.UID != 101 || snap.State != robotActorAssigned {
+		t.Fatalf("actor snapshot uid=%d state=%s", snap.UID, snap.State)
+	}
+	if s.AttachUID(102, time.Second) {
+		t.Fatalf("AttachUID should fail when no empty actor remains")
+	}
+}
+
 func TestStructuralOperationState(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	done := m.beginStructuralOp("cleanup")

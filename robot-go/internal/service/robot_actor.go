@@ -18,12 +18,15 @@ const (
 	robotActorShoutLocal
 	robotActorShoutWorld
 	robotActorStore
+	robotActorCmdOnline
+	robotActorCmdLogout
 )
 
 type robotActorState string
 
 const (
 	robotActorIdle      robotActorState = "idle"
+	robotActorOffline   robotActorState = "attached_offline"
 	robotActorAssigned  robotActorState = "assigned"
 	robotActorOnline    robotActorState = "online"
 	robotActorRunning   robotActorState = "running"
@@ -61,6 +64,7 @@ type robotActorSnapshot struct {
 	State          robotActorState
 	Busy           bool
 	BusyKind       string
+	OnlineDesired  bool
 	LastOnlineTry  time.Time
 	FirstFailureAt time.Time
 	Failures       int
@@ -106,6 +110,7 @@ type robotActor struct {
 	busy             bool
 	busyKind         string
 	releaseRequested bool
+	onlineDesired    bool
 }
 
 func newRobotActor(slotID int, mode robotActorMode, runtime *RobotRuntime) *robotActor {
@@ -242,6 +247,12 @@ func (a *robotActor) tick(now time.Time) {
 	if uid <= 0 {
 		return
 	}
+	if !a.onlineDesiredValue() {
+		if a.stateValue() != robotActorOffline && !a.busyValue() {
+			a.setState(robotActorOffline)
+		}
+		return
+	}
 	rc := a.runtime.Config()
 	if !a.runtime.IsActive(uid) {
 		a.ensureOnline(now)
@@ -265,6 +276,9 @@ func (a *robotActor) tick(now time.Time) {
 		return
 	}
 	if a.modeValue() != robotActorAuto {
+		return
+	}
+	if !a.runtime.manager.autoActionsEnabled(rc) {
 		return
 	}
 	if randomizedDue(&a.nextWorldShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec, a.runtime.manager.randBetween) {
@@ -353,26 +367,58 @@ func (a *robotActor) releaseCurrentUID() int {
 	return uid
 }
 
+func (a *robotActor) logoutCurrentUID() RobotActionResult {
+	uid := a.uidValue()
+	if uid <= 0 {
+		a.setState(robotActorIdle)
+		return RobotActionResult{OK: true, State: "idle"}
+	}
+	a.setOnlineDesired(false)
+	a.clearAutoSchedule()
+	a.setBusy(true, "logout")
+	defer a.setBusy(false, "")
+	res := a.runtime.Logout(uid)
+	if res.UID == 0 {
+		res.UID = uid
+	}
+	if res.OK {
+		res.State = "attached_offline"
+	}
+	a.setState(robotActorOffline)
+	return res
+}
+
 func (a *robotActor) resetForUID(uid int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.uid = uid
-	a.nextMove = time.Time{}
-	a.nextLocalShout = time.Time{}
-	a.nextWorldShout = time.Time{}
-	a.nextStore = time.Time{}
-	a.storeUntil = time.Time{}
+	a.clearAutoScheduleLocked()
 	a.lastOnlineTry = time.Time{}
 	a.firstFailureAt = time.Time{}
 	a.failures = 0
 	a.busy = false
 	a.busyKind = ""
 	a.releaseRequested = false
+	a.onlineDesired = uid > 0
 	if uid > 0 {
 		a.state = robotActorAssigned
 	} else {
 		a.state = robotActorIdle
 	}
+}
+
+func (a *robotActor) clearAutoSchedule() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.clearAutoScheduleLocked()
+}
+
+func (a *robotActor) clearAutoScheduleLocked() {
+	a.nextMove = time.Time{}
+	a.nextLocalShout = time.Time{}
+	a.nextWorldShout = time.Time{}
+	a.nextStore = time.Time{}
+	a.storeUntil = time.Time{}
 }
 
 func (a *robotActor) setReleaseRequested(v bool) {
@@ -385,6 +431,18 @@ func (a *robotActor) releaseRequestedValue() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.releaseRequested
+}
+
+func (a *robotActor) setOnlineDesired(v bool) {
+	a.mu.Lock()
+	a.onlineDesired = v
+	a.mu.Unlock()
+}
+
+func (a *robotActor) onlineDesiredValue() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.onlineDesired
 }
 
 func (a *robotActor) markOnlineHealthy() {
@@ -457,9 +515,19 @@ func (a *robotActor) setBusy(v bool, kind string) {
 	if v {
 		a.state = robotActorBusy
 	} else if a.uid > 0 {
-		a.state = robotActorRunning
+		if a.onlineDesired {
+			a.state = robotActorRunning
+		} else {
+			a.state = robotActorOffline
+		}
 	}
 	a.mu.Unlock()
+}
+
+func (a *robotActor) busyValue() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.busy
 }
 
 func (a *robotActor) setState(state robotActorState) {
@@ -525,6 +593,7 @@ func (a *robotActor) snapshot() robotActorSnapshot {
 		State:          a.state,
 		Busy:           a.busy,
 		BusyKind:       a.busyKind,
+		OnlineDesired:  a.onlineDesired,
 		LastOnlineTry:  a.lastOnlineTry,
 		FirstFailureAt: a.firstFailureAt,
 		Failures:       a.failures,
@@ -554,6 +623,14 @@ func (a *robotActor) handleCommand(cmd robotActorCommand) RobotActionResult {
 	if uid <= 0 {
 		return RobotActionResult{OK: false, State: "idle", Message: "actor has no uid"}
 	}
+	switch cmd {
+	case robotActorCmdOnline:
+		a.setOnlineDesired(true)
+		a.setState(robotActorAssigned)
+		return RobotActionResult{UID: uid, OK: true, State: "accepted"}
+	case robotActorCmdLogout:
+		return a.logoutCurrentUID()
+	}
 	a.setBusy(true, "command")
 	defer a.setBusy(false, "")
 	switch cmd {
@@ -564,6 +641,7 @@ func (a *robotActor) handleCommand(cmd robotActorCommand) RobotActionResult {
 	case robotActorShoutWorld:
 		return a.runtime.Shout(uid, true)
 	case robotActorStore:
+		a.setOnlineDesired(true)
 		res := a.runtime.Store(uid)
 		if res.OK {
 			rc := a.runtime.Config()

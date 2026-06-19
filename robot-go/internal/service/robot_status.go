@@ -10,6 +10,11 @@ type RobotStatusItem struct {
 	CID              int    `json:"cid"`
 	Name             string `json:"name"`
 	Account          string `json:"account"`
+	ActorAttached    bool   `json:"actor_attached"`
+	ActorSlot        int    `json:"actor_slot,omitempty"`
+	ActorState       string `json:"actor_state,omitempty"`
+	ActorBusy        bool   `json:"actor_busy,omitempty"`
+	ActorBusyKind    string `json:"actor_busy_kind,omitempty"`
 	Level            int    `json:"level"`
 	Job              int    `json:"job"`
 	Grow             int    `json:"grow"`
@@ -40,6 +45,7 @@ type RobotStatusResult struct {
 
 func (m *RobotManager) RobotsStatus(req RobotCommandRequest) (RobotStatusResult, error) {
 	runtime := m.runtimeStatusMap()
+	actors := m.actorStatusMap()
 	args := make([]interface{}, 0)
 	where := ""
 	limit := ""
@@ -101,6 +107,13 @@ ORDER BY r.uid` + limit
 		} else {
 			item.StateName = "offline"
 		}
+		if actor, ok := actors[item.UID]; ok {
+			item.ActorAttached = true
+			item.ActorSlot = actor.SlotID
+			item.ActorState = string(actor.State)
+			item.ActorBusy = actor.Busy
+			item.ActorBusyKind = actor.BusyKind
+		}
 		if item.Online {
 			out.Running++
 		}
@@ -114,4 +127,18 @@ ORDER BY r.uid` + limit
 	}
 	out.Total = len(out.Robots)
 	return out, nil
+}
+
+func (m *RobotManager) actorStatusMap() map[int]robotActorSnapshot {
+	out := map[int]robotActorSnapshot{}
+	supervisor := m.currentSupervisor()
+	if supervisor == nil {
+		return out
+	}
+	for _, snap := range supervisor.actorSnapshots() {
+		if snap.UID > 0 {
+			out[snap.UID] = snap
+		}
+	}
+	return out
 }
