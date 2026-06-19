@@ -40,8 +40,12 @@ func (m *RobotManager) SetAutoEnabled(enabled bool) RobotAutoStatus {
 		"auto.auto_actions": strconv.FormatBool(enabled),
 	})
 	m.autoMu.Lock()
+	supervisor := m.supervisor
 	m.autoEnabled = enabled
 	m.autoMu.Unlock()
+	if !enabled && supervisor != nil {
+		supervisor.stopAutoActors(true)
+	}
 	return m.AutoStatus()
 }
 
