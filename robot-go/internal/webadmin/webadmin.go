@@ -3,8 +3,9 @@ package webadmin
 import (
 	"archive/zip"
 	"bytes"
-	"crypto/sha256"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"robot/internal/config"
@@ -25,6 +27,8 @@ type Server struct {
 	cfg       *config.SysConfig
 	robotAddr string
 	webAddr   string
+	tokenMu   sync.RWMutex
+	token     string
 }
 
 type callRequest struct {
@@ -43,6 +47,7 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 		cfg:       cfg,
 		robotAddr: robotAddr,
 		webAddr:   webAddr,
+		token:     randomToken(),
 	}
 }
 
@@ -97,14 +102,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.WebPassword)) == 1 {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "tw_web_token",
-			Value:    s.authToken(),
-			Path:     "/",
-			MaxAge:   int((7 * 24 * time.Hour).Seconds()),
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
+		token := randomToken()
+		s.tokenMu.Lock()
+		s.token = token
+		s.tokenMu.Unlock()
+		http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -141,17 +143,10 @@ func (s *Server) authed(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	token := s.authToken()
+	s.tokenMu.RLock()
+	token := s.token
+	s.tokenMu.RUnlock()
 	return token != "" && subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) == 1
-}
-
-func (s *Server) authToken() string {
-	password := strings.TrimSpace(s.cfg.WebPassword)
-	if password == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte("tw-web-admin:" + password))
-	return fmt.Sprintf("%x", sum[:])
 }
 
 func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
@@ -397,6 +392,14 @@ func (s *Server) handleKeypairDownload(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="tw_game_public_key.zip"`)
 	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	_, _ = w.Write(buf.Bytes())
+}
+
+func randomToken() string {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(fmt.Sprintf("webadmin random token: %v", err))
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 func callRobot(addr, command string, payload map[string]interface{}, timeout time.Duration, maxResponseBytes int) (string, error) {
