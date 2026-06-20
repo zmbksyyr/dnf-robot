@@ -63,6 +63,8 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 		}
 	}
 	if len(uids) > 0 {
+		m.markCleanupPending(uids)
+		defer m.clearCleanupPending(uids)
 		if registry := m.currentActorRegistry(); registry != nil {
 			registry.StopUIDs(uids, true)
 		} else {

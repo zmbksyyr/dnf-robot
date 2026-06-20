@@ -23,9 +23,11 @@ type RobotManager struct {
 	randMu                          sync.Mutex
 	storeSlotMu                     sync.Mutex
 	operationMu                     sync.Mutex
+	cleanupMu                       sync.Mutex
 	colCache                        map[string]map[string]bool
 	rand                            *rand.Rand
 	autoStoreBusy                   map[int]bool
+	cleanupPendingUIDs              map[int]time.Time
 	autoStoreSlots                  chan struct{}
 	autoStoreCap                    int
 	autoEnabled                     bool
@@ -95,11 +97,12 @@ func (m *RobotManager) structuralOperation() (string, time.Time, bool) {
 
 func NewRobotManager(db *sql.DB, cfg *config.SysConfig, doll *DollService) *RobotManager {
 	return &RobotManager{
-		db:       db,
-		cfg:      cfg,
-		doll:     doll,
-		colCache: make(map[string]map[string]bool),
-		rand:     rand.New(rand.NewSource(time.Now().UnixNano())),
+		db:                 db,
+		cfg:                cfg,
+		doll:               doll,
+		colCache:           make(map[string]map[string]bool),
+		rand:               rand.New(rand.NewSource(time.Now().UnixNano())),
+		cleanupPendingUIDs: make(map[int]time.Time),
 	}
 }
 

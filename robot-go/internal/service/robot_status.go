@@ -48,6 +48,7 @@ type RobotStatusResult struct {
 func (m *RobotManager) RobotsStatus(req RobotCommandRequest) (RobotStatusResult, error) {
 	runtime := m.runtimeStatusMap()
 	actors := m.actorStatusMap()
+	cleanupPending := m.cleanupPendingSet()
 	args := make([]interface{}, 0)
 	where := ""
 	limit := ""
@@ -133,6 +134,10 @@ ORDER BY r.uid` + limit
 			}
 			item.Operation = actorOperation(actor)
 			item.HealthState = actorHealthState(item.HealthState, actor)
+		}
+		if cleanupPending[item.UID] {
+			item.Operation = "cleanup"
+			item.DesiredState = "deleting"
 		}
 		if item.Online {
 			out.Running++
