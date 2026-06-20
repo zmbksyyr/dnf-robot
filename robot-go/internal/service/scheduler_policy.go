@@ -16,6 +16,7 @@ const (
 	schedulerPolicyPressure    schedulerPolicyMode = "pressure"
 	schedulerPolicyBreaker     schedulerPolicyMode = "breaker"
 	schedulerPolicyMaintenance schedulerPolicyMode = "maintenance"
+	schedulerPolicyManual      schedulerPolicyMode = "manual"
 )
 
 type adaptiveSchedulerSignals struct {
@@ -55,7 +56,7 @@ func (m *RobotManager) SchedulerStatus() SchedulerStatus {
 	signals := m.adaptiveSchedulerSignals()
 	decision := applyAdaptiveSchedulerConfig(&rc, signals)
 	if !m.autoActionsEnabled(rc) {
-		decision = schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "auto_disabled"}
+		decision = schedulerPolicyDecision{Mode: schedulerPolicyManual, Reason: "auto_disabled"}
 	}
 	m.updateSchedulerStatus(rc, signals, decision)
 

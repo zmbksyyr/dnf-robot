@@ -9,16 +9,10 @@ import (
 var errActorRegistryUnavailable = errors.New("actor registry unavailable")
 
 func (m *RobotManager) OnlineManaged(req RobotCommandRequest) (RobotCommandResult, error) {
-	registry := m.currentActorRegistry()
-	if registry == nil {
-		return RobotCommandResult{}, errActorRegistryUnavailable
+	registry, robots, rc, early, err := m.prepareUserActorCommand(req, "online", true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
 	}
-	robots, err := m.selectRobots(req)
-	if err != nil {
-		return RobotCommandResult{}, err
-	}
-	rc := m.loadRobotConfig()
-	registry.EnsureActorSlots(rc, rc.AutoTargetOnlineCount)
 	result := newCommandResult(len(robots))
 	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
 	for _, robot := range robots {
@@ -57,22 +51,13 @@ func (m *RobotManager) ShoutManaged(req RobotCommandRequest, world bool) (RobotC
 }
 
 func (m *RobotManager) ShoutBothManaged(req RobotCommandRequest) (RobotCommandResult, error) {
-	registry := m.currentActorRegistry()
-	if registry == nil {
-		return RobotCommandResult{}, errActorRegistryUnavailable
-	}
-	robots, err := m.selectRobots(req)
-	if err != nil {
-		return RobotCommandResult{}, err
+	registry, robots, _, early, err := m.prepareUserActorCommand(req, "shout", true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
 	}
 	result := newCommandResult(len(robots))
 	timeout := time.Duration(m.loadRobotConfig().SystemManualActionTimeoutSec) * time.Second
 	for _, robot := range robots {
-		if !registry.HasUID(robot.UID) {
-			result.Failed++
-			result.Robots = append(result.Robots, uidNotAttachedResult(robot, "shout"))
-			continue
-		}
 		local, localOK := registry.Command(robot.UID, robotActorShoutLocal, timeout)
 		world, worldOK := registry.Command(robot.UID, robotActorShoutWorld, timeout)
 		if localOK && worldOK && local.OK && world.OK {
@@ -104,53 +89,35 @@ func (m *RobotManager) StoreManaged(req RobotCommandRequest) (RobotCommandResult
 }
 
 func (m *RobotManager) LogoutManaged(req RobotCommandRequest) (RobotCommandResult, error) {
-	registry := m.currentActorRegistry()
-	if registry == nil {
-		return RobotCommandResult{}, errActorRegistryUnavailable
-	}
-	robots, err := m.selectRobots(req)
-	if err != nil {
-		return RobotCommandResult{}, err
+	registry, robots, rc, early, err := m.prepareUserActorCommand(req, "logout", true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
 	}
 	result := newCommandResult(len(robots))
-	timeout := time.Duration(m.loadRobotConfig().SystemManualActionTimeoutSec) * time.Second
+	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
 	for _, robot := range robots {
-		if registry.HasUID(robot.UID) {
-			item, ok := registry.LogoutUID(robot.UID, timeout)
-			item.CID = robot.CID
-			if ok && item.OK {
-				result.Accepted++
-				result.Confirmed++
-				result.Robots = append(result.Robots, item)
-			} else {
-				result.Failed++
-				result.Robots = append(result.Robots, failedActorResult(robot, item, "logout actor command failed"))
-			}
-			continue
+		item, ok := registry.LogoutUID(robot.UID, timeout)
+		item.CID = robot.CID
+		if ok && item.OK {
+			result.Accepted++
+			result.Confirmed++
+			result.Robots = append(result.Robots, item)
+		} else {
+			result.Failed++
+			result.Robots = append(result.Robots, failedActorResult(robot, item, "logout actor command failed"))
 		}
-		result.Failed++
-		result.Robots = append(result.Robots, uidNotAttachedResult(robot, "logout"))
 	}
 	return result, nil
 }
 
 func (m *RobotManager) actorCommandManaged(req RobotCommandRequest, cmd robotActorCommand, action string) (RobotCommandResult, error) {
-	registry := m.currentActorRegistry()
-	if registry == nil {
-		return RobotCommandResult{}, errActorRegistryUnavailable
-	}
-	robots, err := m.selectRobots(req)
-	if err != nil {
-		return RobotCommandResult{}, err
+	registry, robots, rc, early, err := m.prepareUserActorCommand(req, action, true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
 	}
 	result := newCommandResult(len(robots))
-	timeout := time.Duration(m.loadRobotConfig().SystemManualActionTimeoutSec) * time.Second
+	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
 	for _, robot := range robots {
-		if !registry.HasUID(robot.UID) {
-			result.Failed++
-			result.Robots = append(result.Robots, uidNotAttachedResult(robot, action))
-			continue
-		}
 		item, ok := registry.Command(robot.UID, cmd, timeout)
 		item.CID = robot.CID
 		if ok && item.OK {
@@ -163,6 +130,107 @@ func (m *RobotManager) actorCommandManaged(req RobotCommandRequest, cmd robotAct
 		}
 	}
 	return result, nil
+}
+
+func (m *RobotManager) prepareUserActorCommand(req RobotCommandRequest, action string, attachInManual bool) (actorRegistry, []RobotInfo, robotRuntimeConfig, *RobotCommandResult, error) {
+	registry := m.currentActorRegistry()
+	if registry == nil {
+		return nil, nil, robotRuntimeConfig{}, nil, errActorRegistryUnavailable
+	}
+	robots, err := m.selectRobots(req)
+	if err != nil {
+		return nil, nil, robotRuntimeConfig{}, nil, err
+	}
+	rc := m.loadRobotConfig()
+	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+		return nil, nil, rc, rejectedCommandResult(robots, "scheduler_busy", reason), nil
+	}
+	missing := make([]RobotInfo, 0)
+	for _, robot := range robots {
+		if !registry.HasUID(robot.UID) {
+			missing = append(missing, robot)
+		}
+	}
+	if len(missing) == 0 {
+		return registry, robots, rc, nil, nil
+	}
+	if !attachInManual || m.autoActionsEnabled(rc) {
+		return nil, nil, rc, rejectedCommandResult(robots, "uid_not_attached", fmt.Sprintf("%s requires actor attachment", action)), nil
+	}
+	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+		return nil, nil, rc, rejectedCommandResult(robots, "scheduler_busy", reason), nil
+	}
+	end := m.beginActorContainerOp("manual_attach")
+	defer end()
+	target := len(registry.actorSnapshots()) + len(missing)
+	registry.EnsureActorSlots(rc, target)
+	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
+	out := newCommandResult(len(robots))
+	for _, robot := range missing {
+		if registry.AttachUID(robot.UID, timeout) {
+			continue
+		}
+		out.Failed++
+		out.Robots = append(out.Robots, actorFullResult(robot, action))
+	}
+	if out.Failed > 0 {
+		for _, robot := range robots {
+			if registry.HasUID(robot.UID) {
+				out.Accepted++
+				out.Robots = append(out.Robots, robotActionResult(robot, true, "attached", ""))
+			}
+		}
+		return nil, nil, rc, &out, nil
+	}
+	return registry, robots, rc, nil, nil
+}
+
+func (m *RobotManager) userActorCommandBusy(registry actorRegistry, rc robotRuntimeConfig) (bool, string) {
+	if op, _, active := m.structuralOperation(); active {
+		return true, "structural_op=" + op
+	}
+	if op, _, active := m.actorContainerOperation(); active {
+		return true, "actor_container=" + op
+	}
+	snapshots := registry.actorSnapshots()
+	manual := !m.autoActionsEnabled(rc)
+	target := schedulerTargetCapacity(rc)
+	actors := len(snapshots)
+	idle := 0
+	for _, snap := range snapshots {
+		if snap.UID <= 0 {
+			idle++
+		}
+		switch snap.State {
+		case robotActorAssigned, robotActorOnline, robotActorReleasing:
+			return true, "actor_state=" + string(snap.State)
+		}
+	}
+	if !manual {
+		if actors < target {
+			return true, fmt.Sprintf("auto_filling actors=%d target=%d", actors, target)
+		}
+		if idle > 0 {
+			return true, fmt.Sprintf("auto_loading idle=%d", idle)
+		}
+	}
+	return false, ""
+}
+
+func rejectedCommandResult(robots []RobotInfo, state, message string) *RobotCommandResult {
+	out := newCommandResult(len(robots))
+	out.Failed = len(robots)
+	for _, robot := range robots {
+		out.Robots = append(out.Robots, robotActionResult(robot, false, state, message))
+	}
+	return &out
+}
+
+func resultOrZero(result *RobotCommandResult) RobotCommandResult {
+	if result == nil {
+		return RobotCommandResult{}
+	}
+	return *result
 }
 
 func robotActionResult(robot RobotInfo, ok bool, state, message string) RobotActionResult {

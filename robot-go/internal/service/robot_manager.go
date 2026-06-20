@@ -50,6 +50,8 @@ type RobotManager struct {
 	operations                      []RobotOperationStatus
 	structuralOp                    string
 	structuralOpStarted             time.Time
+	actorContainerOp                string
+	actorContainerOpStarted         time.Time
 	configCache                     robotRuntimeConfig
 	configMod                       time.Time
 	configCached                    bool
@@ -93,6 +95,32 @@ func (m *RobotManager) structuralOperation() (string, time.Time, bool) {
 	m.autoMu.Lock()
 	defer m.autoMu.Unlock()
 	return m.structuralOp, m.structuralOpStarted, m.structuralOp != ""
+}
+
+func (m *RobotManager) beginActorContainerOp(op string) func() {
+	if strings.TrimSpace(op) == "" {
+		op = "actor_container"
+	}
+	m.autoMu.Lock()
+	m.actorContainerOp = op
+	m.actorContainerOpStarted = time.Now()
+	m.autoMu.Unlock()
+	robotLogf("[RobotLifecycle] actor_container op=%s state=begin\n", op)
+	return func() {
+		m.autoMu.Lock()
+		if m.actorContainerOp == op {
+			m.actorContainerOp = ""
+			m.actorContainerOpStarted = time.Time{}
+		}
+		m.autoMu.Unlock()
+		robotLogf("[RobotLifecycle] actor_container op=%s state=end\n", op)
+	}
+}
+
+func (m *RobotManager) actorContainerOperation() (string, time.Time, bool) {
+	m.autoMu.Lock()
+	defer m.autoMu.Unlock()
+	return m.actorContainerOp, m.actorContainerOpStarted, m.actorContainerOp != ""
 }
 
 func NewRobotManager(db *sql.DB, cfg *config.SysConfig, doll *DollService) *RobotManager {

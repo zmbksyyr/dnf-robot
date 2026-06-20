@@ -44,7 +44,7 @@ func (s *RobotSupervisor) handleAutoGuards(now time.Time, rc robotRuntimeConfig)
 	enabled := s.manager.autoEnabled
 	s.manager.autoMu.Unlock()
 	if !enabled || !rc.AutoActions {
-		s.updateGuardStatus(rc, schedulerPolicyMaintenance, "auto_disabled")
+		s.updateGuardStatus(rc, schedulerPolicyManual, "auto_disabled")
 		s.updateMetrics(rc)
 		return true
 	}

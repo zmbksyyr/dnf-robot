@@ -181,6 +181,41 @@ func TestManagedRuntimeActionsRequireActorRegistry(t *testing.T) {
 	}
 }
 
+func TestUserActorCommandBusyFollowsAutoAndManualPolicy(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
+	rc := robotRuntimeConfig{AutoActions: true, AutoTargetOnlineCount: 2}
+
+	m.autoEnabled = true
+	if busy, reason := m.userActorCommandBusy(registry, rc); !busy || reason != "auto_filling actors=0 target=2" {
+		t.Fatalf("auto under target busy=%v reason=%q", busy, reason)
+	}
+
+	m.autoEnabled = false
+	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+		t.Fatalf("manual empty container should be available, reason=%q", reason)
+	}
+}
+
+func TestUserActorCommandBusyRejectsContainerTransitions(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
+	rc := robotRuntimeConfig{AutoActions: false, AutoTargetOnlineCount: 1}
+	m.autoEnabled = false
+
+	for _, state := range []robotActorState{robotActorAssigned, robotActorOnline, robotActorReleasing} {
+		s.ledger = newActorLedger()
+		actor := &robotActor{slotID: 1, mode: robotActorAuto, uid: 101, state: state}
+		addLedgerActor(t, &s.ledger, actor)
+		s.ledger.tryLeaseUID(101, actor)
+		if busy, reason := m.userActorCommandBusy(registry, rc); !busy || reason != "actor_state="+string(state) {
+			t.Fatalf("state %s busy=%v reason=%q", state, busy, reason)
+		}
+	}
+}
+
 func TestActorStatusFieldsDeriveLedgerState(t *testing.T) {
 	actor := robotActorSnapshot{State: robotActorOffline, OnlineDesired: false}
 	if got := actorOperation(actor); got != "offline" {
