@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"robot/internal/config"
+	"robot/internal/service"
 )
 
 type Server struct {
@@ -439,42 +440,40 @@ func (s *Server) handleKeypairDownload(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "game keypair is not valid", http.StatusConflict)
 		return
 	}
-	gameDir := filepath.Dir(s.cfg.DFGameR)
-	files := []struct {
-		name string
-		path string
-	}{
-		{name: "publickey.pem", path: filepath.Join(gameDir, "publickey.pem")},
+	defaultPrivate, defaultPublic, err := service.DefaultKeypairPEM()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	for _, file := range files {
-		data, err := os.ReadFile(file.path)
-		if err != nil {
-			_ = zw.Close()
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		fw, err := zw.Create(file.name)
-		if err != nil {
-			_ = zw.Close()
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if _, err := fw.Write(data); err != nil {
-			_ = zw.Close()
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	if err := addZipFile(zw, "privatekey.pem", defaultPrivate); err != nil {
+		_ = zw.Close()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := addZipFile(zw, "publickey.pem", defaultPublic); err != nil {
+		_ = zw.Close()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	if err := zw.Close(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="tw_game_public_key.zip"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="tw_game_keypair.zip"`)
 	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	_, _ = w.Write(buf.Bytes())
+}
+
+func addZipFile(zw *zip.Writer, name string, data []byte) error {
+	fw, err := zw.Create(name)
+	if err != nil {
+		return err
+	}
+	_, err = fw.Write(data)
+	return err
 }
 
 func randomToken() string {

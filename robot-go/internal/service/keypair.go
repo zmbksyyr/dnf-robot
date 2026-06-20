@@ -328,6 +328,18 @@ func loadDefaultKeypair() (loadedKeypair, error) {
 	return loadKeypairBytes(priv, pub)
 }
 
+func DefaultKeypairPEM() ([]byte, []byte, error) {
+	priv, err := defaultFiles.ReadFile("defaults/privatekey.pem")
+	if err != nil {
+		return nil, nil, err
+	}
+	pub, err := defaultFiles.ReadFile("defaults/publickey.pem")
+	if err != nil {
+		return nil, nil, err
+	}
+	return priv, pub, nil
+}
+
 func loadKeypairBytes(privatePEM, publicPEM []byte) (loadedKeypair, error) {
 	priv, err := parseRSAPrivatePEM(privatePEM)
 	if err != nil {
