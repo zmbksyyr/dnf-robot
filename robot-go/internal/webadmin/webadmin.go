@@ -28,7 +28,7 @@ type Server struct {
 	robotAddr string
 	webAddr   string
 	tokenMu   sync.RWMutex
-	token     string
+	tokens    map[string]time.Time
 }
 
 type callRequest struct {
@@ -47,7 +47,7 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 		cfg:       cfg,
 		robotAddr: robotAddr,
 		webAddr:   webAddr,
-		token:     randomToken(),
+		tokens:    make(map[string]time.Time),
 	}
 }
 
@@ -104,7 +104,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.WebPassword)) == 1 {
 		token := randomToken()
 		s.tokenMu.Lock()
-		s.token = token
+		s.cleanupExpiredTokensLocked(time.Now())
+		s.tokens[token] = time.Now().Add(12 * time.Hour)
 		s.tokenMu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -114,6 +115,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie("tw_web_token"); err == nil {
+		s.tokenMu.Lock()
+		delete(s.tokens, c.Value)
+		s.tokenMu.Unlock()
+	}
 	http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: "", Path: "/", MaxAge: -1})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -143,10 +149,30 @@ func (s *Server) authed(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	s.tokenMu.RLock()
-	token := s.token
-	s.tokenMu.RUnlock()
-	return token != "" && subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) == 1
+	if c.Value == "" {
+		return false
+	}
+	now := time.Now()
+	s.tokenMu.Lock()
+	expires, ok := s.tokens[c.Value]
+	if ok && now.After(expires) {
+		delete(s.tokens, c.Value)
+		ok = false
+	}
+	if ok {
+		s.tokens[c.Value] = now.Add(12 * time.Hour)
+	}
+	s.cleanupExpiredTokensLocked(now)
+	s.tokenMu.Unlock()
+	return ok
+}
+
+func (s *Server) cleanupExpiredTokensLocked(now time.Time) {
+	for token, expires := range s.tokens {
+		if now.After(expires) {
+			delete(s.tokens, token)
+		}
+	}
 }
 
 func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
