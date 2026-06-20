@@ -16,6 +16,7 @@ type RobotManager struct {
 	db                              *sql.DB
 	cfg                             *config.SysConfig
 	doll                            *DollService
+	startedAt                       time.Time
 	mu                              sync.Mutex
 	lifecycleMu                     sync.Mutex
 	autoMu                          sync.Mutex
@@ -128,6 +129,7 @@ func NewRobotManager(db *sql.DB, cfg *config.SysConfig, doll *DollService) *Robo
 		db:                 db,
 		cfg:                cfg,
 		doll:               doll,
+		startedAt:          time.Now(),
 		colCache:           make(map[string]map[string]bool),
 		rand:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		cleanupPendingUIDs: make(map[int]time.Time),

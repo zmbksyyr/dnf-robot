@@ -14,6 +14,7 @@ type SystemStatus struct {
 	RobotCPUPercent float64   `json:"robot_cpu_percent"`
 	RobotMemoryMB   int       `json:"robot_memory_mb"`
 	RobotThreads    int       `json:"robot_threads"`
+	RobotUptimeSec  int       `json:"robot_uptime_seconds"`
 	Running         int       `json:"running"`
 	Store           int       `json:"store"`
 }
@@ -26,6 +27,7 @@ func (m *RobotManager) SystemStatus() SystemStatus {
 		RobotCPUPercent: cpu,
 		RobotMemoryMB:   mem,
 		RobotThreads:    threads,
+		RobotUptimeSec:  int(time.Since(m.startedAt).Seconds()),
 		Running:         auto.Running,
 		Store:           auto.StoreRunning,
 	}
