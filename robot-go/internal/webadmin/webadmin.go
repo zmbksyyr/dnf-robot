@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +30,6 @@ type Server struct {
 	webAddr   string
 	tokenMu   sync.RWMutex
 	tokens    map[string]time.Time
-	tokenPath string
 }
 
 type callRequest struct {
@@ -48,8 +48,7 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 		cfg:       cfg,
 		robotAddr: robotAddr,
 		webAddr:   webAddr,
-		tokens:    loadSessionTokens(filepath.Join(cfg.ConfigDir, "web_sessions.json")),
-		tokenPath: filepath.Join(cfg.ConfigDir, "web_sessions.json"),
+		tokens:    make(map[string]time.Time),
 	}
 }
 
@@ -64,7 +63,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
 	server := &http.Server{
 		Addr:              s.webAddr,
-		Handler:           mux,
+		Handler:           s.withDiagnostics(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -109,9 +108,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.cleanupExpiredTokensLocked(time.Now())
 		s.tokens[token] = time.Now().Add(12 * time.Hour)
 		active := len(s.tokens)
-		if err := s.saveSessionTokensLocked(); err != nil {
-			fmt.Printf("[WebAdmin] session save failed pid=%d err=%v\n", os.Getpid(), err)
-		}
 		s.tokenMu.Unlock()
 		fmt.Printf("[WebAdmin] session created pid=%d active=%d remote=%s\n", os.Getpid(), active, r.RemoteAddr)
 		http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
@@ -125,9 +121,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("tw_web_token"); err == nil {
 		s.tokenMu.Lock()
 		delete(s.tokens, c.Value)
-		if err := s.saveSessionTokensLocked(); err != nil {
-			fmt.Printf("[WebAdmin] session save failed pid=%d err=%v\n", os.Getpid(), err)
-		}
 		s.tokenMu.Unlock()
 	}
 	http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: "", Path: "/", MaxAge: -1})
@@ -196,45 +189,47 @@ func (s *Server) cleanupExpiredTokensLocked(now time.Time) {
 	}
 }
 
-func (s *Server) saveSessionTokensLocked() error {
-	if s.tokenPath == "" {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(s.tokenPath), 0755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(s.tokens, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := s.tokenPath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.tokenPath)
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int
 }
 
-func loadSessionTokens(path string) map[string]time.Time {
-	tokens := make(map[string]time.Time)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			fmt.Printf("[WebAdmin] session load failed pid=%d path=%s err=%v\n", os.Getpid(), path, err)
-		}
-		return tokens
+func (w *statusRecorder) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
 	}
-	if err := json.Unmarshal(data, &tokens); err != nil {
-		fmt.Printf("[WebAdmin] session parse failed pid=%d path=%s err=%v\n", os.Getpid(), path, err)
-		return make(map[string]time.Time)
-	}
-	now := time.Now()
-	for token, expires := range tokens {
-		if token == "" || now.After(expires) {
-			delete(tokens, token)
-		}
-	}
-	fmt.Printf("[WebAdmin] sessions loaded pid=%d path=%s active=%d\n", os.Getpid(), path, len(tokens))
-	return tokens
+	n, err := w.ResponseWriter.Write(data)
+	w.bytes += n
+	return n, err
+}
+
+func (s *Server) withDiagnostics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		defer func() {
+			duration := time.Since(start)
+			if v := recover(); v != nil {
+				fmt.Printf("[WebAdmin] panic pid=%d method=%s path=%s remote=%s duration=%s err=%v\n%s\n", os.Getpid(), r.Method, r.URL.Path, r.RemoteAddr, duration.Round(time.Millisecond), v, debug.Stack())
+				http.Error(rec, "internal server error", http.StatusInternalServerError)
+				return
+			}
+			status := rec.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 500 || duration > 3*time.Second {
+				fmt.Printf("[WebAdmin] request pid=%d method=%s path=%s status=%d bytes=%d duration=%s remote=%s\n", os.Getpid(), r.Method, r.URL.Path, status, rec.bytes, duration.Round(time.Millisecond), r.RemoteAddr)
+			}
+		}()
+		next.ServeHTTP(rec, r)
+	})
 }
 
 func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {

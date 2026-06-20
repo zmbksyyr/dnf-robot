@@ -182,7 +182,11 @@ func startWebAdminSupervisor(cfg *config.SysConfig) func() {
 					continue
 				}
 			}
-			dnf.PrintfBlue("web admin listening on %s\n", fmt.Sprintf("0.0.0.0:%d", cfg.WebPort))
+			pid := 0
+			if cmd.Process != nil {
+				pid = cmd.Process.Pid
+			}
+			dnf.PrintfBlue("web admin listening on %s pid=%d\n", fmt.Sprintf("0.0.0.0:%d", cfg.WebPort), pid)
 			waitCh := make(chan error, 1)
 			go func() { waitCh <- cmd.Wait() }()
 			select {
@@ -198,7 +202,7 @@ func startWebAdminSupervisor(cfg *config.SysConfig) func() {
 				}
 				return
 			case err := <-waitCh:
-				dnf.PrintfRed("web admin exited: %v; restarting\n", err)
+				dnf.PrintfRed("web admin exited pid=%d err=%v; restarting\n", pid, err)
 				select {
 				case <-stop:
 					return
