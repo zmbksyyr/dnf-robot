@@ -108,3 +108,29 @@ func TestStorePointCoordinatorExploresUnknownBeforeReusingSuccess(t *testing.T) 
 		t.Fatalf("success point reused before unknown points were tried: %s", second.PointID)
 	}
 }
+
+func TestStorePointCoordinatorKeepsHistoricallySuccessfulPointReusable(t *testing.T) {
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []mapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
+	c := newStorePointCoordinator(configDir)
+	first, ok := c.claim(1001)
+	if !ok {
+		t.Fatalf("first claim failed")
+	}
+	c.report(1001, first, 1, true, "test_success")
+	retry, ok := c.claim(1002)
+	if !ok {
+		t.Fatalf("success fallback claim failed")
+	}
+	c.report(1002, retry, 1, false, "transient_failed")
+	c.flush()
+
+	reloaded := newStorePointCoordinator(configDir)
+	next, ok := reloaded.claim(1003)
+	if !ok {
+		t.Fatalf("historically successful point was not reusable after restart")
+	}
+	if next.PointID != first.PointID {
+		t.Fatalf("claim got %s want historical success point %s", next.PointID, first.PointID)
+	}
+}

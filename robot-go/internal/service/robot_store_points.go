@@ -180,14 +180,20 @@ func (c *storePointCoordinator) report(uid int, pos storePosition, try int, ok b
 			c.points[idx].LastResultAt = now
 		}
 	} else {
-		c.failedPoints[pos.PointID] = true
-		delete(c.successPoints, pos.PointID)
 		if hasPoint {
-			c.points[idx].Status = "failed"
+			if c.points[idx].Success > 0 {
+				c.successPoints[pos.PointID] = true
+				c.points[idx].Status = "success"
+			} else {
+				c.failedPoints[pos.PointID] = true
+				c.points[idx].Status = "failed"
+			}
 			c.points[idx].Failed++
 			c.points[idx].LastUID = uid
 			c.points[idx].LastReason = reason
 			c.points[idx].LastResultAt = now
+		} else {
+			c.failedPoints[pos.PointID] = true
 		}
 	}
 	c.dirtyCount++
@@ -319,10 +325,11 @@ func (c *storePointCoordinator) rebuildIndexes() {
 		if pt.Success > 0 || pt.Failed > 0 || (pt.Status != "" && pt.Status != "unknown") {
 			c.triedPoints[pt.ID] = true
 		}
-		switch pt.Status {
-		case "success":
+		if pt.Success > 0 || pt.Status == "success" {
 			c.successPoints[pt.ID] = true
-		case "failed":
+			continue
+		}
+		if pt.Status == "failed" {
 			c.failedPoints[pt.ID] = true
 		}
 	}
