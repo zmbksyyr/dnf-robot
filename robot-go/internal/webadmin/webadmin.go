@@ -29,6 +29,7 @@ type Server struct {
 	webAddr   string
 	tokenMu   sync.RWMutex
 	tokens    map[string]time.Time
+	tokenPath string
 }
 
 type callRequest struct {
@@ -47,7 +48,8 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 		cfg:       cfg,
 		robotAddr: robotAddr,
 		webAddr:   webAddr,
-		tokens:    make(map[string]time.Time),
+		tokens:    loadSessionTokens(filepath.Join(cfg.ConfigDir, "web_sessions.json")),
+		tokenPath: filepath.Join(cfg.ConfigDir, "web_sessions.json"),
 	}
 }
 
@@ -68,7 +70,7 @@ func (s *Server) ListenAndServe() error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	fmt.Printf("[WebAdmin] listening on %s, robot=%s\n", s.webAddr, s.robotAddr)
+	fmt.Printf("[WebAdmin] listening on %s, robot=%s pid=%d sessions=%d\n", s.webAddr, s.robotAddr, os.Getpid(), s.sessionCount())
 	return server.ListenAndServe()
 }
 
@@ -106,7 +108,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.tokenMu.Lock()
 		s.cleanupExpiredTokensLocked(time.Now())
 		s.tokens[token] = time.Now().Add(12 * time.Hour)
+		active := len(s.tokens)
+		if err := s.saveSessionTokensLocked(); err != nil {
+			fmt.Printf("[WebAdmin] session save failed pid=%d err=%v\n", os.Getpid(), err)
+		}
 		s.tokenMu.Unlock()
+		fmt.Printf("[WebAdmin] session created pid=%d active=%d remote=%s\n", os.Getpid(), active, r.RemoteAddr)
 		http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
@@ -118,6 +125,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("tw_web_token"); err == nil {
 		s.tokenMu.Lock()
 		delete(s.tokens, c.Value)
+		if err := s.saveSessionTokensLocked(); err != nil {
+			fmt.Printf("[WebAdmin] session save failed pid=%d err=%v\n", os.Getpid(), err)
+		}
 		s.tokenMu.Unlock()
 	}
 	http.SetCookie(w, &http.Cookie{Name: "tw_web_token", Value: "", Path: "/", MaxAge: -1})
@@ -150,6 +160,7 @@ func (s *Server) authed(r *http.Request) bool {
 		return false
 	}
 	if c.Value == "" {
+		fmt.Printf("[WebAdmin] auth rejected pid=%d reason=empty_token path=%s remote=%s\n", os.Getpid(), r.URL.Path, r.RemoteAddr)
 		return false
 	}
 	now := time.Now()
@@ -163,8 +174,18 @@ func (s *Server) authed(r *http.Request) bool {
 		s.tokens[c.Value] = now.Add(12 * time.Hour)
 	}
 	s.cleanupExpiredTokensLocked(now)
+	active := len(s.tokens)
 	s.tokenMu.Unlock()
+	if !ok {
+		fmt.Printf("[WebAdmin] auth rejected pid=%d reason=unknown_or_expired_token active=%d path=%s remote=%s\n", os.Getpid(), active, r.URL.Path, r.RemoteAddr)
+	}
 	return ok
+}
+
+func (s *Server) sessionCount() int {
+	s.tokenMu.RLock()
+	defer s.tokenMu.RUnlock()
+	return len(s.tokens)
 }
 
 func (s *Server) cleanupExpiredTokensLocked(now time.Time) {
@@ -173,6 +194,47 @@ func (s *Server) cleanupExpiredTokensLocked(now time.Time) {
 			delete(s.tokens, token)
 		}
 	}
+}
+
+func (s *Server) saveSessionTokensLocked() error {
+	if s.tokenPath == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.tokenPath), 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(s.tokens, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := s.tokenPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.tokenPath)
+}
+
+func loadSessionTokens(path string) map[string]time.Time {
+	tokens := make(map[string]time.Time)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Printf("[WebAdmin] session load failed pid=%d path=%s err=%v\n", os.Getpid(), path, err)
+		}
+		return tokens
+	}
+	if err := json.Unmarshal(data, &tokens); err != nil {
+		fmt.Printf("[WebAdmin] session parse failed pid=%d path=%s err=%v\n", os.Getpid(), path, err)
+		return make(map[string]time.Time)
+	}
+	now := time.Now()
+	for token, expires := range tokens {
+		if token == "" || now.After(expires) {
+			delete(tokens, token)
+		}
+	}
+	fmt.Printf("[WebAdmin] sessions loaded pid=%d path=%s active=%d\n", os.Getpid(), path, len(tokens))
+	return tokens
 }
 
 func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
