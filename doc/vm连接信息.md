@@ -98,13 +98,13 @@ dofrobot-main_YYYYMMDD-HHMMSS_最新编译_源码文档.zip
 包内包含：
 
 - 源码
+- `.git` 目录，用于下次继续修复、查看历史、提交和回滚
 - `doc`
 - `bin/robot-linux`
 - 默认资源
 
 包内不包含：
 
-- `.git`
 - 临时诊断文件
 - 旧基线产物
 - 旧压测摘要
