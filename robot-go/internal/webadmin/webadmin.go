@@ -58,6 +58,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/api/call", s.requireAuth(s.handleCall))
 	mux.HandleFunc("/api/game-port", s.requireAuth(s.handleGamePort))
+	mux.HandleFunc("/api/game-hook", s.requireAuth(s.handleGameHook))
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
 	server := &http.Server{
 		Addr:              s.webAddr,
@@ -194,6 +195,86 @@ func (s *Server) handleGamePort(w http.ResponseWriter, _ *http.Request) {
 		out["game_cfg_path"] = cfgPath
 	}
 	writeJSON(w, out)
+}
+
+type gameHookProcess struct {
+	PID    int    `json:"pid"`
+	Loaded bool   `json:"loaded"`
+	Error  string `json:"error,omitempty"`
+}
+
+func (s *Server) handleGameHook(w http.ResponseWriter, _ *http.Request) {
+	const library = "libantisvrinline.so"
+	processes, err := dfGameProcesses()
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "library": library, "error": err.Error()})
+		return
+	}
+	out := map[string]interface{}{
+		"ok":        false,
+		"library":   library,
+		"total":     len(processes),
+		"loaded":    0,
+		"processes": processes,
+		"state":     "no_process",
+	}
+	if len(processes) == 0 {
+		writeJSON(w, out)
+		return
+	}
+	loaded := 0
+	for i := range processes {
+		maps, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(processes[i].PID), "maps"))
+		if err != nil {
+			processes[i].Error = err.Error()
+			continue
+		}
+		processes[i].Loaded = bytes.Contains(maps, []byte(library))
+		if processes[i].Loaded {
+			loaded++
+		}
+	}
+	out["loaded"] = loaded
+	out["processes"] = processes
+	switch {
+	case loaded == len(processes):
+		out["ok"] = true
+		out["state"] = "loaded"
+	case loaded > 0:
+		out["state"] = "partial"
+	default:
+		out["state"] = "missing"
+	}
+	writeJSON(w, out)
+}
+
+func dfGameProcesses() ([]gameHookProcess, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	out := []gameHookProcess{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		if err != nil || len(cmdline) == 0 {
+			continue
+		}
+		parts := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+		for _, part := range parts {
+			if strings.HasSuffix(part, "df_game_r") || part == "df_game_r" || strings.Contains(part, "/df_game_r") {
+				out = append(out, gameHookProcess{PID: pid})
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) gameMaxUserNum() (int, string, string, bool) {
