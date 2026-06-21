@@ -221,6 +221,11 @@ func (m *RobotManager) autoShoutRobot(uid int, tpl shoutTemplates, msg string, w
 func (m *RobotManager) sendRobotShout(source string, uid int, tpl shoutTemplates, msg string, world bool, rc robotRuntimeConfig) error {
 	msg = safeRobotShoutMessage(msg)
 	msgType, channel, outMsg := m.prepareShout(tpl, msg, world)
+	if world {
+		if err := m.ensureRobotWorldHorn(uid); err != nil {
+			return err
+		}
+	}
 	body := map[string]interface{}{"userinfos": []map[string]interface{}{{"id": uid, "msg": outMsg, "type": msgType}}}
 	data, _ := json.Marshal(body)
 	if rc.ShoutDelayMS > 0 {
@@ -235,7 +240,7 @@ func (m *RobotManager) sendRobotShout(source string, uid int, tpl shoutTemplates
 
 func (m *RobotManager) prepareShout(_ shoutTemplates, msg string, world bool) (int, string, string) {
 	if world {
-		return 80, "world", msg + "  服务器喇叭()"
+		return 11, "world", msg
 	}
 	return 3, "local", msg
 }

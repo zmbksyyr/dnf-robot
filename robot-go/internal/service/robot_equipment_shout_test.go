@@ -2,7 +2,6 @@ package service
 
 import (
 	"math/rand"
-	"strings"
 	"testing"
 )
 
@@ -32,11 +31,8 @@ func TestPrepareShoutSeparatesLocalAndWorld(t *testing.T) {
 	}
 
 	worldType, worldChannel, worldOut := m.prepareShout(shoutTemplates{}, "hello", true)
-	if worldType != 80 || worldChannel != "world" {
-		t.Fatalf("world shout got type=%d channel=%s, want type=80 channel=world", worldType, worldChannel)
-	}
-	if !strings.Contains(worldOut, "服务器喇叭") {
-		t.Fatalf("world shout missing server horn marker: %q", worldOut)
+	if worldType != 11 || worldChannel != "world" || worldOut != "hello" {
+		t.Fatalf("world shout got type=%d channel=%s out=%q, want type=11 channel=world out=hello", worldType, worldChannel, worldOut)
 	}
 }
 

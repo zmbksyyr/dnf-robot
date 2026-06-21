@@ -2,8 +2,16 @@ package service
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strings"
+)
+
+const (
+	worldHornItemID   = 36
+	worldHornCount    = 200
+	worldHornBoxIndex = 55
+	worldHornRawIndex = worldHornBoxIndex + 2
 )
 
 func (m *RobotManager) populateStoreInventory(info RobotInfo, rc robotRuntimeConfig) error {
@@ -81,6 +89,37 @@ func (m *RobotManager) ensureStoreInventoryAndStall(r RobotInfo, rc robotRuntime
 	title := fmt.Sprintf("tw-%d", r.UID%100000)
 	_, _ = m.db.Exec("DELETE FROM d_starsky.Robot_stall_config WHERE UID=? AND function_type=2 AND cfg_type=3", r.UID)
 	_, _ = m.db.Exec("INSERT INTO d_starsky.Robot_stall_config (cfg_content,cfg_type,UID,function_type,state) VALUES (?,3,?,2,1)", title, r.UID)
+	return nil
+}
+
+func (m *RobotManager) ensureRobotWorldHorn(uid int) error {
+	var cid int
+	if err := m.db.QueryRow("SELECT cid FROM d_starsky.robot_registry WHERE uid=? LIMIT 1", uid).Scan(&cid); err != nil {
+		return fmt.Errorf("world horn robot uid=%d not registered: %w", uid, err)
+	}
+	return m.ensureRobotWorldHornByCID(cid)
+}
+
+func (m *RobotManager) ensureRobotWorldHornByCID(cid int) error {
+	var invRaw []byte
+	row := m.db.QueryRow("SELECT UNCOMPRESS(inventory) FROM taiwan_cain_2nd.inventory WHERE charac_no=?", cid)
+	if err := row.Scan(&invRaw); err != nil {
+		return fmt.Errorf("world horn inventory cid=%d: %w", cid, err)
+	}
+	if len(invRaw) < 249*61 {
+		return errors.New("world horn inventory blob is too short")
+	}
+	slot := invRaw[worldHornRawIndex*61 : (worldHornRawIndex+1)*61]
+	itemID := int(binary.LittleEndian.Uint32(slot[2:6]))
+	count := int(binary.LittleEndian.Uint32(slot[7:11]))
+	if int(binary.BigEndian.Uint16(slot[0:2])) == inventoryTypeForBoxIndex(worldHornBoxIndex) && itemID == worldHornItemID && count >= 1 {
+		return nil
+	}
+	clear(slot)
+	writeInventoryStack(slot, equipmentCatalogItem{ID: worldHornItemID}, worldHornCount, inventoryTypeForBoxIndex(worldHornBoxIndex))
+	if _, err := m.db.Exec("UPDATE taiwan_cain_2nd.inventory SET inventory=? WHERE charac_no=?", compressRaw(invRaw), cid); err != nil {
+		return fmt.Errorf("update world horn inventory cid=%d: %w", cid, err)
+	}
 	return nil
 }
 
