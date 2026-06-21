@@ -166,13 +166,22 @@ func (m *RobotManager) cleanupCandidates(req RobotCleanupRequest) ([]RobotCleanu
 			}
 			seen[uid] = true
 			account := fmt.Sprintf("%d", uid)
-			out = append(out, RobotCleanupCandidate{
+			c := RobotCleanupCandidate{
 				UID:     uid,
 				CID:     0,
 				Name:    "confirmed-broken",
 				Account: account,
 				Reason:  "confirmed broken uid without registry row",
-			})
+			}
+			accountName, err := m.accountName(uid)
+			if err != nil {
+				return nil, err
+			}
+			if accountName != "" && accountName != account {
+				c.Protected = true
+				c.Reason = "accountname does not equal uid"
+			}
+			out = append(out, c)
 		}
 	}
 	if req.MinUID > 0 || req.MaxUID > 0 {
@@ -183,6 +192,21 @@ func (m *RobotManager) cleanupCandidates(req RobotCleanupRequest) ([]RobotCleanu
 		out = append(out, orphans...)
 	}
 	return out, nil
+}
+
+func (m *RobotManager) accountName(uid int) (string, error) {
+	var accountName sql.NullString
+	err := m.db.QueryRow("SELECT accountname FROM d_taiwan.accounts WHERE UID=? LIMIT 1", uid).Scan(&accountName)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !accountName.Valid {
+		return "", nil
+	}
+	return accountName.String, nil
 }
 
 func (m *RobotManager) orphanStorePermissionCandidates(minUID, maxUID int, seen map[int]bool) ([]RobotCleanupCandidate, error) {
