@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -9,6 +10,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"syscall"
@@ -365,6 +368,8 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.OperationStatus()})
 	case "systemStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SystemStatus()})
+	case "goroutineDump":
+		return wrapResult(map[string]interface{}{"ok": true, "result": goroutineDump()})
 	case "databaseStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.DatabaseStatus()})
 	case "keypairStatus":
@@ -410,6 +415,17 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 	default:
 		dnf.PrintfBlue("unknown command: %s\n", cmd)
 		return wrapResult(map[string]interface{}{"ok": false, "error": "unknown command"})
+	}
+}
+
+func goroutineDump() map[string]interface{} {
+	var buf bytes.Buffer
+	if prof := pprof.Lookup("goroutine"); prof != nil {
+		_ = prof.WriteTo(&buf, 1)
+	}
+	return map[string]interface{}{
+		"count": runtime.NumGoroutine(),
+		"dump":  buf.String(),
 	}
 }
 

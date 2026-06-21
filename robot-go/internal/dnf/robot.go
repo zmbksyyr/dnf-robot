@@ -470,7 +470,7 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 			}
 			r.mu.Unlock()
 			if reDelay > 0 {
-				time.Sleep(time.Duration(reDelay) * time.Second)
+				time.Sleep(time.Duration(reDelay) * time.Millisecond)
 			}
 			r.RefishConnect()
 			return
@@ -964,6 +964,7 @@ func (r *RobotVo) sendRaw(pkt []byte) bool {
 	if r.Conn == nil || len(pkt) == 0 {
 		return false
 	}
+	_ = r.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	for written := 0; written < len(pkt); {
 		n, err := r.Conn.Write(pkt[written:])
 		if err != nil {
@@ -1325,6 +1326,8 @@ func (r *RobotVo) RefishConnect() bool {
 			delaySec := int(newVo.ReDelay)
 			if delaySec <= 0 {
 				delaySec = 5
+			} else {
+				delaySec = int((time.Duration(newVo.ReDelay)*time.Millisecond + time.Second - 1) / time.Second)
 			}
 			if r.Controller != nil {
 				r.Controller.AddMessageDelay("MsgOnLine", newVo, delaySec)

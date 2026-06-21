@@ -30,6 +30,7 @@ func TestRequiresValidKeypair(t *testing.T) {
 		"autoStatus",
 		"schedulerStatus",
 		"systemStatus",
+		"goroutineDump",
 		"keypairStatus",
 		"keypairReleaseDefault",
 		"autoStop",
