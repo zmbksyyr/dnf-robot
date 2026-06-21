@@ -43,9 +43,6 @@ func InitRuntime(cfg *config.SysConfig) error {
 	if err := ensurePVFExports(cfg.DFGameR, cfg.ConfigDir); err != nil {
 		return err
 	}
-	if err := ensureDFGameRPatches(cfg.DFGameR); err != nil {
-		return err
-	}
 	if err := updateRuntimeManifest(cfg); err != nil {
 		dnf.PrintfBlue("[Runtime] self-check manifest update skipped: %v\n", err)
 	}
