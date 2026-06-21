@@ -89,10 +89,10 @@ Web session 安全要求：
 
 ## 打包
 
-交付 zip 放到桌面，命名格式：
+git提交，交付 zip 放到桌面，命名格式：
 
 ```text
-dofrobot-main_YYYYMMDD-HHMMSS_最新编译_源码文档.zip
+dofrobot-main_YYYYMMDD-HHMMSS_最后更新的功能xxx.zip
 ```
 
 包内包含：
@@ -100,7 +100,7 @@ dofrobot-main_YYYYMMDD-HHMMSS_最新编译_源码文档.zip
 - 源码
 - `.git` 目录，用于下次继续修复、查看历史、提交和回滚
 - `doc`
-- `bin/robot-linux`
+- `bin/robot`
 - 默认资源
 
 包内不包含：
