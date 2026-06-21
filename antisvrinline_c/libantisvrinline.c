@@ -200,7 +200,8 @@ static int initInlineOnce(FILE* log)
 	InstallChatMessageHook(log);
 	InstallAntibotRecvBypass(log);
 	InstallAntibotInputBypass(log);
-	InstallIPGQueryBypass(log);
+	if (log != NULL)
+		fprintf(log, "INFO: IPGQuery bypass disabled.\n");
 
 	if (log != NULL)
 		fprintf(log, "INFO: proxy init success.\n");
