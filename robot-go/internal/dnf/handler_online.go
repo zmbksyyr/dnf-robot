@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	"robot/pkg/message"
@@ -161,8 +162,6 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 		query string
 		args  []interface{}
 	}{
-		{"DELETE FROM d_taiwan.member_join_info WHERE m_id=?", []interface{}{uid}},
-		{"DELETE FROM taiwan_login.member_join_info WHERE m_id=?", []interface{}{uid}},
 		{"INSERT IGNORE INTO d_taiwan.member_info_bot_backup (m_id,user_id) VALUES (?,?)", []interface{}{uid, fmt.Sprintf("%d", uid)}},
 		{"UPDATE d_taiwan.member_info_bot_backup SET user_id=?,state=1,slot=8,hangame_flag=0 WHERE m_id=?", []interface{}{fmt.Sprintf("%d", uid), uid}},
 		{"INSERT IGNORE INTO taiwan_login.allow_proxy_user (m_id) VALUES (?)", []interface{}{uid}},
@@ -171,6 +170,12 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 		{"INSERT IGNORE INTO taiwan_login.churn_member_info (m_id,play_info) VALUES (?,'000000000000000000000000000011')", []interface{}{uid}},
 		{"INSERT IGNORE INTO taiwan_login.member_game_option VALUES (?,0x48000000789C63646064F85FCF90028408F0BF9E9181112C0382CC50B117CC20F114A038023042210009AC0C9,'','',0x10020000789C636018058319686115D5C62AAA83555417ABA81E56517D06003C02010C)", []interface{}{uid}},
 		{"INSERT IGNORE INTO taiwan_login_play.member_key_option (m_id,key_type,key_option) VALUES (?,0,UNHEX(''))", []interface{}{uid}},
+	}
+
+	for _, table := range []string{"d_taiwan.member_join_info", "taiwan_login.member_join_info"} {
+		if !deleteOnlineRepairRowIfTableExists(db, table, "m_id", uid) {
+			return false
+		}
 	}
 
 	for _, s := range sqls {
@@ -185,6 +190,36 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 		return false
 	}
 
+	return true
+}
+
+func deleteOnlineRepairRowIfTableExists(db *sql.DB, table, col string, uid int) bool {
+	if db == nil {
+		fmt.Printf("MsgOnLine preflight sql failed: delete optional %s (no db)\n", table)
+		return false
+	}
+	schema, name, ok := strings.Cut(table, ".")
+	if !ok {
+		fmt.Printf("MsgOnLine preflight sql failed: invalid optional table %s\n", table)
+		return false
+	}
+	var tableName sql.NullString
+	err := db.QueryRow("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=? LIMIT 1", schema, name).Scan(&tableName)
+	if err == sql.ErrNoRows {
+		return true
+	}
+	if err != nil {
+		fmt.Printf("MsgOnLine preflight sql failed: check optional %s: %v\n", table, err)
+		return false
+	}
+	if !tableName.Valid {
+		return true
+	}
+	quoted := "`" + strings.ReplaceAll(schema, "`", "``") + "`.`" + strings.ReplaceAll(name, "`", "``") + "`"
+	if _, err := db.Exec("DELETE FROM "+quoted+" WHERE `"+col+"`=?", uid); err != nil {
+		fmt.Printf("MsgOnLine preflight sql failed: delete optional %s: %v\n", table, err)
+		return false
+	}
 	return true
 }
 

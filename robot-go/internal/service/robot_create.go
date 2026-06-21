@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -141,15 +140,14 @@ func (m *RobotManager) ensureAccount(uid int) error {
 	account := fmt.Sprintf("%d", uid)
 	steps := []string{
 		"CREATE TABLE IF NOT EXISTS d_taiwan.member_info_bot_backup LIKE d_taiwan.member_info",
-		"DELETE FROM d_taiwan.member_join_info WHERE m_id=?",
-		"DELETE FROM taiwan_login.member_join_info WHERE m_id=?",
 	}
 	for _, q := range steps {
-		if strings.Contains(q, "?") {
-			if _, err := m.db.Exec(q, uid); err != nil {
-				return err
-			}
-		} else if _, err := m.db.Exec(q); err != nil {
+		if _, err := m.db.Exec(q); err != nil {
+			return err
+		}
+	}
+	for _, table := range []string{"d_taiwan.member_join_info", "taiwan_login.member_join_info"} {
+		if err := m.deleteByIntIfTableExists(table, "m_id", uid); err != nil {
 			return err
 		}
 	}

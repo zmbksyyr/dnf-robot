@@ -100,6 +100,31 @@ func (m *RobotManager) tableColumns(table string) (map[string]bool, error) {
 	return cols, rows.Err()
 }
 
+func (m *RobotManager) tableExists(table string) (bool, error) {
+	parts := strings.Split(table, ".")
+	if len(parts) != 2 {
+		return false, fmt.Errorf("invalid table name %q", table)
+	}
+	var name sql.NullString
+	err := m.db.QueryRow("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=? LIMIT 1", parts[0], parts[1]).Scan(&name)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return name.Valid, nil
+}
+
+func (m *RobotManager) deleteByIntIfTableExists(table, col string, id int) error {
+	exists, err := m.tableExists(table)
+	if err != nil || !exists {
+		return err
+	}
+	_, err = m.db.Exec("DELETE FROM "+quoteTable(table)+" WHERE `"+col+"`=?", id)
+	return err
+}
+
 func quoteTable(table string) string {
 	parts := strings.Split(table, ".")
 	for i := range parts {
