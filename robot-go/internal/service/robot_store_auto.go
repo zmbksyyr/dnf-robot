@@ -136,6 +136,8 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 
 func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shouldStop func() bool) bool {
 	displaySent := false
+	fallbackSent := false
+	started := time.Now()
 	deadline := time.Now().Add(2500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if shouldStop != nil && shouldStop() {
@@ -154,6 +156,12 @@ func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shou
 				return true
 			}
 			deadline = time.Now().Add(500 * time.Millisecond)
+		}
+		if !fallbackSent && time.Since(started) >= 800*time.Millisecond {
+			fallbackSent = true
+			if m.doll.CompletePrivateStoreDisplay(uid) {
+				return true
+			}
 		}
 		if sleepWithStop(200*time.Millisecond, shouldStop) {
 			return false
