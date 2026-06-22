@@ -625,22 +625,26 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		return
 	}
 
-	if packetFlag == 1 && r.State == StateRun && (packetType == 20 || packetType == 88 || packetType == 90 || packetType == 13) {
+	if r.State == StateRun && (packetType == 88 || packetType == 90) && r.RobotTyp == 2 {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
-		if packetType == 88 && err == nil && len(decData) > 0 && decData[0] == 1 {
+		value := byte(0)
+		if len(decData) > 0 {
+			value = decData[0]
+		}
+		if packetFlag == 1 && packetType == 88 && err == nil && value == 1 {
 			r.StoreCreated = true
 		}
-		if packetType == 90 && err == nil && len(decData) > 0 && decData[0] == 1 {
+		if packetFlag == 1 && packetType == 90 && err == nil && value == 1 {
 			r.StoreDisplayAck = true
 		}
-		if (packetType == 88 || packetType == 90) && r.RobotTyp == 2 {
-			value := byte(0)
-			if len(decData) > 0 {
-				value = decData[0]
-			}
-			fmt.Printf("[StoreAck] uid=%d type=%d flag=%d value=%d len=%d err=%v created=%t display_ack=%t\n",
-				r.UID, packetType, packetFlag, value, len(decData), err, r.StoreCreated, r.StoreDisplayAck)
-		}
+		fmt.Printf("[StoreAck] uid=%d type=%d flag=%d value=%d len=%d err=%v created=%t display_ack=%t\n",
+			r.UID, packetType, packetFlag, value, len(decData), err, r.StoreCreated, r.StoreDisplayAck)
+	}
+
+	if packetFlag == 1 && r.State == StateRun && (packetType == 20 || packetType == 13) {
+		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		_ = decData
+		_ = err
 	}
 
 	if packetFlag == 0 && packetType == 13 && (r.State == StateRun || r.State == StateLogin) {
@@ -1170,6 +1174,7 @@ func (r *RobotVo) CreatePrivateStore() {
 	pkt, err := buildSendPacket(88, uint16(r.PacketID), data[:], r.Cipher)
 	r.PacketID++
 	if err == nil {
+		fmt.Printf("[StoreCreate] uid=%d village=%d area=%d x=%d y=%d packet_id=%d\n", r.UID, r.CurVillage, r.CurArea, r.CurX, r.CurY, r.PacketID-1)
 		r.SendMsg(pkt)
 	}
 	r.RobotTyp = 2
