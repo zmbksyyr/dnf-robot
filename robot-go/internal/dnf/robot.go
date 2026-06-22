@@ -1,8 +1,6 @@
 package dnf
 
 import (
-	"bytes"
-	"compress/zlib"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
@@ -25,14 +23,6 @@ const (
 	StateRun   ClientState = 3
 	StateClean ClientState = 4
 	StateWrong ClientState = 5
-)
-
-const (
-	worldHornItemSpace = 1
-	worldHornBoxIndex  = 55
-	worldHornRawIndex  = worldHornBoxIndex + 2
-	worldHornItemID    = 36
-	worldHornCount     = 200
 )
 
 type DisconnectReason int
@@ -632,9 +622,6 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 				go r.RefishConnect()
 			}
 		}
-		if r.IsRefishUser == 1 && r.DB != nil {
-			_, _ = r.DB.Exec("update taiwan_cain_2nd.inventory set money=2000000000,inventory=? where charac_no in(select b.charac_no from d_taiwan.accounts a left join taiwan_cain.charac_info b on a.uid=b.m_id where a.uid=? and a.login_Mac='');", compressedWorldHornInventory(), r.UID)
-		}
 		return
 	}
 
@@ -902,7 +889,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if err == nil {
 			if r.sendRaw(pkt) {
 				if r.IsRefishUser == 1 && r.DB != nil {
-					_, _ = r.DB.Exec("update taiwan_cain_2nd.inventory set money=2000000000,inventory=? where charac_no in(select b.charac_no from d_taiwan.accounts a left join taiwan_cain.charac_info b on a.uid=b.m_id where a.uid=? and a.login_Mac='');", compressedWorldHornInventory(), r.UID)
+					_, _ = r.DB.Exec("update taiwan_cain_2nd.inventory set money=2000000000 where charac_no in(select b.charac_no from d_taiwan.accounts a left join taiwan_cain.charac_info b on a.uid=b.m_id where a.uid=?);", r.UID)
 				} else {
 					r.PacketID = 29
 					r.State = StateRun
@@ -1056,14 +1043,14 @@ func (r *RobotVo) SendPublicMessage(msgType int, msg []byte) {
 		}
 		_ = pos
 
-		if sendMsgType == 11 {
-			r.sendPublicMessagePacketWithItem(sendMsgType, worldHornItemSpace, worldHornBoxIndex, msg)
+		if isHornMessageType(sendMsgType) {
+			r.sendPublicMessagePacket(sendMsgType, 0, msg)
 			return
 		}
 		r.sendPublicMessagePacket(sendMsgType, 0x24, msg)
 	} else {
-		if sendMsgType == 11 {
-			r.sendPublicMessagePacketWithItem(sendMsgType, worldHornItemSpace, worldHornBoxIndex, msg)
+		if isHornMessageType(sendMsgType) {
+			r.sendPublicMessagePacket(sendMsgType, 0, msg)
 			return
 		}
 		r.sendPublicMessagePacket(sendMsgType, 0x24, msg)
@@ -1085,36 +1072,8 @@ func (r *RobotVo) sendPublicMessagePacket(msgType, flag byte, msg []byte) {
 	}
 }
 
-func (r *RobotVo) sendPublicMessagePacketWithItem(msgType byte, itemSpace uint16, itemIndex uint32, msg []byte) {
-	realSize := 1 + 2 + 4 + 4 + len(msg)
-	alinSize := alignTo16(realSize)
-	data := make([]byte, alinSize)
-	data[0] = msgType
-	binary.LittleEndian.PutUint16(data[1:3], itemSpace)
-	binary.LittleEndian.PutUint32(data[3:7], itemIndex)
-	binary.LittleEndian.PutUint32(data[7:11], uint32(len(msg)))
-	copy(data[11:], msg)
-	pkt, err := buildSendPacket(17, uint16(r.PacketID), data, r.Cipher)
-	r.PacketID++
-	if err == nil {
-		r.SendMsg(pkt)
-	}
-}
-
-func compressedWorldHornInventory() []byte {
-	raw := make([]byte, 249*61)
-	slot := raw[worldHornRawIndex*61 : (worldHornRawIndex+1)*61]
-	slot[0] = 0
-	slot[1] = 2
-	binary.LittleEndian.PutUint32(slot[2:6], uint32(worldHornItemID))
-	binary.LittleEndian.PutUint32(slot[7:11], uint32(worldHornCount))
-	var compressed bytes.Buffer
-	zw := zlib.NewWriter(&compressed)
-	_, _ = zw.Write(raw)
-	_ = zw.Close()
-	blob := append(make([]byte, 4), compressed.Bytes()...)
-	binary.LittleEndian.PutUint32(blob[0:4], uint32(len(raw)))
-	return blob
+func isHornMessageType(msgType byte) bool {
+	return msgType == 11 || msgType == 12 || msgType == 35
 }
 
 func trimWorldHornSuffix(msg []byte, msgStr string) ([]byte, bool) {
