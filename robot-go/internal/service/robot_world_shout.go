@@ -14,7 +14,7 @@ func sendMonitorMegaphone(msg, name string, senderID uint16) error {
 	if len(msgBytes) > 255 {
 		msgBytes = msgBytes[:255]
 	}
-	nameBytes := []byte(name)
+	nameBytes := windows1252StringBytes(name)
 	if len(nameBytes) == 0 {
 		nameBytes = []byte("Robot")
 	}

@@ -103,10 +103,10 @@ func (m *RobotManager) Shout(req RobotCommandRequest) (RobotCommandResult, error
 			result.Confirmed++
 			result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: true, State: "sent", Message: fmt.Sprintf("world=%s local=%s", worldMsg, localMsg)})
 		} else {
-			if err := m.sendRobotShout("manager", r.UID, tpl, worldMsg, true, rc); err != nil {
+			if err := m.sendRobotShout("manager", r.UID, r.Name, tpl, worldMsg, true, rc); err != nil {
 				result.Failed++
 				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "failed", Message: err.Error()})
-			} else if err := m.sendRobotShout("manager", r.UID, tpl, localMsg, false, rc); err != nil {
+			} else if err := m.sendRobotShout("manager", r.UID, r.Name, tpl, localMsg, false, rc); err != nil {
 				result.Failed++
 				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "failed", Message: err.Error()})
 			} else {
@@ -160,7 +160,7 @@ func (m *RobotManager) ShoutOne(req RobotCommandRequest, world bool) (RobotComma
 			result.Accepted++
 			result.Confirmed++
 			result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: true, State: "sent", Message: msg})
-		} else if err := m.sendRobotShout("manager", r.UID, tpl, msg, world, rc); err != nil {
+		} else if err := m.sendRobotShout("manager", r.UID, r.Name, tpl, msg, world, rc); err != nil {
 			result.Failed++
 			result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "failed", Message: err.Error()})
 		} else {
@@ -215,10 +215,10 @@ func (m *RobotManager) autoShoutRobot(uid int, tpl shoutTemplates, msg string, w
 		_ = m.appendShout(uid, channel, msgType, msg)
 		return
 	}
-	_ = m.sendRobotShout("auto", uid, tpl, msg, world, rc)
+	_ = m.sendRobotShout("auto", uid, m.lookupRobotCharacName(uid), tpl, msg, world, rc)
 }
 
-func (m *RobotManager) sendRobotShout(source string, uid int, tpl shoutTemplates, msg string, world bool, rc robotRuntimeConfig) error {
+func (m *RobotManager) sendRobotShout(source string, uid int, senderName string, tpl shoutTemplates, msg string, world bool, rc robotRuntimeConfig) error {
 	msg = safeRobotShoutMessage(msg)
 	msgType, channel, outMsg := m.prepareShout(tpl, msg, world)
 	body := map[string]interface{}{"userinfos": []map[string]interface{}{{"id": uid, "msg": outMsg, "type": msgType}}}
@@ -227,7 +227,7 @@ func (m *RobotManager) sendRobotShout(source string, uid int, tpl shoutTemplates
 		time.Sleep(time.Duration(m.randBetween(100, maxInt(100, rc.ShoutDelayMS/2))) * time.Millisecond)
 	}
 	if world {
-		if err := sendMonitorMegaphone(outMsg, "Robot", uint16(uid)); err != nil {
+		if err := sendMonitorMegaphone(outMsg, senderName, uint16(uid)); err != nil {
 			return err
 		}
 		_ = m.appendShoutDetail(uid, channel, msgType, msg, source)
@@ -238,6 +238,12 @@ func (m *RobotManager) sendRobotShout(source string, uid int, tpl shoutTemplates
 	}
 	_ = m.appendShoutDetail(uid, channel, msgType, msg, source)
 	return nil
+}
+
+func (m *RobotManager) lookupRobotCharacName(uid int) string {
+	var name string
+	_ = m.db.QueryRow("SELECT IFNULL(charac_name,'') FROM taiwan_cain.charac_info WHERE m_id=? AND delete_flag=0 ORDER BY last_play_time DESC, charac_no DESC LIMIT 1", uid).Scan(&name)
+	return name
 }
 
 func (m *RobotManager) prepareShout(_ shoutTemplates, msg string, world bool) (int, string, string) {

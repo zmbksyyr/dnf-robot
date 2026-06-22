@@ -16,12 +16,12 @@ func (m *RobotManager) selectRobots(req RobotCommandRequest) ([]RobotInfo, error
 		for i, uid := range req.UIDs {
 			args[i] = uid
 		}
-		rows, err = m.db.Query("SELECT d.UID,d.CID,d.port,d.curvill,d.curarea,d.curx,d.cury,IFNULL(c.lev,0),IFNULL(c.job,0),IFNULL(c.grow_type,0) FROM d_starsky.Dummylist d LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=d.CID WHERE d.UID IN ("+holders+") ORDER BY CAST(d.UID AS UNSIGNED)", args...)
+		rows, err = m.db.Query("SELECT d.UID,d.CID,IFNULL(c.charac_name,''),d.port,d.curvill,d.curarea,d.curx,d.cury,IFNULL(c.lev,0),IFNULL(c.job,0),IFNULL(c.grow_type,0) FROM d_starsky.Dummylist d LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=d.CID WHERE d.UID IN ("+holders+") ORDER BY CAST(d.UID AS UNSIGNED)", args...)
 	} else {
 		if req.Count <= 0 {
 			req.Count = 10
 		}
-		rows, err = m.db.Query("SELECT d.UID,d.CID,d.port,d.curvill,d.curarea,d.curx,d.cury,IFNULL(c.lev,0),IFNULL(c.job,0),IFNULL(c.grow_type,0) FROM d_starsky.Dummylist d LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=d.CID ORDER BY CAST(d.UID AS UNSIGNED) LIMIT ?", req.Count)
+		rows, err = m.db.Query("SELECT d.UID,d.CID,IFNULL(c.charac_name,''),d.port,d.curvill,d.curarea,d.curx,d.cury,IFNULL(c.lev,0),IFNULL(c.job,0),IFNULL(c.grow_type,0) FROM d_starsky.Dummylist d LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=d.CID ORDER BY CAST(d.UID AS UNSIGNED) LIMIT ?", req.Count)
 	}
 	if err != nil {
 		return nil, err
@@ -30,7 +30,7 @@ func (m *RobotManager) selectRobots(req RobotCommandRequest) ([]RobotInfo, error
 	var out []RobotInfo
 	for rows.Next() {
 		var r RobotInfo
-		if err := rows.Scan(&r.UID, &r.CID, &r.Port, &r.Village, &r.Area, &r.X, &r.Y, &r.Level, &r.Job, &r.Grow); err != nil {
+		if err := rows.Scan(&r.UID, &r.CID, &r.Name, &r.Port, &r.Village, &r.Area, &r.X, &r.Y, &r.Level, &r.Job, &r.Grow); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
