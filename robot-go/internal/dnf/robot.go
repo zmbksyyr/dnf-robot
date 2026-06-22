@@ -1044,13 +1044,13 @@ func (r *RobotVo) SendPublicMessage(msgType int, msg []byte) {
 		_ = pos
 
 		if isHornMessageType(sendMsgType) {
-			r.sendPublicMessagePacket(sendMsgType, 0, msg)
+			r.sendWorldHornMessagePacket(sendMsgType, msg)
 			return
 		}
 		r.sendPublicMessagePacket(sendMsgType, 0x24, msg)
 	} else {
 		if isHornMessageType(sendMsgType) {
-			r.sendPublicMessagePacket(sendMsgType, 0, msg)
+			r.sendWorldHornMessagePacket(sendMsgType, msg)
 			return
 		}
 		r.sendPublicMessagePacket(sendMsgType, 0x24, msg)
@@ -1063,6 +1063,26 @@ func (r *RobotVo) sendPublicMessagePacket(msgType, flag byte, msg []byte) {
 	data := make([]byte, alinSize)
 	data[0] = msgType
 	data[1] = flag
+	binary.LittleEndian.PutUint32(data[7:11], uint32(len(msg)))
+	copy(data[11:], msg)
+	pkt, err := buildSendPacket(17, uint16(r.PacketID), data, r.Cipher)
+	r.PacketID++
+	if err == nil {
+		r.SendMsg(pkt)
+	}
+}
+
+func (r *RobotVo) sendWorldHornMessagePacket(msgType byte, msg []byte) {
+	const (
+		worldHornItemSpace   = 1
+		worldHornPacketIndex = 0
+	)
+	realSize := 1 + 2 + 4 + 4 + len(msg)
+	alinSize := alignTo16(realSize)
+	data := make([]byte, alinSize)
+	data[0] = msgType
+	binary.LittleEndian.PutUint16(data[1:3], worldHornItemSpace)
+	binary.LittleEndian.PutUint32(data[3:7], worldHornPacketIndex)
 	binary.LittleEndian.PutUint32(data[7:11], uint32(len(msg)))
 	copy(data[11:], msg)
 	pkt, err := buildSendPacket(17, uint16(r.PacketID), data, r.Cipher)

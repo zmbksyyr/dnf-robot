@@ -126,6 +126,9 @@ func (m *RobotManager) createRobot(info RobotInfo, rc robotRuntimeConfig) error 
 	if err := m.populateStoreInventory(info, rc); err != nil {
 		return err
 	}
+	if err := m.ensureRobotWorldHornByCID(info.CID); err != nil {
+		return err
+	}
 	if err := m.rebuildCharacView(info.UID); err != nil {
 		return err
 	}

@@ -47,6 +47,11 @@ func (m *RobotManager) online(req RobotCommandRequest, store bool, confirm bool)
 	if rc.OnlineDispatchIntervalMS <= 0 {
 		userinfos := make([]map[string]interface{}, 0, len(robots))
 		for _, r := range robots {
+			if err := m.ensureRobotWorldHorn(r.UID); err != nil {
+				result.Failed++
+				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "failed", Message: err.Error()})
+				continue
+			}
 			userinfos = append(userinfos, map[string]interface{}{
 				"birtharea": r.Area, "birthvill": r.Village, "birthx": r.X, "birthy": r.Y,
 				"cid": 0, "delay": rc.LoginDelayMS, "discost": 0, "disopen": 0,
@@ -69,6 +74,11 @@ func (m *RobotManager) online(req RobotCommandRequest, store bool, confirm bool)
 		}
 	} else {
 		for _, r := range robots {
+			if err := m.ensureRobotWorldHorn(r.UID); err != nil {
+				result.Failed++
+				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "failed", Message: err.Error()})
+				continue
+			}
 			body := map[string]interface{}{"userinfos": []map[string]interface{}{{
 				"birtharea": r.Area, "birthvill": r.Village, "birthx": r.X, "birthy": r.Y,
 				"cid": 0, "delay": rc.LoginDelayMS, "discost": 0, "disopen": 0,
