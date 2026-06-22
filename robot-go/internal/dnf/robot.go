@@ -1011,52 +1011,18 @@ func (r *RobotVo) SendPublicMessage(msgType int, msg []byte) {
 	if sendMsgType == 0 {
 		sendMsgType = 0x03
 	}
-
-	if trimmed, ok := trimWorldHornSuffix(msg, msgStr); ok {
-		msg = trimmed
-		sendMsgType = 11
-	}
-	for _, marker := range []string{"  服务器喇叭(", "  服务端喇叭("} {
-		if basePos := findSubstring(msgStr, marker); basePos >= 0 {
-			endP := findSubstring(msgStr[basePos:], ")")
-			if endP >= 0 {
-				msg = msg[:basePos]
+	if basePos := findSubstring(msgStr, "ext("); basePos >= 0 {
+		fPos := basePos + 4
+		if endP := findSubstring(msgStr[fPos:], ")"); endP >= 0 {
+			if t, err := strconv.Atoi(msgStr[fPos : fPos+endP]); err == nil {
+				sendMsgType = byte(t)
 			}
-
-			sendMsgType = 11
-			break
+			msg = msg[:basePos]
 		}
 	}
-	if pos := findSubstring(msgStr, "ext"); pos >= 0 {
-		basePos := findSubstring(msgStr, "ext(")
-		if basePos >= 0 {
-			fPos := basePos + 4
-			endP := findSubstring(msgStr[fPos:], ")")
-			if endP >= 0 {
-				typeStr := msgStr[fPos : fPos+endP]
-				if t, err := strconv.Atoi(typeStr); err == nil {
-					sendMsgType = byte(t)
-				}
-				newMsg := msg[:basePos]
-				msg = newMsg
-			}
-		}
-		_ = pos
 
-		if isHornMessageType(sendMsgType) {
-			r.sendWorldHornMessagePacket(sendMsgType, msg)
-			return
-		}
-		r.sendPublicMessagePacket(sendMsgType, 0x24, msg)
-	} else {
-		if isHornMessageType(sendMsgType) {
-			r.sendWorldHornMessagePacket(sendMsgType, msg)
-			return
-		}
-		r.sendPublicMessagePacket(sendMsgType, 0x24, msg)
-	}
+	r.sendPublicMessagePacket(sendMsgType, 0x24, msg)
 }
-
 func (r *RobotVo) sendPublicMessagePacket(msgType, flag byte, msg []byte) {
 	realSize := 1 + 2 + 4 + 4 + len(msg)
 	alinSize := alignTo16(realSize)
@@ -1070,46 +1036,6 @@ func (r *RobotVo) sendPublicMessagePacket(msgType, flag byte, msg []byte) {
 	if err == nil {
 		r.SendMsg(pkt)
 	}
-}
-
-func (r *RobotVo) sendWorldHornMessagePacket(msgType byte, msg []byte) {
-	const (
-		worldHornItemSpace   = 1
-		worldHornPacketIndex = 0
-	)
-	realSize := 1 + 2 + 4 + 4 + len(msg)
-	alinSize := alignTo16(realSize)
-	data := make([]byte, alinSize)
-	data[0] = msgType
-	binary.LittleEndian.PutUint16(data[1:3], worldHornItemSpace)
-	binary.LittleEndian.PutUint32(data[3:7], worldHornPacketIndex)
-	binary.LittleEndian.PutUint32(data[7:11], uint32(len(msg)))
-	copy(data[11:], msg)
-	pkt, err := buildSendPacket(17, uint16(r.PacketID), data, r.Cipher)
-	r.PacketID++
-	if err == nil {
-		r.SendMsg(pkt)
-	}
-}
-
-func isHornMessageType(msgType byte) bool {
-	return msgType == 11 || msgType == 12 || msgType == 35
-}
-
-func trimWorldHornSuffix(msg []byte, msgStr string) ([]byte, bool) {
-	for _, suffix := range []string{"  服务器喇叭()", "  服务端喇叭()", "  SERVER_HORN()"} {
-		if basePos := findSubstring(msgStr, suffix); basePos >= 0 {
-			return msg[:basePos], true
-		}
-	}
-	for _, prefix := range []string{"  服务器喇叭(", "  服务端喇叭(", "  SERVER_HORN("} {
-		if basePos := findSubstring(msgStr, prefix); basePos >= 0 {
-			if endP := findSubstring(msgStr[basePos:], ")"); endP >= 0 {
-				return msg[:basePos], true
-			}
-		}
-	}
-	return msg, false
 }
 
 func (r *RobotVo) SendPrivateMessage(msgType int, msg []byte, charcName []byte) {

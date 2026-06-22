@@ -148,7 +148,7 @@ func generateDefaultConfig(path string) error {
 		"[Robot]",
 		"# robot TCP API 端口，Web/CLI 通过它发送命令。",
 		"robotPort = 8111",
-		"# df_game_r 路径，用于运行环境自检、补丁检查和同步 SO。",
+		"# df_game_r path, used for runtime self-check and PVF export.",
 		"DfGameR = /home/neople/game/df_game_r",
 		"# 运行配置目录，robot_config.ini、模板、PVF 导出和日志都在这里。",
 		"ConfigDir = ./config",
