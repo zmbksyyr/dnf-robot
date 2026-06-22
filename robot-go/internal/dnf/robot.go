@@ -1514,14 +1514,18 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		}),
 	}
 	variantName := os.Getenv("TW_STORE_DISPLAY_VARIANT")
-	if variantName == "" {
-		variantName = "row-game"
+	tryVariants := []displayVariant{
+		variants["row-game"],
+		variants["game-row"],
+		variants["row-raw"],
+		variants["realtype-game"],
 	}
-	variant, ok := variants[variantName]
-	if !ok {
-		variant = variants["row-game"]
+	if variantName != "" {
+		if variant, ok := variants[variantName]; ok {
+			tryVariants = []displayVariant{variant}
+		}
 	}
-	for _, variant := range []displayVariant{variant} {
+	for _, variant := range tryVariants {
 		r.mu.Lock()
 		if r.State != StateRun || r.StoreDisplayAck {
 			ack := r.StoreDisplayAck
@@ -1538,6 +1542,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 			fmt.Printf("[StoreDisplay] uid=%d ack=%s\n", uid, variant.name)
 			return true
 		}
+		fmt.Printf("[StoreDisplay] uid=%d miss=%s\n", uid, variant.name)
 	}
 	return r.Snapshot().StoreDisplayAck
 }
