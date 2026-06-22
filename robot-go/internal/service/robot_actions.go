@@ -226,6 +226,13 @@ func (m *RobotManager) sendRobotShout(source string, uid int, tpl shoutTemplates
 	if rc.ShoutDelayMS > 0 {
 		time.Sleep(time.Duration(m.randBetween(100, maxInt(100, rc.ShoutDelayMS/2))) * time.Millisecond)
 	}
+	if world {
+		if err := sendMonitorMegaphone(outMsg, "Robot", uint16(uid)); err != nil {
+			return err
+		}
+		_ = m.appendShoutDetail(uid, channel, msgType, msg, source)
+		return nil
+	}
 	if _, err := m.doll.MsgPublicMsg(source, string(data)); err != nil {
 		return err
 	}
