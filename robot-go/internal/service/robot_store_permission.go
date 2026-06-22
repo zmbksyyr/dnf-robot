@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"strconv"
 )
 
@@ -28,6 +29,25 @@ func (m *RobotManager) ensureStorePermission(uid, cid int) error {
 			return err
 		}
 	}
+	var premium, miles, prodUser, puUser, eventEntry int
+	checks := []struct {
+		dst   *int
+		query string
+		args  []interface{}
+	}{
+		{&premium, "SELECT COUNT(*) FROM taiwan_login.member_premium WHERE event_id=50002 AND pre_type=8 AND m_id=? AND service_end>NOW()", []interface{}{uid}},
+		{&miles, "SELECT COUNT(*) FROM d_taiwan.member_miles WHERE m_id=? AND miles>=7", []interface{}{uid}},
+		{&prodUser, "SELECT COUNT(*) FROM taiwan_prod.prod_buy_user WHERE m_id=?", []interface{}{uid}},
+		{&puUser, "SELECT COUNT(*) FROM taiwan_prod.pu_user_list WHERE m_id=?", []interface{}{uid}},
+		{&eventEntry, "SELECT COUNT(*) FROM taiwan_login.dnf_event_entry WHERE event_id=50002 AND m_id=? AND charac_no=?", []interface{}{uid, cid}},
+	}
+	for _, check := range checks {
+		if err := m.db.QueryRow(check.query, check.args...).Scan(check.dst); err != nil {
+			return fmt.Errorf("verify store permission uid=%d cid=%d: %w", uid, cid, err)
+		}
+	}
+	robotLogf("[StorePrepare] uid=%d cid=%d permission premium=%d miles=%d prod_user=%d pu_user=%d event_entry=%d\n",
+		uid, cid, premium, miles, prodUser, puUser, eventEntry)
 	return nil
 }
 

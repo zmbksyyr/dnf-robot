@@ -44,6 +44,8 @@ func (m *RobotManager) populateStoreInventory(info RobotInfo, rc robotRuntimeCon
 		}
 		writeInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], item, count, inventoryTypeForBoxIndex(boxIndex))
 	}
+	robotLogf("[StorePrepare] uid=%d cid=%d selected_items=%d slots=%d start_box=%d capacity=%d\n",
+		info.UID, info.CID, len(items), rc.StoreItemSlots, rc.StoreInventoryStartBox, rc.InventoryCapacity)
 	_, err := m.db.Exec("UPDATE taiwan_cain_2nd.inventory SET inventory_capacity=?,inventory=? WHERE charac_no=?", rc.InventoryCapacity, compressRaw(invRaw), info.CID)
 	return err
 }
@@ -84,11 +86,17 @@ func (m *RobotManager) ensureStoreInventoryAndStall(r RobotInfo, rc robotRuntime
 		}
 	}
 	if len(foundItems) == 0 {
+		robotLogf("[StorePrepare] uid=%d cid=%d inventory_found=0\n", r.UID, r.CID)
 		return nil
 	}
 	title := fmt.Sprintf("tw-%d", r.UID%100000)
 	_, _ = m.db.Exec("DELETE FROM d_starsky.Robot_stall_config WHERE UID=? AND function_type=2 AND cfg_type=3", r.UID)
 	_, _ = m.db.Exec("INSERT INTO d_starsky.Robot_stall_config (cfg_content,cfg_type,UID,function_type,state) VALUES (?,3,?,2,1)", title, r.UID)
+	var stallRows, cfgRows int
+	_ = m.db.QueryRow("SELECT COUNT(*) FROM d_starsky.Robot_stall WHERE UID=? AND function_type=2 AND state=1", r.UID).Scan(&stallRows)
+	_ = m.db.QueryRow("SELECT COUNT(*) FROM d_starsky.Robot_stall_config WHERE UID=? AND function_type=2 AND cfg_type=3 AND state=1", r.UID).Scan(&cfgRows)
+	robotLogf("[StorePrepare] uid=%d cid=%d inventory_found=%d items=%v stall_rows=%d cfg_rows=%d title=%s\n",
+		r.UID, r.CID, len(foundItems), foundItems, stallRows, cfgRows, title)
 	return nil
 }
 

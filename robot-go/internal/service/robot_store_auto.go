@@ -112,12 +112,19 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 	if shouldStop != nil && shouldStop() {
 		return false
 	}
-	_, _ = m.db.Exec("UPDATE d_starsky.Dummylist SET curvill=?,curarea=?,curx=?,cury=?,function_type=2 WHERE UID=?", info.Village, info.Area, info.X, info.Y, info.UID)
+	if res, err := m.db.Exec("UPDATE d_starsky.Dummylist SET curvill=?,curarea=?,curx=?,cury=?,function_type=2 WHERE UID=?", info.Village, info.Area, info.X, info.Y, info.UID); err != nil {
+		robotLogf("[AutoStore] uid=%d dummy_update_failed try=%d err=%v\n", info.UID, try, err)
+		return false
+	} else if affected, err := res.RowsAffected(); err == nil {
+		robotLogf("[AutoStore] uid=%d dummy_updated try=%d rows=%d pos=%d/%d/%d/%d\n", info.UID, try, affected, info.Village, info.Area, info.X, info.Y)
+	}
 	if err := m.ensureStoreInventoryAndStall(info, rc); err != nil {
 		robotLogf("[AutoStore] uid=%d prepare_failed try=%d err=%v\n", info.UID, try, err)
 		return false
 	}
+	robotLogf("[AutoStore] uid=%d prepare_ok try=%d cid=%d pos=%d/%d/%d/%d\n", info.UID, try, info.CID, info.Village, info.Area, info.X, info.Y)
 	online, err := m.Online(RobotCommandRequest{UIDs: []int{info.UID}}, true)
+	robotLogf("[AutoStore] uid=%d online_result try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
 	if err != nil || online.Confirmed != 1 {
 		robotLogf("[AutoStore] uid=%d store_online_failed try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
 		m.doll.ResetPrivateStore(info.UID)
