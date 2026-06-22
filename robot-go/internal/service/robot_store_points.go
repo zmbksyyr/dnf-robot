@@ -21,6 +21,7 @@ const (
 	storePointClaimTTL  = 45 * time.Second
 	storePointSaveMax   = 100
 	storePointSaveAge   = 30 * time.Second
+	storePointFailRetry = 30 * time.Minute
 )
 
 type storePointCoordinator struct {
@@ -124,6 +125,9 @@ func (c *storePointCoordinator) claim(uid int) (storePosition, bool) {
 		if pos, ok := c.claimFromArea(uid, areaKey, true); ok {
 			return pos, true
 		}
+		if pos, ok := c.claimFailedFromArea(uid, areaKey); ok {
+			return pos, true
+		}
 	}
 	return storePosition{}, false
 }
@@ -157,6 +161,38 @@ func (c *storePointCoordinator) claimFromArea(uid int, areaKey string, successOn
 		return storePosition{Village: pt.Village, Area: pt.Area, X: pt.X, Y: pt.Y, Source: source, PointID: pt.ID, Region: pt.Region}, true
 	}
 	return storePosition{}, false
+}
+
+func (c *storePointCoordinator) claimFailedFromArea(uid int, areaKey string) (storePosition, bool) {
+	now := time.Now()
+	for _, idx := range c.byArea[areaKey] {
+		pt := c.points[idx]
+		if !c.failedPoints[pt.ID] || c.recentFailedPoint(pt, now) {
+			continue
+		}
+		if _, ok := c.pointClaims[pt.ID]; ok {
+			continue
+		}
+		if _, ok := c.regionClaims[pt.Region]; ok {
+			continue
+		}
+		claim := storePointClaim{UID: uid, ExpiresAt: now.Add(storePointClaimTTL)}
+		c.pointClaims[pt.ID] = claim
+		c.regionClaims[pt.Region] = claim
+		return storePosition{Village: pt.Village, Area: pt.Area, X: pt.X, Y: pt.Y, Source: "grid_failed_retry", PointID: pt.ID, Region: pt.Region}, true
+	}
+	return storePosition{}, false
+}
+
+func (c *storePointCoordinator) recentFailedPoint(pt storeGridPoint, now time.Time) bool {
+	if pt.LastResultAt == "" {
+		return true
+	}
+	last, err := time.Parse(time.RFC3339, pt.LastResultAt)
+	if err != nil {
+		return true
+	}
+	return now.Sub(last) < storePointFailRetry
 }
 
 func (c *storePointCoordinator) report(uid int, pos storePosition, try int, ok bool, reason string) {

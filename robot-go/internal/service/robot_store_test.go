@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSelectStoreItemsUsesAllowDenyAndMaterialRules(t *testing.T) {
@@ -88,6 +89,45 @@ func TestStorePointCoordinatorDoesNotReuseFailedPointAfterRestart(t *testing.T) 
 	}
 	if next.PointID == first.PointID {
 		t.Fatalf("failed point was reused after restart: %s", next.PointID)
+	}
+}
+
+func TestStorePointCoordinatorRetriesOldFailedPointAfterRestart(t *testing.T) {
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []mapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
+	c := newStorePointCoordinator(configDir)
+	first, ok := c.claim(1001)
+	if !ok {
+		t.Fatalf("first claim failed")
+	}
+	c.report(1001, first, 1, false, "test_failed")
+	c.flush()
+
+	cachePath := filepath.Join(configDir, storePointCacheFile)
+	cacheData, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cache storePointCache
+	if err := json.Unmarshal(cacheData, &cache); err != nil {
+		t.Fatal(err)
+	}
+	cache.Points[0].LastResultAt = time.Now().Add(-storePointFailRetry - time.Minute).Format(time.RFC3339)
+	cacheData, err = json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, cacheData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := newStorePointCoordinator(configDir)
+	next, ok := reloaded.claim(1002)
+	if !ok {
+		t.Fatalf("old failed point was not retried")
+	}
+	if next.PointID != first.PointID || next.Source != "grid_failed_retry" {
+		t.Fatalf("claim got point=%s source=%s want point=%s source=grid_failed_retry", next.PointID, next.Source, first.PointID)
 	}
 }
 
