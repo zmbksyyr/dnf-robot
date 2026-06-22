@@ -633,6 +633,14 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if packetType == 90 && err == nil && len(decData) > 0 && decData[0] == 1 {
 			r.StoreDisplayAck = true
 		}
+		if (packetType == 88 || packetType == 90) && r.RobotTyp == 2 {
+			value := byte(0)
+			if len(decData) > 0 {
+				value = decData[0]
+			}
+			fmt.Printf("[StoreAck] uid=%d type=%d flag=%d value=%d len=%d err=%v created=%t display_ack=%t\n",
+				r.UID, packetType, packetFlag, value, len(decData), err, r.StoreCreated, r.StoreDisplayAck)
+		}
 	}
 
 	if packetFlag == 0 && packetType == 13 && (r.State == StateRun || r.State == StateLogin) {

@@ -167,6 +167,10 @@ func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shou
 			return false
 		}
 	}
+	if st, ok := m.runtimeStatusMap()[uid]; ok {
+		robotLogf("[AutoStore] uid=%d display_wait_failed state=%s disconnect=%d robot_type=%d store_created=%t display_sent=%t display_ack=%t\n",
+			uid, st.StateName, st.DisconnectReason, st.RobotType, st.StoreCreated, st.StoreDisplaySent, st.StoreDisplayAck)
+	}
 	return false
 }
 
