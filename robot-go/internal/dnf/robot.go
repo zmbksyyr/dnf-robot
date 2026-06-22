@@ -637,8 +637,8 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if packetFlag == 1 && packetType == 90 && err == nil && value == 1 {
 			r.StoreDisplayAck = true
 		}
-		fmt.Printf("[StoreAck] uid=%d type=%d flag=%d value=%d len=%d err=%v created=%t display_ack=%t\n",
-			r.UID, packetType, packetFlag, value, len(decData), err, r.StoreCreated, r.StoreDisplayAck)
+		fmt.Printf("[StoreAck] uid=%d type=%d flag=%d value=%d len=%d hex=%x err=%v created=%t display_ack=%t\n",
+			r.UID, packetType, packetFlag, value, len(decData), decData, err, r.StoreCreated, r.StoreDisplayAck)
 	}
 
 	if packetFlag == 1 && r.State == StateRun && (packetType == 20 || packetType == 13) {
@@ -1174,7 +1174,7 @@ func (r *RobotVo) CreatePrivateStore() {
 	pkt, err := buildSendPacket(88, uint16(r.PacketID), data[:], r.Cipher)
 	r.PacketID++
 	if err == nil {
-		fmt.Printf("[StoreCreate] uid=%d village=%d area=%d x=%d y=%d packet_id=%d\n", r.UID, r.CurVillage, r.CurArea, r.CurX, r.CurY, r.PacketID-1)
+		fmt.Printf("[StoreCreate] uid=%d village=%d area=%d x=%d y=%d packet_id=%d payload=%x\n", r.UID, r.CurVillage, r.CurArea, r.CurX, r.CurY, r.PacketID-1, data)
 		r.SendMsg(pkt)
 	}
 	r.RobotTyp = 2
