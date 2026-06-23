@@ -248,6 +248,20 @@ func (d *DollService) ResetPrivateStore(uid int) bool {
 	return false
 }
 
+func (d *DollService) SetArea(uid int, village, area int, x, y int) bool {
+	if svc, ok := robotSvc.(*RobotSvc); ok {
+		return svc.SetArea(uid, village, area, x, y)
+	}
+	return false
+}
+
+func (d *DollService) SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool {
+	if svc, ok := robotSvc.(*RobotSvc); ok {
+		return svc.SetAreaFrom(uid, village, area, x, y, fromVillage, fromArea)
+	}
+	return false
+}
+
 func (d *DollService) CompletePrivateStoreDisplay(uid int) bool {
 	if svc, ok := robotSvc.(*RobotSvc); ok {
 		return svc.CompletePrivateStoreDisplay(uid)

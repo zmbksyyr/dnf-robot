@@ -273,6 +273,7 @@ func (m *RobotManager) batchDeleteRobotData(uids, cids []int) error {
 		"d_taiwan.member_info":                "m_id",
 		"d_taiwan.member_info_bot_backup":     "m_id",
 		"d_taiwan.member_miles":               "m_id",
+		"d_taiwan.member_punish_info":         "m_id",
 		"d_taiwan.member_white_account":       "m_id",
 		"taiwan_login.allow_proxy_user":       "m_id",
 		"taiwan_login.churn_member_info":      "m_id",

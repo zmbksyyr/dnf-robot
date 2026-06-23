@@ -14,6 +14,18 @@ import (
 	sqlpkg "robot/internal/sql"
 )
 
+func dnfLogf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Print(msg)
+	f, err := os.OpenFile("/root/config/log_robot", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(time.Now().Format("[02/01/06 15:04:05] "))
+	_, _ = f.WriteString(msg)
+}
+
 type ClientState int
 
 const (
@@ -153,6 +165,8 @@ type RobotVo struct {
 	PendingStoreTitle         string
 	StoreDisplaySent          bool
 	StoreDisplayAck           bool
+	StoreDisplayRejected      bool
+	StoreCreateRejected       bool
 	StoreCreated              bool
 	PrepareStoreAfterItemList bool
 	AfterRunAsyncTaskVec      []AsyncTask
@@ -190,21 +204,23 @@ type Controller interface {
 }
 
 type RobotSnapshot struct {
-	UID              uint32
-	CID              int
-	State            ClientState
-	LastError        ClientError
-	DisconnectReason DisconnectReason
-	Reconnects       uint32
-	RunStartTime     uint32
-	RobotType        int
-	StoreDisplaySent bool
-	StoreDisplayAck  bool
-	StoreCreated     bool
-	Village          uint8
-	Area             uint8
-	X                uint16
-	Y                uint16
+	UID                  uint32
+	CID                  int
+	State                ClientState
+	LastError            ClientError
+	DisconnectReason     DisconnectReason
+	Reconnects           uint32
+	RunStartTime         uint32
+	RobotType            int
+	StoreDisplaySent     bool
+	StoreDisplayAck      bool
+	StoreDisplayRejected bool
+	StoreCreateRejected  bool
+	StoreCreated         bool
+	Village              uint8
+	Area                 uint8
+	X                    uint16
+	Y                    uint16
 }
 
 func NewRobotVo(db *sql.DB) *RobotVo {
@@ -264,21 +280,23 @@ func (r *RobotVo) Snapshot() RobotSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return RobotSnapshot{
-		UID:              r.UID,
-		CID:              r.CID,
-		State:            r.State,
-		LastError:        r.LastError,
-		DisconnectReason: r.DisconReason,
-		Reconnects:       r.ConnCount,
-		RunStartTime:     r.RunStartTime,
-		RobotType:        r.RobotTyp,
-		StoreDisplaySent: r.StoreDisplaySent,
-		StoreDisplayAck:  r.StoreDisplayAck,
-		StoreCreated:     r.StoreCreated,
-		Village:          r.CurVillage,
-		Area:             r.CurArea,
-		X:                r.CurX,
-		Y:                r.CurY,
+		UID:                  r.UID,
+		CID:                  r.CID,
+		State:                r.State,
+		LastError:            r.LastError,
+		DisconnectReason:     r.DisconReason,
+		Reconnects:           r.ConnCount,
+		RunStartTime:         r.RunStartTime,
+		RobotType:            r.RobotTyp,
+		StoreDisplaySent:     r.StoreDisplaySent,
+		StoreDisplayAck:      r.StoreDisplayAck,
+		StoreDisplayRejected: r.StoreDisplayRejected,
+		StoreCreateRejected:  r.StoreCreateRejected,
+		StoreCreated:         r.StoreCreated,
+		Village:              r.CurVillage,
+		Area:                 r.CurArea,
+		X:                    r.CurX,
+		Y:                    r.CurY,
 	}
 }
 
@@ -290,6 +308,8 @@ func (r *RobotVo) ResetPrivateStoreState() {
 	}
 	r.StoreDisplaySent = false
 	r.StoreDisplayAck = false
+	r.StoreDisplayRejected = false
+	r.StoreCreateRejected = false
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
 	r.PendingStoreTitle = ""
@@ -301,6 +321,8 @@ func (r *RobotVo) PreparePrivateStoreState(title string) {
 	r.PendingStoreTitle = title
 	r.StoreDisplaySent = false
 	r.StoreDisplayAck = false
+	r.StoreDisplayRejected = false
+	r.StoreCreateRejected = false
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
 	r.RobotTyp = 2
@@ -331,6 +353,8 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.MoveType = 5
 	r.StoreDisplaySent = false
 	r.StoreDisplayAck = false
+	r.StoreDisplayRejected = false
+	r.StoreCreateRejected = false
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
 	r.recvSize = 0
@@ -634,11 +658,35 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if packetFlag == 1 && packetType == 88 && err == nil && value == 1 {
 			r.StoreCreated = true
 		}
+		if packetFlag == 1 && packetType == 88 && err == nil && value == 0 {
+			r.StoreCreateRejected = true
+		}
 		if packetFlag == 1 && packetType == 90 && err == nil && value == 1 {
 			r.StoreDisplayAck = true
 		}
-		fmt.Printf("[StoreAck] uid=%d type=%d flag=%d value=%d len=%d hex=%x err=%v created=%t display_ack=%t\n",
-			r.UID, packetType, packetFlag, value, len(decData), decData, err, r.StoreCreated, r.StoreDisplayAck)
+		storeErr := byte(0)
+		if len(decData) > 1 {
+			storeErr = decData[1]
+		}
+		if packetFlag == 1 && packetType == 90 && err == nil && value == 0 && storeErr == 0x11 {
+			r.StoreDisplayRejected = true
+		}
+		dnfLogf("[StoreAck] uid=%d type=%d flag=%d value=%d store_err=0x%02x pos=%d/%d/%d/%d len=%d hex=%x err=%v created=%t display_ack=%t\n",
+			r.UID, packetType, packetFlag, value, storeErr, r.CurVillage, r.CurArea, r.CurX, r.CurY, len(decData), decData, err, r.StoreCreated, r.StoreDisplayAck)
+	}
+
+	if packetFlag == 1 && packetType == 38 && r.State == StateRun {
+		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		value := byte(0)
+		if len(decData) > 0 {
+			value = decData[0]
+		}
+		areaErr := byte(0)
+		if len(decData) > 1 {
+			areaErr = decData[1]
+		}
+		dnfLogf("[SetAreaAck] uid=%d value=%d area_err=0x%02x len=%d hex=%x err=%v\n",
+			r.UID, value, areaErr, len(decData), decData, err)
 	}
 
 	if packetFlag == 1 && r.State == StateRun && (packetType == 20 || packetType == 13) {
@@ -683,7 +731,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 					}
 					if snap := r.Snapshot(); snap.State == StateRun {
 						if !snap.StoreCreated {
-							fmt.Printf("[StoreDisplay] uid=%d created_ack_missing_after_item_list\n", r.UID)
+							dnfLogf("[StoreDisplay] uid=%d created_ack_missing_after_item_list\n", r.UID)
 						}
 						r.GetDbDataAndCompleteDisplay()
 					}
@@ -700,7 +748,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if err == nil && len(decData) >= 15 {
 			if r.StoreDisplaySent && r.RobotTyp == 2 && !r.StoreDisplayAck {
 				r.StoreDisplayAck = true
-				fmt.Printf("[StoreDisplay] uid=%d ack=item-update\n", r.UID)
+				dnfLogf("[StoreDisplay] uid=%d ack=item-update\n", r.UID)
 			}
 			itemPos := int16(binary.LittleEndian.Uint16(decData[0:2]))
 			itemID := int32(binary.LittleEndian.Uint32(decData[2:6]))
@@ -890,6 +938,9 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		r.setArea[1] = r.CurArea
 		binary.LittleEndian.PutUint16(r.setArea[2:4], r.CurX)
 		binary.LittleEndian.PutUint16(r.setArea[4:6], r.CurY)
+		r.setArea[7] = 0x01
+		binary.LittleEndian.PutUint16(r.setArea[8:10], uint16(r.CurVillage))
+		binary.LittleEndian.PutUint16(r.setArea[10:12], uint16(dnfGateAreaForVillage(int(r.CurVillage))))
 		pkt, err = buildSendPacket(38, 26, r.setArea[:], r.Cipher)
 		if err == nil {
 			r.sendRaw(pkt)
@@ -1081,14 +1132,29 @@ func (r *RobotVo) SetArea(village, area uint8, x, y uint16) {
 		return
 	}
 
-	var setArea [16]byte
+	r.setAreaFromLocked(village, area, x, y, uint16(r.CurVillage), uint16(r.CurArea))
+}
+
+func (r *RobotVo) SetAreaFrom(village, area uint8, x, y uint16, fromVillage, fromArea uint16) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.State != StateRun {
+		return
+	}
+
+	r.setAreaFromLocked(village, area, x, y, fromVillage, fromArea)
+}
+
+func (r *RobotVo) setAreaFromLocked(village, area uint8, x, y uint16, fromVillage, fromArea uint16) {
+	setArea := r.setArea
 	setArea[0] = village
 	setArea[1] = area
 	binary.LittleEndian.PutUint16(setArea[2:4], x)
 	binary.LittleEndian.PutUint16(setArea[4:6], y)
 	setArea[7] = 0x01
-	binary.LittleEndian.PutUint16(setArea[8:10], uint16(r.CurVillage))
-	binary.LittleEndian.PutUint16(setArea[10:12], uint16(r.CurArea))
+	binary.LittleEndian.PutUint16(setArea[8:10], fromVillage)
+	binary.LittleEndian.PutUint16(setArea[10:12], fromArea)
 
 	pkt, err := buildSendPacket(38, uint16(r.PacketID), setArea[:], r.Cipher)
 	r.PacketID++
@@ -1163,6 +1229,7 @@ func (r *RobotVo) CreatePrivateStore() {
 	if r.State != StateRun {
 		return
 	}
+	r.StoreCreateRejected = false
 
 	var data [16]byte
 	data[6] = 0xFF
@@ -1174,7 +1241,7 @@ func (r *RobotVo) CreatePrivateStore() {
 	pkt, err := buildSendPacket(88, uint16(r.PacketID), data[:], r.Cipher)
 	r.PacketID++
 	if err == nil {
-		fmt.Printf("[StoreCreate] uid=%d village=%d area=%d x=%d y=%d packet_id=%d payload=%x\n", r.UID, r.CurVillage, r.CurArea, r.CurX, r.CurY, r.PacketID-1, data)
+		dnfLogf("[StoreCreate] uid=%d village=%d area=%d x=%d y=%d packet_id=%d payload=%x\n", r.UID, r.CurVillage, r.CurArea, r.CurX, r.CurY, r.PacketID-1, data)
 		r.SendMsg(pkt)
 	}
 	r.RobotTyp = 2
@@ -1344,6 +1411,10 @@ func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 	if r.State != StateRun {
 		return false
 	}
+	if !r.StoreCreated {
+		dnfLogf("[StoreDisplay] uid=%d skip_no_create_ack\n", r.UID)
+		return false
+	}
 
 	r.IsWaitingItemList = true
 	var data [8]byte
@@ -1359,6 +1430,10 @@ func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if !r.StoreCreated {
+		dnfLogf("[StoreDisplay] uid=%d skip_db_display_no_create_ack\n", r.UID)
+		return false
+	}
 	return r.getDbDataAndCompleteDisplayUnsafe()
 }
 
@@ -1416,7 +1491,7 @@ func (r *RobotVo) getDbDataAndCompleteDisplayUnsafe() bool {
 
 func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	r.mu.Lock()
-	if r.State != StateRun || r.StoreDisplayAck || r.DB == nil {
+	if r.State != StateRun || !r.StoreCreated || r.StoreDisplayAck || r.DB == nil {
 		r.mu.Unlock()
 		return false
 	}
@@ -1450,7 +1525,10 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 				if gameIndex <= 0 {
 					gameIndex = rawIndex
 				}
-				inventory[itemID] = invPos{BoxType: boxType, RawBoxIndex: rawIndex, GameBoxIndex: gameIndex, Count: count}
+				pos := invPos{BoxType: boxType, RawBoxIndex: rawIndex, GameBoxIndex: gameIndex, Count: count}
+				if old, ok := inventory[itemID]; !ok || (!isStoreStackableType(old.BoxType) && isStoreStackableType(boxType)) {
+					inventory[itemID] = pos
+				}
 			}
 		}
 	}
@@ -1462,7 +1540,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		Pos    invPos
 	}
 	storeRows := make([]storeRow, 0, len(rows))
-	for i, row := range rows {
+	for _, row := range rows {
 		if len(row) < 3 || row[1] == "" || row[2] == "" {
 			continue
 		}
@@ -1474,7 +1552,13 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		}
 		pos, ok := inventory[tradeItem]
 		if !ok {
-			pos = invPos{BoxType: 3, RawBoxIndex: 107 + i, GameBoxIndex: 105 + i, Count: itemNumber}
+			dnfLogf("[StoreDisplay] uid=%d skip_item_missing item=%d price=%d count=%d\n", uid, tradeItem, price, itemNumber)
+			continue
+		}
+		if !isStoreStackableType(pos.BoxType) {
+			dnfLogf("[StoreDisplay] uid=%d skip_item_space item=%d inv_type=%d raw=%d game=%d count=%d\n",
+				uid, tradeItem, pos.BoxType, pos.RawBoxIndex, pos.GameBoxIndex, pos.Count)
+			continue
 		}
 		if pos.Count > 0 && itemNumber > pos.Count {
 			itemNumber = pos.Count
@@ -1495,50 +1579,28 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	}
 	r.StoreDisplaySent = false
 	r.StoreDisplayAck = false
+	r.StoreDisplayRejected = false
 	r.mu.Unlock()
 
 	type displayVariant struct {
-		name string
-		info []StoreInfo
+		Name string
+		Info []StoreInfo
 	}
-	buildVariant := func(name string, fn func(int, storeRow) StoreInfo) displayVariant {
+	buildVariant := func(name string, boxType func(storeRow) int, boxIndex func(storeRow) int) displayVariant {
 		info := make([]StoreInfo, 0, len(storeRows))
 		for i, sr := range storeRows {
-			si := fn(i, sr)
-			if si.Count <= 0 {
-				si.Count = 1
+			count := sr.Count
+			if count <= 0 {
+				count = 1
 			}
-			info = append(info, si)
+			info = append(info, StoreInfo{Index: i, BoxType: boxType(sr), BoxIndex: boxIndex(sr), Price: sr.Price, Count: count})
 		}
-		return displayVariant{name: name, info: info}
+		return displayVariant{Name: name, Info: info}
 	}
-	variants := map[string]displayVariant{
-		"row-game": buildVariant("row-game", func(i int, sr storeRow) StoreInfo {
-			return StoreInfo{Index: i, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: sr.Count}
-		}),
-		"game-row": buildVariant("game-row", func(i int, sr storeRow) StoreInfo {
-			return StoreInfo{Index: sr.Pos.GameBoxIndex, BoxType: 0, BoxIndex: i, Price: sr.Price, Count: sr.Count}
-		}),
-		"row-raw": buildVariant("row-raw", func(i int, sr storeRow) StoreInfo {
-			return StoreInfo{Index: i, BoxType: 0, BoxIndex: sr.Pos.RawBoxIndex, Price: sr.Price, Count: sr.Count}
-		}),
-		"realtype-game": buildVariant("realtype-game", func(i int, sr storeRow) StoreInfo {
-			return StoreInfo{Index: i, BoxType: sr.Pos.BoxType, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: sr.Count}
-		}),
+	variants := []displayVariant{
+		buildVariant("row-game-space0", func(storeRow) int { return 0 }, func(sr storeRow) int { return sr.Pos.GameBoxIndex }),
 	}
-	variantName := os.Getenv("TW_STORE_DISPLAY_VARIANT")
-	tryVariants := []displayVariant{
-		variants["row-game"],
-		variants["game-row"],
-		variants["row-raw"],
-		variants["realtype-game"],
-	}
-	if variantName != "" {
-		if variant, ok := variants[variantName]; ok {
-			tryVariants = []displayVariant{variant}
-		}
-	}
-	for _, variant := range tryVariants {
+	for _, variant := range variants {
 		r.mu.Lock()
 		if r.State != StateRun || r.StoreDisplayAck {
 			ack := r.StoreDisplayAck
@@ -1547,15 +1609,21 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		}
 		r.StoreDisplaySent = false
 		r.StoreDisplayAck = false
+		r.StoreDisplayRejected = false
 		r.mu.Unlock()
-		fmt.Printf("[StoreDisplay] uid=%d try=%s items=%d\n", uid, variant.name, len(variant.info))
-		r.CompleteDisplay(title, variant.info)
+		dnfLogf("[StoreDisplay] uid=%d try=%s items=%d\n", uid, variant.Name, len(variant.Info))
+		for i, sr := range storeRows {
+			dnfLogf("[StoreDisplay] uid=%d item[%d]=%d inv_type=%d raw=%d game=%d send_index=%d send_space=%d send_box=%d count=%d price=%d\n",
+				uid, i, sr.ItemID, sr.Pos.BoxType, sr.Pos.RawBoxIndex, sr.Pos.GameBoxIndex,
+				variant.Info[i].Index, variant.Info[i].BoxType, variant.Info[i].BoxIndex, variant.Info[i].Count, variant.Info[i].Price)
+		}
+		r.CompleteDisplay(title, variant.Info)
 		time.Sleep(1400 * time.Millisecond)
 		if r.Snapshot().StoreDisplayAck {
-			fmt.Printf("[StoreDisplay] uid=%d ack=%s\n", uid, variant.name)
+			dnfLogf("[StoreDisplay] uid=%d ack=%s\n", uid, variant.Name)
 			return true
 		}
-		fmt.Printf("[StoreDisplay] uid=%d miss=%s\n", uid, variant.name)
+		dnfLogf("[StoreDisplay] uid=%d miss=%s\n", uid, variant.Name)
 	}
 	return r.Snapshot().StoreDisplayAck
 }
@@ -1667,6 +1735,28 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func dnfGateAreaForVillage(village int) int {
+	if area, ok := dnfGateAreaByVillage[village]; ok {
+		return area
+	}
+	return 1
+}
+
+var dnfGateAreaByVillage = map[int]int{
+	1: 1, 2: 5, 3: 2, 4: 1, 5: 1, 6: 4, 8: 1, 9: 2, 10: 1, 11: 3,
+	14: 3, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0, 21: 7, 23: 0,
+	24: 0, 25: 0, 26: 0,
+}
+
+func isStoreStackableType(itemType int) bool {
+	switch itemType {
+	case 2, 3, 4, 10:
+		return true
+	default:
+		return false
+	}
 }
 
 func findSubstring(s, substr string) int {

@@ -15,7 +15,8 @@ const (
 )
 
 func (m *RobotManager) populateStoreInventory(info RobotInfo, rc robotRuntimeConfig) error {
-	items := m.selectStoreItems(info, rc)
+	plan := storeInventoryPlanFor(info.UID, rc)
+	items := m.selectStoreItemsForPlan(info, rc, plan)
 	if len(items) == 0 {
 		return nil
 	}
@@ -24,16 +25,18 @@ func (m *RobotManager) populateStoreInventory(info RobotInfo, rc robotRuntimeCon
 	if err := row.Scan(&invRaw); err != nil || len(invRaw) < 249*61 {
 		invRaw = make([]byte, 249*61)
 	}
-	for slot := 0; slot < rc.StoreItemSlots && slot < 24; slot++ {
-		boxIndex := rc.StoreInventoryStartBox + slot
-		for _, rawIndex := range []int{boxIndex, boxIndex + 1, boxIndex + 2, boxIndex + 3} {
-			if rawIndex >= 0 && rawIndex < 249 {
-				clear(invRaw[rawIndex*61 : (rawIndex+1)*61])
+	for _, startBox := range storeInventoryClearStartBoxes(plan.StartBox) {
+		for slot := 0; slot < rc.StoreItemSlots && slot < 24; slot++ {
+			boxIndex := startBox + slot
+			for _, rawIndex := range []int{boxIndex, boxIndex + 1, boxIndex + 2, boxIndex + 3} {
+				if rawIndex >= 0 && rawIndex < 249 {
+					clear(invRaw[rawIndex*61 : (rawIndex+1)*61])
+				}
 			}
 		}
 	}
 	for slot, item := range items {
-		boxIndex := rc.StoreInventoryStartBox + slot
+		boxIndex := plan.StartBox + slot
 		rawIndex := boxIndex + 2
 		if rawIndex < 0 || rawIndex >= 249 {
 			continue
@@ -42,10 +45,10 @@ func (m *RobotManager) populateStoreInventory(info RobotInfo, rc robotRuntimeCon
 		if count <= 0 {
 			count = 1
 		}
-		writeInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], item, count, inventoryTypeForBoxIndex(boxIndex))
+		writeInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], item, count, inventoryTypeForStackable(item, inventoryTypeForBoxIndex(boxIndex)))
 	}
-	robotLogf("[StorePrepare] uid=%d cid=%d selected_items=%d slots=%d start_box=%d capacity=%d\n",
-		info.UID, info.CID, len(items), rc.StoreItemSlots, rc.StoreInventoryStartBox, rc.InventoryCapacity)
+	robotLogf("[StorePrepare] uid=%d cid=%d store_plan=%s selected_items=%d slots=%d start_box=%d capacity=%d\n",
+		info.UID, info.CID, plan.Name, len(items), rc.StoreItemSlots, plan.StartBox, rc.InventoryCapacity)
 	_, err := m.db.Exec("UPDATE taiwan_cain_2nd.inventory SET inventory_capacity=?,inventory=? WHERE charac_no=?", rc.InventoryCapacity, compressRaw(invRaw), info.CID)
 	return err
 }
@@ -64,8 +67,9 @@ func (m *RobotManager) ensureStoreInventoryAndStall(r RobotInfo, rc robotRuntime
 	}
 	_, _ = m.db.Exec("DELETE FROM d_starsky.Robot_stall WHERE UID=? AND function_type=2", r.UID)
 	var foundItems []int
+	plan := storeInventoryPlanFor(r.UID, rc)
 	for slot := 0; slot < rc.StoreItemSlots && slot < 24; slot++ {
-		boxIndex := rc.StoreInventoryStartBox + slot
+		boxIndex := plan.StartBox + slot
 		rawIndex := boxIndex + 2
 		if rawIndex < 0 || rawIndex >= 249 {
 			continue
@@ -86,7 +90,7 @@ func (m *RobotManager) ensureStoreInventoryAndStall(r RobotInfo, rc robotRuntime
 		}
 	}
 	if len(foundItems) == 0 {
-		robotLogf("[StorePrepare] uid=%d cid=%d inventory_found=0\n", r.UID, r.CID)
+		robotLogf("[StorePrepare] uid=%d cid=%d store_plan=%s inventory_found=0\n", r.UID, r.CID, plan.Name)
 		return nil
 	}
 	title := fmt.Sprintf("tw-%d", r.UID%100000)
@@ -95,8 +99,8 @@ func (m *RobotManager) ensureStoreInventoryAndStall(r RobotInfo, rc robotRuntime
 	var stallRows, cfgRows int
 	_ = m.db.QueryRow("SELECT COUNT(*) FROM d_starsky.Robot_stall WHERE UID=? AND function_type=2 AND state=1", r.UID).Scan(&stallRows)
 	_ = m.db.QueryRow("SELECT COUNT(*) FROM d_starsky.Robot_stall_config WHERE UID=? AND function_type=2 AND cfg_type=3 AND state=1", r.UID).Scan(&cfgRows)
-	robotLogf("[StorePrepare] uid=%d cid=%d inventory_found=%d items=%v stall_rows=%d cfg_rows=%d title=%s\n",
-		r.UID, r.CID, len(foundItems), foundItems, stallRows, cfgRows, title)
+	robotLogf("[StorePrepare] uid=%d cid=%d store_plan=%s inventory_found=%d items=%v stall_rows=%d cfg_rows=%d title=%s\n",
+		r.UID, r.CID, plan.Name, len(foundItems), foundItems, stallRows, cfgRows, title)
 	return nil
 }
 
@@ -131,6 +135,10 @@ func (m *RobotManager) ensureRobotWorldHornByCID(cid int) error {
 }
 
 func (m *RobotManager) selectStoreItems(r RobotInfo, rc robotRuntimeConfig) []equipmentCatalogItem {
+	return m.selectStoreItemsForPlan(r, rc, storeInventoryPlanFor(r.UID, rc))
+}
+
+func (m *RobotManager) selectStoreItemsForPlan(r RobotInfo, rc robotRuntimeConfig, plan storeInventoryPlan) []equipmentCatalogItem {
 	catalog := m.loadStackableCatalog()
 	count := rc.StoreItemSlots
 	if count <= 0 {
@@ -143,7 +151,7 @@ func (m *RobotManager) selectStoreItems(r RobotInfo, rc robotRuntimeConfig) []eq
 	var basicCandidates []equipmentCatalogItem
 	var fallback []equipmentCatalogItem
 	wantSlot := "material"
-	if inventoryTypeForBoxIndex(rc.StoreInventoryStartBox) == 2 {
+	if inventoryTypeForBoxIndex(plan.StartBox) == 2 {
 		wantSlot = "waste"
 	}
 	for _, item := range catalog {
@@ -208,6 +216,26 @@ func (m *RobotManager) selectStoreItems(r RobotInfo, rc robotRuntimeConfig) []eq
 	return candidates
 }
 
+type storeInventoryPlan struct {
+	Name     string
+	StartBox int
+}
+
+func storeInventoryPlanFor(uid int, rc robotRuntimeConfig) storeInventoryPlan {
+	start := rc.StoreInventoryStartBox
+	if start <= 0 || start == 7 {
+		start = 105
+	}
+	return storeInventoryPlan{Name: "material-default", StartBox: start}
+}
+
+func storeInventoryClearStartBoxes(start int) []int {
+	if start == 105 {
+		return []int{105}
+	}
+	return []int{start, 105}
+}
+
 func storeAttachAllowed(attach string) bool {
 	attach = strings.ToLower(strings.TrimSpace(attach))
 	if attach == "" {
@@ -247,6 +275,21 @@ func inventoryTypeForBoxIndex(boxIndex int) int {
 		return 10
 	default:
 		return 2
+	}
+}
+
+func inventoryTypeForStackable(item equipmentCatalogItem, fallback int) int {
+	switch strings.ToLower(strings.TrimSpace(item.Slot)) {
+	case "waste", "usable", "consumable":
+		return 2
+	case "material":
+		return 3
+	case "quest":
+		return 4
+	case "profession", "expert job":
+		return 10
+	default:
+		return fallback
 	}
 }
 

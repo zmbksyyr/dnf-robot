@@ -14,14 +14,15 @@ import (
 
 const (
 	storePointCacheFile = "store_points_cache.json"
-	storePointXStep     = 80
-	storePointYStep     = 40
-	storePointRegionX   = 120
-	storePointRegionY   = 50
-	storePointClaimTTL  = 45 * time.Second
+	storePointCacheVer  = 5
+	storePointXStep     = 120
+	storePointYStep     = 80
+	storePointRegionX   = 180
+	storePointRegionY   = 120
+	storePointClaimTTL  = 2 * time.Minute
 	storePointSaveMax   = 100
 	storePointSaveAge   = 30 * time.Second
-	storePointFailRetry = 30 * time.Minute
+	storePointFailRetry = 6 * time.Minute
 )
 
 type storePointCoordinator struct {
@@ -60,6 +61,7 @@ type storeGridPoint struct {
 }
 
 type storePointCache struct {
+	Version    int              `json:"version"`
 	SourceFile string           `json:"source_file"`
 	SourceMD5  string           `json:"source_md5"`
 	XStep      int              `json:"x_step"`
@@ -119,13 +121,28 @@ func (c *storePointCoordinator) claim(uid int) (storePosition, bool) {
 	for scanned := 0; scanned < len(c.areaOrder); scanned++ {
 		areaKey := c.areaOrder[c.areaCursor%len(c.areaOrder)]
 		c.areaCursor = (c.areaCursor + 1) % len(c.areaOrder)
-		if pos, ok := c.claimFromArea(uid, areaKey, false); ok {
-			return pos, true
-		}
 		if pos, ok := c.claimFromArea(uid, areaKey, true); ok {
 			return pos, true
 		}
-		if pos, ok := c.claimFailedFromArea(uid, areaKey); ok {
+	}
+	for scanned := 0; scanned < len(c.areaOrder); scanned++ {
+		areaKey := c.areaOrder[c.areaCursor%len(c.areaOrder)]
+		c.areaCursor = (c.areaCursor + 1) % len(c.areaOrder)
+		if pos, ok := c.claimFromArea(uid, areaKey, false); ok {
+			return pos, true
+		}
+	}
+	for scanned := 0; scanned < len(c.areaOrder); scanned++ {
+		areaKey := c.areaOrder[c.areaCursor%len(c.areaOrder)]
+		c.areaCursor = (c.areaCursor + 1) % len(c.areaOrder)
+		if pos, ok := c.claimFailedFromArea(uid, areaKey, true); ok {
+			return pos, true
+		}
+	}
+	for scanned := 0; scanned < len(c.areaOrder); scanned++ {
+		areaKey := c.areaOrder[c.areaCursor%len(c.areaOrder)]
+		c.areaCursor = (c.areaCursor + 1) % len(c.areaOrder)
+		if pos, ok := c.claimFailedFromArea(uid, areaKey, false); ok {
 			return pos, true
 		}
 	}
@@ -133,9 +150,16 @@ func (c *storePointCoordinator) claim(uid int) (storePosition, bool) {
 }
 
 func (c *storePointCoordinator) claimFromArea(uid int, areaKey string, successOnly bool) (storePosition, bool) {
+	now := time.Now()
 	for _, idx := range c.byArea[areaKey] {
 		pt := c.points[idx]
 		if c.failedPoints[pt.ID] {
+			continue
+		}
+		if c.regionRecentlySucceeded(areaKey, pt.Region, now) {
+			continue
+		}
+		if pt.LastReason == "store_failed" && c.recentFailedPoint(pt, now) {
 			continue
 		}
 		if successOnly {
@@ -151,7 +175,7 @@ func (c *storePointCoordinator) claimFromArea(uid int, areaKey string, successOn
 		if _, ok := c.regionClaims[pt.Region]; ok {
 			continue
 		}
-		claim := storePointClaim{UID: uid, ExpiresAt: time.Now().Add(storePointClaimTTL)}
+		claim := storePointClaim{UID: uid, ExpiresAt: now.Add(storePointClaimTTL)}
 		c.pointClaims[pt.ID] = claim
 		c.regionClaims[pt.Region] = claim
 		source := "grid_unknown"
@@ -163,11 +187,17 @@ func (c *storePointCoordinator) claimFromArea(uid int, areaKey string, successOn
 	return storePosition{}, false
 }
 
-func (c *storePointCoordinator) claimFailedFromArea(uid int, areaKey string) (storePosition, bool) {
+func (c *storePointCoordinator) claimFailedFromArea(uid int, areaKey string, requireAreaSuccess bool) (storePosition, bool) {
 	now := time.Now()
+	if requireAreaSuccess && !c.areaHasUsableSuccess(areaKey, now) {
+		return storePosition{}, false
+	}
 	for _, idx := range c.byArea[areaKey] {
 		pt := c.points[idx]
 		if !c.failedPoints[pt.ID] || c.recentFailedPoint(pt, now) {
+			continue
+		}
+		if c.regionRecentlySucceeded(areaKey, pt.Region, now) {
 			continue
 		}
 		if _, ok := c.pointClaims[pt.ID]; ok {
@@ -182,6 +212,40 @@ func (c *storePointCoordinator) claimFailedFromArea(uid int, areaKey string) (st
 		return storePosition{Village: pt.Village, Area: pt.Area, X: pt.X, Y: pt.Y, Source: "grid_failed_retry", PointID: pt.ID, Region: pt.Region}, true
 	}
 	return storePosition{}, false
+}
+
+func (c *storePointCoordinator) areaHasUsableSuccess(areaKey string, now time.Time) bool {
+	for _, idx := range c.byArea[areaKey] {
+		pt := c.points[idx]
+		if !c.successPoints[pt.ID] {
+			continue
+		}
+		if pt.LastReason == "store_failed" && c.recentFailedPoint(pt, now) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func (c *storePointCoordinator) regionRecentlySucceeded(areaKey, region string, now time.Time) bool {
+	if region == "" {
+		return false
+	}
+	for _, idx := range c.byArea[areaKey] {
+		pt := c.points[idx]
+		if pt.Region != region || pt.LastReason != "store_ack" {
+			continue
+		}
+		last, err := time.Parse(time.RFC3339, pt.LastResultAt)
+		if err != nil {
+			continue
+		}
+		if now.Sub(last) < storePointClaimTTL {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *storePointCoordinator) recentFailedPoint(pt storeGridPoint, now time.Time) bool {
@@ -201,8 +265,16 @@ func (c *storePointCoordinator) report(uid int, pos storePosition, try int, ok b
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.pointClaims, pos.PointID)
-	delete(c.regionClaims, pos.Region)
+	if ok {
+		claim := storePointClaim{UID: uid, ExpiresAt: time.Now().Add(storePointClaimTTL)}
+		c.pointClaims[pos.PointID] = claim
+		if pos.Region != "" {
+			c.regionClaims[pos.Region] = claim
+		}
+	} else {
+		delete(c.pointClaims, pos.PointID)
+		delete(c.regionClaims, pos.Region)
+	}
 	c.triedPoints[pos.PointID] = true
 	idx, hasPoint := c.byID[pos.PointID]
 	now := time.Now().Format(time.RFC3339)
@@ -253,6 +325,7 @@ func (c *storePointCoordinator) saveCacheLocked() {
 		return
 	}
 	cache := storePointCache{
+		Version:    storePointCacheVer,
 		SourceFile: c.sourceName,
 		SourceMD5:  c.sourceMD5,
 		XStep:      storePointXStep,
@@ -304,6 +377,7 @@ func (c *storePointCoordinator) load() error {
 	if cacheData, err := os.ReadFile(cachePath); err == nil {
 		var cache storePointCache
 		if json.Unmarshal(cacheData, &cache) == nil &&
+			cache.Version == storePointCacheVer &&
 			cache.SourceMD5 == sourceMD5 &&
 			cache.XStep == storePointXStep &&
 			cache.YStep == storePointYStep &&
@@ -329,7 +403,7 @@ func (c *storePointCoordinator) load() error {
 	}
 	generatedAt := time.Now().Format(time.RFC3339)
 	cache := storePointCache{
-		SourceFile: sourceName, SourceMD5: sourceMD5, XStep: storePointXStep, YStep: storePointYStep,
+		Version: storePointCacheVer, SourceFile: sourceName, SourceMD5: sourceMD5, XStep: storePointXStep, YStep: storePointYStep,
 		RegionX: storePointRegionX, RegionY: storePointRegionY, Generated: generatedAt, Points: points,
 	}
 	data, err := json.MarshalIndent(cache, "", "  ")
@@ -373,13 +447,24 @@ func (c *storePointCoordinator) rebuildIndexes() {
 	for key := range c.byArea {
 		c.areaOrder = append(c.areaOrder, key)
 	}
-	sort.Strings(c.areaOrder)
+	sort.Slice(c.areaOrder, func(i, j int) bool {
+		pi, pj := storeAreaPriority[c.areaOrder[i]], storeAreaPriority[c.areaOrder[j]]
+		if pi != pj {
+			return pi > pj
+		}
+		return c.areaOrder[i] < c.areaOrder[j]
+	})
 }
 
 func buildStoreGridPoints(maps []mapCatalogItem) []storeGridPoint {
 	var points []storeGridPoint
+	skippedArea := 0
 	for _, mp := range maps {
 		if !mp.Use || mp.XMax < mp.XMin || mp.YMax < mp.YMin {
+			continue
+		}
+		if !isStoreAreaEligible(mp.Village, mp.Area) {
+			skippedArea++
 			continue
 		}
 		for y := mp.YMin; y <= mp.YMax; y += storePointYStep {
@@ -391,6 +476,9 @@ func buildStoreGridPoints(maps []mapCatalogItem) []storeGridPoint {
 				})
 			}
 		}
+	}
+	if skippedArea > 0 {
+		robotLogf("[StorePoint] filtered_invalid_areas=%d\n", skippedArea)
 	}
 	sort.Slice(points, func(i, j int) bool {
 		a, b := points[i], points[j]
@@ -406,6 +494,84 @@ func buildStoreGridPoints(maps []mapCatalogItem) []storeGridPoint {
 		return a.X < b.X
 	})
 	return points
+}
+
+func isStoreAreaEligible(village, area int) bool {
+	key := [2]int{village, area}
+	if storeGateArea[key] {
+		return false
+	}
+	return storeAreaEligible[key]
+}
+
+var storeGateArea = map[[2]int]bool{
+	{1, 1}: true, {2, 5}: true, {3, 2}: true, {4, 1}: true, {5, 1}: true,
+	{6, 4}: true, {8, 1}: true, {9, 2}: true, {10, 1}: true, {11, 3}: true,
+	{14, 3}: true, {15, 0}: true, {16, 0}: true, {17, 0}: true, {18, 0}: true,
+	{19, 0}: true, {20, 0}: true, {21, 7}: true, {23, 0}: true, {24, 0}: true,
+	{25, 0}: true, {26, 0}: true,
+}
+
+func storeGateAreaForVillage(village int) int {
+	if area, ok := storeGateAreaByVillage[village]; ok {
+		return area
+	}
+	return 1
+}
+
+var storeGateAreaByVillage = map[int]int{
+	1: 1, 2: 5, 3: 2, 4: 1, 5: 1, 6: 4, 8: 1, 9: 2, 10: 1, 11: 3,
+	14: 3, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0, 21: 7, 23: 0,
+	24: 0, 25: 0, 26: 0,
+}
+
+var storeAreaEligible = map[[2]int]bool{
+	{1, 0}: true,
+	{2, 0}: true, {2, 1}: true, {2, 2}: true, {2, 3}: true, {2, 8}: true,
+	{3, 0}: true, {3, 1}: true, {3, 8}: true,
+	{4, 0}: true, {4, 5}: true,
+	{5, 0}: true,
+	{6, 0}: true, {6, 1}: true,
+	{8, 0}: true,
+	{9, 0}: true, {9, 3}: true,
+	{10, 2}: true, {10, 3}: true,
+	{11, 0}: true, {11, 1}: true,
+	{14, 0}: true, {14, 1}: true, {14, 4}: true, {14, 5}: true,
+	{15, 1}: true, {15, 3}: true,
+	{16, 1}: true,
+	{17, 1}: true, {17, 3}: true, {17, 4}: true,
+	{18, 1}: true,
+	{19, 1}: true, {19, 3}: true,
+	{20, 1}: true, {20, 2}: true,
+	{21, 0}: true, {21, 1}: true, {21, 2}: true, {21, 3}: true,
+	{23, 1}: true, {23, 3}: true, {23, 4}: true,
+	{24, 1}: true,
+	{25, 1}: true,
+}
+
+var storeAreaPriority = map[string]int{
+	"4/0":  30,
+	"5/0":  26,
+	"6/0":  17,
+	"2/8":  17,
+	"2/0":  16,
+	"2/1":  15,
+	"8/0":  13,
+	"3/8":  11,
+	"9/0":  10,
+	"3/0":  9,
+	"2/2":  9,
+	"10/2": 7,
+	"3/1":  6,
+	"1/0":  6,
+	"6/1":  4,
+	"25/1": 4,
+	"2/3":  4,
+	"4/5":  3,
+	"11/1": 3,
+	"23/3": 2,
+	"16/1": 2,
+	"11/0": 2,
 }
 
 func storeAreaKey(village, area int) string {

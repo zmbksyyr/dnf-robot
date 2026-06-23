@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -103,11 +104,15 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 	if shouldStop != nil && shouldStop() {
 		return false
 	}
-	_, _ = m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
-	if rc.ReconnectDelayMS > 0 {
-		if sleepWithStop(time.Duration(rc.ReconnectDelayMS)*time.Millisecond, shouldStop) {
-			return false
-		}
+	logoutResult, logoutErr := m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
+	robotLogf("[AutoStore] uid=%d pre_prepare_logout try=%d confirmed=%d failed=%d err=%v\n",
+		info.UID, try, logoutResult.Confirmed, logoutResult.Failed, logoutErr)
+	logoutDelay := time.Duration(rc.ReconnectDelayMS) * time.Millisecond
+	if logoutDelay < 1500*time.Millisecond {
+		logoutDelay = 1500 * time.Millisecond
+	}
+	if sleepWithStop(logoutDelay, shouldStop) {
+		return false
 	}
 	if shouldStop != nil && shouldStop() {
 		return false
@@ -118,19 +123,53 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 	} else if affected, err := res.RowsAffected(); err == nil {
 		robotLogf("[AutoStore] uid=%d dummy_updated try=%d rows=%d pos=%d/%d/%d/%d\n", info.UID, try, affected, info.Village, info.Area, info.X, info.Y)
 	}
+	if err := m.syncRobotCharacterVillage(info.CID, info.Village); err != nil {
+		robotLogf("[AutoStore] uid=%d charac_village_sync_failed try=%d cid=%d village=%d err=%v\n", info.UID, try, info.CID, info.Village, err)
+		return false
+	}
 	if err := m.ensureStoreInventoryAndStall(info, rc); err != nil {
 		robotLogf("[AutoStore] uid=%d prepare_failed try=%d err=%v\n", info.UID, try, err)
 		return false
 	}
 	robotLogf("[AutoStore] uid=%d prepare_ok try=%d cid=%d pos=%d/%d/%d/%d\n", info.UID, try, info.CID, info.Village, info.Area, info.X, info.Y)
-	online, err := m.Online(RobotCommandRequest{UIDs: []int{info.UID}}, true)
+	if sleepWithStop(800*time.Millisecond, shouldStop) {
+		return false
+	}
+	online, err := m.online(RobotCommandRequest{UIDs: []int{info.UID}}, false, true)
 	robotLogf("[AutoStore] uid=%d online_result try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
 	if err != nil || online.Confirmed != 1 {
 		robotLogf("[AutoStore] uid=%d store_online_failed try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
 		m.doll.ResetPrivateStore(info.UID)
 		return false
 	}
+	if err := m.syncRobotCharacterVillage(info.CID, info.Village); err != nil {
+		robotLogf("[AutoStore] uid=%d charac_village_resync_failed try=%d cid=%d village=%d err=%v\n", info.UID, try, info.CID, info.Village, err)
+		return false
+	}
 	if shouldStop != nil && shouldStop() {
+		return false
+	}
+	fromGate := storeGateAreaForVillage(info.Village)
+	if fromGate != info.Area {
+		areaSet := m.doll.SetAreaFrom(info.UID, info.Village, info.Area, info.X, info.Y, info.Village, fromGate)
+		robotLogf("[AutoStore] uid=%d set_area_from_gate try=%d ok=%t from=%d/%d target=%d/%d/%d/%d\n",
+			info.UID, try, areaSet, info.Village, fromGate, info.Village, info.Area, info.X, info.Y)
+		if !areaSet {
+			m.doll.ResetPrivateStore(info.UID)
+			return false
+		}
+		if sleepWithStop(1800*time.Millisecond, shouldStop) {
+			return false
+		}
+	}
+	if st, ok := m.runtimeStatusMap()[info.UID]; ok {
+		robotLogf("[AutoStore] uid=%d before_store try=%d state=%s disconnect=%d runtime_pos=%d/%d/%d/%d target_pos=%d/%d/%d/%d\n",
+			info.UID, try, st.StateName, st.DisconnectReason, st.Village, st.Area, st.X, st.Y, info.Village, info.Area, info.X, info.Y)
+	}
+	title := fmt.Sprintf("tw-%d", info.UID%100000)
+	if !m.doll.StartPrivateStore(info.UID, title) {
+		robotLogf("[AutoStore] uid=%d store_start_failed try=%d\n", info.UID, try)
+		m.doll.ResetPrivateStore(info.UID)
 		return false
 	}
 	if m.autoWaitStoreDisplay(info.UID, rc, shouldStop) {
@@ -142,10 +181,11 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 }
 
 func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shouldStop func() bool) bool {
-	displaySent := false
-	fallbackSent := false
 	started := time.Now()
-	deadline := time.Now().Add(2500 * time.Millisecond)
+	var createdAt time.Time
+	var lastDisplayAt time.Time
+	displayTries := 0
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if shouldStop != nil && shouldStop() {
 			return false
@@ -157,15 +197,23 @@ func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shou
 		if st.StoreDisplayAck {
 			return true
 		}
-		if st.StoreCreated && !displaySent {
-			displaySent = true
-			if m.doll.CompletePrivateStoreDisplay(uid) {
-				return true
-			}
-			deadline = time.Now().Add(500 * time.Millisecond)
+		if st.StoreDisplayRejected {
+			robotLogf("[AutoStore] uid=%d display_rejected state=%s disconnect=%d robot_type=%d store_created=%t wait_ms=%d tries=%d\n",
+				uid, st.StateName, st.DisconnectReason, st.RobotType, st.StoreCreated, time.Since(started).Milliseconds(), displayTries)
+			return false
 		}
-		if !fallbackSent && time.Since(started) >= 800*time.Millisecond {
-			fallbackSent = true
+		if st.StoreCreateRejected && !st.StoreCreated {
+			robotLogf("[AutoStore] uid=%d create_rejected state=%s disconnect=%d robot_type=%d wait_ms=%d tries=%d\n",
+				uid, st.StateName, st.DisconnectReason, st.RobotType, time.Since(started).Milliseconds(), displayTries)
+			return false
+		}
+		if st.StoreCreated && createdAt.IsZero() {
+			createdAt = time.Now()
+		}
+		if !createdAt.IsZero() && time.Since(createdAt) >= 2*time.Second &&
+			(lastDisplayAt.IsZero() || time.Since(lastDisplayAt) >= 2*time.Second) && displayTries < 4 {
+			lastDisplayAt = time.Now()
+			displayTries++
 			if m.doll.CompletePrivateStoreDisplay(uid) {
 				return true
 			}
@@ -175,8 +223,8 @@ func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shou
 		}
 	}
 	if st, ok := m.runtimeStatusMap()[uid]; ok {
-		robotLogf("[AutoStore] uid=%d display_wait_failed state=%s disconnect=%d robot_type=%d store_created=%t display_sent=%t display_ack=%t\n",
-			uid, st.StateName, st.DisconnectReason, st.RobotType, st.StoreCreated, st.StoreDisplaySent, st.StoreDisplayAck)
+		robotLogf("[AutoStore] uid=%d display_wait_failed state=%s disconnect=%d robot_type=%d store_created=%t display_sent=%t display_ack=%t wait_ms=%d tries=%d\n",
+			uid, st.StateName, st.DisconnectReason, st.RobotType, st.StoreCreated, st.StoreDisplaySent, st.StoreDisplayAck, time.Since(started).Milliseconds(), displayTries)
 	}
 	return false
 }
@@ -186,9 +234,36 @@ func (m *RobotManager) restoreAutoNormalPosition(info RobotInfo, rc robotRuntime
 	normal := m.randomNormalPosition(info, rc, maps)
 	_, _ = m.db.Exec("UPDATE d_starsky.Dummylist SET curvill=?,curarea=?,curx=?,cury=?,function_type=0 WHERE UID=?",
 		normal.Village, normal.Area, normal.X, normal.Y, normal.UID)
+	if err := m.syncRobotCharacterVillage(normal.CID, normal.Village); err != nil {
+		robotLogf("[AutoStore] uid=%d restore_charac_village_sync_failed cid=%d village=%d err=%v\n",
+			normal.UID, normal.CID, normal.Village, err)
+	}
 	robotLogf("[AutoStore] uid=%d restore_normal reason=%s pos=%d/%d/%d/%d\n",
 		normal.UID, reason, normal.Village, normal.Area, normal.X, normal.Y)
 	return normal
+}
+
+func (m *RobotManager) syncRobotCharacterVillage(cid int, village int) error {
+	if cid <= 0 {
+		return fmt.Errorf("invalid cid %d", cid)
+	}
+	if _, err := m.db.Exec("UPDATE taiwan_cain.charac_info SET village=? WHERE charac_no=?", village, cid); err != nil {
+		return fmt.Errorf("update charac_info: %w", err)
+	}
+	if _, err := m.db.Exec("UPDATE taiwan_cain.charac_stat SET village=?,village_prev=? WHERE charac_no=?", village, village, cid); err != nil {
+		return fmt.Errorf("update charac_stat: %w", err)
+	}
+	var infoVillage, statVillage, statPrev int
+	if err := m.db.QueryRow(`SELECT ci.village,cs.village,cs.village_prev
+		FROM taiwan_cain.charac_info ci JOIN taiwan_cain.charac_stat cs ON cs.charac_no=ci.charac_no
+		WHERE ci.charac_no=?`, cid).Scan(&infoVillage, &statVillage, &statPrev); err != nil {
+		return fmt.Errorf("verify charac village: %w", err)
+	}
+	if infoVillage != village || statVillage != village || statPrev != village {
+		return fmt.Errorf("verify charac village mismatch want=%d info=%d stat=%d prev=%d", village, infoVillage, statVillage, statPrev)
+	}
+	robotLogf("[AutoStore] cid=%d charac_village_synced village=%d stat_prev=%d\n", cid, statVillage, statPrev)
+	return nil
 }
 
 func (m *RobotManager) randomNormalPosition(info RobotInfo, rc robotRuntimeConfig, maps []mapCatalogItem) RobotInfo {

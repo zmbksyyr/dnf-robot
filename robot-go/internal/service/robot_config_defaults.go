@@ -12,7 +12,7 @@ func defaultRobotRuntimeConfig() robotRuntimeConfig {
 		EquipSlots: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, EquipRarityMin: 0, EquipRarityMax: 5, EquipIntensifyMin: 7, EquipIntensifyMax: 10, EquipSmithingMin: 0, EquipSmithingMax: 8,
 		PreferEquipSets: true, EquipSetMinSlots: 2,
 		AvatarSlots: []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, MinAvatarSlots: 10, PreferAvatarSets: true, AvatarSetMinSlots: 2,
-		StoreItemSlots: 3, StoreItemCountMin: 2, StoreItemCountMax: 20, StorePriceMin: 100000, StorePriceMax: 5000000, StoreInventoryStartBox: 105, StoreItemAllowIDs: []int{3037, 3031, 3032, 3034, 3035}, StoreItemDenyIDs: []int{7312, 7404, 7560, 7563, 7567, 7746},
+		StoreItemSlots: 3, StoreItemCountMin: 2, StoreItemCountMax: 20, StorePriceMin: 100000, StorePriceMax: 5000000, StoreInventoryStartBox: 7, StoreItemAllowIDs: []int{3037, 3031, 3032, 3034, 3035}, StoreItemDenyIDs: []int{7312, 7404, 7560, 7563, 7567, 7746},
 		StoreConfirmTimeoutSec: 30,
 		FollowRadiusX:          120, FollowRadiusY: 30, ShoutDelayMS: 1000, ShoutSendEnabled: true,
 		AutoActions: true, AutoTargetOnlineCount: 20,
@@ -263,8 +263,8 @@ func normalizeRobotRuntimeConfig(rc *robotRuntimeConfig) {
 	if rc.StorePriceMax < rc.StorePriceMin {
 		rc.StorePriceMin, rc.StorePriceMax = rc.StorePriceMax, rc.StorePriceMin
 	}
-	if rc.StoreInventoryStartBox <= 0 {
-		rc.StoreInventoryStartBox = 105
+	if rc.StoreInventoryStartBox <= 0 || rc.StoreInventoryStartBox == 105 {
+		rc.StoreInventoryStartBox = 7
 	}
 	if rc.StoreInventoryStartBox > 240 {
 		rc.StoreInventoryStartBox = 240

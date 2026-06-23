@@ -64,6 +64,14 @@ func (m *RobotManager) insertIgnore(table string, values map[string]interface{})
 	return err
 }
 
+func (m *RobotManager) insertIgnoreIfTableExists(table string, values map[string]interface{}) error {
+	exists, err := m.tableExists(table)
+	if err != nil || !exists {
+		return err
+	}
+	return m.insertIgnore(table, values)
+}
+
 func (m *RobotManager) tableColumns(table string) (map[string]bool, error) {
 	m.cacheMu.Lock()
 	if c, ok := m.colCache[table]; ok {

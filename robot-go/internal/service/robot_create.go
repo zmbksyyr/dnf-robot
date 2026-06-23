@@ -129,6 +129,9 @@ func (m *RobotManager) createRobot(info RobotInfo, rc robotRuntimeConfig) error 
 	if err := m.ensureRobotWorldHornByCID(info.CID); err != nil {
 		return err
 	}
+	if err := m.repairRobotExpBounds(info.UID, info.CID); err != nil {
+		return err
+	}
 	if err := m.rebuildCharacView(info.UID); err != nil {
 		return err
 	}
@@ -149,10 +152,8 @@ func (m *RobotManager) ensureAccount(uid int) error {
 			return err
 		}
 	}
-	for _, table := range []string{"d_taiwan.member_join_info", "taiwan_login.member_join_info"} {
-		if err := m.deleteByIntIfTableExists(table, "m_id", uid); err != nil {
-			return err
-		}
+	if err := m.disableRobotTradePunish(uid); err != nil {
+		return err
 	}
 	if err := m.insertIgnore("d_taiwan.accounts", map[string]interface{}{
 		"UID": uid, "accountname": account, "password": "e10adc3949ba59abbe56e057f20f883e",
@@ -180,6 +181,19 @@ func (m *RobotManager) ensureAccount(uid int) error {
 	}
 	for _, u := range upserts {
 		if err := m.insertIgnore(u.table, u.vals); err != nil {
+			return err
+		}
+	}
+	for _, table := range []string{"d_taiwan.member_join_info", "taiwan_login.member_join_info"} {
+		if err := m.insertIgnoreIfTableExists(table, map[string]interface{}{
+			"m_id": uid, "reg_date": time.Now().Year(), "ip": m.cfg.RobotInnerIP, "contry_code": 0,
+			"login_time": now, "error_type": 0, "login_ip": m.cfg.RobotInnerIP, "game_use_history": 1,
+		}); err != nil {
+			return err
+		}
+	}
+	for _, table := range []string{"d_taiwan.member_security_grade", "d_taiwan_secu.member_security_grade"} {
+		if err := m.insertIgnoreIfTableExists(table, map[string]interface{}{"m_id": uid}); err != nil {
 			return err
 		}
 	}

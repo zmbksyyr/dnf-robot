@@ -9,6 +9,12 @@ func (m *RobotManager) ensureStorePermission(uid, cid int) error {
 	if uid <= 0 || cid <= 0 {
 		return nil
 	}
+	if err := m.repairRobotExpBounds(uid, cid); err != nil {
+		return err
+	}
+	if err := m.disableRobotTradePunish(uid); err != nil {
+		return err
+	}
 	steps := []struct {
 		query string
 		args  []interface{}
@@ -51,6 +57,108 @@ func (m *RobotManager) ensureStorePermission(uid, cid int) error {
 	return nil
 }
 
+func (m *RobotManager) disableRobotTradePunish(uid int) error {
+	exists, err := m.tableExists("d_taiwan.member_punish_info")
+	if err != nil || !exists {
+		return err
+	}
+	res, err := m.db.Exec("DELETE FROM d_taiwan.member_punish_info WHERE m_id=? AND punish_type=11", uid)
+	if err == nil {
+		if rows, rowErr := res.RowsAffected(); rowErr == nil && rows > 0 {
+			robotLogf("[StorePrepare] uid=%d cleared_trade_punish rows=%d\n", uid, rows)
+		}
+	}
+	return err
+}
+
+func (m *RobotManager) repairRobotExpBounds(uid, cid int) error {
+	if uid <= 0 || cid <= 0 {
+		return nil
+	}
+	exists, err := m.tableExists("taiwan_cain.exp_level_ref")
+	if err != nil {
+		return err
+	}
+	var refRows int
+	if exists {
+		_ = m.db.QueryRow("SELECT COUNT(*) FROM taiwan_cain.exp_level_ref").Scan(&refRows)
+	}
+	var changed int64
+	if refRows > 0 {
+		res, err := m.db.Exec(`UPDATE taiwan_cain.charac_info c
+			JOIN taiwan_cain.exp_level_ref e ON e.lev=c.lev
+			LEFT JOIN taiwan_cain.exp_level_ref n ON n.lev=c.lev+1
+			SET c.exp=e.exp
+			WHERE c.charac_no=? AND (c.exp<e.exp OR (n.exp IS NOT NULL AND c.exp>=n.exp))`, cid)
+		if err != nil {
+			return err
+		}
+		if rows, rowErr := res.RowsAffected(); rowErr == nil {
+			changed += rows
+		}
+		res, err = m.db.Exec(`UPDATE taiwan_cain.charac_stat s
+			JOIN taiwan_cain.charac_info c ON c.charac_no=s.charac_no
+			JOIN taiwan_cain.exp_level_ref e ON e.lev=c.lev
+			LEFT JOIN taiwan_cain.exp_level_ref n ON n.lev=c.lev+1
+			SET s.exp=e.exp
+			WHERE s.charac_no=? AND (s.exp<e.exp OR (n.exp IS NOT NULL AND s.exp>=n.exp))`, cid)
+		if err != nil {
+			return err
+		}
+		if rows, rowErr := res.RowsAffected(); rowErr == nil {
+			changed += rows
+		}
+	} else {
+		var lev, infoExp, statExp int
+		if err := m.db.QueryRow(`SELECT IFNULL(c.lev,0),IFNULL(c.exp,0),IFNULL(s.exp,0)
+			FROM taiwan_cain.charac_info c LEFT JOIN taiwan_cain.charac_stat s ON s.charac_no=c.charac_no
+			WHERE c.charac_no=?`, cid).Scan(&lev, &infoExp, &statExp); err != nil {
+			return err
+		}
+		minExp, ok := robotLevelMinExp(lev)
+		if ok && (infoExp < minExp || statExp < minExp) {
+			res, err := m.db.Exec("UPDATE taiwan_cain.charac_info SET exp=? WHERE charac_no=? AND exp<?", minExp, cid, minExp)
+			if err != nil {
+				return err
+			}
+			if rows, rowErr := res.RowsAffected(); rowErr == nil {
+				changed += rows
+			}
+			res, err = m.db.Exec("UPDATE taiwan_cain.charac_stat SET exp=? WHERE charac_no=? AND exp<?", minExp, cid, minExp)
+			if err != nil {
+				return err
+			}
+			if rows, rowErr := res.RowsAffected(); rowErr == nil {
+				changed += rows
+			}
+		}
+	}
+	if changed > 0 {
+		robotLogf("[StorePrepare] uid=%d cid=%d repaired_exp_bounds ref_rows=%d rows=%d\n", uid, cid, refRows, changed)
+	}
+	return nil
+}
+
+func robotLevelMinExp(level int) (int, bool) {
+	if level < 1 || level >= len(robotLevelMinExpTable) {
+		return 0, false
+	}
+	return robotLevelMinExpTable[level], true
+}
+
+var robotLevelMinExpTable = []int{
+	0,
+	0, 1000, 2653, 5543, 10575, 18509, 30205, 46627, 68840, 98012,
+	135412, 182411, 240483, 311203, 396249, 497399, 619844, 767003, 942667, 1150141,
+	1393864, 1677655, 2016592, 2419616, 2881880, 3410208, 4010357, 4690036, 5457538, 6319795,
+	7286075, 8364071, 9564081, 10897068, 12372076, 14001186, 15794305, 17764684, 19926329, 22290671,
+	24872971, 27685628, 30844672, 34385491, 38223728, 42379527, 46869144, 51714280, 56937632, 62557467,
+	68598134, 75079161, 82244762, 90154153, 98612376, 107650320, 117292652, 127572249, 138523258, 150172894,
+	162557394, 175705561, 190075639, 205759433, 222370655, 239953967, 258544759, 278190155, 298938852, 320829378,
+	343912998, 368230186, 394571074, 423070174, 453854220, 487070095, 522855717, 561371046, 602783706, 647250436,
+	694953116, 746061309, 801975949, 863016468, 929492724,
+}
+
 func (m *RobotManager) revokeStorePermission(uid, cid int) error {
 	if uid <= 0 {
 		return nil
@@ -59,24 +167,9 @@ func (m *RobotManager) revokeStorePermission(uid, cid int) error {
 		query string
 		args  []interface{}
 	}{
-		{"DELETE FROM taiwan_login.member_premium WHERE pre_type=8 AND m_id=?", []interface{}{uid}},
-		{"DELETE FROM d_taiwan.member_miles WHERE m_id=?", []interface{}{uid}},
-		{"DELETE FROM taiwan_prod.prod_buy_user WHERE m_id=?", []interface{}{uid}},
-		{"DELETE FROM taiwan_prod.pu_user_list WHERE m_id=?", []interface{}{uid}},
 		{"DELETE FROM d_starsky.Robot_stall WHERE UID=? AND function_type=2", []interface{}{uid}},
 		{"DELETE FROM d_starsky.Robot_stall_config WHERE UID=? AND function_type=2", []interface{}{uid}},
 		{"UPDATE d_starsky.Dummylist SET function_type=0 WHERE UID=?", []interface{}{uid}},
-	}
-	if cid > 0 {
-		steps = append(steps, struct {
-			query string
-			args  []interface{}
-		}{"DELETE FROM taiwan_login.dnf_event_entry WHERE event_id=50002 AND m_id=? AND charac_no=?", []interface{}{uid, cid}})
-	} else {
-		steps = append(steps, struct {
-			query string
-			args  []interface{}
-		}{"DELETE FROM taiwan_login.dnf_event_entry WHERE event_id=50002 AND m_id=?", []interface{}{uid}})
 	}
 	for _, step := range steps {
 		if _, err := m.db.Exec(step.query, step.args...); err != nil {

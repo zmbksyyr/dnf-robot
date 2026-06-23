@@ -24,23 +24,25 @@ type robotMsgEntry struct {
 }
 
 type RuntimeRobotStatus struct {
-	UID              int
-	CID              int
-	State            int
-	StateName        string
-	LastError        int
-	DisconnectReason int
-	Reconnects       int
-	RunStartTime     int64
-	UptimeSeconds    int
-	RobotType        int
-	StoreDisplaySent bool
-	StoreDisplayAck  bool
-	StoreCreated     bool
-	Village          int
-	Area             int
-	X                int
-	Y                int
+	UID                  int
+	CID                  int
+	State                int
+	StateName            string
+	LastError            int
+	DisconnectReason     int
+	Reconnects           int
+	RunStartTime         int64
+	UptimeSeconds        int
+	RobotType            int
+	StoreDisplaySent     bool
+	StoreDisplayAck      bool
+	StoreDisplayRejected bool
+	StoreCreateRejected  bool
+	StoreCreated         bool
+	Village              int
+	Area                 int
+	X                    int
+	Y                    int
 }
 
 var robotServiceInstance *RobotSvc
@@ -104,23 +106,25 @@ func (rs *RobotSvc) RuntimeStatus() []RuntimeRobotStatus {
 		snap := vo.Snapshot()
 		state := int(snap.State)
 		out = append(out, RuntimeRobotStatus{
-			UID:              int(snap.UID),
-			CID:              int(snap.CID),
-			State:            state,
-			StateName:        robotStateName(state),
-			LastError:        int(snap.LastError),
-			DisconnectReason: int(snap.DisconnectReason),
-			Reconnects:       int(snap.Reconnects),
-			RunStartTime:     int64(snap.RunStartTime),
-			UptimeSeconds:    uptimeSeconds(now, snap.RunStartTime),
-			RobotType:        snap.RobotType,
-			StoreDisplaySent: snap.StoreDisplaySent,
-			StoreDisplayAck:  snap.StoreDisplayAck,
-			StoreCreated:     snap.StoreCreated,
-			Village:          int(snap.Village),
-			Area:             int(snap.Area),
-			X:                int(snap.X),
-			Y:                int(snap.Y),
+			UID:                  int(snap.UID),
+			CID:                  int(snap.CID),
+			State:                state,
+			StateName:            robotStateName(state),
+			LastError:            int(snap.LastError),
+			DisconnectReason:     int(snap.DisconnectReason),
+			Reconnects:           int(snap.Reconnects),
+			RunStartTime:         int64(snap.RunStartTime),
+			UptimeSeconds:        uptimeSeconds(now, snap.RunStartTime),
+			RobotType:            snap.RobotType,
+			StoreDisplaySent:     snap.StoreDisplaySent,
+			StoreDisplayAck:      snap.StoreDisplayAck,
+			StoreDisplayRejected: snap.StoreDisplayRejected,
+			StoreCreateRejected:  snap.StoreCreateRejected,
+			StoreCreated:         snap.StoreCreated,
+			Village:              int(snap.Village),
+			Area:                 int(snap.Area),
+			X:                    int(snap.X),
+			Y:                    int(snap.Y),
 		})
 	}
 	return out
@@ -193,6 +197,36 @@ func (rs *RobotSvc) ResetPrivateStore(uid int) bool {
 	return true
 }
 
+func (rs *RobotSvc) SetArea(uid int, village, area int, x, y int) bool {
+	if rs.table == nil || uid <= 0 {
+		return false
+	}
+	vo := rs.table.GetTask().Find(uid)
+	if vo == nil {
+		return false
+	}
+	if snap := vo.Snapshot(); robotStateName(int(snap.State)) != "running" {
+		return false
+	}
+	vo.SetArea(uint8(village), uint8(area), uint16(x), uint16(y))
+	return true
+}
+
+func (rs *RobotSvc) SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool {
+	if rs.table == nil || uid <= 0 {
+		return false
+	}
+	vo := rs.table.GetTask().Find(uid)
+	if vo == nil {
+		return false
+	}
+	if snap := vo.Snapshot(); robotStateName(int(snap.State)) != "running" {
+		return false
+	}
+	vo.SetAreaFrom(uint8(village), uint8(area), uint16(x), uint16(y), uint16(fromVillage), uint16(fromArea))
+	return true
+}
+
 func (rs *RobotSvc) CompletePrivateStoreDisplay(uid int) bool {
 	if rs.table == nil || uid <= 0 {
 		return false
@@ -208,7 +242,7 @@ func waitStoreCreated(vo *dnf.RobotVo, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		snap := vo.Snapshot()
-		if snap.StoreCreated || robotStateName(int(snap.State)) != "running" {
+		if snap.StoreCreated || snap.StoreCreateRejected || robotStateName(int(snap.State)) != "running" {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
