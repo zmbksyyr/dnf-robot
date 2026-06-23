@@ -85,61 +85,6 @@ func (m *RobotManager) Move(req RobotCommandRequest) (RobotCommandResult, error)
 	return result, nil
 }
 
-func (m *RobotManager) Shout(req RobotCommandRequest) (RobotCommandResult, error) {
-	robots, err := m.selectRobots(req)
-	if err != nil {
-		return RobotCommandResult{}, err
-	}
-	tpl := m.loadShoutTemplates()
-	rc := m.loadRobotConfig()
-	result := newCommandResult(len(robots))
-	for _, r := range robots {
-		worldMsg := safeRobotShoutMessage(tpl.Messages[m.randIntn(len(tpl.Messages))])
-		localMsg := safeRobotShoutMessage(tpl.Messages[m.randIntn(len(tpl.Messages))])
-		if !rc.ShoutSendEnabled {
-			_ = m.appendShout(r.UID, "world", 3, worldMsg)
-			_ = m.appendShout(r.UID, "local", 3, localMsg)
-			result.Accepted++
-			result.Confirmed++
-			result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: true, State: "sent", Message: fmt.Sprintf("world=%s local=%s", worldMsg, localMsg)})
-		} else {
-			if err := m.sendRobotShout("manager", r.UID, r.Name, tpl, worldMsg, true, rc); err != nil {
-				result.Failed++
-				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "failed", Message: err.Error()})
-			} else if err := m.sendRobotShout("manager", r.UID, r.Name, tpl, localMsg, false, rc); err != nil {
-				result.Failed++
-				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "failed", Message: err.Error()})
-			} else {
-				result.Accepted++
-				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "accepted", Message: fmt.Sprintf("world=%s local=%s", worldMsg, localMsg)})
-			}
-		}
-		if rc.ShoutDelayMS > 0 {
-			delay := m.randBetween(maxInt(200, rc.ShoutDelayMS/2), maxInt(200, rc.ShoutDelayMS*2))
-			time.Sleep(time.Duration(delay) * time.Millisecond)
-		}
-	}
-	time.Sleep(500 * time.Millisecond)
-	status := m.runtimeStatusMap()
-	for i := range result.Robots {
-		if !strings.EqualFold(result.Robots[i].State, "accepted") {
-			continue
-		}
-		if st, ok := status[result.Robots[i].UID]; ok && activeRuntimeStatus(st) {
-			result.Robots[i].OK = true
-			result.Robots[i].State = "sent"
-			result.Confirmed++
-		} else {
-			result.Robots[i].State = "not_confirmed"
-			if st, ok := status[result.Robots[i].UID]; ok && st.DisconnectReason != 0 {
-				result.Robots[i].Message = fmt.Sprintf("%s; disconnect_reason=%d", result.Robots[i].Message, st.DisconnectReason)
-			}
-			result.Failed++
-		}
-	}
-	return result, nil
-}
-
 func (m *RobotManager) ShoutOne(req RobotCommandRequest, world bool) (RobotCommandResult, error) {
 	robots, err := m.selectRobots(req)
 	if err != nil {
