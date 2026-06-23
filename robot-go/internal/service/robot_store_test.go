@@ -71,6 +71,18 @@ func TestStorePointCoordinatorCachesSourceMD5(t *testing.T) {
 	}
 }
 
+func TestBuildStoreGridPointsUsesLowerHalf(t *testing.T) {
+	points := buildStoreGridPoints([]mapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 200, YMax: 440, Use: true}})
+	if len(points) == 0 {
+		t.Fatalf("expected generated store points")
+	}
+	for _, pt := range points {
+		if pt.Y < 320 {
+			t.Fatalf("generated upper-half point y=%d", pt.Y)
+		}
+	}
+}
+
 func TestStorePointCoordinatorDoesNotReuseFailedPointAfterRestart(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []mapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})

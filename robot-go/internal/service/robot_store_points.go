@@ -14,7 +14,7 @@ import (
 
 const (
 	storePointCacheFile = "store_points_cache.json"
-	storePointCacheVer  = 5
+	storePointCacheVer  = 6
 	storePointXStep     = 120
 	storePointYStep     = 80
 	storeRestrictHalfX  = 80
@@ -120,31 +120,34 @@ func (c *storePointCoordinator) claim(uid int) (storePosition, bool) {
 	if len(c.areaOrder) == 0 {
 		return storePosition{}, false
 	}
-	for scanned := 0; scanned < len(c.areaOrder); scanned++ {
-		areaKey := c.areaOrder[c.areaCursor%len(c.areaOrder)]
-		c.areaCursor = (c.areaCursor + 1) % len(c.areaOrder)
-		if pos, ok := c.claimFromArea(uid, areaKey, true); ok {
-			return pos, true
-		}
+	if pos, ok := c.claimAcrossAreas(func(areaKey string) (storePosition, bool) {
+		return c.claimFromArea(uid, areaKey, true)
+	}); ok {
+		return pos, true
 	}
-	for scanned := 0; scanned < len(c.areaOrder); scanned++ {
-		areaKey := c.areaOrder[c.areaCursor%len(c.areaOrder)]
-		c.areaCursor = (c.areaCursor + 1) % len(c.areaOrder)
-		if pos, ok := c.claimFromArea(uid, areaKey, false); ok {
-			return pos, true
-		}
+	if pos, ok := c.claimAcrossAreas(func(areaKey string) (storePosition, bool) {
+		return c.claimFromArea(uid, areaKey, false)
+	}); ok {
+		return pos, true
 	}
-	for scanned := 0; scanned < len(c.areaOrder); scanned++ {
-		areaKey := c.areaOrder[c.areaCursor%len(c.areaOrder)]
-		c.areaCursor = (c.areaCursor + 1) % len(c.areaOrder)
-		if pos, ok := c.claimFailedFromArea(uid, areaKey, true); ok {
-			return pos, true
-		}
+	if pos, ok := c.claimAcrossAreas(func(areaKey string) (storePosition, bool) {
+		return c.claimFailedFromArea(uid, areaKey, true)
+	}); ok {
+		return pos, true
 	}
+	if pos, ok := c.claimAcrossAreas(func(areaKey string) (storePosition, bool) {
+		return c.claimFailedFromArea(uid, areaKey, false)
+	}); ok {
+		return pos, true
+	}
+	return storePosition{}, false
+}
+
+func (c *storePointCoordinator) claimAcrossAreas(fn func(string) (storePosition, bool)) (storePosition, bool) {
 	for scanned := 0; scanned < len(c.areaOrder); scanned++ {
 		areaKey := c.areaOrder[c.areaCursor%len(c.areaOrder)]
 		c.areaCursor = (c.areaCursor + 1) % len(c.areaOrder)
-		if pos, ok := c.claimFailedFromArea(uid, areaKey, false); ok {
+		if pos, ok := fn(areaKey); ok {
 			return pos, true
 		}
 	}
@@ -493,7 +496,7 @@ func buildStoreGridPoints(maps []mapCatalogItem) []storeGridPoint {
 			skippedArea++
 			continue
 		}
-		for y := mp.YMin; y <= mp.YMax; y += storePointYStep {
+		for y := storePointYStart(mp); y <= mp.YMax; y += storePointYStep {
 			for x := mp.XMin; x <= mp.XMax; x += storePointXStep {
 				region := storeRegionKey(mp.Village, mp.Area, x, y)
 				points = append(points, storeGridPoint{
@@ -520,6 +523,13 @@ func buildStoreGridPoints(maps []mapCatalogItem) []storeGridPoint {
 		return a.X < b.X
 	})
 	return points
+}
+
+func storePointYStart(mp mapCatalogItem) int {
+	if mp.YMax <= mp.YMin {
+		return mp.YMin
+	}
+	return mp.YMin + (mp.YMax-mp.YMin)/2
 }
 
 func isStoreAreaEligible(village, area int) bool {
