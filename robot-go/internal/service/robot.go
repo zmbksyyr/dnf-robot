@@ -38,6 +38,7 @@ type RuntimeRobotStatus struct {
 	StoreDisplayAck      bool
 	StoreDisplayRejected bool
 	StoreCreateRejected  bool
+	LastStoreError       byte
 	StoreCreated         bool
 	Village              int
 	Area                 int
@@ -120,6 +121,7 @@ func (rs *RobotSvc) RuntimeStatus() []RuntimeRobotStatus {
 			StoreDisplayAck:      snap.StoreDisplayAck,
 			StoreDisplayRejected: snap.StoreDisplayRejected,
 			StoreCreateRejected:  snap.StoreCreateRejected,
+			LastStoreError:       snap.LastStoreError,
 			StoreCreated:         snap.StoreCreated,
 			Village:              int(snap.Village),
 			Area:                 int(snap.Area),

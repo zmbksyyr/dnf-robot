@@ -17,6 +17,8 @@ const (
 	storePointCacheVer  = 5
 	storePointXStep     = 120
 	storePointYStep     = 80
+	storeRestrictHalfX  = 80
+	storeRestrictHalfY  = 150
 	storePointRegionX   = 180
 	storePointRegionY   = 120
 	storePointClaimTTL  = 2 * time.Minute
@@ -303,10 +305,34 @@ func (c *storePointCoordinator) report(uid int, pos storePosition, try int, ok b
 		} else {
 			c.failedPoints[pos.PointID] = true
 		}
+		if reason == "store_err_0x52" {
+			c.markRestrictiveZoneLocked(uid, pos, now)
+		}
 	}
 	c.dirtyCount++
 	if c.dirtyCount >= storePointSaveMax || time.Since(c.lastCacheSave) >= storePointSaveAge {
 		c.saveCacheLocked()
+	}
+}
+
+func (c *storePointCoordinator) markRestrictiveZoneLocked(uid int, pos storePosition, now string) {
+	areaKey := storeAreaKey(pos.Village, pos.Area)
+	maxDX := storeRestrictHalfX * 2
+	maxDY := storeRestrictHalfY * 2
+	for _, idx := range c.byArea[areaKey] {
+		pt := &c.points[idx]
+		if pt.Success > 0 || pt.Status == "success" {
+			continue
+		}
+		if absInt(pt.X-pos.X) > maxDX || absInt(pt.Y-pos.Y) > maxDY {
+			continue
+		}
+		c.failedPoints[pt.ID] = true
+		c.triedPoints[pt.ID] = true
+		pt.Status = "failed"
+		pt.LastUID = uid
+		pt.LastReason = "store_err_0x52_zone"
+		pt.LastResultAt = now
 	}
 }
 

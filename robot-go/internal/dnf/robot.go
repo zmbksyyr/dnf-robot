@@ -167,6 +167,7 @@ type RobotVo struct {
 	StoreDisplayAck           bool
 	StoreDisplayRejected      bool
 	StoreCreateRejected       bool
+	LastStoreError            byte
 	StoreCreated              bool
 	PrepareStoreAfterItemList bool
 	AfterRunAsyncTaskVec      []AsyncTask
@@ -216,6 +217,7 @@ type RobotSnapshot struct {
 	StoreDisplayAck      bool
 	StoreDisplayRejected bool
 	StoreCreateRejected  bool
+	LastStoreError       byte
 	StoreCreated         bool
 	Village              uint8
 	Area                 uint8
@@ -292,6 +294,7 @@ func (r *RobotVo) Snapshot() RobotSnapshot {
 		StoreDisplayAck:      r.StoreDisplayAck,
 		StoreDisplayRejected: r.StoreDisplayRejected,
 		StoreCreateRejected:  r.StoreCreateRejected,
+		LastStoreError:       r.LastStoreError,
 		StoreCreated:         r.StoreCreated,
 		Village:              r.CurVillage,
 		Area:                 r.CurArea,
@@ -310,6 +313,7 @@ func (r *RobotVo) ResetPrivateStoreState() {
 	r.StoreDisplayAck = false
 	r.StoreDisplayRejected = false
 	r.StoreCreateRejected = false
+	r.LastStoreError = 0
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
 	r.PendingStoreTitle = ""
@@ -323,6 +327,7 @@ func (r *RobotVo) PreparePrivateStoreState(title string) {
 	r.StoreDisplayAck = false
 	r.StoreDisplayRejected = false
 	r.StoreCreateRejected = false
+	r.LastStoreError = 0
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
 	r.RobotTyp = 2
@@ -355,6 +360,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.StoreDisplayAck = false
 	r.StoreDisplayRejected = false
 	r.StoreCreateRejected = false
+	r.LastStoreError = 0
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
 	r.recvSize = 0
@@ -667,6 +673,9 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		storeErr := byte(0)
 		if len(decData) > 1 {
 			storeErr = decData[1]
+		}
+		if packetFlag == 1 && err == nil && value == 0 && storeErr != 0 {
+			r.LastStoreError = storeErr
 		}
 		if packetFlag == 1 && packetType == 90 && err == nil && value == 0 && storeErr == 0x11 {
 			r.StoreDisplayRejected = true

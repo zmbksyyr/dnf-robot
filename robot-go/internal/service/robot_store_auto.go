@@ -51,11 +51,14 @@ func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRunt
 		}
 		info.Village, info.Area, info.X, info.Y = pos.Village, pos.Area, pos.X, pos.Y
 		robotLogf("[AutoStore] uid=%d try=%d/%d source=%s point=%s region=%s pos=%d/%d/%d/%d\n", info.UID, try, tries, pos.Source, pos.PointID, pos.Region, info.Village, info.Area, info.X, info.Y)
-		if m.tryAutoStorePosition(info, rc, try, shouldStop) {
+		if ok, reason := m.tryAutoStorePosition(info, rc, try, shouldStop); ok {
 			points.report(info.UID, pos, try, true, "store_ack")
 			robotLogf("[StoreSuccessPoint] uid=%d point=%s region=%s village=%d area=%d x=%d y=%d try=%d source=%s\n", info.UID, pos.PointID, pos.Region, info.Village, info.Area, info.X, info.Y, try, pos.Source)
 			m.addAutoStore(1, 0, 0)
 			return true
+		} else if reason != "" {
+			points.report(info.UID, pos, try, false, reason)
+			continue
 		}
 		points.report(info.UID, pos, try, false, "store_failed")
 	}
@@ -100,9 +103,9 @@ func (m *RobotManager) releaseAutoStoreSlot(slots chan struct{}) {
 	}
 }
 
-func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfig, try int, shouldStop func() bool) bool {
+func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfig, try int, shouldStop func() bool) (bool, string) {
 	if shouldStop != nil && shouldStop() {
-		return false
+		return false, "cancelled"
 	}
 	logoutResult, logoutErr := m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
 	robotLogf("[AutoStore] uid=%d pre_prepare_logout try=%d confirmed=%d failed=%d err=%v\n",
@@ -112,42 +115,42 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 		logoutDelay = 1500 * time.Millisecond
 	}
 	if sleepWithStop(logoutDelay, shouldStop) {
-		return false
+		return false, "cancelled"
 	}
 	if shouldStop != nil && shouldStop() {
-		return false
+		return false, "cancelled"
 	}
 	if res, err := m.db.Exec("UPDATE d_starsky.Dummylist SET curvill=?,curarea=?,curx=?,cury=?,function_type=2 WHERE UID=?", info.Village, info.Area, info.X, info.Y, info.UID); err != nil {
 		robotLogf("[AutoStore] uid=%d dummy_update_failed try=%d err=%v\n", info.UID, try, err)
-		return false
+		return false, "prepare_failed"
 	} else if affected, err := res.RowsAffected(); err == nil {
 		robotLogf("[AutoStore] uid=%d dummy_updated try=%d rows=%d pos=%d/%d/%d/%d\n", info.UID, try, affected, info.Village, info.Area, info.X, info.Y)
 	}
 	if err := m.syncRobotCharacterVillage(info.CID, info.Village); err != nil {
 		robotLogf("[AutoStore] uid=%d charac_village_sync_failed try=%d cid=%d village=%d err=%v\n", info.UID, try, info.CID, info.Village, err)
-		return false
+		return false, "prepare_failed"
 	}
 	if err := m.ensureStoreInventoryAndStall(info, rc); err != nil {
 		robotLogf("[AutoStore] uid=%d prepare_failed try=%d err=%v\n", info.UID, try, err)
-		return false
+		return false, "prepare_failed"
 	}
 	robotLogf("[AutoStore] uid=%d prepare_ok try=%d cid=%d pos=%d/%d/%d/%d\n", info.UID, try, info.CID, info.Village, info.Area, info.X, info.Y)
 	if sleepWithStop(800*time.Millisecond, shouldStop) {
-		return false
+		return false, "cancelled"
 	}
 	online, err := m.online(RobotCommandRequest{UIDs: []int{info.UID}}, false, true)
 	robotLogf("[AutoStore] uid=%d online_result try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
 	if err != nil || online.Confirmed != 1 {
 		robotLogf("[AutoStore] uid=%d store_online_failed try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
 		m.doll.ResetPrivateStore(info.UID)
-		return false
+		return false, "online_failed"
 	}
 	if err := m.syncRobotCharacterVillage(info.CID, info.Village); err != nil {
 		robotLogf("[AutoStore] uid=%d charac_village_resync_failed try=%d cid=%d village=%d err=%v\n", info.UID, try, info.CID, info.Village, err)
-		return false
+		return false, "prepare_failed"
 	}
 	if shouldStop != nil && shouldStop() {
-		return false
+		return false, "cancelled"
 	}
 	fromGate := storeGateAreaForVillage(info.Village)
 	if fromGate != info.Area {
@@ -156,10 +159,10 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 			info.UID, try, areaSet, info.Village, fromGate, info.Village, info.Area, info.X, info.Y)
 		if !areaSet {
 			m.doll.ResetPrivateStore(info.UID)
-			return false
+			return false, "set_area_failed"
 		}
 		if sleepWithStop(1800*time.Millisecond, shouldStop) {
-			return false
+			return false, "cancelled"
 		}
 	}
 	if st, ok := m.runtimeStatusMap()[info.UID]; ok {
@@ -170,17 +173,21 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 	if !m.doll.StartPrivateStore(info.UID, title) {
 		robotLogf("[AutoStore] uid=%d store_start_failed try=%d\n", info.UID, try)
 		m.doll.ResetPrivateStore(info.UID)
-		return false
+		return false, "store_start_failed"
 	}
-	if m.autoWaitStoreDisplay(info.UID, rc, shouldStop) {
-		return true
+	if ok, reason := m.autoWaitStoreDisplay(info.UID, rc, shouldStop); ok {
+		return true, ""
+	} else if reason != "" {
+		_, _ = m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
+		m.doll.ResetPrivateStore(info.UID)
+		return false, reason
 	}
 	_, _ = m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
 	m.doll.ResetPrivateStore(info.UID)
-	return false
+	return false, "store_failed"
 }
 
-func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shouldStop func() bool) bool {
+func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shouldStop func() bool) (bool, string) {
 	started := time.Now()
 	var createdAt time.Time
 	var lastDisplayAt time.Time
@@ -188,24 +195,24 @@ func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shou
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if shouldStop != nil && shouldStop() {
-			return false
+			return false, "cancelled"
 		}
 		st, ok := m.runtimeStatusMap()[uid]
 		if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
-			return false
+			return false, "runtime_stopped"
 		}
 		if st.StoreDisplayAck {
-			return true
+			return true, ""
 		}
 		if st.StoreDisplayRejected {
 			robotLogf("[AutoStore] uid=%d display_rejected state=%s disconnect=%d robot_type=%d store_created=%t wait_ms=%d tries=%d\n",
 				uid, st.StateName, st.DisconnectReason, st.RobotType, st.StoreCreated, time.Since(started).Milliseconds(), displayTries)
-			return false
+			return false, storeErrReason(st.LastStoreError)
 		}
 		if st.StoreCreateRejected && !st.StoreCreated {
 			robotLogf("[AutoStore] uid=%d create_rejected state=%s disconnect=%d robot_type=%d wait_ms=%d tries=%d\n",
 				uid, st.StateName, st.DisconnectReason, st.RobotType, time.Since(started).Milliseconds(), displayTries)
-			return false
+			return false, storeErrReason(st.LastStoreError)
 		}
 		if st.StoreCreated && createdAt.IsZero() {
 			createdAt = time.Now()
@@ -215,18 +222,25 @@ func (m *RobotManager) autoWaitStoreDisplay(uid int, rc robotRuntimeConfig, shou
 			lastDisplayAt = time.Now()
 			displayTries++
 			if m.doll.CompletePrivateStoreDisplay(uid) {
-				return true
+				return true, ""
 			}
 		}
 		if sleepWithStop(200*time.Millisecond, shouldStop) {
-			return false
+			return false, "cancelled"
 		}
 	}
 	if st, ok := m.runtimeStatusMap()[uid]; ok {
 		robotLogf("[AutoStore] uid=%d display_wait_failed state=%s disconnect=%d robot_type=%d store_created=%t display_sent=%t display_ack=%t wait_ms=%d tries=%d\n",
 			uid, st.StateName, st.DisconnectReason, st.RobotType, st.StoreCreated, st.StoreDisplaySent, st.StoreDisplayAck, time.Since(started).Milliseconds(), displayTries)
 	}
-	return false
+	return false, "display_wait_failed"
+}
+
+func storeErrReason(err byte) string {
+	if err == 0 {
+		return "store_failed"
+	}
+	return fmt.Sprintf("store_err_0x%02x", err)
 }
 
 func (m *RobotManager) restoreAutoNormalPosition(info RobotInfo, rc robotRuntimeConfig, reason string) RobotInfo {
