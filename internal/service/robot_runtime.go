@@ -128,8 +128,7 @@ func (r *RobotRuntime) ExpireStore(uid int) RobotActionResult {
 		}
 		rc := r.Config()
 		_, _ = r.manager.Logout(RobotCommandRequest{UIDs: []int{uid}})
-		_ = r.manager.revokeStorePermission(uid, st.CID)
-		r.manager.doll.ResetPrivateStore(uid)
+		r.manager.finishStoreState(uid, st.CID, "store_expired")
 		r.manager.addAutoStore(0, 0, 1)
 		info := RobotInfo{UID: uid, CID: st.CID, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y, Port: r.manager.cfg.RobotGamePort}
 		if robots, err := r.manager.selectRobots(RobotCommandRequest{UIDs: []int{uid}}); err == nil && len(robots) > 0 {

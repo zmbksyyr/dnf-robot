@@ -63,8 +63,7 @@ func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRunt
 	}
 	points.flush()
 	_, _ = m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
-	_ = m.revokeStorePermission(info.UID, info.CID)
-	m.doll.ResetPrivateStore(info.UID)
+	m.finishStoreState(info.UID, info.CID, "store_failed")
 	robotLogf("[AutoStore] uid=%d failed_after=%d\n", info.UID, tries)
 	m.addAutoStore(0, 1, 0)
 	m.restoreAutoNormalPosition(info, rc, "store_failed")
@@ -135,7 +134,7 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 	online, err := m.online(RobotCommandRequest{UIDs: []int{info.UID}}, false, true)
 	if err != nil || online.Confirmed != 1 {
 		robotLogf("[AutoStore] uid=%d store_online_failed try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
-		m.doll.ResetPrivateStore(info.UID)
+		m.finishStoreState(info.UID, info.CID, "store_online_failed")
 		return false, "online_failed"
 	}
 	if err := m.syncRobotCharacterVillage(info.CID, info.Village); err != nil {
@@ -149,7 +148,7 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 	if fromGate != info.Area {
 		areaSet := m.doll.SetAreaFrom(info.UID, info.Village, info.Area, info.X, info.Y, info.Village, fromGate)
 		if !areaSet {
-			m.doll.ResetPrivateStore(info.UID)
+			m.finishStoreState(info.UID, info.CID, "set_area_failed")
 			return false, "set_area_failed"
 		}
 		if sleepWithStop(1800*time.Millisecond, shouldStop) {
@@ -159,18 +158,18 @@ func (m *RobotManager) tryAutoStorePosition(info RobotInfo, rc robotRuntimeConfi
 	title := fmt.Sprintf("tw-%d", info.UID%100000)
 	if !m.doll.StartPrivateStore(info.UID, title) {
 		robotLogf("[AutoStore] uid=%d store_start_failed try=%d\n", info.UID, try)
-		m.doll.ResetPrivateStore(info.UID)
+		m.finishStoreState(info.UID, info.CID, "store_start_failed")
 		return false, "store_start_failed"
 	}
 	if ok, reason := m.autoWaitStoreDisplay(info.UID, rc, shouldStop); ok {
 		return true, ""
 	} else if reason != "" {
 		_, _ = m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
-		m.doll.ResetPrivateStore(info.UID)
+		m.finishStoreState(info.UID, info.CID, reason)
 		return false, reason
 	}
 	_, _ = m.Logout(RobotCommandRequest{UIDs: []int{info.UID}})
-	m.doll.ResetPrivateStore(info.UID)
+	m.finishStoreState(info.UID, info.CID, "store_failed")
 	return false, "store_failed"
 }
 

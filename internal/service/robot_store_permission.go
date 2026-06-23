@@ -164,17 +164,43 @@ func (m *RobotManager) revokeStorePermission(uid, cid int) error {
 		return nil
 	}
 	steps := []struct {
+		table string
 		query string
 		args  []interface{}
 	}{
-		{"DELETE FROM d_starsky.Robot_stall WHERE UID=? AND function_type=2", []interface{}{uid}},
-		{"DELETE FROM d_starsky.Robot_stall_config WHERE UID=? AND function_type=2", []interface{}{uid}},
-		{"UPDATE d_starsky.Dummylist SET function_type=0 WHERE UID=?", []interface{}{uid}},
+		{"d_starsky.Robot_stall", "DELETE FROM d_starsky.Robot_stall WHERE UID=? AND function_type=2", []interface{}{uid}},
+		{"d_starsky.Robot_stall_config", "DELETE FROM d_starsky.Robot_stall_config WHERE UID=? AND function_type=2", []interface{}{uid}},
+		{"d_starsky.Dummylist", "UPDATE d_starsky.Dummylist SET function_type=0 WHERE UID=?", []interface{}{uid}},
+		{"taiwan_login.member_premium", "DELETE FROM taiwan_login.member_premium WHERE m_id=? AND pre_type=8 AND event_id=50002", []interface{}{uid}},
+		{"taiwan_login.dnf_event_entry", "DELETE FROM taiwan_login.dnf_event_entry WHERE event_id=50002 AND m_id=?", []interface{}{uid}},
 	}
 	for _, step := range steps {
+		exists, err := m.tableExists(step.table)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			continue
+		}
 		if _, err := m.db.Exec(step.query, step.args...); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (m *RobotManager) finishStoreState(uid, cid int, reason string) {
+	if uid <= 0 {
+		return
+	}
+	if cid <= 0 {
+		if robots, err := m.selectRobots(RobotCommandRequest{UIDs: []int{uid}}); err == nil && len(robots) > 0 {
+			cid = robots[0].CID
+		}
+	}
+	if err := m.revokeStorePermission(uid, cid); err != nil {
+		robotLogf("[StoreCleanup] uid=%d cid=%d reason=%s err=%v\n", uid, cid, reason, err)
+	}
+	m.doll.ResetPrivateStore(uid)
+	robotLogf("[StoreCleanup] uid=%d cid=%d reason=%s\n", uid, cid, reason)
 }

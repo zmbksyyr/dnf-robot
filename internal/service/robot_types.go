@@ -147,11 +147,18 @@ type SchedulerStatus struct {
 	OnlineBatchSize         int       `json:"online_batch_size"`
 	OnlineStartRate         int       `json:"online_start_rate"`
 	OnlineFillTimeoutSec    int       `json:"online_fill_timeout_sec"`
+	MoveIntervalMinSec      int       `json:"move_interval_min_sec"`
+	MoveIntervalMaxSec      int       `json:"move_interval_max_sec"`
+	ShoutIntervalMinSec     int       `json:"shout_interval_min_sec"`
+	ShoutIntervalMaxSec     int       `json:"shout_interval_max_sec"`
 	StoreConcurrent         int       `json:"store_concurrent"`
 	StoreProbabilityPercent int       `json:"store_probability_percent"`
 	StoreIntervalMinSec     int       `json:"store_interval_min_sec"`
 	StoreIntervalMaxSec     int       `json:"store_interval_max_sec"`
+	StoreDurationSec        int       `json:"store_duration_sec"`
+	StoreTickSec            int       `json:"store_tick_sec"`
 	StoreMaxPositionTries   int       `json:"store_max_position_tries"`
+	StoreFailCooldownSec    int       `json:"store_fail_cooldown_sec"`
 	ScaleUpBatch            int       `json:"scale_up_batch"`
 	ScaleDownBatch          int       `json:"scale_down_batch"`
 	BreakerReleaseBatch     int       `json:"breaker_release_batch"`

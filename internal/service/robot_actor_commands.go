@@ -10,6 +10,9 @@ func (a *robotActor) logoutCurrentUID() RobotActionResult {
 		a.setState(robotActorIdle)
 		return RobotActionResult{OK: true, State: "idle"}
 	}
+	if st, ok := a.runtime.Status(uid); ok && (st.RobotType == 2 || st.RobotType == 3 || st.StoreDisplayAck) {
+		a.runtime.manager.finishStoreState(uid, st.CID, "logout")
+	}
 	a.setOnlineDesired(false)
 	a.clearAutoSchedule()
 	a.setBusy(true, "logout")

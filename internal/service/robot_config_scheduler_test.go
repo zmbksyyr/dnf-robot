@@ -197,6 +197,12 @@ func TestLoadRobotConfigSchedulerOnlineDefaults(t *testing.T) {
 	if !rc.AutoActions || rc.AutoTargetOnlineCount != 20 || rc.AutoStoreProbabilityPercent != 35 {
 		t.Fatalf("auto defaults got enabled=%v target=%d store_probability=%d, want true/20/35", rc.AutoActions, rc.AutoTargetOnlineCount, rc.AutoStoreProbabilityPercent)
 	}
+	if rc.AutoMoveIntervalMinSec != 6 || rc.AutoMoveIntervalMaxSec != 18 {
+		t.Fatalf("AutoMoveInterval got %d..%d want 6..18", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
+	}
+	if rc.AutoShoutIntervalMinSec != 40 || rc.AutoShoutIntervalMaxSec != 115 {
+		t.Fatalf("AutoShoutInterval got %d..%d want 40..115", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
+	}
 	assertIntSlice(t, rc.StoreItemAllowIDs, []int{3037, 3031, 3032, 3034, 3035})
 }
 
@@ -217,6 +223,12 @@ func TestLoadRobotConfigSchedulerValuesAreAdaptive(t *testing.T) {
 	}
 	if rc.AutoStoreProbabilityPercent != 16 {
 		t.Fatalf("AutoStoreProbabilityPercent got %d want 16", rc.AutoStoreProbabilityPercent)
+	}
+	if rc.AutoMoveIntervalMinSec != 11 || rc.AutoMoveIntervalMaxSec != 33 {
+		t.Fatalf("AutoMoveInterval got %d..%d want 11..33", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
+	}
+	if rc.AutoShoutIntervalMinSec != 65 || rc.AutoShoutIntervalMaxSec != 185 {
+		t.Fatalf("AutoShoutInterval got %d..%d want 65..185", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 	}
 	if rc.AutoStoreIntervalMinSec != 75 || rc.AutoStoreIntervalMaxSec != 195 {
 		t.Fatalf("AutoStoreInterval got %d..%d want 75..195", rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec)
@@ -290,6 +302,12 @@ func TestAdaptiveSchedulerLiveFeedbackIncreasesStoreWhenHealthy(t *testing.T) {
 	if rc.AutoStoreProbabilityPercent != 26 {
 		t.Fatalf("AutoStoreProbabilityPercent got %d want 26", rc.AutoStoreProbabilityPercent)
 	}
+	if rc.AutoMoveIntervalMinSec != 9 || rc.AutoMoveIntervalMaxSec != 29 {
+		t.Fatalf("AutoMoveInterval got %d..%d want 9..29", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
+	}
+	if rc.AutoShoutIntervalMinSec != 58 || rc.AutoShoutIntervalMaxSec != 166 {
+		t.Fatalf("AutoShoutInterval got %d..%d want 58..166", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
+	}
 	if rc.AutoStoreIntervalMinSec != 60 || rc.AutoStoreIntervalMaxSec != 156 {
 		t.Fatalf("AutoStoreInterval got %d..%d want 60..156", rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec)
 	}
@@ -317,6 +335,12 @@ func TestAdaptiveSchedulerLiveFeedbackReducesPressure(t *testing.T) {
 	}
 	if rc.AutoStoreProbabilityPercent != 5 {
 		t.Fatalf("AutoStoreProbabilityPercent got %d want 5", rc.AutoStoreProbabilityPercent)
+	}
+	if rc.AutoMoveIntervalMinSec != 16 || rc.AutoMoveIntervalMaxSec != 49 {
+		t.Fatalf("AutoMoveInterval got %d..%d want 16..49", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
+	}
+	if rc.AutoShoutIntervalMinSec != 97 || rc.AutoShoutIntervalMaxSec != 277 {
+		t.Fatalf("AutoShoutInterval got %d..%d want 97..277", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 	}
 	if rc.AutoStoreIntervalMinSec != 112 || rc.AutoStoreIntervalMaxSec != 292 {
 		t.Fatalf("AutoStoreInterval got %d..%d want 112..292", rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec)

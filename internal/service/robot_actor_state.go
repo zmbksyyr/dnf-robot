@@ -11,6 +11,9 @@ func (a *robotActor) releaseCurrentUID() int {
 		return 0
 	}
 	a.setState(robotActorReleasing)
+	if st, ok := a.runtime.Status(uid); ok && (st.RobotType == 2 || st.RobotType == 3 || st.StoreDisplayAck) {
+		a.runtime.manager.finishStoreState(uid, st.CID, "release")
+	}
 	a.runtime.Logout(uid)
 	a.resetForUID(0)
 	return uid

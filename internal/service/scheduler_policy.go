@@ -144,11 +144,18 @@ func (m *RobotManager) updateSchedulerStatus(rc robotRuntimeConfig, sig adaptive
 		OnlineBatchSize:         rc.SchedulerOnlineBatchSize,
 		OnlineStartRate:         rc.SchedulerOnlineStartRate,
 		OnlineFillTimeoutSec:    rc.SchedulerOnlineFillTimeout,
+		MoveIntervalMinSec:      rc.AutoMoveIntervalMinSec,
+		MoveIntervalMaxSec:      rc.AutoMoveIntervalMaxSec,
+		ShoutIntervalMinSec:     rc.AutoShoutIntervalMinSec,
+		ShoutIntervalMaxSec:     rc.AutoShoutIntervalMaxSec,
 		StoreConcurrent:         rc.SchedulerStoreConcurrent,
 		StoreProbabilityPercent: rc.AutoStoreProbabilityPercent,
 		StoreIntervalMinSec:     rc.AutoStoreIntervalMinSec,
 		StoreIntervalMaxSec:     rc.AutoStoreIntervalMaxSec,
+		StoreDurationSec:        rc.AutoStoreDurationSec,
+		StoreTickSec:            rc.AutoStoreTickSec,
 		StoreMaxPositionTries:   rc.AutoStoreMaxPositionTries,
+		StoreFailCooldownSec:    rc.AutoStoreFailCooldownSec,
 		ScaleUpBatch:            schedulerScaleUpBatch(rc),
 		ScaleDownBatch:          schedulerScaleDownBatch(sig.Actors, target),
 		BreakerReleaseBatch:     rc.SchedulerBreakerReleaseBatch,
@@ -180,6 +187,11 @@ func applyAdaptiveSchedulerConfig(rc *robotRuntimeConfig, sig adaptiveSchedulerS
 	rc.SchedulerOnlineBatchSize = clampInt(target/10, 10, 60)
 	rc.SchedulerOnlineStartRate = clampInt(target/40, 4, 30)
 	rc.SchedulerOnlineFillTimeout = clampInt(target/10, 45, 180)
+
+	rc.AutoMoveIntervalMinSec = clampInt(5+scale, 6, 18)
+	rc.AutoMoveIntervalMaxSec = rc.AutoMoveIntervalMinSec + clampInt(10+scale*2, 12, 36)
+	rc.AutoShoutIntervalMinSec = clampInt(35+scale*5, 40, 90)
+	rc.AutoShoutIntervalMaxSec = rc.AutoShoutIntervalMinSec + clampInt(60+scale*10, 75, 180)
 
 	rc.SchedulerStoreConcurrent = clampInt(target/20, 5, 50)
 	rc.AutoStoreProbabilityPercent = clampInt(100/scale, 5, 35)
@@ -226,6 +238,10 @@ func applyLiveSchedulerFeedback(rc *robotRuntimeConfig, target int, sig adaptive
 		rc.SchedulerOnlineBatchSize = clampInt(rc.SchedulerOnlineBatchSize/2, 5, 60)
 		rc.SchedulerOnlineStartRate = clampInt(rc.SchedulerOnlineStartRate/2, 4, 30)
 		rc.SchedulerOnlineFillTimeout = clampInt(rc.SchedulerOnlineFillTimeout*2, 60, 300)
+		rc.AutoMoveIntervalMinSec = clampInt(rc.AutoMoveIntervalMinSec*3/2, 10, 45)
+		rc.AutoMoveIntervalMaxSec = clampInt(rc.AutoMoveIntervalMaxSec*3/2, rc.AutoMoveIntervalMinSec+12, 90)
+		rc.AutoShoutIntervalMinSec = clampInt(rc.AutoShoutIntervalMinSec*3/2, 60, 180)
+		rc.AutoShoutIntervalMaxSec = clampInt(rc.AutoShoutIntervalMaxSec*3/2, rc.AutoShoutIntervalMinSec+60, 360)
 		rc.SchedulerStoreConcurrent = clampInt(rc.SchedulerStoreConcurrent/2, 2, 25)
 		rc.AutoStoreProbabilityPercent = clampInt(rc.AutoStoreProbabilityPercent/3, 1, 15)
 		rc.AutoStoreIntervalMinSec = clampInt(rc.AutoStoreIntervalMinSec*3/2, 60, 240)
@@ -247,6 +263,10 @@ func applyLiveSchedulerFeedback(rc *robotRuntimeConfig, target int, sig adaptive
 		}
 		rc.SchedulerStoreConcurrent = clampInt(rc.SchedulerStoreConcurrent+storeBoost, 5, 90)
 		rc.AutoStoreProbabilityPercent = clampInt(rc.AutoStoreProbabilityPercent+10, 5, 60)
+		rc.AutoMoveIntervalMinSec = clampInt(rc.AutoMoveIntervalMinSec*9/10, 5, 18)
+		rc.AutoMoveIntervalMaxSec = clampInt(rc.AutoMoveIntervalMaxSec*9/10, rc.AutoMoveIntervalMinSec+10, 54)
+		rc.AutoShoutIntervalMinSec = clampInt(rc.AutoShoutIntervalMinSec*9/10, 30, 90)
+		rc.AutoShoutIntervalMaxSec = clampInt(rc.AutoShoutIntervalMaxSec*9/10, rc.AutoShoutIntervalMinSec+60, 270)
 		rc.AutoStoreIntervalMinSec = clampInt(rc.AutoStoreIntervalMinSec*4/5, 30, 120)
 		rc.AutoStoreIntervalMaxSec = clampInt(rc.AutoStoreIntervalMaxSec*4/5, rc.AutoStoreIntervalMinSec+60, 300)
 		rc.AutoStoreMaxPositionTries = clampInt(rc.AutoStoreMaxPositionTries+3, 5, 30)

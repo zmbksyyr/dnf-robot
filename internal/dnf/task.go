@@ -77,7 +77,7 @@ type RobotDnfTask struct {
 	timerMutex        sync.Mutex
 
 	robotVoMap   map[int]*RobotVo
-	robotVoMutex sync.Mutex
+	robotVoMutex sync.RWMutex
 
 	keyToHandle   map[string]func(task *RobotDnfTask, data interface{}) bool
 	keyToHandleMu sync.Mutex
@@ -192,13 +192,10 @@ func (t *RobotDnfTask) AddMessage(typ string, data interface{}) {
 	t.messageMutex.Lock()
 	if len(t.messageQueue) >= maxMessageQueueSize {
 		if typ == "MsgLogout" || typ == "MsgOnLine" {
-			fmt.Printf("[RobotDnfTask] message_queue_full preserve_critical type=%s len=%d\n", typ, len(t.messageQueue))
-			t.messageQueue[0] = msg
-			t.messageMutex.Unlock()
-			t.messageCond.Signal()
-			return
+			fmt.Printf("[RobotDnfTask] message_queue_full enqueue_critical_drop_oldest type=%s len=%d\n", typ, len(t.messageQueue))
+		} else {
+			fmt.Printf("[RobotDnfTask] message_queue_overflow drop_oldest type=%s len=%d\n", typ, len(t.messageQueue))
 		}
-		fmt.Printf("[RobotDnfTask] message_queue_overflow drop_oldest type=%s len=%d\n", typ, len(t.messageQueue))
 		t.messageQueue = t.messageQueue[1:]
 	}
 	t.messageQueue = append(t.messageQueue, msg)
@@ -239,8 +236,8 @@ func (t *RobotDnfTask) Insert(uid uint32, vo *RobotVo) {
 }
 
 func (t *RobotDnfTask) Find(uid int) *RobotVo {
-	t.robotVoMutex.Lock()
-	defer t.robotVoMutex.Unlock()
+	t.robotVoMutex.RLock()
+	defer t.robotVoMutex.RUnlock()
 	return t.robotVoMap[uid]
 }
 
@@ -261,8 +258,8 @@ func (t *RobotDnfTask) DeleteByInt(key int) bool {
 }
 
 func (t *RobotDnfTask) GetRobotVoMap() map[int]*RobotVo {
-	t.robotVoMutex.Lock()
-	defer t.robotVoMutex.Unlock()
+	t.robotVoMutex.RLock()
+	defer t.robotVoMutex.RUnlock()
 	out := make(map[int]*RobotVo, len(t.robotVoMap))
 	for k, v := range t.robotVoMap {
 		out[k] = v

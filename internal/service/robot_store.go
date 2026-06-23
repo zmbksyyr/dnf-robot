@@ -48,6 +48,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 			if _, ok := onlineOK[r.UID]; !ok {
 				result.Failed++
 				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "not_online", Message: "online before store failed"})
+				m.finishStoreState(r.UID, r.CID, "store_online_failed")
 				continue
 			}
 			title := fmt.Sprintf("tw-%d", r.UID%100000)
@@ -58,6 +59,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 			} else {
 				result.Failed++
 				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "store_start_failed", Message: "StartPrivateStore failed after online"})
+				m.finishStoreState(r.UID, r.CID, "store_start_failed")
 			}
 		}
 	}
@@ -93,8 +95,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 			result.Robots[i].State = "not_confirmed"
 			result.Robots[i].Message = "store state not confirmed"
 			result.Failed++
-			_ = m.revokeStorePermission(result.Robots[i].UID, result.Robots[i].CID)
-			m.doll.ResetPrivateStore(result.Robots[i].UID)
+			m.finishStoreState(result.Robots[i].UID, result.Robots[i].CID, "store_not_confirmed")
 		}
 	}
 	return result, nil

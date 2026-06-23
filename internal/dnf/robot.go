@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -13,18 +12,6 @@ import (
 	"robot/internal/dnf/crypt"
 	sqlpkg "robot/internal/sql"
 )
-
-func dnfLogf(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Print(msg)
-	f, err := os.OpenFile("/root/config/log_robot", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_, _ = f.WriteString(time.Now().Format("[02/01/06 15:04:05] "))
-	_, _ = f.WriteString(msg)
-}
 
 type ClientState int
 
@@ -682,12 +669,6 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		}
 	}
 
-	if packetFlag == 1 && r.State == StateRun && (packetType == 20 || packetType == 13) {
-		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
-		_ = decData
-		_ = err
-	}
-
 	if packetFlag == 0 && packetType == 13 && (r.State == StateRun || r.State == StateLogin) {
 		wasWaiting := r.IsWaitingItemList
 		r.IsWaitingItemList = false
@@ -977,19 +958,15 @@ func (r *RobotVo) runAsyncTasks() {
 		}
 	}
 
-	unlocked := false
+	go r.executeAsyncTasks(tasks, cost, title)
+}
+
+func (r *RobotVo) executeAsyncTasks(tasks []AsyncTask, cost uint32, title string) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			fmt.Printf("[RobotVo] runAsyncTasks panic uid=%d err=%v\n", r.UID, rec)
-			if unlocked {
-				r.mu.Lock()
-				unlocked = false
-			}
 		}
 	}()
-
-	r.mu.Unlock()
-	unlocked = true
 	for _, task := range tasks {
 		switch task.Type {
 		case AsyncDisjoint:
@@ -1002,8 +979,6 @@ func (r *RobotVo) runAsyncTasks() {
 			r.GetCompleteDisplay(0)
 		}
 	}
-	r.mu.Lock()
-	unlocked = false
 }
 
 func (r *RobotVo) sendRaw(pkt []byte) bool {
@@ -1013,8 +988,8 @@ func (r *RobotVo) sendRaw(pkt []byte) bool {
 	if r.Conn == nil || len(pkt) == 0 {
 		return false
 	}
-	_ = r.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	for written := 0; written < len(pkt); {
+		_ = r.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		n, err := r.Conn.Write(pkt[written:])
 		if err != nil {
 			fmt.Printf("[RobotVo] write failed uid=%d err=%v\n", r.UID, err)
@@ -1372,8 +1347,7 @@ func (r *RobotVo) getShopVo(functionType int) map[int]ShopVo {
 		return result
 	}
 
-	query := fmt.Sprintf("select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=%d and state=1 and (UID=%d or UID=0) order by UID", functionType, r.UID)
-	rows, err := sqlpkg.Select(r.DB, query)
+	rows, err := sqlpkg.Select(r.DB, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=? and state=1 and (UID=? or UID=0) order by UID", functionType, r.UID)
 	if err != nil {
 		fmt.Printf("getShopVo query error: %v\n", err)
 		return result
@@ -1432,8 +1406,7 @@ func (r *RobotVo) getDbDataAndCompleteDisplayUnsafe() bool {
 		return false
 	}
 
-	query := fmt.Sprintf("select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=%d or UID=0) order by UID", r.UID)
-	rows, err := sqlpkg.Select(r.DB, query)
+	rows, err := sqlpkg.Select(r.DB, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID", r.UID)
 	if err != nil {
 		return false
 	}
@@ -1463,8 +1436,7 @@ func (r *RobotVo) getDbDataAndCompleteDisplayUnsafe() bool {
 			title = "store"
 		}
 
-		cfgQuery := fmt.Sprintf("select cfg_content from d_starsky.Robot_stall_config where cfg_type=3 and function_type=2 and state=1 and (UID=%d or UID=0) order by UID", r.UID)
-		cfgRows, _ := sqlpkg.Select(r.DB, cfgQuery)
+		cfgRows, _ := sqlpkg.Select(r.DB, "select cfg_content from d_starsky.Robot_stall_config where cfg_type=3 and function_type=2 and state=1 and (UID=? or UID=0) order by UID", r.UID)
 		if len(cfgRows) > 0 && len(cfgRows[0]) > 0 && r.PendingStoreTitle == "" {
 			title = cfgRows[0][0]
 		}
@@ -1485,8 +1457,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	title := r.PendingStoreTitle
 	r.mu.Unlock()
 
-	query := fmt.Sprintf("select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=%d or UID=0) order by UID,id limit 24", uid)
-	rows, err := sqlpkg.Select(r.DB, query)
+	rows, err := sqlpkg.Select(r.DB, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID,id limit 24", uid)
 	if err != nil || len(rows) == 0 {
 		return false
 	}
@@ -1555,7 +1526,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	}
 
 	r.mu.Lock()
-	if r.State != StateRun || r.StoreDisplayAck {
+	if r.State != StateRun || !r.StoreCreated || r.StoreDisplayAck || r.UID != uid || r.DB == nil {
 		r.mu.Unlock()
 		return r.StoreDisplayAck
 	}

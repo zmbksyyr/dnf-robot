@@ -1,10 +1,6 @@
 package service
 
-import (
-	"encoding/json"
-	"fmt"
-	"time"
-)
+import "encoding/json"
 
 type Result struct {
 	Msg string
@@ -186,43 +182,31 @@ func NewDollService() *DollService {
 }
 
 func (d *DollService) ListDoll(clientID string, keyData string) (string, error) {
-	key := fmt.Sprintf("%s_%d", clientID, time.Now().UnixNano())
-	_ = key
 	result := listDoll(keyData)
 	return result.Msg, nil
 }
 
 func (d *DollService) MsgRemove(clientID string, keyData string) (string, error) {
-	key := fmt.Sprintf("%s_%d", clientID, time.Now().UnixNano())
-	_ = key
 	result := msgRemove(keyData)
 	return result.Msg, nil
 }
 
 func (d *DollService) MsgLogout(clientID string, keyData string) (string, error) {
-	key := fmt.Sprintf("%s_%d", clientID, time.Now().UnixNano())
-	_ = key
 	result := msgLogout(keyData)
 	return result.Msg, nil
 }
 
 func (d *DollService) MsgMove(clientID string, keyData string) (string, error) {
-	key := fmt.Sprintf("%s_%d", clientID, time.Now().UnixNano())
-	_ = key
 	result := msgMove(keyData)
 	return result.Msg, nil
 }
 
 func (d *DollService) MsgPublicMsg(clientID string, keyData string) (string, error) {
-	key := fmt.Sprintf("%s_%d", clientID, time.Now().UnixNano())
-	_ = key
 	result := msgPublicMsg(keyData)
 	return result.Msg, nil
 }
 
 func (d *DollService) MsgOnLine(clientID string, keyData string) (string, error) {
-	key := fmt.Sprintf("%s_%d", clientID, time.Now().UnixNano())
-	_ = key
 	result := msgOnLine(keyData)
 	return result.Msg, nil
 }

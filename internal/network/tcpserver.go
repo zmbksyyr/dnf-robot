@@ -294,7 +294,9 @@ func (s *TCPServer) Broadcast(data []byte) {
 		if s.writeTimeout > 0 {
 			_ = c.Conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
 		}
-		c.Conn.Write(data)
+		if _, err := c.Conn.Write(data); err != nil {
+			fmt.Printf("[TCPServer] broadcast write failed addr=%s uid=%s err=%v\n", c.Addr, c.UID, err)
+		}
 	}
 }
 
