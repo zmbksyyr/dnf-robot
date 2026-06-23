@@ -680,22 +680,6 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if packetFlag == 1 && packetType == 90 && err == nil && value == 0 && storeErr == 0x11 {
 			r.StoreDisplayRejected = true
 		}
-		dnfLogf("[StoreAck] uid=%d type=%d flag=%d value=%d store_err=0x%02x pos=%d/%d/%d/%d len=%d hex=%x err=%v created=%t display_ack=%t\n",
-			r.UID, packetType, packetFlag, value, storeErr, r.CurVillage, r.CurArea, r.CurX, r.CurY, len(decData), decData, err, r.StoreCreated, r.StoreDisplayAck)
-	}
-
-	if packetFlag == 1 && packetType == 38 && r.State == StateRun {
-		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
-		value := byte(0)
-		if len(decData) > 0 {
-			value = decData[0]
-		}
-		areaErr := byte(0)
-		if len(decData) > 1 {
-			areaErr = decData[1]
-		}
-		dnfLogf("[SetAreaAck] uid=%d value=%d area_err=0x%02x len=%d hex=%x err=%v\n",
-			r.UID, value, areaErr, len(decData), decData, err)
 	}
 
 	if packetFlag == 1 && r.State == StateRun && (packetType == 20 || packetType == 13) {
@@ -739,9 +723,6 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 						time.Sleep(100 * time.Millisecond)
 					}
 					if snap := r.Snapshot(); snap.State == StateRun {
-						if !snap.StoreCreated {
-							dnfLogf("[StoreDisplay] uid=%d created_ack_missing_after_item_list\n", r.UID)
-						}
 						r.GetDbDataAndCompleteDisplay()
 					}
 				}()
@@ -757,7 +738,6 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if err == nil && len(decData) >= 15 {
 			if r.StoreDisplaySent && r.RobotTyp == 2 && !r.StoreDisplayAck {
 				r.StoreDisplayAck = true
-				dnfLogf("[StoreDisplay] uid=%d ack=item-update\n", r.UID)
 			}
 			itemPos := int16(binary.LittleEndian.Uint16(decData[0:2]))
 			itemID := int32(binary.LittleEndian.Uint32(decData[2:6]))
@@ -1250,7 +1230,6 @@ func (r *RobotVo) CreatePrivateStore() {
 	pkt, err := buildSendPacket(88, uint16(r.PacketID), data[:], r.Cipher)
 	r.PacketID++
 	if err == nil {
-		dnfLogf("[StoreCreate] uid=%d village=%d area=%d x=%d y=%d packet_id=%d payload=%x\n", r.UID, r.CurVillage, r.CurArea, r.CurX, r.CurY, r.PacketID-1, data)
 		r.SendMsg(pkt)
 	}
 	r.RobotTyp = 2
@@ -1421,7 +1400,6 @@ func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 		return false
 	}
 	if !r.StoreCreated {
-		dnfLogf("[StoreDisplay] uid=%d skip_no_create_ack\n", r.UID)
 		return false
 	}
 
@@ -1440,7 +1418,6 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.StoreCreated {
-		dnfLogf("[StoreDisplay] uid=%d skip_db_display_no_create_ack\n", r.UID)
 		return false
 	}
 	return r.getDbDataAndCompleteDisplayUnsafe()
@@ -1543,10 +1520,9 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	}
 
 	type storeRow struct {
-		ItemID int
-		Price  int
-		Count  int
-		Pos    invPos
+		Price int
+		Count int
+		Pos   invPos
 	}
 	storeRows := make([]storeRow, 0, len(rows))
 	for _, row := range rows {
@@ -1561,18 +1537,15 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		}
 		pos, ok := inventory[tradeItem]
 		if !ok {
-			dnfLogf("[StoreDisplay] uid=%d skip_item_missing item=%d price=%d count=%d\n", uid, tradeItem, price, itemNumber)
 			continue
 		}
 		if !isStoreStackableType(pos.BoxType) {
-			dnfLogf("[StoreDisplay] uid=%d skip_item_space item=%d inv_type=%d raw=%d game=%d count=%d\n",
-				uid, tradeItem, pos.BoxType, pos.RawBoxIndex, pos.GameBoxIndex, pos.Count)
 			continue
 		}
 		if pos.Count > 0 && itemNumber > pos.Count {
 			itemNumber = pos.Count
 		}
-		storeRows = append(storeRows, storeRow{ItemID: tradeItem, Price: price, Count: itemNumber, Pos: pos})
+		storeRows = append(storeRows, storeRow{Price: price, Count: itemNumber, Pos: pos})
 	}
 	if len(storeRows) == 0 {
 		return false
@@ -1591,49 +1564,17 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	r.StoreDisplayRejected = false
 	r.mu.Unlock()
 
-	type displayVariant struct {
-		Name string
-		Info []StoreInfo
-	}
-	buildVariant := func(name string, boxType func(storeRow) int, boxIndex func(storeRow) int) displayVariant {
-		info := make([]StoreInfo, 0, len(storeRows))
-		for i, sr := range storeRows {
-			count := sr.Count
-			if count <= 0 {
-				count = 1
-			}
-			info = append(info, StoreInfo{Index: i, BoxType: boxType(sr), BoxIndex: boxIndex(sr), Price: sr.Price, Count: count})
+	storeInfo := make([]StoreInfo, 0, len(storeRows))
+	for i, sr := range storeRows {
+		count := sr.Count
+		if count <= 0 {
+			count = 1
 		}
-		return displayVariant{Name: name, Info: info}
+		storeInfo = append(storeInfo, StoreInfo{Index: i, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
 	}
-	variants := []displayVariant{
-		buildVariant("row-game-space0", func(storeRow) int { return 0 }, func(sr storeRow) int { return sr.Pos.GameBoxIndex }),
-	}
-	for _, variant := range variants {
-		r.mu.Lock()
-		if r.State != StateRun || r.StoreDisplayAck {
-			ack := r.StoreDisplayAck
-			r.mu.Unlock()
-			return ack
-		}
-		r.StoreDisplaySent = false
-		r.StoreDisplayAck = false
-		r.StoreDisplayRejected = false
-		r.mu.Unlock()
-		dnfLogf("[StoreDisplay] uid=%d try=%s items=%d\n", uid, variant.Name, len(variant.Info))
-		for i, sr := range storeRows {
-			dnfLogf("[StoreDisplay] uid=%d item[%d]=%d inv_type=%d raw=%d game=%d send_index=%d send_space=%d send_box=%d count=%d price=%d\n",
-				uid, i, sr.ItemID, sr.Pos.BoxType, sr.Pos.RawBoxIndex, sr.Pos.GameBoxIndex,
-				variant.Info[i].Index, variant.Info[i].BoxType, variant.Info[i].BoxIndex, variant.Info[i].Count, variant.Info[i].Price)
-		}
-		r.CompleteDisplay(title, variant.Info)
-		time.Sleep(1400 * time.Millisecond)
-		if r.Snapshot().StoreDisplayAck {
-			dnfLogf("[StoreDisplay] uid=%d ack=%s\n", uid, variant.Name)
-			return true
-		}
-		dnfLogf("[StoreDisplay] uid=%d miss=%s\n", uid, variant.Name)
-	}
+
+	r.CompleteDisplay(title, storeInfo)
+	time.Sleep(1400 * time.Millisecond)
 	return r.Snapshot().StoreDisplayAck
 }
 

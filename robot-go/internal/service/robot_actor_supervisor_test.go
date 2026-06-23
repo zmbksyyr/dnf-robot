@@ -336,11 +336,11 @@ func TestRobotActorStoreFailedCooldownDoesNotPoisonHealth(t *testing.T) {
 	}
 }
 
-func TestRobotActorOnlineAttemptWithoutPendingDoesNotRecycle(t *testing.T) {
+func TestRobotActorOnlineAttemptWithoutPendingStillTimesOut(t *testing.T) {
 	now := time.Now()
 	a := &robotActor{mode: robotActorAuto, uid: 1001, state: robotActorOnline, lastOnlineTry: now.Add(-2 * time.Minute)}
 	status := a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
-	if status.RecycleUID {
-		t.Fatalf("online attempt without pending marker should not recycle, reason=%q", status.HealthReason)
+	if !status.RecycleUID || status.HealthReason != "online_confirm_timeout" {
+		t.Fatalf("online attempt timeout got recycle=%v reason=%q, want online_confirm_timeout recycle", status.RecycleUID, status.HealthReason)
 	}
 }

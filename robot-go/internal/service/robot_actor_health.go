@@ -22,7 +22,7 @@ func (a *robotActor) status(now time.Time, rc robotRuntimeConfig) robotActorStat
 		status.RecycleUID = true
 		return status
 	}
-	if s.State == robotActorOnline && !s.LastOnlineTry.IsZero() && !s.FirstFailureAt.IsZero() {
+	if s.State == robotActorOnline && !s.LastOnlineTry.IsZero() {
 		timeout := time.Duration(rc.OnlineConfirmTimeoutMS) * time.Millisecond
 		if timeout <= 0 {
 			timeout = 60 * time.Second

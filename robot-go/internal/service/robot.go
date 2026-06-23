@@ -172,8 +172,6 @@ func (rs *RobotSvc) StartPrivateStore(uid int, title string) bool {
 		time.Sleep(1200 * time.Millisecond)
 		if snap := vo.Snapshot(); robotStateName(int(snap.State)) != "running" {
 			return
-		} else if !snap.StoreCreated {
-			robotLogf("[StartPrivateStore] uid=%d created_ack_missing_try_display\n", uid)
 		}
 		vo.GetCompleteDisplay(0)
 		time.Sleep(1200 * time.Millisecond)
