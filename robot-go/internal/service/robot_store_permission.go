@@ -190,17 +190,21 @@ func (m *RobotManager) revokeStorePermission(uid, cid int) error {
 }
 
 func (m *RobotManager) finishStoreState(uid, cid int, reason string) {
-	if uid <= 0 {
+	if m == nil || uid <= 0 {
 		return
 	}
-	if cid <= 0 {
+	if m.db != nil && cid <= 0 {
 		if robots, err := m.selectRobots(RobotCommandRequest{UIDs: []int{uid}}); err == nil && len(robots) > 0 {
 			cid = robots[0].CID
 		}
 	}
-	if err := m.revokeStorePermission(uid, cid); err != nil {
-		robotLogf("[StoreCleanup] uid=%d cid=%d reason=%s err=%v\n", uid, cid, reason, err)
+	if m.db != nil {
+		if err := m.revokeStorePermission(uid, cid); err != nil {
+			robotLogf("[StoreCleanup] uid=%d cid=%d reason=%s err=%v\n", uid, cid, reason, err)
+		}
 	}
-	m.doll.ResetPrivateStore(uid)
+	if m.doll != nil {
+		m.doll.ResetPrivateStore(uid)
+	}
 	robotLogf("[StoreCleanup] uid=%d cid=%d reason=%s\n", uid, cid, reason)
 }
