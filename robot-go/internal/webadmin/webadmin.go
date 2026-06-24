@@ -252,7 +252,11 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "raw": raw, "result": parseRobotResult(raw)})
+	out := map[string]interface{}{"ok": true, "result": parseRobotResult(raw)}
+	if r.URL.Query().Get("raw") == "1" {
+		out["raw"] = raw
+	}
+	writeJSON(w, out)
 }
 
 func robotCallTimeout(command string) time.Duration {
@@ -439,7 +443,7 @@ func callRobot(addr, command string, payload map[string]interface{}, timeout tim
 		n, err := conn.Read(tmp)
 		if n > 0 {
 			buf.Write(tmp[:n])
-			if strings.Contains(buf.String(), "</tw>") {
+			if bytes.Contains(buf.Bytes(), []byte("</tw>")) {
 				return buf.String(), nil
 			}
 			if buf.Len() > maxResponseBytes {
