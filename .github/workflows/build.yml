@@ -1,0 +1,54 @@
+name: Build Binaries
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - 'bin/**'
+      - '.github/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install MinGW and UPX
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-mingw-w64-x86-64 upx-ucl
+
+      - name: Build bin/robot (linux/amd64)
+        run: |
+          cd robot-go
+          go mod download
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../bin/robot ./cmd/robot
+
+      - name: Build bin/部署.exe (windows/amd64)
+        run: |
+          cd tools/deploy-launcher
+          go mod download
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc go build -trimpath -ldflags="-s -w -H windowsgui" -o ../../bin/部署.exe .
+          if command -v upx &> /dev/null; then
+            upx --best --lzma ../../bin/部署.exe || true
+          else
+            echo "UPX not found, skipping compression"
+          fi
+
+      - name: Commit and push binaries
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f bin/robot bin/部署.exe
+          if git diff --staged --quiet; then
+            echo "No changes to binaries"
+          else
+            git commit -m "build: update bin/robot and bin/部署.exe [skip ci]"
+            git push
+          fi
