@@ -223,6 +223,41 @@ func (a *robotActor) stateValue() robotActorState {
 	return a.state
 }
 
+func (a *robotActor) randIntn(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if a.rand == nil {
+		return 0
+	}
+	return a.rand.Intn(n)
+}
+
+func (a *robotActor) randBetween(min, max int) int {
+	if max < min {
+		min, max = max, min
+	}
+	return min + a.randIntn(max-min+1)
+}
+
+func (a *robotActor) randomizedDue(next *time.Time, now time.Time, minSec, maxSec int) bool {
+	if minSec <= 0 || maxSec <= 0 {
+		return false
+	}
+	if maxSec < minSec {
+		minSec, maxSec = maxSec, minSec
+	}
+	if next.IsZero() {
+		*next = now.Add(time.Duration(a.randBetween(minSec, maxSec)) * time.Second)
+		return false
+	}
+	if now.Before(*next) {
+		return false
+	}
+	*next = now.Add(time.Duration(a.randBetween(minSec, maxSec)) * time.Second)
+	return true
+}
+
 func (s robotActorSnapshot) empty() bool {
 	return s.UID <= 0
 }

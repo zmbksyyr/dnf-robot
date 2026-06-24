@@ -7,11 +7,17 @@ import (
 
 type RobotRuntime struct {
 	manager *RobotManager
-	locks   sync.Map
+	locksMu sync.Mutex
+	locks   map[int]*runtimeUIDLock
+}
+
+type runtimeUIDLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func NewRobotRuntime(manager *RobotManager) *RobotRuntime {
-	return &RobotRuntime{manager: manager}
+	return &RobotRuntime{manager: manager, locks: make(map[int]*runtimeUIDLock)}
 }
 
 func (r *RobotRuntime) Config() robotRuntimeConfig {
@@ -86,7 +92,7 @@ func (r *RobotRuntime) AutoMove(uid int) RobotActionResult {
 	})
 }
 
-func (r *RobotRuntime) AutoShout(uid int, world bool) RobotActionResult {
+func (r *RobotRuntime) AutoShout(uid int, world bool, msg string) RobotActionResult {
 	return r.run(uid, func() RobotActionResult {
 		st, ok := r.Status(uid)
 		if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
@@ -94,7 +100,9 @@ func (r *RobotRuntime) AutoShout(uid int, world bool) RobotActionResult {
 			return RobotActionResult{UID: uid, OK: false, State: "offline"}
 		}
 		tpl := r.manager.loadShoutTemplates()
-		msg := safeRobotShoutMessage(tpl.Messages[r.manager.randIntn(len(tpl.Messages))])
+		if msg == "" && len(tpl.Messages) > 0 {
+			msg = safeRobotShoutMessage(tpl.Messages[0])
+		}
 		r.manager.autoShoutRobot(uid, tpl, msg, world)
 		r.manager.addAutoShoutChannel(world, 1, 0)
 		return RobotActionResult{UID: uid, CID: st.CID, OK: true, State: "sent"}
@@ -110,8 +118,13 @@ func (r *RobotRuntime) AutoStore(uid int, shouldStop func() bool) RobotActionRes
 		if shouldStop != nil && shouldStop() {
 			return RobotActionResult{UID: uid, CID: st.CID, OK: false, State: "cancelled"}
 		}
-		if r.manager.autoStoreUntilSuccess(st, r.Config(), shouldStop) {
+		switch r.manager.autoStoreUntilSuccess(st, r.Config(), shouldStop) {
+		case autoStoreAttemptSuccess:
 			return RobotActionResult{UID: uid, CID: st.CID, OK: true, State: "store"}
+		case autoStoreAttemptBusy:
+			return RobotActionResult{UID: uid, CID: st.CID, OK: false, State: "store_busy"}
+		case autoStoreAttemptCancelled:
+			return RobotActionResult{UID: uid, CID: st.CID, OK: false, State: "cancelled"}
 		}
 		if shouldStop != nil && shouldStop() {
 			return RobotActionResult{UID: uid, CID: st.CID, OK: false, State: "cancelled"}
@@ -140,9 +153,9 @@ func (r *RobotRuntime) ExpireStore(uid int) RobotActionResult {
 }
 
 func (r *RobotRuntime) run(uid int, fn func() RobotActionResult) RobotActionResult {
-	lock := r.uidLock(uid)
-	lock.Lock()
-	defer lock.Unlock()
+	lock := r.acquireUIDLock(uid)
+	lock.mu.Lock()
+	defer r.releaseUIDLock(uid, lock)
 	defer func() {
 		if rec := recover(); rec != nil {
 			robotLogf("[RobotRuntime] panic uid=%d err=%v\n", uid, rec)
@@ -151,9 +164,29 @@ func (r *RobotRuntime) run(uid int, fn func() RobotActionResult) RobotActionResu
 	return fn()
 }
 
-func (r *RobotRuntime) uidLock(uid int) *sync.Mutex {
-	v, _ := r.locks.LoadOrStore(uid, &sync.Mutex{})
-	return v.(*sync.Mutex)
+func (r *RobotRuntime) acquireUIDLock(uid int) *runtimeUIDLock {
+	r.locksMu.Lock()
+	defer r.locksMu.Unlock()
+	if r.locks == nil {
+		r.locks = make(map[int]*runtimeUIDLock)
+	}
+	lock := r.locks[uid]
+	if lock == nil {
+		lock = &runtimeUIDLock{}
+		r.locks[uid] = lock
+	}
+	lock.refs++
+	return lock
+}
+
+func (r *RobotRuntime) releaseUIDLock(uid int, lock *runtimeUIDLock) {
+	lock.mu.Unlock()
+	r.locksMu.Lock()
+	defer r.locksMu.Unlock()
+	lock.refs--
+	if lock.refs <= 0 && r.locks[uid] == lock {
+		delete(r.locks, uid)
+	}
 }
 
 func firstActionResult(uid int, res RobotCommandResult, err error) RobotActionResult {

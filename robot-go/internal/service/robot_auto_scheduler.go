@@ -30,7 +30,7 @@ func (s *RobotSupervisor) tick(now time.Time) {
 		return
 	}
 	s.maintainTarget(rc)
-	s.releaseBrokenLeases()
+	s.releaseBrokenLeases(now, rc)
 	s.cleanupBlockedUIDs(10)
 	s.recycleUnhealthyActors(now, rc)
 	s.assignIdleAutoActors(rc)

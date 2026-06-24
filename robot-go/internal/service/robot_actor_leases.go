@@ -4,7 +4,19 @@ import "time"
 
 // Lease health, broken UID cleanup, and recycle paths.
 
-func (s *RobotSupervisor) releaseBrokenLeases() {
+func (s *RobotSupervisor) releaseBrokenLeases(now time.Time, rc robotRuntimeConfig) {
+	if !s.nextLeaseHealth.IsZero() && now.Before(s.nextLeaseHealth) {
+		return
+	}
+	interval := time.Duration(rc.SchedulerMetricsIntervalSec) * time.Second
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	if interval > time.Minute {
+		interval = time.Minute
+	}
+	s.nextLeaseHealth = now.Add(interval)
+
 	leases := s.ledger.leaseSnapshots()
 	if len(leases) == 0 {
 		return

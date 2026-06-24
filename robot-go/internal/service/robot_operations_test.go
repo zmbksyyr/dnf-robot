@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 var errTestOperation = errors.New("operation failed")
@@ -54,6 +55,18 @@ func TestStructuralOperationState(t *testing.T) {
 	done()
 	if op, _, active := m.structuralOperation(); active || op != "" {
 		t.Fatalf("structural op should clear, active=%v op=%q", active, op)
+	}
+}
+
+func TestStructuralOperationExpiresStaleState(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	m.autoMu.Lock()
+	m.structuralOp = "cleanup"
+	m.structuralOpStarted = time.Now().Add(-11 * time.Minute)
+	m.autoMu.Unlock()
+
+	if op, _, active := m.structuralOperation(); active || op != "" {
+		t.Fatalf("stale structural op should expire, active=%v op=%q", active, op)
 	}
 }
 

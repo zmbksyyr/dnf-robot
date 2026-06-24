@@ -1,6 +1,9 @@
 package service
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 type RobotSupervisor struct {
 	manager *RobotManager
@@ -10,9 +13,11 @@ type RobotSupervisor struct {
 
 	stop chan struct{}
 	done chan struct{}
+	once sync.Once
 
-	nextMetrics time.Time
-	nextKeyLog  time.Time
+	nextMetrics     time.Time
+	nextKeyLog      time.Time
+	nextLeaseHealth time.Time
 }
 
 // RobotSupervisor coordinates the runtime loop. Actor ownership is stored in
@@ -35,6 +40,6 @@ func (s *RobotSupervisor) Start() {
 }
 
 func (s *RobotSupervisor) Stop() {
-	close(s.stop)
+	s.once.Do(func() { close(s.stop) })
 	<-s.done
 }

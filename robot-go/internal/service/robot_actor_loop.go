@@ -22,16 +22,24 @@ func (a *robotActor) controlAndWait(ctrl robotActorControl, timeout time.Duratio
 	ctrl.done = make(chan robotActorControlResult, 1)
 	select {
 	case a.ctrls <- ctrl:
+	case <-a.done:
+		return robotActorControlResult{}
 	default:
 		return robotActorControlResult{}
 	}
 	if timeout <= 0 {
-		res := <-ctrl.done
-		return res
+		select {
+		case res := <-ctrl.done:
+			return res
+		case <-a.done:
+			return robotActorControlResult{}
+		}
 	}
 	select {
 	case res := <-ctrl.done:
 		return res
+	case <-a.done:
+		return robotActorControlResult{}
 	case <-time.After(timeout):
 		return robotActorControlResult{}
 	}

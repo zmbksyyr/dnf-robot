@@ -15,8 +15,16 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 	result := newCommandResult(len(robots))
 	var offline []RobotInfo
 	for _, r := range robots {
+		if !m.beginStoreBusy(r.UID) {
+			result.Failed++
+			result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "store_busy", Message: "store already running for uid"})
+			continue
+		}
 		if err := m.ensureStoreInventoryAndStall(r, rc); err != nil {
-			return RobotCommandResult{}, err
+			result.Failed++
+			result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "store_prepare_failed", Message: err.Error()})
+			m.endStoreBusy(r.UID)
+			continue
 		}
 		if st, ok := status[r.UID]; ok && activeRuntimeStatus(st) {
 			logoutResult, err := m.Logout(RobotCommandRequest{UIDs: []int{r.UID}})
@@ -25,6 +33,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 				robotLogf("[Store] uid=%d %s\n", r.UID, msg)
 				result.Failed++
 				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "logout_failed", Message: msg})
+				m.endStoreBusy(r.UID)
 				continue
 			}
 			if rc.ReconnectDelayMS > 0 {
@@ -36,6 +45,9 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 	if len(offline) > 0 {
 		online, err := m.Online(RobotCommandRequest{UIDs: robotUIDs(offline)}, false)
 		if err != nil {
+			for _, r := range offline {
+				m.endStoreBusy(r.UID)
+			}
 			return result, err
 		}
 		onlineOK := make(map[int]RobotActionResult)
@@ -49,6 +61,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 				result.Failed++
 				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "not_online", Message: "online before store failed"})
 				m.finishStoreState(r.UID, r.CID, "store_online_failed")
+				m.endStoreBusy(r.UID)
 				continue
 			}
 			title := fmt.Sprintf("tw-%d", r.UID%100000)
@@ -60,6 +73,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 				result.Failed++
 				result.Robots = append(result.Robots, RobotActionResult{UID: r.UID, CID: r.CID, OK: false, State: "store_start_failed", Message: "StartPrivateStore failed after online"})
 				m.finishStoreState(r.UID, r.CID, "store_start_failed")
+				m.endStoreBusy(r.UID)
 			}
 		}
 	}
@@ -97,6 +111,7 @@ func (m *RobotManager) Store(req RobotCommandRequest) (RobotCommandResult, error
 			result.Failed++
 			m.finishStoreState(result.Robots[i].UID, result.Robots[i].CID, "store_not_confirmed")
 		}
+		m.endStoreBusy(result.Robots[i].UID)
 	}
 	return result, nil
 }

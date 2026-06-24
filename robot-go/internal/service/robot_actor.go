@@ -1,6 +1,7 @@
 package service
 
 import (
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -92,6 +93,7 @@ type robotActor struct {
 	mode    robotActorMode
 	state   robotActorState
 	runtime *RobotRuntime
+	rand    *rand.Rand
 	mu      sync.Mutex
 	cmds    chan robotActorRequest
 	ctrls   chan robotActorControl
@@ -119,6 +121,7 @@ func newRobotActor(slotID int, mode robotActorMode, runtime *RobotRuntime) *robo
 		mode:    mode,
 		state:   robotActorIdle,
 		runtime: runtime,
+		rand:    rand.New(rand.NewSource(time.Now().UnixNano() + int64(slotID)*7919)),
 		cmds:    make(chan robotActorRequest, 16),
 		ctrls:   make(chan robotActorControl, 4),
 		stop:    make(chan struct{}),

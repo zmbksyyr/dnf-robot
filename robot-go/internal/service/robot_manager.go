@@ -20,6 +20,7 @@ type RobotManager struct {
 	mu                              sync.Mutex
 	lifecycleMu                     sync.Mutex
 	autoMu                          sync.Mutex
+	runtimeStatusMu                 sync.Mutex
 	cacheMu                         sync.Mutex
 	randMu                          sync.Mutex
 	storeSlotMu                     sync.Mutex
@@ -44,6 +45,8 @@ type RobotManager struct {
 	autoBreakerLastShoutLocalFailed int
 	autoBreakerLastShoutWorldFailed int
 	autoBreakerLastStoreFailed      int
+	runtimeStatusCache              map[int]RuntimeRobotStatus
+	runtimeStatusCacheAt            time.Time
 	autoPolicyLastMode              schedulerPolicyMode
 	autoPolicyLastReason            string
 	schedulerStatus                 SchedulerStatus
@@ -95,6 +98,12 @@ func (m *RobotManager) beginStructuralOp(op string) func() {
 func (m *RobotManager) structuralOperation() (string, time.Time, bool) {
 	m.autoMu.Lock()
 	defer m.autoMu.Unlock()
+	if m.structuralOp != "" && (m.structuralOpStarted.IsZero() || time.Since(m.structuralOpStarted) > 10*time.Minute) {
+		robotLogf("[RobotLifecycle] op=%s state=expired started=%s\n", m.structuralOp, m.structuralOpStarted.Format(time.RFC3339))
+		m.structuralOp = ""
+		m.structuralOpStarted = time.Time{}
+		return "", time.Time{}, false
+	}
 	return m.structuralOp, m.structuralOpStarted, m.structuralOp != ""
 }
 

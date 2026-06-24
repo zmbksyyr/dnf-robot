@@ -69,8 +69,42 @@ func TestSupervisorStopUIDsWithoutLogoutSkipsDetachedRuntime(t *testing.T) {
 	if got := registry.StopUIDs([]int{999}, false); got != 0 {
 		t.Fatalf("StopUIDs got %d want 0 for missing uid", got)
 	}
-	if _, ok := runtime.locks.Load(999); ok {
+	runtime.locksMu.Lock()
+	_, ok := runtime.locks[999]
+	runtime.locksMu.Unlock()
+	if ok {
 		t.Fatalf("StopUIDs logout=false should not call runtime logout for detached uid")
+	}
+}
+
+func TestRuntimeUIDLocksAreReleasedAfterAction(t *testing.T) {
+	runtime := NewRobotRuntime(testRobotManagerWithConfig(t, ""))
+	res := runtime.run(101, func() RobotActionResult {
+		return RobotActionResult{UID: 101, OK: true}
+	})
+	if !res.OK {
+		t.Fatalf("runtime action should pass")
+	}
+	runtime.locksMu.Lock()
+	_, ok := runtime.locks[101]
+	runtime.locksMu.Unlock()
+	if ok {
+		t.Fatalf("runtime uid lock should be removed after last action")
+	}
+}
+
+func TestReleaseBrokenLeasesHonorsInterval(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	m.db = nil
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	a := &robotActor{slotID: 1, mode: robotActorAuto, uid: 101}
+	addLedgerActor(t, &s.ledger, a)
+	s.ledger.tryLeaseUID(101, a)
+	s.nextLeaseHealth = time.Now().Add(time.Minute)
+
+	s.releaseBrokenLeases(time.Now(), robotRuntimeConfig{SchedulerMetricsIntervalSec: 10})
+	if !s.ledger.hasUID(101) {
+		t.Fatalf("lease health should be skipped before interval without touching ledger")
 	}
 }
 
@@ -102,6 +136,16 @@ func TestRobotActorOfflineKeepsUIDAttached(t *testing.T) {
 	a.setOnlineDesired(true)
 	if snap := a.snapshot(); snap.UID != 101 || !snap.OnlineDesired {
 		t.Fatalf("online desired should re-open without detaching uid, uid=%d desired=%v", snap.UID, snap.OnlineDesired)
+	}
+}
+
+func TestRobotActorControlReturnsWhenStopped(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	a := newRobotActor(1, robotActorAuto, NewRobotRuntime(m))
+	a.start()
+	a.stopAndWait(time.Second)
+	if a.assignAndWait(101, 0) {
+		t.Fatalf("assign on stopped actor should fail instead of blocking")
 	}
 }
 

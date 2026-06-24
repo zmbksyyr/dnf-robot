@@ -5,6 +5,9 @@ import (
 )
 
 func (a *robotActor) tick(now time.Time) {
+	if a.releaseRequestedValue() || a.stateValue() == robotActorReleasing {
+		return
+	}
 	uid := a.uidValue()
 	if uid <= 0 {
 		return
@@ -43,18 +46,18 @@ func (a *robotActor) tick(now time.Time) {
 	if !a.runtime.manager.autoActionsEnabled(rc) {
 		return
 	}
-	if randomizedDue(&a.nextWorldShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec, a.runtime.manager.randBetween) {
+	if a.randomizedDue(&a.nextWorldShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec) {
 		a.runBusy("shout_world", func() {
-			a.runtime.AutoShout(uid, true)
+			a.runtime.AutoShout(uid, true, a.randomShoutMessage())
 		})
 	}
-	if randomizedDue(&a.nextLocalShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec, a.runtime.manager.randBetween) {
+	if a.randomizedDue(&a.nextLocalShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec) {
 		a.runBusy("shout_local", func() {
-			a.runtime.AutoShout(uid, false)
+			a.runtime.AutoShout(uid, false, a.randomShoutMessage())
 		})
 	}
-	if !isStore && randomizedDue(&a.nextStore, now, rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec, a.runtime.manager.randBetween) {
-		if rc.AutoStoreProbabilityPercent > 0 && a.runtime.manager.randIntn(100) < rc.AutoStoreProbabilityPercent {
+	if !isStore && a.randomizedDue(&a.nextStore, now, rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec) {
+		if rc.AutoStoreProbabilityPercent > 0 && a.randIntn(100) < rc.AutoStoreProbabilityPercent {
 			var res RobotActionResult
 			a.runBusy("store", func() {
 				defer a.clearOnlineAttempt()
@@ -62,6 +65,9 @@ func (a *robotActor) tick(now time.Time) {
 			})
 			if res.OK {
 				a.storeUntil = time.Now().Add(time.Duration(rc.AutoStoreDurationSec) * time.Second)
+			} else if res.State == "store_busy" {
+				a.markOnlineHealthy()
+				a.nextStore = time.Now().Add(time.Duration(rc.AutoStoreFailCooldownSec) * time.Second)
 			} else if res.State == "store_failed" {
 				a.markOnlineHealthy()
 				a.nextStore = time.Now().Add(time.Duration(rc.AutoStoreFailCooldownSec) * time.Second)
@@ -71,11 +77,19 @@ func (a *robotActor) tick(now time.Time) {
 			return
 		}
 	}
-	if !isStore && randomizedDue(&a.nextMove, now, rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec, a.runtime.manager.randBetween) {
+	if !isStore && a.randomizedDue(&a.nextMove, now, rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec) {
 		a.runBusy("move", func() {
 			a.runtime.AutoMove(uid)
 		})
 	}
+}
+
+func (a *robotActor) randomShoutMessage() string {
+	tpl := a.runtime.manager.loadShoutTemplates()
+	if len(tpl.Messages) == 0 {
+		return ""
+	}
+	return safeRobotShoutMessage(tpl.Messages[a.randIntn(len(tpl.Messages))])
 }
 
 func (a *robotActor) ensureOnline(now time.Time) {

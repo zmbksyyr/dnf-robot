@@ -79,6 +79,9 @@ func (dt *DnfTableDrive) handleOnLine(task *RobotDnfTask, robotMsg RobotMsg) Dnf
 			return DnfTableTaskResult{Msg: "repair login prerequisites failed"}
 		}
 	}
+	if task.onlineBacklog()+req.UserinfosSize() > maxMessageQueueSize {
+		return DnfTableTaskResult{Msg: "online queue full"}
+	}
 	for i := 0; i < req.UserinfosSize(); i++ {
 		userInfo := req.Userinfos(i)
 
@@ -137,7 +140,9 @@ func (dt *DnfTableDrive) handleOnLine(task *RobotDnfTask, robotMsg RobotMsg) Dnf
 		}
 
 		vo.AfterRunAsyncTaskVec = asyncTaskVec
-		task.AddMessage("MsgOnLine", vo)
+		if !task.TryAddMessage("MsgOnLine", vo) {
+			return DnfTableTaskResult{Msg: "online queue full"}
+		}
 
 		result := message.NewMsgOnLineResult()
 		result.SetId(userInfo.Id())

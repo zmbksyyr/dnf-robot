@@ -5,12 +5,35 @@ import (
 	"time"
 )
 
+const runtimeStatusCacheTTL = 250 * time.Millisecond
+
 func (m *RobotManager) runtimeStatusMap() map[int]RuntimeRobotStatus {
+	now := time.Now()
+	m.runtimeStatusMu.Lock()
+	if !m.runtimeStatusCacheAt.IsZero() && now.Sub(m.runtimeStatusCacheAt) <= runtimeStatusCacheTTL && m.runtimeStatusCache != nil {
+		out := copyRuntimeStatusMap(m.runtimeStatusCache)
+		m.runtimeStatusMu.Unlock()
+		return out
+	}
+	m.runtimeStatusMu.Unlock()
+
 	status := map[int]RuntimeRobotStatus{}
 	for _, st := range m.doll.RuntimeStatus() {
 		status[st.UID] = st
 	}
+	m.runtimeStatusMu.Lock()
+	m.runtimeStatusCache = copyRuntimeStatusMap(status)
+	m.runtimeStatusCacheAt = now
+	m.runtimeStatusMu.Unlock()
 	return status
+}
+
+func copyRuntimeStatusMap(in map[int]RuntimeRobotStatus) map[int]RuntimeRobotStatus {
+	out := make(map[int]RuntimeRobotStatus, len(in))
+	for uid, st := range in {
+		out[uid] = st
+	}
+	return out
 }
 
 func (m *RobotManager) countRuntimeRunning() int {

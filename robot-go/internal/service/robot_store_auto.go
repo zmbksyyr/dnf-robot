@@ -5,7 +5,16 @@ import (
 	"time"
 )
 
-func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRuntimeConfig, shouldStop func() bool) bool {
+type autoStoreAttemptState int
+
+const (
+	autoStoreAttemptFailed autoStoreAttemptState = iota
+	autoStoreAttemptSuccess
+	autoStoreAttemptBusy
+	autoStoreAttemptCancelled
+)
+
+func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRuntimeConfig, shouldStop func() bool) autoStoreAttemptState {
 	tries := rc.AutoStoreMaxPositionTries
 	if tries <= 0 {
 		tries = 10
@@ -18,31 +27,23 @@ func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRunt
 		info.Job = robots[0].Job
 		info.Grow = robots[0].Grow
 	}
-	m.autoMu.Lock()
-	if m.autoStoreBusy[info.UID] {
-		m.autoMu.Unlock()
-		return false
+	if !m.beginStoreBusy(info.UID) {
+		return autoStoreAttemptBusy
 	}
-	m.autoStoreBusy[info.UID] = true
-	m.autoMu.Unlock()
 	slot, ok := m.acquireAutoStoreSlot(rc)
 	if !ok {
-		m.autoMu.Lock()
-		delete(m.autoStoreBusy, info.UID)
-		m.autoMu.Unlock()
-		return false
+		m.endStoreBusy(info.UID)
+		return autoStoreAttemptBusy
 	}
 	defer func() {
 		m.releaseAutoStoreSlot(slot)
-		m.autoMu.Lock()
-		delete(m.autoStoreBusy, info.UID)
-		m.autoMu.Unlock()
+		m.endStoreBusy(info.UID)
 	}()
 	points := m.storePoints()
 	for try := 1; try <= tries; try++ {
 		if shouldStop != nil && shouldStop() {
 			robotLogf("[AutoStore] uid=%d cancelled_before_try=%d\n", info.UID, try)
-			return false
+			return autoStoreAttemptCancelled
 		}
 		pos, ok := points.claim(info.UID)
 		if !ok {
@@ -54,7 +55,7 @@ func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRunt
 			points.report(info.UID, pos, try, true, "store_ack")
 			robotLogf("[StoreSuccessPoint] uid=%d point=%s region=%s village=%d area=%d x=%d y=%d try=%d source=%s\n", info.UID, pos.PointID, pos.Region, info.Village, info.Area, info.X, info.Y, try, pos.Source)
 			m.addAutoStore(1, 0, 0)
-			return true
+			return autoStoreAttemptSuccess
 		} else if reason != "" {
 			points.report(info.UID, pos, try, false, reason)
 			continue
@@ -67,7 +68,7 @@ func (m *RobotManager) autoStoreUntilSuccess(st RuntimeRobotStatus, rc robotRunt
 	robotLogf("[AutoStore] uid=%d failed_after=%d\n", info.UID, tries)
 	m.addAutoStore(0, 1, 0)
 	m.restoreAutoNormalPosition(info, rc, "store_failed")
-	return false
+	return autoStoreAttemptFailed
 }
 
 func (m *RobotManager) acquireAutoStoreSlot(rc robotRuntimeConfig) (chan struct{}, bool) {
@@ -86,7 +87,6 @@ func (m *RobotManager) acquireAutoStoreSlot(rc robotRuntimeConfig) (chan struct{
 	case slots <- struct{}{}:
 		return slots, true
 	default:
-		robotLogf("[AutoStore] store_concurrent_limit limit=%d\n", limit)
 		return nil, false
 	}
 }

@@ -7,6 +7,8 @@ import (
 
 // Actor stop/release helpers.
 
+const actorStopConcurrency = 60
+
 func (s *RobotSupervisor) stopAutoActors(logout bool) {
 	stopActorsConcurrent(s.ledger.detachAutoActors(), logout)
 }
@@ -29,16 +31,30 @@ func (s *RobotSupervisor) stopAll(logout bool) {
 }
 
 func stopActorsConcurrent(actors []*robotActor, logout bool) {
-	var wg sync.WaitGroup
-	for _, actor := range actors {
-		wg.Add(1)
-		go func(actor *robotActor) {
-			defer wg.Done()
-			if logout {
-				actor.releaseAndWait(10 * time.Second)
-			}
-			actor.stopAndWait(5 * time.Second)
-		}(actor)
+	if len(actors) == 0 {
+		return
 	}
+	workers := actorStopConcurrency
+	if len(actors) < workers {
+		workers = len(actors)
+	}
+	jobs := make(chan *robotActor)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for actor := range jobs {
+				if logout {
+					actor.releaseAndWait(10 * time.Second)
+				}
+				actor.stopAndWait(5 * time.Second)
+			}
+		}()
+	}
+	for _, actor := range actors {
+		jobs <- actor
+	}
+	close(jobs)
 	wg.Wait()
 }

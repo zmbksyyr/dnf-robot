@@ -43,6 +43,7 @@ type MsgQueueData struct {
 const (
 	maxMessageQueueSize      = 5000
 	maxMessageTimerQueueSize = 10000
+	connectLaunchInterval    = 35 * time.Millisecond
 )
 
 type RobotStallConfig struct {
@@ -84,6 +85,10 @@ type RobotDnfTask struct {
 
 	done         chan struct{}
 	shutdownOnce sync.Once
+
+	connectQueue  chan *RobotVo
+	connectMu     sync.Mutex
+	connectQueued map[uint32]struct{}
 }
 
 func NewRobotDnfTask() *RobotDnfTask {
@@ -93,15 +98,39 @@ func NewRobotDnfTask() *RobotDnfTask {
 		robotVoMap:        make(map[int]*RobotVo),
 		keyToHandle:       make(map[string]func(task *RobotDnfTask, data interface{}) bool),
 		done:              make(chan struct{}),
+		connectQueue:      make(chan *RobotVo, maxMessageQueueSize),
+		connectQueued:     make(map[uint32]struct{}),
 	}
 	t.messageCond = sync.NewCond(&t.messageMutex)
 
 	t.initKeyCall()
 
+	go t.connectLoop()
 	go t.timerLoop()
 	go t.dispatchLoop()
 
 	return t
+}
+
+func (t *RobotDnfTask) connectLoop() {
+	ticker := time.NewTicker(connectLaunchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-t.done:
+			return
+		case vo := <-t.connectQueue:
+			t.connectMu.Lock()
+			delete(t.connectQueued, vo.UID)
+			t.connectMu.Unlock()
+			select {
+			case <-t.done:
+				return
+			case <-ticker.C:
+				go vo.Connect()
+			}
+		}
+	}
 }
 
 func (t *RobotDnfTask) initKeyCall() {
@@ -188,19 +217,28 @@ func (t *RobotDnfTask) processTimedMessages() {
 }
 
 func (t *RobotDnfTask) AddMessage(typ string, data interface{}) {
+	t.TryAddMessage(typ, data)
+}
+
+func (t *RobotDnfTask) TryAddMessage(typ string, data interface{}) bool {
 	msg := MsgQueueData{Type: typ, Data: data}
 	t.messageMutex.Lock()
+	defer t.messageMutex.Unlock()
 	if len(t.messageQueue) >= maxMessageQueueSize {
-		if typ == "MsgLogout" || typ == "MsgOnLine" {
-			fmt.Printf("[RobotDnfTask] message_queue_full enqueue_critical_drop_oldest type=%s len=%d\n", typ, len(t.messageQueue))
+		if typ == "MsgOnLine" {
+			fmt.Printf("[RobotDnfTask] message_queue_full reject_online len=%d\n", len(t.messageQueue))
+			return false
+		}
+		if typ == "MsgLogout" {
+			fmt.Printf("[RobotDnfTask] message_queue_full enqueue_logout_drop_oldest len=%d\n", len(t.messageQueue))
 		} else {
 			fmt.Printf("[RobotDnfTask] message_queue_overflow drop_oldest type=%s len=%d\n", typ, len(t.messageQueue))
 		}
 		t.messageQueue = t.messageQueue[1:]
 	}
 	t.messageQueue = append(t.messageQueue, msg)
-	t.messageMutex.Unlock()
 	t.messageCond.Signal()
+	return true
 }
 
 func (t *RobotDnfTask) AddMessageDelay(typ string, data interface{}, sleepVal int) {
@@ -299,9 +337,40 @@ func (t *RobotDnfTask) dnfMsgOnLine(_ *RobotDnfTask, voVoid interface{}) bool {
 	vo.Controller = t
 	vo.IsTokenRight = false
 	vo.mu.Unlock()
-	go vo.Connect()
+	return t.enqueueConnect(vo)
+}
 
-	return true
+func (t *RobotDnfTask) enqueueConnect(vo *RobotVo) bool {
+	if vo == nil {
+		return false
+	}
+	t.connectMu.Lock()
+	if _, exists := t.connectQueued[vo.UID]; exists {
+		t.connectMu.Unlock()
+		return true
+	}
+	select {
+	case t.connectQueue <- vo:
+		t.connectQueued[vo.UID] = struct{}{}
+		t.connectMu.Unlock()
+		return true
+	default:
+		t.connectMu.Unlock()
+		fmt.Printf("[RobotDnfTask] connect_queue_full uid=%d len=%d\n", vo.UID, len(t.connectQueue))
+		return false
+	}
+}
+
+func (t *RobotDnfTask) onlineBacklog() int {
+	t.messageMutex.Lock()
+	pendingMessages := 0
+	for _, msg := range t.messageQueue {
+		if msg.Type == "MsgOnLine" {
+			pendingMessages++
+		}
+	}
+	t.messageMutex.Unlock()
+	return pendingMessages + len(t.connectQueue)
 }
 
 func (t *RobotDnfTask) dnfMsgMove(_ *RobotDnfTask, moveVoid interface{}) bool {
