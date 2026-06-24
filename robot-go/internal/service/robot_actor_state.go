@@ -119,6 +119,25 @@ func (a *robotActor) onlineConfirmPending(uid int, now time.Time, rc robotRuntim
 	return st.DisconnectReason == 0 && (st.StateName == "init" || st.StateName == "login")
 }
 
+func (a *robotActor) onlineAttemptTimedOut(uid int, now time.Time, rc robotRuntimeConfig) bool {
+	lastOnlineTry := a.lastOnlineTryValue()
+	if lastOnlineTry.IsZero() {
+		return false
+	}
+	timeout := time.Duration(rc.OnlineConfirmTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if now.Sub(lastOnlineTry) < timeout {
+		return false
+	}
+	st, ok := a.runtime.Status(uid)
+	if !ok {
+		return true
+	}
+	return st.StateName != "running" || st.DisconnectReason != 0
+}
+
 func (a *robotActor) lastOnlineTryValue() time.Time {
 	a.mu.Lock()
 	defer a.mu.Unlock()

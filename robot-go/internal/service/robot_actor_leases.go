@@ -111,11 +111,6 @@ func (s *RobotSupervisor) recycleActorUID(actor *robotActor, status robotActorSt
 		released = status.UID
 	}
 	s.ledger.removeLeaseIfActor(released, actor)
-	if status.HealthReason == "online_confirm_timeout" {
-		s.cleanupBrokenUID(released)
-		robotLogf("[RobotSupervisor] recycle_release_done uid=%d reason=%s cleanup=true\n", released, status.HealthReason)
-		return
-	}
 	result, err := s.manager.CleanupRobots(RobotCleanupRequest{UIDs: []int{released}, Force: true})
 	if err != nil {
 		robotLogf("[RobotSupervisor] recycle_cleanup_failed uid=%d err=%v\n", released, err)

@@ -90,6 +90,13 @@ func (a *robotActor) ensureOnline(now time.Time) {
 		return
 	}
 	rc := a.runtime.Config()
+	if a.onlineAttemptTimedOut(uid, now, rc) {
+		failures := a.recordFailure(now)
+		a.runtime.manager.addAutoOnline(0, 1)
+		robotLogf("[RobotActor] online_confirm_timeout slot=%d uid=%d failures=%d\n", a.slotID, uid, failures)
+		a.clearOnlineAttempt()
+		return
+	}
 	if a.onlineConfirmPending(uid, now, rc) {
 		a.markOnlinePending(now)
 		return

@@ -285,8 +285,8 @@ func TestRobotActorBadByRecoveryWindow(t *testing.T) {
 	now := time.Now()
 	a := &robotActor{mode: robotActorAuto, uid: 1001, failures: 1, firstFailureAt: now.Add(-61 * time.Second)}
 	status := a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60})
-	if !status.RecycleUID || status.HealthReason != "failure_window" {
-		t.Fatalf("actor status got recycle=%v reason=%q, want failure_window recycle", status.RecycleUID, status.HealthReason)
+	if status.RecycleUID {
+		t.Fatalf("single old failure should not recycle, reason=%q", status.HealthReason)
 	}
 
 	a.firstFailureAt = now.Add(-59 * time.Second)
@@ -308,8 +308,8 @@ func TestRobotActorPendingOnlineUsesConfirmTimeout(t *testing.T) {
 	a := &robotActor{mode: robotActorAuto, uid: 1001, state: robotActorOnline, lastOnlineTry: now.Add(-61 * time.Second)}
 	a.markOnlinePending(now.Add(-61 * time.Second))
 	status := a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
-	if !status.RecycleUID || status.HealthReason != "online_confirm_timeout" {
-		t.Fatalf("pending actor status got recycle=%v reason=%q, want online_confirm_timeout recycle", status.RecycleUID, status.HealthReason)
+	if status.RecycleUID || status.HealthReason != "online_confirm_timeout" {
+		t.Fatalf("pending actor status got recycle=%v reason=%q, want timeout without recycle", status.RecycleUID, status.HealthReason)
 	}
 }
 
@@ -340,7 +340,7 @@ func TestRobotActorOnlineAttemptWithoutPendingStillTimesOut(t *testing.T) {
 	now := time.Now()
 	a := &robotActor{mode: robotActorAuto, uid: 1001, state: robotActorOnline, lastOnlineTry: now.Add(-2 * time.Minute)}
 	status := a.status(now, robotRuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
-	if !status.RecycleUID || status.HealthReason != "online_confirm_timeout" {
-		t.Fatalf("online attempt timeout got recycle=%v reason=%q, want online_confirm_timeout recycle", status.RecycleUID, status.HealthReason)
+	if status.RecycleUID || status.HealthReason != "online_confirm_timeout" {
+		t.Fatalf("online attempt timeout got recycle=%v reason=%q, want timeout without recycle", status.RecycleUID, status.HealthReason)
 	}
 }

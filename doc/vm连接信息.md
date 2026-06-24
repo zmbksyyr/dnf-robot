@@ -34,7 +34,13 @@ vmrun -T ws revertToSnapshot "<VMX>" "快照 2"
 vmrun -T ws start "<VMX>" nogui
 ```
 
-实际执行时优先用 PowerShell 变量或 Python `subprocess.run([...])`，避免 shell 编码和转义问题。
+AI 执行约束：
+
+- 连接 VM、上传文件、执行远端命令时，优先使用 Python SSH 工具 `paramiko` 或者调用 `vmrun`。
+- 禁止用 PowerShell 直接执行 SSH、SCP、vmrun 等 VM 操作，避免编码、转义和交互行为不一致。
+- VM 网络偶发波动时可以等待后重试，不要立刻判断部署失败。
+- VM 响应慢通常是 VMware CPU 占用导致的卡顿，先等待或降低并发操作，不要误判为网络断开。
+- 需要恢复/启动虚拟机时，只通过 `vmrun` 执行，不要手动改 VM 文件。
 
 ## 本地构建
 
@@ -44,7 +50,7 @@ vmrun -T ws start "<VMX>" nogui
 cd robot-go
 go test ./...
 go vet ./...
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../bin/robot-linux ./cmd/robot
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../bin/robot ./cmd/robot
 ```
 
 Windows PowerShell 示例：
@@ -53,13 +59,13 @@ Windows PowerShell 示例：
 $env:GOOS='linux'
 $env:GOARCH='amd64'
 $env:CGO_ENABLED='0'
-go build -trimpath -ldflags='-s -w' -o ..\bin\robot-linux .\cmd\robot
+go build -trimpath -ldflags='-s -w' -o ..\bin\robot .\cmd\robot
 ```
 
 ## 部署
 
 1. 记录当前 git commit。
-2. 上传 `bin/robot-linux` 到 `/root/robot.new`。
+2. 上传 `bin/robot` 到 `/root/robot.new`。
 3. `chmod +x /root/robot.new`。
 4. 备份旧 `/root/robot`。
 5. 停止旧 `/root/robot` 进程。

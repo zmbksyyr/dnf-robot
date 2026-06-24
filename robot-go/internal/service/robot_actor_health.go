@@ -31,22 +31,14 @@ func (a *robotActor) status(now time.Time, rc robotRuntimeConfig) robotActorStat
 			if a.runtime == nil {
 				status.Health = robotActorHealthUnhealthy
 				status.HealthReason = "online_confirm_timeout"
-				status.RecycleUID = true
 				return status
 			}
 			if st, ok := a.runtime.Status(s.UID); !ok || st.StateName != "running" || st.DisconnectReason != 0 {
 				status.Health = robotActorHealthUnhealthy
 				status.HealthReason = "online_confirm_timeout"
-				status.RecycleUID = true
 				return status
 			}
 		}
-	}
-	if s.Failures > 0 && !s.FirstFailureAt.IsZero() && now.Sub(s.FirstFailureAt) >= time.Duration(rc.SchedulerBadRecoverSec)*time.Second {
-		status.Health = robotActorHealthUnhealthy
-		status.HealthReason = "failure_window"
-		status.RecycleUID = true
-		return status
 	}
 	return status
 }
