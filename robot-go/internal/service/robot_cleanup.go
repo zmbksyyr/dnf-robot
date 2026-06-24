@@ -7,7 +7,6 @@ import (
 )
 
 func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResult, error) {
-	var done func()
 	var finishOperation func(string, error) RobotOperationStatus
 	var opErr error
 	var opResult RobotCleanupResult
@@ -23,9 +22,6 @@ func (m *RobotManager) CleanupRobots(req RobotCleanupRequest) (RobotCleanupResul
 			defer func() {
 				finishOperation(CleanupOperationSummary(opResult, opErr), opErr)
 			}()
-		} else {
-			done = m.beginStructuralOp("cleanup")
-			defer done()
 		}
 	}
 	if err := m.ensureSchema(); err != nil {

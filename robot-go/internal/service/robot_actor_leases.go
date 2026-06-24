@@ -111,7 +111,7 @@ func (s *RobotSupervisor) recycleActorUID(actor *robotActor, status robotActorSt
 		released = status.UID
 	}
 	s.ledger.removeLeaseIfActor(released, actor)
-	result, err := s.manager.CleanupRobots(RobotCleanupRequest{UIDs: []int{released}, Force: true})
+	result, err := s.manager.CleanupRobots(RobotCleanupRequest{UIDs: []int{released}, Force: true, InternalConfirmedBroken: true})
 	if err != nil {
 		robotLogf("[RobotSupervisor] recycle_cleanup_failed uid=%d err=%v\n", released, err)
 		s.ledger.blockUID(released)
