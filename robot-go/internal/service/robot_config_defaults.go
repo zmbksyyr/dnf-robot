@@ -7,7 +7,7 @@ func defaultRobotRuntimeConfig() robotRuntimeConfig {
 		NameASCIIFallback: false, NameASCIIPrefix: "twbot",
 		SpawnFixed: false, SpawnVillage: 3, SpawnFallbackVillage: 1, SpawnArea: 0, SpawnXMin: 240, SpawnXMax: 1800, SpawnYMin: 180, SpawnYMax: 460,
 		MoveSpeedMin: 180, MoveSpeedMax: 260, MoveType: 5, MoveSteps: 4, MoveStepDelayMS: 1200,
-		LoginDelayMS: 1000, ReconnectDelayMS: 5000, MaxReconnect: 3, MaxOnlineRobots: 1000, MaxOnlinePerCommand: 1000, OnlineDispatchIntervalMS: 1000, OnlineConfirmTimeoutMS: 60000,
+		LoginDelayMS: 1000, ReconnectDelayMS: 5000, MaxReconnect: 2, MaxOnlineRobots: 1000, MaxOnlinePerCommand: 1000, OnlineDispatchIntervalMS: 1000, OnlineConfirmTimeoutMS: 90000,
 		DefaultMoney: 2000000000, DefaultCoin: 5, InventoryCapacity: 16,
 		EquipSlots: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, EquipRarityMin: 0, EquipRarityMax: 5, EquipIntensifyMin: 7, EquipIntensifyMax: 10, EquipSmithingMin: 0, EquipSmithingMax: 8,
 		PreferEquipSets: true, EquipSetMinSlots: 2,
@@ -17,11 +17,11 @@ func defaultRobotRuntimeConfig() robotRuntimeConfig {
 		FollowRadiusX:          120, FollowRadiusY: 30, ShoutDelayMS: 1000, ShoutSendEnabled: true,
 		AutoActions: true, AutoTargetOnlineCount: 20,
 		AutoMoveIntervalMinSec: 6, AutoMoveIntervalMaxSec: 18, AutoShoutIntervalMinSec: 45, AutoShoutIntervalMaxSec: 120,
-		AutoStoreProbabilityPercent: 5, AutoStoreIntervalMinSec: 60, AutoStoreIntervalMaxSec: 180, AutoStoreDurationSec: 120, AutoStoreTickSec: 10, AutoStoreMaxPositionTries: 10, AutoStoreFailCooldownSec: 60,
+		AutoStoreProbabilityPercent: 5, AutoStoreIntervalMinSec: 120, AutoStoreIntervalMaxSec: 180, AutoStoreDurationSec: 120, AutoStoreTickSec: 10, AutoStoreMaxPositionTries: 10, AutoStoreFailCooldownSec: 60,
 		AutoGamePortStableSec: 15, AutoGamePortCheckTimeoutMS: 800,
-		SchedulerBadRecoverSec: 60, SchedulerBadFailures: 3, SchedulerMetricsIntervalSec: 10, SchedulerStoreConcurrent: 30, SchedulerOnlineBatchSize: 120, SchedulerOnlineStartRate: 20, SchedulerOnlineFillTimeout: 60,
+		SchedulerBadRecoverSec: 60, SchedulerBadFailures: 3, SchedulerMetricsIntervalSec: 10, SchedulerStoreConcurrent: 30, SchedulerOnlineBatchSize: 120, SchedulerOnlineStartRate: 20, SchedulerOnlineFillTimeout: 120,
 		SchedulerBreakerAbnormalPct: 30, SchedulerBreakerPauseSec: 300, SchedulerBreakerReleaseBatch: 20, SchedulerBreakerFloorPct: 70, SchedulerPortDownReleaseBatch: 20,
-		SystemActorPollMS: 1000, SystemManualActionTimeoutSec: 60, SystemPacketRatePerSec: 20,
+		SystemActorPollMS: 3000, SystemManualActionTimeoutSec: 60, SystemPacketRatePerSec: 20,
 	}
 }
 

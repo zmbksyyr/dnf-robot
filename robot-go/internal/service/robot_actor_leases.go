@@ -79,7 +79,12 @@ func (s *RobotSupervisor) actorOwnsUID(uid int) bool {
 	if uid <= 0 {
 		return false
 	}
-	for _, actor := range s.ledger.actorPointers() {
+	if s.ledger.actorForUID(uid) != nil {
+		return true
+	}
+	s.ledger.mu.Lock()
+	defer s.ledger.mu.Unlock()
+	for _, actor := range s.ledger.actors {
 		if actor.uidValue() == uid {
 			return true
 		}

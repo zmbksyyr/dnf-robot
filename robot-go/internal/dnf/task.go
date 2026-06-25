@@ -113,8 +113,6 @@ func NewRobotDnfTask() *RobotDnfTask {
 }
 
 func (t *RobotDnfTask) connectLoop() {
-	ticker := time.NewTicker(connectLaunchInterval)
-	defer ticker.Stop()
 	for {
 		select {
 		case <-t.done:
@@ -126,7 +124,7 @@ func (t *RobotDnfTask) connectLoop() {
 			select {
 			case <-t.done:
 				return
-			case <-ticker.C:
+			case <-time.After(connectLaunchInterval):
 				go vo.Connect()
 			}
 		}

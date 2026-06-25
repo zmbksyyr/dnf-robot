@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const runtimeStatusCacheTTL = 250 * time.Millisecond
+const runtimeStatusCacheTTL = 2000 * time.Millisecond
 
 func (m *RobotManager) runtimeStatusMap() map[int]RuntimeRobotStatus {
 	now := time.Now()

@@ -18,7 +18,7 @@ func NewThreadPool(numWorkers int) *ThreadPool {
 		numWorkers = 1
 	}
 	tp := &ThreadPool{
-		jobQueue: make(chan func(), numWorkers*2),
+		jobQueue: make(chan func(), numWorkers*10),
 		quit:     make(chan struct{}),
 	}
 

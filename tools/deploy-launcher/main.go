@@ -1,15 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lxn/walk"
@@ -20,13 +17,12 @@ import (
 type DeployWindow struct {
 	*walk.MainWindow
 	deployBtn  *walk.PushButton
+	restartBtn *walk.PushButton
 	runBtn     *walk.PushButton
 	hostEdit   *walk.LineEdit
 	userEdit   *walk.LineEdit
 	passEdit   *walk.LineEdit
 	logEdit    *walk.TextEdit
-	geoipCount int
-	geoipMu    sync.Mutex
 }
 
 func (dw *DeployWindow) safeSync(fn func()) {
@@ -84,11 +80,7 @@ func (dw *DeployWindow) deploy() {
 		}()
 
 		err := dw.doDeploy()
-
 		dw.deployBtn.Synchronize(func() {
-			if dw.deployBtn == nil {
-				return
-			}
 			dw.deployBtn.SetEnabled(true)
 			dw.deployBtn.SetText("部署 robot")
 			if err != nil {
@@ -98,6 +90,83 @@ func (dw *DeployWindow) deploy() {
 			}
 		})
 	}()
+}
+
+func (dw *DeployWindow) restart() {
+	if err := dw.validateInput(); err != nil {
+		walk.MsgBox(dw.MainWindow, "输入错误", err.Error(), walk.MsgBoxIconError)
+		return
+	}
+
+	dw.restartBtn.SetEnabled(false)
+	dw.restartBtn.SetText("重启中...")
+	dw.logEdit.SetText("")
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				dw.safeSync(func() {
+					walk.MsgBox(dw.MainWindow, "异常", fmt.Sprintf("重启异常: %v", r), walk.MsgBoxIconError)
+				})
+			}
+		}()
+
+		err := dw.doRestart()
+		dw.restartBtn.Synchronize(func() {
+			dw.restartBtn.SetEnabled(true)
+			dw.restartBtn.SetText("重启 robot")
+			if err != nil {
+				walk.MsgBox(dw.MainWindow, "重启失败", err.Error(), walk.MsgBoxIconError)
+			} else {
+				walk.MsgBox(dw.MainWindow, "重启成功", "robot 已重启", walk.MsgBoxIconInformation)
+			}
+		})
+	}()
+}
+
+func (dw *DeployWindow) doRestart() error {
+	client, err := sshConnectWithRetry(dw.hostEdit.Text(), dw.userEdit.Text(), dw.passEdit.Text(), 3)
+	if err != nil {
+		return fmt.Errorf("SSH 连接 %s 失败(已重试): %v", dw.hostEdit.Text(), err)
+	}
+	defer client.Close()
+	dw.appendLog(fmt.Sprintf("SSH %s 连接成功", dw.hostEdit.Text()))
+
+	dw.killRemoteRobot(client)
+
+	if err := runCmdBg(client, "nohup /root/robot >/root/robot_stdout.log 2>&1 &"); err != nil {
+		return fmt.Errorf("启动 robot 失败: %v", err)
+	}
+
+	time.Sleep(2 * time.Second)
+
+	robotPid, _ := runCmdOutput(client, "pgrep -f '/root/robot' | head -1 || true")
+	robotPid = strings.TrimSpace(robotPid)
+	if robotPid == "" {
+		return fmt.Errorf("新 robot 进程未运行，请检查 /root/robot_stdout.log")
+	}
+	dw.appendLog(fmt.Sprintf("robot 已启动 (pid: %s)", robotPid))
+	return nil
+}
+
+func (dw *DeployWindow) killRemoteRobot(client *ssh.Client) {
+	runCmd(client, "pkill -9 robot 2>/dev/null; pkill -9 -f '/root/robot' 2>/dev/null; killall -q -9 robot 2>/dev/null; true")
+	time.Sleep(2 * time.Second)
+
+	check, _ := runCmdOutput(client, "ps -C robot -o pid= 2>/dev/null | tr -d ' '; true")
+	check = strings.TrimSpace(check)
+	if check != "" {
+		dw.appendLog(fmt.Sprintf("仍有 robot 残留 PID: %s，逐个强杀 ...", check))
+		runCmd(client, fmt.Sprintf("kill -9 %s 2>/dev/null; true", strings.ReplaceAll(check, "\n", " ")))
+		time.Sleep(2 * time.Second)
+		check2, _ := runCmdOutput(client, "ps -C robot -o pid= 2>/dev/null | tr -d ' '; true")
+		check2 = strings.TrimSpace(check2)
+		if check2 != "" {
+			dw.appendLog(fmt.Sprintf("警告: robot 残留 PID %s，继续", check2))
+			return
+		}
+	}
+	dw.appendLog("旧 robot 已停止")
 }
 
 func (dw *DeployWindow) doDeploy() error {
@@ -144,21 +213,13 @@ func (dw *DeployWindow) doDeploy() error {
 
 	backupName := fmt.Sprintf("/root/robot.bak.%s", time.Now().Format("20060102_150405"))
 	if err := runCmd(client, fmt.Sprintf("cp /root/robot %s 2>/dev/null", backupName)); err != nil {
-		dw.appendLog(fmt.Sprintf("备份旧 robot 无文件可备份（首次部署）"))
+		dw.appendLog("备份旧 robot 无文件可备份（首次部署）")
 	} else {
 		dw.appendLog(fmt.Sprintf("备份旧 robot → %s", backupName))
+		runCmd(client, "ls -1t /root/robot.bak.* 2>/dev/null | tail -n +4 | xargs -r rm -f; true")
 	}
 
-	runCmd(client, "pkill -f '/root/robot' 2>/dev/null || true")
-	time.Sleep(1 * time.Second)
-
-	stillRunning, _ := runCmdOutput(client, "pgrep -cf '/root/robot' || true")
-	stillRunning = strings.TrimSpace(stillRunning)
-	count, _ := strconv.Atoi(stillRunning)
-	if count > 0 {
-		return fmt.Errorf("旧 robot 进程未能停止 (剩余 %d 个进程)", count)
-	}
-	dw.appendLog("旧 robot 已停止")
+	dw.killRemoteRobot(client)
 
 	if err := runCmd(client, "mv /root/robot.new /root/robot"); err != nil {
 		return fmt.Errorf("替换 robot 失败: %v", err)
@@ -190,7 +251,6 @@ func (dw *DeployWindow) runGame() {
 	dw.runBtn.SetEnabled(false)
 	dw.runBtn.SetText("启动中...")
 	dw.logEdit.SetText("")
-	dw.geoipCount = 0
 
 	go func() {
 		defer func() {
@@ -215,86 +275,72 @@ func (dw *DeployWindow) runGame() {
 			return
 		}
 		defer client.Close()
-		dw.appendLog("SSH 连接成功，正在执行 /root/run ...")
+		dw.appendLog("SSH 连接成功，正在启动游戏服务 ...")
 
-		session, err := client.NewSession()
-		if err != nil {
-			dw.appendLog(fmt.Sprintf("创建 SSH session 失败: %v", err))
-			return
-		}
-		defer session.Close()
-
-		modes := ssh.TerminalModes{ssh.ECHO: 0, ssh.OPOST: 0}
-		if err := session.RequestPty("xterm", 120, 40, modes); err != nil {
-			dw.appendLog(fmt.Sprintf("请求 PTY 失败: %v", err))
-			return
-		}
-
-		stdout, err := session.StdoutPipe()
-		if err != nil {
-			dw.appendLog(fmt.Sprintf("获取 stdout 失败: %v", err))
-			return
-		}
-		stderr, err := session.StderrPipe()
-		if err != nil {
-			dw.appendLog(fmt.Sprintf("获取 stderr 失败: %v", err))
-			return
-		}
-
-		if err := session.Start("/root/run"); err != nil {
+		if err := runCmdBg(client, "nohup /root/run >/dev/null 2>&1 &"); err != nil {
 			dw.appendLog(fmt.Sprintf("执行 /root/run 失败: %v", err))
 			return
 		}
+		dw.appendLog("/root/run 已提交，开始监控 ...")
 
-		output := io.MultiReader(stdout, stderr)
-		scanner := bufio.NewScanner(output)
-		scanner.Buffer(make([]byte, 64*1024), 512*1024)
+		processFound := false
+		portOpen := false
+		success := false
 
-		lineCh := make(chan string, 100)
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			for scanner.Scan() {
-				lineCh <- scanner.Text()
-			}
-		}()
+		for i := 1; i <= 60; i++ {
+			time.Sleep(2 * time.Second)
 
-		timeout := time.After(5 * time.Minute)
-
-		for {
-			select {
-			case line, ok := <-lineCh:
-				if !ok {
-					dw.appendLog("--- /root/run 已结束 ---")
-					return
+			if !processFound {
+				out, _ := runCmdOutput(client, "pgrep -cf 'df_game_r' || true")
+				count, _ := strconv.Atoi(strings.TrimSpace(out))
+				if count >= 2 {
+					processFound = true
+					dw.appendLog(fmt.Sprintf("[%ds] df_game_r 进程已启动 (%d 个)", i*2, count))
 				}
-				dw.appendLog(line)
-
-				if strings.Contains(line, "Geoip Allow Country Code") {
-					dw.geoipMu.Lock()
-					dw.geoipCount++
-					count := dw.geoipCount
-					dw.geoipMu.Unlock()
-
-					if count >= 5 {
-						dw.safeSync(func() {
-							walk.MsgBox(dw.MainWindow, "启动成功",
-								"游戏服务已完全启动！（检测到 5 次 Geoip Allow Country Code）",
-								walk.MsgBoxIconInformation)
-						})
-						dw.appendLog("游戏服务启动完成，日志监听继续...")
-					}
-				}
-
-			case <-timeout:
-				dw.appendLog("--- 日志监听超时（5分钟），已自动停止 ---")
-				session.Close()
-				return
-
-			case <-done:
-				dw.appendLog("--- /root/run 已结束 ---")
-				return
 			}
+
+			if !portOpen {
+				out, _ := runCmdOutput(client, "ss -tlnp 2>/dev/null | grep -c ':10011 ' || true")
+				n, _ := strconv.Atoi(strings.TrimSpace(out))
+				if n > 0 {
+					portOpen = true
+					dw.appendLog(fmt.Sprintf("[%ds] 游戏端口 10011 已监听", i*2))
+				}
+			}
+
+			if processFound && portOpen {
+				success = true
+				break
+			}
+
+			if i%5 == 0 {
+				stat := ""
+				if processFound {
+					stat += "进程:OK"
+				} else {
+					stat += "进程:等待"
+				}
+				stat += " 端口:" + map[bool]string{true: "OK", false: "等待"}[portOpen]
+				dw.appendLog(fmt.Sprintf("[%ds] %s", i*2, stat))
+			}
+		}
+
+		if success {
+			dw.Synchronize(func() {
+				walk.MsgBox(dw.MainWindow, "启动成功", "游戏服务已完全启动！（df_game_r 运行中，端口 10011 已监听）", walk.MsgBoxIconInformation)
+			})
+		} else {
+			stat := ""
+			if !processFound {
+				stat += "df_game_r 未启动"
+			}
+			if !portOpen {
+				if stat != "" {
+					stat += "，"
+				}
+				stat += "端口 10011 未监听"
+			}
+			dw.appendLog(fmt.Sprintf("--- 启动监控超时: %s ---", stat))
 		}
 	}()
 }
@@ -407,6 +453,13 @@ func main() {
 						Text:     "部署 robot",
 						OnClicked: func() {
 							dw.deploy()
+						},
+					},
+					PushButton{
+						AssignTo: &dw.restartBtn,
+						Text:     "重启 robot",
+						OnClicked: func() {
+							dw.restart()
 						},
 					},
 					PushButton{
