@@ -266,7 +266,7 @@ func (dw *DeployWindow) runGame() {
 				return
 			}
 			dw.runBtn.SetEnabled(true)
-			dw.runBtn.SetText("启动游戏")
+							dw.runBtn.SetText("启动 /root/run")
 		})
 
 		client, err := sshConnectWithRetry(dw.hostEdit.Text(), dw.userEdit.Text(), dw.passEdit.Text(), 2)
@@ -286,7 +286,10 @@ func (dw *DeployWindow) runGame() {
 		processFound := false
 		stableCount := 0
 		lastProcCount := 0
+		stableAt := 0
 		seenPorts := make(map[string]bool)
+		portStable := 0
+		lastPortCount := -1
 		success := false
 
 		for i := 1; i <= 60; i++ {
@@ -304,26 +307,40 @@ func (dw *DeployWindow) runGame() {
 				}
 				if !processFound && stableCount >= 3 && procCount >= 1 {
 					processFound = true
-					dw.appendLog(fmt.Sprintf("[%ds] df_game_r 进程已稳定 (%d 个)", i*2, procCount))
+					stableAt = i
+					dw.appendLog(fmt.Sprintf("[%ds] df_game_r 进程已稳定 (%d 个)，等待端口就绪 ...", i*2, procCount))
 				}
 			} else {
 				stableCount = 0
 				lastProcCount = 0
 			}
 
-			allPorts := detectOpenGamePorts(client)
-			for _, p := range allPorts {
-				if !seenPorts[p] {
-					seenPorts[p] = true
-					dw.appendLog(fmt.Sprintf("[%ds] 游戏端口 %s 已监听", i*2, p))
+			// 进程稳定后等 3 个周期再开始检测端口
+			shouldCheckPorts := processFound && i > stableAt+3
+
+			if shouldCheckPorts {
+				allPorts := detectOpenGamePorts(client)
+				for _, p := range allPorts {
+					if !seenPorts[p] {
+						seenPorts[p] = true
+						dw.appendLog(fmt.Sprintf("[%ds] 游戏端口 %s 已监听", i*2, p))
+					}
 				}
-			}
-
-			allGood := processFound && len(allPorts) > 0
-
-			if allGood {
-				success = true
-				break
+				if len(allPorts) > 0 {
+					if len(allPorts) == lastPortCount {
+						portStable++
+					} else {
+						portStable = 1
+						lastPortCount = len(allPorts)
+					}
+					if portStable >= 3 {
+						success = true
+						break
+					}
+				} else {
+					portStable = 0
+					lastPortCount = -1
+				}
 			}
 
 			if i%5 == 0 {
@@ -491,7 +508,7 @@ func main() {
 					},
 					PushButton{
 						AssignTo: &dw.runBtn,
-						Text:     "启动游戏",
+						Text:     "启动 /root/run",
 						OnClicked: func() {
 							dw.runGame()
 						},
