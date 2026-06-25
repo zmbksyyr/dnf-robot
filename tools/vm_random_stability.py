@@ -70,12 +70,15 @@ SAMPLE_FIELDS = [
     "goroutines",
     "robot_cpu_api",
     "robot_mem_mb",
+    "robot_pid_cpu",
+    "df_game_cpu",
     "load1",
     "load5",
     "load15",
     "top_cpu",
     "keyword_hits",
     "api_error",
+    "event",
 ]
 
 
@@ -227,6 +230,9 @@ class StabilityRun(object):
         self.log("set_target target=%s config=%s" % (target, json_text(res, 1200)))
         res = self.safe_call("autoStart", {})
         self.log("autoStart result=%s" % json_text(res, 1200))
+        self.sample_with_event("after_set_target:%s" % target)
+        if self.args.scenario == "full" and target >= 100:
+            self.burst_sample("set_target:%s" % target, 60, 5)
 
     def random_target(self):
         self.set_target(random.randint(self.args.target_min, self.args.target_max))
@@ -280,6 +286,7 @@ class StabilityRun(object):
         deleted = int((((result or {}).get("result") or {}).get("deleted")) or 0)
         self.deleted_total += deleted
         self.log("cleanup result uids=%s deleted=%s total=%s result=%s" % (uids, deleted, self.deleted_total, json_text(result, 2000)))
+        self.sample_with_event("after_cleanup:%s" % deleted)
 
     def smoke_actions(self):
         status = self.safe_call("robotsStatus", {"count": 20})
@@ -298,10 +305,12 @@ class StabilityRun(object):
         for command, payload in actions:
             res = self.safe_call(command, payload)
             self.log("smoke_action command=%s payload=%s result=%s" % (command, payload, json_text(res, 1600)))
+            self.sample_with_event("smoke:%s" % command)
             time.sleep(8)
 
     def monitor_fault(self):
         self.log("monitor_fault stop df_monitor_r")
+        self.sample_with_event("monitor_fault_stop")
         self.shell("pkill -TERM -f './df_monitor_r mnt_cain start' || true; sleep 8; ss -lntp | grep ':30303' || true", 30)
         status = self.safe_call("robotsStatus", {"count": 20})
         rows = (((status or {}).get("result") or {}).get("robots") or [])
@@ -311,17 +320,23 @@ class StabilityRun(object):
             self.log("monitor_fault world_shout_down uids=%s result=%s" % (uids, json_text(res, 1600)))
         self.log("monitor_fault restore /root/run")
         self.shell("cd /root && (./run >/tmp/vm_random_run_monitor.log 2>&1 || true); sleep 20; ss -lntp | grep ':30303' || true; pgrep -af 'df_monitor_r|df_game_r' || true", 180)
+        self.sample_with_event("monitor_fault_restore")
+        self.burst_sample("monitor_fault_recover", 60, 5)
 
     def game_port_fault(self):
         self.log("game_port_fault stop /root/stop")
+        self.sample_with_event("game_port_fault_stop")
         self.shell("cd /root && (./stop >/tmp/vm_random_stop_game.log 2>&1 || true); sleep 15; ss -lntp | grep ':10011' || true; pgrep -af 'df_game_r' || true", 180)
-        self.sample()
+        self.sample_with_event("game_port_down")
         time.sleep(120)
         self.log("game_port_fault restore /root/run")
         self.shell("cd /root && (./run >/tmp/vm_random_run_game.log 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303)' || true; pgrep -af 'df_game_r|df_monitor_r' || true", 240)
+        self.sample_with_event("game_port_fault_restore")
+        self.burst_sample("game_port_fault_recover", 60, 5)
 
     def robot_restart(self):
         self.log("robot_restart begin")
+        self.sample_with_event("robot_restart_stop")
         script = r"""
 pids=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
@@ -336,44 +351,10 @@ ss -lntp | grep -E ':(8111|8112|10011|30303)' || true
         self.shell(script, 120)
         time.sleep(20)
         self.set_target(self.args.target_max)
+        self.burst_sample("robot_restart_recover", 60, 5)
 
     def sample(self):
-        row = dict((key, "") for key in SAMPLE_FIELDS)
-        row["time"] = now_text()
-        try:
-            auto = (self.api.call("autoStatus").get("result") or {})
-            sched = (self.api.call("schedulerStatus").get("result") or {})
-            system = (self.api.call("systemStatus").get("result") or {})
-            row.update(
-                {
-                    "target": auto.get("target_online"),
-                    "actors": auto.get("actors"),
-                    "leased": auto.get("leased"),
-                    "running": auto.get("running"),
-                    "connecting": auto.get("connecting"),
-                    "idle": auto.get("idle"),
-                    "blocked": auto.get("blocked_uids"),
-                    "recycling": auto.get("recycling"),
-                    "actor_idle": auto.get("actor_idle"),
-                    "actor_assigned": auto.get("actor_assigned"),
-                    "actor_online": auto.get("actor_online"),
-                    "actor_running": auto.get("actor_running"),
-                    "actor_busy": auto.get("actor_busy"),
-                    "actor_releasing": auto.get("actor_releasing"),
-                    "store_running": auto.get("store_running"),
-                    "scheduler_mode": sched.get("mode"),
-                    "scheduler_reason": sched.get("reason"),
-                    "goroutines": sched.get("goroutines"),
-                    "robot_cpu_api": system.get("robot_cpu_percent"),
-                    "robot_mem_mb": system.get("robot_memory_mb"),
-                }
-            )
-        except Exception as exc:
-            row["api_error"] = repr(exc)
-        load1, load5, load15 = self.load_average()
-        row["load1"], row["load5"], row["load15"] = load1, load5, load15
-        row["top_cpu"] = self.top_cpu()
-        row["keyword_hits"] = self.keyword_hits()
+        row = self.sample_row()
         self.writerow(row)
         self.log(
             "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s load=%s/%s/%s top=%s hits=%s api_error=%s"
@@ -384,9 +365,9 @@ ss -lntp | grep -E ':(8111|8112|10011|30303)' || true
                 row.get("running"),
                 row.get("connecting"),
                 row.get("scheduler_mode"),
-                load1,
-                load5,
-                load15,
+                row.get("load1"),
+                row.get("load5"),
+                row.get("load15"),
                 row.get("top_cpu"),
                 row.get("keyword_hits"),
                 row.get("api_error"),
@@ -440,6 +421,96 @@ ss -lntp | grep -E ':(8111|8112|10011|30303)' || true
             for key in KEYWORDS:
                 counts[key] += out.count(key)
         return ";".join("%s=%s" % (key, value) for key, value in counts.items() if value)
+
+    def proc_pid_cpu(self, pattern):
+        try:
+            out = subprocess.check_output(["pgrep", "-f", pattern]) or b""
+            if not isinstance(out, str):
+                out = out.decode("utf-8", "replace")
+            pids = [int(x) for x in out.strip().split("\n") if x]
+            if not pids:
+                return ""
+            total = 0.0
+            for pid in pids:
+                cpu = subprocess.check_output(["ps", "-p", str(pid), "-o", "pcpu=", "--no-headers"]) or b""
+                if not isinstance(cpu, str):
+                    cpu = cpu.decode("utf-8", "replace")
+                try:
+                    total += float(cpu.strip())
+                except ValueError:
+                    pass
+            return "%.1f" % total
+        except Exception:
+            return ""
+
+    def sample_with_event(self, event):
+        row = self.sample_row()
+        row["event"] = safe_text(event)
+        self.writerow(row)
+        self.log(
+            "sample event=%s target=%s running=%s mode=%s load=%s/%s/%s robot_cpu=%s df_game_cpu=%s goroutines=%s"
+            % (
+                event,
+                row.get("target"),
+                row.get("running"),
+                row.get("scheduler_mode"),
+                row.get("load1"),
+                row.get("load5"),
+                row.get("load15"),
+                row.get("robot_pid_cpu"),
+                row.get("df_game_cpu"),
+                row.get("goroutines"),
+            )
+        )
+
+    def burst_sample(self, event, duration_sec=60, interval_sec=5):
+        self.log("burst_sample start event=%s duration=%ss" % (event, duration_sec))
+        deadline = time.time() + duration_sec
+        while time.time() < deadline:
+            time.sleep(interval_sec)
+            self.sample_with_event("burst:%s" % event)
+        self.log("burst_sample done event=%s" % event)
+
+    def sample_row(self):
+        row = dict((key, "") for key in SAMPLE_FIELDS)
+        row["time"] = now_text()
+        try:
+            auto = (self.api.call("autoStatus").get("result") or {})
+            sched = (self.api.call("schedulerStatus").get("result") or {})
+            system = (self.api.call("systemStatus").get("result") or {})
+            row.update(
+                {
+                    "target": auto.get("target_online"),
+                    "actors": auto.get("actors"),
+                    "leased": auto.get("leased"),
+                    "running": auto.get("running"),
+                    "connecting": auto.get("connecting"),
+                    "idle": auto.get("idle"),
+                    "blocked": auto.get("blocked_uids"),
+                    "recycling": auto.get("recycling"),
+                    "actor_idle": auto.get("actor_idle"),
+                    "actor_assigned": auto.get("actor_assigned"),
+                    "actor_online": auto.get("actor_online"),
+                    "actor_running": auto.get("actor_running"),
+                    "actor_busy": auto.get("actor_busy"),
+                    "actor_releasing": auto.get("actor_releasing"),
+                    "store_running": auto.get("store_running"),
+                    "scheduler_mode": sched.get("mode"),
+                    "scheduler_reason": sched.get("reason"),
+                    "goroutines": sched.get("goroutines"),
+                    "robot_cpu_api": system.get("robot_cpu_percent"),
+                    "robot_mem_mb": system.get("robot_memory_mb"),
+                }
+            )
+        except Exception as exc:
+            row["api_error"] = repr(exc)
+        row["robot_pid_cpu"] = self.proc_pid_cpu("'/root/robot'")
+        row["df_game_cpu"] = self.proc_pid_cpu("'./df_game_r'")
+        load1, load5, load15 = self.load_average()
+        row["load1"], row["load5"], row["load15"] = load1, load5, load15
+        row["top_cpu"] = self.top_cpu()
+        row["keyword_hits"] = self.keyword_hits()
+        return row
 
     def collect_logs(self, label):
         path = os.path.join(self.out_dir, "collected_logs.log")
