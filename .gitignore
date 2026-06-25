@@ -1,2 +1,3 @@
 /bin/
 tools/deploy-launcher/upx.exe
+__pycache__/

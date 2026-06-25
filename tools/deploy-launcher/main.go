@@ -284,65 +284,92 @@ func (dw *DeployWindow) runGame() {
 		dw.appendLog("/root/run 已提交，开始监控 ...")
 
 		processFound := false
-		portOpen := false
+		stableCount := 0
+		lastProcCount := 0
+		seenPorts := make(map[string]bool)
 		success := false
 
 		for i := 1; i <= 60; i++ {
 			time.Sleep(2 * time.Second)
 
-			if !processFound {
-				out, _ := runCmdOutput(client, "pgrep -cf 'df_game_r' || true")
-				count, _ := strconv.Atoi(strings.TrimSpace(out))
-				if count >= 2 {
+			out, _ := runCmdOutput(client, "pgrep -cf 'df_game_r' || true")
+			procCount, _ := strconv.Atoi(strings.TrimSpace(out))
+
+			if procCount >= 1 {
+				if procCount == lastProcCount {
+					stableCount++
+				} else {
+					stableCount = 1
+					lastProcCount = procCount
+				}
+				if !processFound && stableCount >= 3 && procCount >= 1 {
 					processFound = true
-					dw.appendLog(fmt.Sprintf("[%ds] df_game_r 进程已启动 (%d 个)", i*2, count))
+					dw.appendLog(fmt.Sprintf("[%ds] df_game_r 进程已稳定 (%d 个)", i*2, procCount))
+				}
+			} else {
+				stableCount = 0
+				lastProcCount = 0
+			}
+
+			allPorts := detectOpenGamePorts(client)
+			for _, p := range allPorts {
+				if !seenPorts[p] {
+					seenPorts[p] = true
+					dw.appendLog(fmt.Sprintf("[%ds] 游戏端口 %s 已监听", i*2, p))
 				}
 			}
 
-			if !portOpen {
-				out, _ := runCmdOutput(client, "ss -tlnp 2>/dev/null | grep -c ':10011 ' || true")
-				n, _ := strconv.Atoi(strings.TrimSpace(out))
-				if n > 0 {
-					portOpen = true
-					dw.appendLog(fmt.Sprintf("[%ds] 游戏端口 10011 已监听", i*2))
-				}
-			}
+			allGood := processFound && len(allPorts) > 0
 
-			if processFound && portOpen {
+			if allGood {
 				success = true
 				break
 			}
 
 			if i%5 == 0 {
-				stat := ""
-				if processFound {
-					stat += "进程:OK"
-				} else {
-					stat += "进程:等待"
+				pc := "OK"
+				if !processFound {
+					pc = "等待"
 				}
-				stat += " 端口:" + map[bool]string{true: "OK", false: "等待"}[portOpen]
-				dw.appendLog(fmt.Sprintf("[%ds] %s", i*2, stat))
+				dw.appendLog(fmt.Sprintf("[%ds] 进程:%s 端口:%d 个", i*2, pc, len(seenPorts)))
 			}
 		}
 
 		if success {
+			portList := make([]string, 0, len(seenPorts))
+			for p := range seenPorts {
+				portList = append(portList, p)
+			}
 			dw.Synchronize(func() {
-				walk.MsgBox(dw.MainWindow, "启动成功", "游戏服务已完全启动！（df_game_r 运行中，端口 10011 已监听）", walk.MsgBoxIconInformation)
+				walk.MsgBox(dw.MainWindow, "启动成功",
+					fmt.Sprintf("游戏服务已完全启动！（df_game_r 运行中，端口 %s 已监听）", strings.Join(portList, ", ")),
+					walk.MsgBoxIconInformation)
 			})
 		} else {
-			stat := ""
 			if !processFound {
-				stat += "df_game_r 未启动"
+				dw.appendLog("--- 启动监控超时: df_game_r 未启动 ---")
+			} else {
+				dw.appendLog("--- 启动监控超时: df_game_r 已运行但无端口监听 ---")
 			}
-			if !portOpen {
-				if stat != "" {
-					stat += "，"
-				}
-				stat += "端口 10011 未监听"
-			}
-			dw.appendLog(fmt.Sprintf("--- 启动监控超时: %s ---", stat))
 		}
 	}()
+}
+
+func detectOpenGamePorts(client *ssh.Client) []string {
+	cmd := "ss -tlnp 2>/dev/null | grep df_game_r | awk '{for(i=4;i<=NF;i++) if($i~/:([0-9]+)$/){split($i,a,\":\"); print a[length(a)]}}' | sort -nu"
+	out, err := runCmdOutput(client, cmd)
+	if err != nil || strings.TrimSpace(out) == "" {
+		cmd2 := "netstat -tlnp 2>/dev/null | grep df_game_r | awk '{for(i=4;i<=NF;i++) if($i~/:([0-9]+)$/){split($i,a,\":\"); print a[length(a)]}}' | sort -nu"
+		out, _ = runCmdOutput(client, cmd2)
+	}
+	var ports []string
+	for _, p := range strings.Split(strings.TrimSpace(out), "\n") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			ports = append(ports, p)
+		}
+	}
+	return ports
 }
 
 func sshConnectWithRetry(host, user, pass string, retries int) (*ssh.Client, error) {
