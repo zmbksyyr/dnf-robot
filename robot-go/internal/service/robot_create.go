@@ -90,12 +90,12 @@ func (m *RobotManager) createRobot(info RobotInfo, rc robotRuntimeConfig) error 
 	}
 	dbName := robotNameForEncoding(info.Name, "utf8_cp1252")
 	if _, err := m.db.Exec(
-		"INSERT INTO taiwan_cain.charac_info (m_id,charac_no,charac_name,village,maxHP,maxMP,phy_attack,phy_defense,mag_attack,mag_defense,inven_weight,hp_regen,mp_regen,move_speed,attack_speed,cast_speed,hit_recovery,jump,charac_weight,max_fatigue,lev,job,grow_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		info.UID, info.CID, dbName, info.Village, "1800", "1400", "75", "75", "45", "45", "480000", "0", "500", "8500", "8500", "7000", "6000", "4300", "680000", "156", info.Level, info.Job, info.Grow,
+		"INSERT INTO taiwan_cain.charac_info (m_id,charac_no,charac_name,village,maxHP,maxMP,phy_attack,phy_defense,mag_attack,mag_defense,inven_weight,hp_regen,mp_regen,move_speed,attack_speed,cast_speed,hit_recovery,jump,charac_weight,max_fatigue,lev,job,grow_type,fatigue) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		info.UID, info.CID, dbName, info.Village, "1800", "1400", "75", "75", "45", "45", "480000", "0", "500", "8500", "8500", "7000", "6000", "4300", "680000", "156", info.Level, info.Job, info.Grow, "156",
 	); err != nil {
 		return fmt.Errorf("insert charac_info uid=%d cid=%d: %w", info.UID, info.CID, err)
 	}
-	if _, err := m.db.Exec("INSERT INTO taiwan_cain.charac_stat (charac_no,HP,exp,tutorial_flag,village) VALUES (?,?,?,?,?)", info.CID, "100", 0, "-1", info.Village); err != nil {
+	if _, err := m.db.Exec("INSERT INTO taiwan_cain.charac_stat (charac_no,HP,exp,tutorial_flag,village,fatigue) VALUES (?,?,?,?,?,?)", info.CID, "100", 0, "0", info.Village, "156"); err != nil {
 		return fmt.Errorf("insert charac_stat cid=%d: %w", info.CID, err)
 	}
 	optional := []struct {
