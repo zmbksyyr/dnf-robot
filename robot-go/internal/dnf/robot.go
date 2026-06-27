@@ -162,6 +162,9 @@ type RobotVo struct {
 
 	GMName [5][100]byte
 
+	InDungeon   bool
+	NextSkillAt uint32
+
 	mu     sync.Mutex
 	sendMu sync.Mutex
 
@@ -629,6 +632,15 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if err == nil {
 			r.sendRaw(pkt)
 		}
+		// Random skill usage when in dungeon
+		if r.InDungeon && time.Now().Unix()%3 == 0 {
+			slot := byte(time.Now().Unix() % 12)
+			skillPkt, skillErr := buildSendPacket(41, uint16(r.PacketID), []byte{slot, 0, 0, 0}, r.Cipher)
+			r.PacketID++
+			if skillErr == nil {
+				r.sendRaw(skillPkt)
+			}
+		}
 	}
 
 	if packetFlag == 0 && packetType == 199 {
@@ -639,6 +651,42 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 				go r.RefishConnect()
 			}
 		}
+		return
+	}
+
+	// Auto-accept party invites (type 9 PARTY_INFO)
+	if packetFlag == 0 && packetType == 9 && r.State == StateRun {
+		_, _, _, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		if err == nil {
+			accept := make([]byte, 1)
+			accept[0] = 1
+			pkt, pktErr := buildSendPacket(12, uint16(r.PacketID), accept, r.Cipher)
+			r.PacketID++
+			if pktErr == nil {
+				r.sendRaw(pkt)
+			}
+		}
+		return
+	}
+
+	// Follow party into dungeon (type 27 NOTIPACKET_START_GAME)
+	if packetFlag == 0 && packetType == 27 && r.State == StateRun {
+		_, _, _, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		if err == nil {
+			pkt, pktErr := buildSendPacket(91, uint16(r.PacketID), []byte{}, r.Cipher)
+			r.PacketID++
+			if pktErr == nil {
+				r.sendRaw(pkt)
+				r.InDungeon = true
+			}
+		}
+		return
+	}
+
+	// Exit dungeon on clear (type 31 ENABLE_CLEAR_DUNGEON or type 35 CLEAR_DUNGEON_REWARD)
+	if r.State == StateRun && (packetType == 31 || packetType == 35) {
+		_, _, _, _ = parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		r.InDungeon = false
 		return
 	}
 

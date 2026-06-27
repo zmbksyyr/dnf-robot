@@ -208,6 +208,17 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 		return false
 	}
 
+	if !runOnlineRepairSQLIfTableExists(db, "taiwan_cain.charac_stat",
+		"UPDATE taiwan_cain.charac_stat cs JOIN taiwan_cain.charac_info ci ON ci.charac_no=cs.charac_no SET cs.fatigue=156 WHERE ci.m_id=? AND (cs.fatigue IS NULL OR cs.fatigue=0)",
+		"repair fatigue", uid) {
+		return false
+	}
+	if !runOnlineRepairSQLIfTableExists(db, "taiwan_cain.charac_info",
+		"UPDATE taiwan_cain.charac_info SET fatigue=156 WHERE m_id=? AND (fatigue IS NULL OR fatigue=0)",
+		"repair charac_info fatigue", uid) {
+		return false
+	}
+
 	return true
 }
 
