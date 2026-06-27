@@ -95,7 +95,7 @@ func (m *RobotManager) createRobot(info RobotInfo, rc robotRuntimeConfig) error 
 	); err != nil {
 		return fmt.Errorf("insert charac_info uid=%d cid=%d: %w", info.UID, info.CID, err)
 	}
-	if _, err := m.db.Exec("INSERT INTO taiwan_cain.charac_stat (charac_no,HP,exp,tutorial_flag,village,fatigue) VALUES (?,?,?,?,?,?)", info.CID, "100", 0, "0", info.Village, "156"); err != nil {
+	if _, err := m.db.Exec("INSERT INTO taiwan_cain.charac_stat (charac_no,HP,exp,tutorial_flag,village,fatigue,member_dungeon_flag,open_flag) VALUES (?,?,?,?,?,?,?,?)", info.CID, "100", 0, "0", info.Village, "156", "1", "1"); err != nil {
 		return fmt.Errorf("insert charac_stat cid=%d: %w", info.CID, err)
 	}
 	optional := []struct {
