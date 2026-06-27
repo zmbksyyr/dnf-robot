@@ -975,6 +975,8 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 					r.PacketID = 29
 					r.State = StateRun
 					r.ConnCount = 0
+					// Notify server all tutorials complete (packet 146 CHANGE_TUTORIAL_FLAG)
+					r.sendTutorialComplete()
 					if r.RunStartTime == 0 {
 						r.RunStartTime = uint32(time.Now().Unix())
 					}
@@ -1050,6 +1052,17 @@ func (r *RobotVo) sendRaw(pkt []byte) bool {
 		written += n
 	}
 	return true
+}
+
+func (r *RobotVo) sendTutorialComplete() {
+	// Packet 146 CMDPACKET_CHANGE_TUTORIAL_FLAG
+	// Sets all tutorial flags to 0 (completed)
+	data := make([]byte, 4)
+	pkt, err := buildSendPacket(146, uint16(r.PacketID), data, r.Cipher)
+	r.PacketID++
+	if err == nil {
+		r.sendRaw(pkt)
+	}
 }
 
 func (r *RobotVo) sendSelectCharacUnsafe(_ string) bool {
