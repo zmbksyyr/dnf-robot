@@ -215,6 +215,7 @@ class StabilityRun(object):
             {"name": "shrink100", "at": 240 * 60, "fn": lambda: self.set_target(100)},
             {"name": "reexpand600", "at": 270 * 60, "fn": lambda: self.set_target(600)},
             {"name": "robot_restart", "at": 330 * 60, "fn": self.robot_restart},
+            {"name": "custom_key_test", "at": 360 * 60, "fn": self.custom_key_test},
             {"name": "final_reexpand600", "at": 390 * 60, "fn": lambda: self.set_target(600)},
         ]
 
@@ -352,6 +353,69 @@ ss -lntp | grep -E ':(8111|8112|10011|30303)' || true
         time.sleep(20)
         self.set_target(self.args.target_max)
         self.burst_sample("robot_restart_recover", 60, 5)
+
+    def custom_key_test(self):
+        self.log("custom_key_test begin")
+        self.sample_with_event("custom_key_before")
+
+        game_dir = "/home/neople/game"
+        backup_priv = game_dir + "/privatekey.pem.bak"
+        backup_pub = game_dir + "/publickey.pem.bak"
+
+        script = """
+GAME_DIR="%s"
+# Backup original keys
+cp "$GAME_DIR"/privatekey.pem "$GAME_DIR"/privatekey.pem.bak 2>/dev/null || true
+cp "$GAME_DIR"/publickey.pem "$GAME_DIR"/publickey.pem.bak 2>/dev/null || true
+# Generate custom RSA 2048 key pair
+openssl genpkey -algorithm RSA -out "$GAME_DIR"/privatekey.pem -pkeyopt rsa_keygen_bits:2048 2>/dev/null
+openssl rsa -pubout -in "$GAME_DIR"/privatekey.pem -out "$GAME_DIR"/publickey.pem 2>/dev/null
+echo "KEYS_REPLACED"
+""" % game_dir
+        out = self.shell(script, 30)
+        self.log("custom_key_test new_keys_generated output=%s" % out[:500])
+
+        self.robot_restart()
+        time.sleep(10)
+
+        st = self.safe_call("keypairStatus")
+        self.log("custom_key_test keypair_status=%s" % json_text(st, 2000))
+        result = st.get("result") or {}
+        is_user_key = result.get("KeyState") == "user"
+        self.log("custom_key_test is_user_key=%s" % is_user_key)
+        self.sample_with_event("custom_key_user_key")
+
+        # Test smoke actions with user key
+        status = self.safe_call("robotsStatus", {"count": 20})
+        rows = (((status or {}).get("result") or {}).get("robots") or [])
+        uids = [int(r.get("uid") or 0) for r in rows if int(r.get("uid") or 0) > 0][:2]
+        if uids:
+            res = self.safe_call("robotsShoutWorld", {"uids": uids[:1]})
+            self.log("custom_key_test user_key_shout uids=%s result=%s" % (uids, json_text(res, 800)))
+            res = self.safe_call("robotsMove", {"uids": uids[:2]})
+            self.log("custom_key_test user_key_move uids=%s result=%s" % (uids[:2], json_text(res, 800)))
+            self.sample_with_event("custom_key_user_ops")
+
+        # Release default key to recover
+        rel = self.safe_call("keypairReleaseDefault")
+        self.log("custom_key_test release_default result=%s" % json_text(rel, 2000))
+        time.sleep(5)
+        st2 = self.safe_call("keypairStatus")
+        result2 = st2.get("result") or {}
+        is_default = result2.get("KeyState") == "default" or result2.get("UsingDefault")
+        self.log("custom_key_test after_release is_default=%s state=%s" % (is_default, result2.get("KeyState")))
+        self.sample_with_event("custom_key_default_restored")
+
+        # Restore backups for next test run
+        restore = """
+GAME_DIR="%s"
+[ -f "$GAME_DIR"/privatekey.pem.bak ] && mv "$GAME_DIR"/privatekey.pem.bak "$GAME_DIR"/privatekey.pem
+[ -f "$GAME_DIR"/publickey.pem.bak ] && mv "$GAME_DIR"/publickey.pem.bak "$GAME_DIR"/publickey.pem
+echo "KEYS_RESTORED"
+""" % game_dir
+        self.shell(restore, 10)
+        self.log("custom_key_test backups_restored")
+        self.log("custom_key_test done is_user=%s recovered=%s" % (is_user_key, is_default))
 
     def sample(self):
         row = self.sample_row()
