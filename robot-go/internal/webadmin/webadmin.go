@@ -3,6 +3,7 @@ package webadmin
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -61,6 +62,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/call", s.requireAuth(s.handleCall))
 	mux.HandleFunc("/api/game-port", s.requireAuth(s.handleGamePort))
 	mux.HandleFunc("/api/max-user", s.requireAuth(s.handleMaxUser))
+	mux.HandleFunc("/api/server-script", s.requireAuth(s.handleServerScript))
 	mux.HandleFunc("/api/monitor-service", s.requireAuth(s.handleMonitorService))
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
 	server := &http.Server{
@@ -323,6 +325,53 @@ func (s *Server) handleMaxUser(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	script := ""
+	switch strings.TrimSpace(req.Action) {
+	case "run":
+		script = "/root/run"
+	case "stop":
+		script = "/root/stop"
+	default:
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "unknown script action"})
+		return
+	}
+	info, err := os.Stat(script)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "script": script, "error": err.Error()})
+		return
+	}
+	if info.IsDir() {
+		writeJSON(w, map[string]interface{}{"ok": false, "script": script, "error": "script path is a directory"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, script)
+	cmd.Dir = "/root"
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		writeJSON(w, map[string]interface{}{"ok": false, "script": script, "output": string(out), "error": "script timed out"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "script": script, "output": string(out), "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "script": script, "output": string(out)})
 }
 
 func (s *Server) handleMonitorService(w http.ResponseWriter, _ *http.Request) {
