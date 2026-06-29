@@ -360,7 +360,7 @@ func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, script)
+	cmd := exec.CommandContext(ctx, "/bin/sh", script)
 	cmd.Dir = "/root"
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
