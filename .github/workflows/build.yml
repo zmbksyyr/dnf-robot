@@ -41,14 +41,10 @@ jobs:
             echo "UPX not found, skipping compression"
           fi
 
-      - name: Commit and push binaries
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f bin/robot bin/部署.exe
-          if git diff --staged --quiet; then
-            echo "No changes to binaries"
-          else
-            git commit -m "build: update bin/robot and bin/部署.exe [skip ci]"
-            git push
-          fi
+      - name: Upload binaries as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-binaries
+          path: |
+            bin/robot
+            bin/部署.exe
