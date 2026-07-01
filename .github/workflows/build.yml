@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/build.yml'
       - 'robot-go/**'
       - 'tools/deploy-launcher/**'
 
@@ -56,25 +57,12 @@ jobs:
           git tag -f latest "$GITHUB_SHA"
           git push -f origin refs/tags/latest
 
-          if gh release view latest >/dev/null 2>&1; then
-            gh release edit latest \
-              --title "Latest Build" \
-              --notes "Automated build for ${GITHUB_SHA}" \
-              --target "$GITHUB_SHA"
-          else
-            gh release create latest \
-              --title "Latest Build" \
-              --notes "Automated build for ${GITHUB_SHA}" \
-              --target "$GITHUB_SHA"
-          fi
+          gh release delete latest -y >/dev/null 2>&1 || true
 
-          gh release view latest --json assets --jq '.assets[].name' |
-            while IFS= read -r asset; do
-              if [ -n "$asset" ]; then
-                gh release delete-asset latest "$asset" -y
-              fi
-            done
-
+          gh release create latest \
+            --title "Latest Build" \
+            --notes "Automated build for ${GITHUB_SHA}" \
+            --target "$GITHUB_SHA"
           gh release upload latest bin/robot "bin/部署.exe" --clobber
 
       - name: Delete old releases

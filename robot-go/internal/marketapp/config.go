@@ -36,7 +36,7 @@ func DefaultConfig() Config {
 		Collector: CollectorCfg{
 			Enabled:          true,
 			MaxActions:       0,
-			MaxConcurrent:    32,
+			MaxConcurrent:    8,
 			MaxResultActions: 200,
 			PerItemDelayMS:   0,
 		},
@@ -45,7 +45,7 @@ func DefaultConfig() Config {
 			RandLow:          1,
 			RandHigh:         1,
 			MaxActions:       0,
-			MaxConcurrent:    32,
+			MaxConcurrent:    8,
 			MaxResultActions: 200,
 			PerItemDelayMS:   0,
 		},
@@ -55,7 +55,7 @@ func DefaultConfig() Config {
 			InitialDelayMS:  3000,
 			IntervalMS:      30000,
 			MaxActions:      0,
-			MaxConcurrent:   32,
+			MaxConcurrent:   8,
 			ContinueOnError: true,
 		},
 	}
