@@ -19,6 +19,7 @@ import (
 
 	"robot/internal/config"
 	"robot/internal/dnf"
+	"robot/internal/marketapp"
 	"robot/internal/network"
 	"robot/internal/service"
 	"robot/internal/webadmin"
@@ -26,6 +27,7 @@ import (
 
 var db *sql.DB
 var asyncActions sync.Map
+var marketApp *marketapp.App
 
 func main() {
 	webAdminMode := flag.Bool("web-admin", false, "run web admin child process")
@@ -97,6 +99,14 @@ func main() {
 	manager := service.NewRobotManager(db, cfg, dollSvc)
 	manager.StartAutoActions()
 	defer manager.StopAutoActions()
+	marketApp, err = marketapp.New(db, cfg)
+	if err != nil {
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("MARKET_INIT_FAILED err=%v\n", err))
+		dnf.PrintfRed("market init failed: %v\n", err)
+		os.Exit(1)
+	}
+	marketApp.StartAuto()
+	defer marketApp.Shutdown()
 	stopWebAdmin := startWebAdminSupervisor(cfg)
 	defer stopWebAdmin()
 
@@ -377,6 +387,89 @@ func handlePacket(clientID, pkt string, dollSvc *service.DollService, manager *s
 	case "keypairReleaseDefault":
 		res, err := manager.ReleaseDefaultKeypair()
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
+	case "marketStatus":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		return wrapResult(map[string]interface{}{"ok": true, "result": app.Status()})
+	case "marketStart":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		res, err := app.SetAutoEnabled(true)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
+	case "marketStop":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		res, err := app.SetAutoEnabled(false)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
+	case "marketConfigUpdate":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		var req marketapp.ConfigUpdateRequest
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		res, err := app.UpdateConfig(req)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
+	case "marketRestockOnce":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		var req marketapp.RestockRequest
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		req.Execute = true
+		res, err := app.RestockOnce(req)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
+	case "marketCollectOnce":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		var req marketapp.CollectRequest
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		req.Execute = true
+		res, err := app.CollectOnce(req)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
+	case "marketSyncItemInfo":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		return wrapResult(map[string]interface{}{"ok": true, "result": app.SyncItemInfoDAT()})
+	case "marketPVFUpgradeSeparateStatus":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		var req marketapp.PVFUpgradeSeparateRequest
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		res, err := app.PVFUpgradeSeparateStatus(req)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
+	case "marketPVFPatchUpgradeSeparate":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		var req marketapp.PVFUpgradeSeparateRequest
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		res, err := app.PVFPatchUpgradeSeparate(req)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "autoStart":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SetAutoEnabled(true)})
 	case "autoStop":
@@ -551,6 +644,13 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func requireMarketApp() (*marketapp.App, error) {
+	if marketApp == nil {
+		return nil, fmt.Errorf("market app is not initialized")
+	}
+	return marketApp, nil
 }
 
 func extractTagContent(pkt, tag string) string {

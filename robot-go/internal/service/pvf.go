@@ -23,7 +23,9 @@ type pvfManifest struct {
 	Runtime *runtimeManifest `json:"runtime,omitempty"`
 }
 
-const pvfExportVersion = 8
+const pvfExportVersion = 11
+
+const pvfItemInfoExportName = "pvf_iteminfo.dat"
 
 type pvfFile struct {
 	Name string
@@ -107,6 +109,9 @@ func ensurePVFExports(dfGameR, configDir string) error {
 	if err := writeJSON(filepath.Join(configDir, "pvf_map_catalog.json"), maps); err != nil {
 		return err
 	}
+	if err := writePVFItemInfoDAT(configDir, archive); err != nil {
+		return err
+	}
 	return writeJSON(manifestPath, manifest)
 }
 
@@ -126,11 +131,14 @@ func buildPVFManifest(path string, stat os.FileInfo) (pvfManifest, error) {
 }
 
 func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) bool {
-	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json"} {
+	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json", pvfItemInfoExportName} {
 		path := filepath.Join(configDir, name)
 		stat, err := os.Stat(path)
 		if err != nil || stat.Size() <= 5 {
 			return false
+		}
+		if name == pvfItemInfoExportName {
+			continue
 		}
 		data, err := os.ReadFile(path)
 		if err != nil || strings.Contains(string(data), `"source_path"`) {
@@ -154,6 +162,100 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 func removeObsoletePVFExports(configDir string) {
 	for _, name := range []string{"equipment_catalog.json", "stackable_catalog.json", "map_catalog.json"} {
 		_ = os.Remove(filepath.Join(configDir, name))
+	}
+}
+
+func writePVFItemInfoDAT(configDir string, archive *pvfArchive) error {
+	if archive == nil {
+		return nil
+	}
+	text := archive.text("etc/iteminfo.dat")
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	path := filepath.Join(configDir, pvfItemInfoExportName)
+	data := []byte(formatPVFItemInfoDAT(text))
+	return os.WriteFile(path, data, 0644)
+}
+
+func ExportPVFItemInfoDAT(pvfPath, configDir string) (string, error) {
+	if strings.TrimSpace(pvfPath) == "" {
+		return "", fmt.Errorf("pvf path is empty")
+	}
+	if strings.TrimSpace(configDir) == "" {
+		return "", fmt.Errorf("config dir is empty")
+	}
+	archive, err := openPVF(pvfPath)
+	if err != nil {
+		return "", err
+	}
+	if err := writePVFItemInfoDAT(configDir, archive); err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, pvfItemInfoExportName), nil
+}
+
+func formatPVFItemInfoDAT(text string) string {
+	tokens := tokenizePVFItemInfo(text)
+	rows := make([]string, 0, len(tokens)/17)
+	for i := 0; i+16 < len(tokens); {
+		if tokens[i] == "#PVF_File" {
+			i++
+			continue
+		}
+		if _, err := strconv.Atoi(tokens[i]); err != nil {
+			i++
+			continue
+		}
+		if _, err := strconv.Atoi(tokens[i+16]); err != nil {
+			i++
+			continue
+		}
+		rows = append(rows, strings.Join(tokens[i:i+17], " "))
+		i += 17
+	}
+	if len(rows) == 0 {
+		return text
+	}
+	return strings.Join(rows, "\r\n") + "\r\n"
+}
+
+func tokenizePVFItemInfo(text string) []string {
+	tokens := make([]string, 0, 1024)
+	for i := 0; i < len(text); {
+		for i < len(text) && isPVFSpace(text[i]) {
+			i++
+		}
+		if i >= len(text) {
+			break
+		}
+		if text[i] == '`' {
+			start := i
+			i++
+			for i < len(text) && text[i] != '`' {
+				i++
+			}
+			if i < len(text) {
+				i++
+			}
+			tokens = append(tokens, text[start:i])
+			continue
+		}
+		start := i
+		for i < len(text) && !isPVFSpace(text[i]) {
+			i++
+		}
+		tokens = append(tokens, text[start:i])
+	}
+	return tokens
+}
+
+func isPVFSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
 	}
 }
 
