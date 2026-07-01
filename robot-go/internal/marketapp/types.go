@@ -80,6 +80,18 @@ type PVFUpgradeSeparateRequest struct {
 	Target int    `json:"target,omitempty"`
 }
 
+type AuctionSearchGuardRequest struct {
+	Path string `json:"path,omitempty"`
+}
+
+type AuctionSearchGuardResult struct {
+	Path      string `json:"path"`
+	Backup    string `json:"backup,omitempty"`
+	Installed bool   `json:"installed"`
+	Changed   bool   `json:"changed"`
+	Message   string `json:"message,omitempty"`
+}
+
 type ConfigUpdateRequest struct {
 	AutoEnabled      *bool    `json:"auto_enabled,omitempty"`
 	CollectorEnabled *bool    `json:"collector_enabled,omitempty"`
