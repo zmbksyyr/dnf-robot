@@ -84,7 +84,7 @@ type ConfigUpdateRequest struct {
 	AutoEnabled      *bool    `json:"auto_enabled,omitempty"`
 	CollectorEnabled *bool    `json:"collector_enabled,omitempty"`
 	IntervalMS       int      `json:"interval_ms,omitempty"`
-	InitialDelayMS   int      `json:"initial_delay_ms,omitempty"`
+	InitialDelayMS   *int     `json:"initial_delay_ms,omitempty"`
 	MaxActions       int      `json:"max_actions,omitempty"`
 	MaxConcurrent    int      `json:"max_concurrent,omitempty"`
 	ContinueOnError  *bool    `json:"continue_on_error,omitempty"`

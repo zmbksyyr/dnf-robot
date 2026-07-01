@@ -118,8 +118,8 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if req.IntervalMS > 0 {
 		a.cfg.Auto.IntervalMS = req.IntervalMS
 	}
-	if req.InitialDelayMS >= 0 {
-		a.cfg.Auto.InitialDelayMS = req.InitialDelayMS
+	if req.InitialDelayMS != nil && *req.InitialDelayMS >= 0 {
+		a.cfg.Auto.InitialDelayMS = *req.InitialDelayMS
 	}
 	if req.MaxActions >= 0 {
 		a.cfg.Auto.MaxActions = req.MaxActions
