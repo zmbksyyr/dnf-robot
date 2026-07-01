@@ -101,6 +101,8 @@ type Status struct {
 	Restock     RestockCfg         `json:"restock"`
 	AutoRunning bool               `json:"auto_running"`
 	Ready       bool               `json:"ready"`
+	DBInit      []string           `json:"db_init,omitempty"`
+	DBInitError string             `json:"db_init_error,omitempty"`
 	ItemInfo    ItemInfoSyncStatus `json:"iteminfo"`
 	LastJob     *JobSummary        `json:"last_job,omitempty"`
 	LogTail     []LogEvent         `json:"log_tail,omitempty"`

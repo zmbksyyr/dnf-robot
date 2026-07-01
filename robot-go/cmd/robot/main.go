@@ -105,7 +105,11 @@ func main() {
 		dnf.PrintfRed("market init failed: %v\n", err)
 		os.Exit(1)
 	}
-	marketApp.StartAuto()
+	if _, err := marketApp.SetAutoEnabled(true); err != nil {
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("MARKET_AUTO_START_FAILED err=%v\n", err))
+		dnf.PrintfRed("market auto start failed: %v\n", err)
+		marketApp.StartAuto()
+	}
 	defer marketApp.Shutdown()
 	stopWebAdmin := startWebAdminSupervisor(cfg)
 	defer stopWebAdmin()

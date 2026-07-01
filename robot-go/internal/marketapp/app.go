@@ -26,15 +26,17 @@ type App struct {
 	pvfPath    string
 	rs         *service.RobotSvc
 
-	mu       sync.Mutex
-	jobMu    sync.Mutex
-	autoMu   sync.Mutex
-	autoRun  bool
-	lastJob  *JobSummary
-	itemInfo ItemInfoSyncStatus
-	rand     *rand.Rand
-	stopAuto chan struct{}
-	autoDone chan struct{}
+	mu        sync.Mutex
+	jobMu     sync.Mutex
+	autoMu    sync.Mutex
+	autoRun   bool
+	lastJob   *JobSummary
+	dbInit    []string
+	dbInitErr string
+	itemInfo  ItemInfoSyncStatus
+	rand      *rand.Rand
+	stopAuto  chan struct{}
+	autoDone  chan struct{}
 }
 
 func New(db *sql.DB, sys *config.SysConfig) (*App, error) {
@@ -63,6 +65,14 @@ func New(db *sql.DB, sys *config.SysConfig) (*App, error) {
 		autoDone:   make(chan struct{}),
 	}
 	app.itemInfo = app.itemInfoStatus()
+	if tables, err := app.ensureMarketTables(time.Now()); err != nil {
+		app.dbInit = tables
+		app.dbInitErr = err.Error()
+		app.appendLog(LogEvent{Type: "db_init", Status: "failed", Message: err.Error()})
+	} else {
+		app.dbInit = tables
+		app.appendLog(LogEvent{Type: "db_init", Status: "success", Message: strings.Join(tables, ",")})
+	}
 	return app, nil
 }
 
@@ -85,9 +95,10 @@ func (a *App) Status() Status {
 		Restock:     a.cfg.Restock,
 		AutoRunning: a.AutoRunning(),
 		Ready:       true,
+		DBInit:      append([]string(nil), a.dbInit...),
+		DBInitError: a.dbInitErr,
 		ItemInfo:    a.itemInfo,
 		LastJob:     compactJob(a.lastJob),
-		LogTail:     a.logTail(20),
 	}
 }
 

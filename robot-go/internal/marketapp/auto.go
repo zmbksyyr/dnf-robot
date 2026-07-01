@@ -95,6 +95,18 @@ func (a *App) autoLoop() {
 }
 
 func (a *App) runAutoOnce() {
+	if tables, err := a.ensureMarketTables(time.Now()); err != nil {
+		a.mu.Lock()
+		a.dbInit = tables
+		a.dbInitErr = err.Error()
+		a.mu.Unlock()
+		a.appendLog(LogEvent{Type: "db_init", Status: "failed", Message: err.Error()})
+	} else {
+		a.mu.Lock()
+		a.dbInit = tables
+		a.dbInitErr = ""
+		a.mu.Unlock()
+	}
 	markets := a.cfg.Auto.Markets
 	if len(markets) == 0 {
 		markets = []string{"auction", "cera"}
