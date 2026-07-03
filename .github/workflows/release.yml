@@ -2,7 +2,7 @@ name: Build and Release
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -79,6 +79,6 @@ jobs:
           git push -f origin $tag
           gh release create $tag `
             --title "Latest Build" `
-            --notes "Auto-built from master branch" `
+            --notes "Auto-built from main branch" `
             dist/robot.exe `
             dist/deploy-launcher.exe
