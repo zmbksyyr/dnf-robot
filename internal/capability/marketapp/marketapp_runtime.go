@@ -589,6 +589,7 @@ func quoteIdent(v string) string {
 
 // ---- planner.go ----
 func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
+	var duplicateActions []Action
 	for _, row := range rows {
 		if row.ItemID == 0 || row.Quantity <= 0 || !row.Enabled {
 			continue
@@ -634,8 +635,7 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 		if isEquip {
 			batchInflate = float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
 		}
-		for i := 0; i < targetRecords; i++ {
-			pos := i
+		buildAction := func(pos int) Action {
 			count := int32(1)
 			if !isEquip {
 				if pos < targetRecords-1 {
@@ -667,7 +667,7 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			if source == "" {
 				source = "legacy_seed"
 			}
-			result.Actions = append(result.Actions, Action{
+			return Action{
 				Market:       "auction",
 				Kind:         item.Kind,
 				ItemID:       row.ItemID,
@@ -683,10 +683,15 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 				Upgrade:      upgrade,
 				ExtraAddInfo: extraAddInfo,
 				Source:       source,
-			})
+			}
+		}
+		result.Actions = append(result.Actions, buildAction(0))
+		for i := 1; i < targetRecords; i++ {
+			duplicateActions = append(duplicateActions, buildAction(i))
 		}
 		have[row.ItemID] = targetRecords
 	}
+	result.Actions = append(result.Actions, duplicateActions...)
 }
 
 func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
@@ -843,7 +848,17 @@ func (a *App) catalogAuctionRows(catalog map[uint32]catalogItem) []restockRow {
 			ids = append(ids, id)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	sort.Slice(ids, func(i, j int) bool {
+		left := catalog[ids[i]]
+		right := catalog[ids[j]]
+		if left.Kind != right.Kind {
+			return left.Kind == "equipment"
+		}
+		if left.Kind == "equipment" && left.Level != right.Level {
+			return left.Level > right.Level
+		}
+		return left.ItemID < right.ItemID
+	})
 	rows := make([]restockRow, 0, len(ids))
 	for _, id := range ids {
 		if row, ok := a.catalogAuctionRow(catalog[id]); ok {
@@ -891,6 +906,7 @@ func (a *App) catalogAuctionRow(item catalogItem) (restockRow, bool) {
 		Enabled:     true,
 		Source:      "pvf",
 		Kind:        item.Kind,
+		Level:       item.Level,
 		ItemType:    item.ItemType,
 		SubType:     item.SubType,
 		Slot:        item.Slot,

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/lockhub"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -247,12 +246,6 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 		}
 		a.planCera(ceraRows, ceraCatalog, haveCera, occ, &result)
 	}
-	sort.Slice(result.Actions, func(i, j int) bool {
-		if result.Actions[i].Market == result.Actions[j].Market {
-			return result.Actions[i].ItemID < result.Actions[j].ItemID
-		}
-		return result.Actions[i].Market < result.Actions[j].Market
-	})
 	result.Actions = limitActions(result.Actions, req.MaxActions)
 	result.Summary = PlanSummary{Actions: len(result.Actions), Skipped: len(result.Skipped), ExistingRecords: result.Summary.ExistingRecords}
 	for _, action := range result.Actions {
@@ -395,7 +388,7 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 		if item.BadName || item.NoTrade || item.Expire {
 			kind = "blocked"
 		}
-		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
 	}
 	equipment, err := readPVFItems(filepath.Join(a.configDir, "pvf_equipment_catalog.json"))
 	if err != nil {
@@ -409,7 +402,7 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 		if item.BadName || item.NoTrade || item.Expire {
 			kind = "blocked"
 		}
-		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
 	}
 	return out, nil
 }
@@ -911,6 +904,7 @@ type SkippedItem struct {
 
 type pvfItem struct {
 	ID         int    `json:"id"`
+	Level      int    `json:"level,omitempty"`
 	ItemType   int    `json:"item_type"`
 	SubType    int    `json:"sub_type,omitempty"`
 	Slot       string `json:"slot,omitempty"`
@@ -930,6 +924,7 @@ type catalogItem struct {
 	ItemID     uint32
 	Name       string
 	Kind       string
+	Level      int
 	ItemType   int
 	SubType    int
 	Slot       string
@@ -952,6 +947,7 @@ type restockRow struct {
 	Enabled     bool   `json:"enabled"`
 	Source      string `json:"source,omitempty"`
 	Kind        string `json:"-"`
+	Level       int    `json:"-"`
 	ItemType    int    `json:"-"`
 	SubType     int    `json:"-"`
 	Slot        string `json:"-"`
@@ -969,6 +965,7 @@ func (r restockRow) marketItem() catalogItem {
 		ItemID:     r.ItemID,
 		Name:       r.Name,
 		Kind:       kind,
+		Level:      r.Level,
 		ItemType:   r.ItemType,
 		SubType:    r.SubType,
 		Slot:       r.Slot,
@@ -982,6 +979,7 @@ func (r restockRow) marketItem() catalogItem {
 func (r *restockRow) applyMarketItem(item catalogItem) {
 	r.Name = item.Name
 	r.Kind = item.Kind
+	r.Level = item.Level
 	r.ItemType = item.ItemType
 	r.SubType = item.SubType
 	r.Slot = item.Slot

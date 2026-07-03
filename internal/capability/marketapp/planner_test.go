@@ -97,6 +97,26 @@ func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 	}
 }
 
+func TestPlanAuctionCoversAllItemsBeforeDuplicates(t *testing.T) {
+	app := testApp()
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		10075:     {ItemID: 10075, Name: "low", Kind: "equipment", Attach: "trade", Slot: "coat"},
+		100050020: {ItemID: 100050020, Name: "high", Kind: "equipment", Attach: "trade", Slot: "coat"},
+	}
+	app.planAuction([]restockRow{
+		{ItemID: 10075, SystemPrice: 1000, Quantity: 3, StackSize: 1, Enabled: true},
+		{ItemID: 100050020, SystemPrice: 1000, Quantity: 3, StackSize: 1, Enabled: true},
+	}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 6 {
+		t.Fatalf("actions = %d, want 6", len(result.Actions))
+	}
+	if result.Actions[0].ItemID != 10075 || result.Actions[1].ItemID != 100050020 {
+		t.Fatalf("first pass did not cover both items before duplicates: %#v", result.Actions[:3])
+	}
+}
+
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 	app := testApp()
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)
@@ -134,18 +154,22 @@ func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 	app := testApp()
 	app.cfg.Restock.StackSizes = []int{500}
 	catalog := map[uint32]catalogItem{
-		4000:  {ItemID: 4000, Kind: "stackable", Price: 7, StackLimit: 1000},
-		31056: {ItemID: 31056, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100},
-		31057: {ItemID: 31057, Kind: "blocked", Price: 100},
+		4000:      {ItemID: 4000, Kind: "stackable", Price: 7, StackLimit: 1000},
+		31056:     {ItemID: 31056, Kind: "equipment", Level: 40, Attach: "trade", Slot: "weapon", Price: 100},
+		100050020: {ItemID: 100050020, Kind: "equipment", Level: 80, Attach: "trade", Slot: "coat", Price: 100},
+		31057:     {ItemID: 31057, Kind: "blocked", Price: 100},
 	}
 	rows := app.catalogAuctionRows(catalog)
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want 2", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
 	}
-	if rows[0].ItemID != 4000 || rows[0].Quantity != 500 || rows[0].StackSize != 500 {
+	if rows[0].ItemID != 100050020 || rows[1].ItemID != 31056 {
+		t.Fatalf("equipment rows are not level-desc first: %#v", rows)
+	}
+	if rows[2].ItemID != 4000 || rows[2].Quantity != 500 || rows[2].StackSize != 500 {
 		t.Fatalf("unexpected stackable row: %#v", rows[0])
 	}
-	if rows[1].ItemID != 31056 || rows[1].Quantity < 2 || rows[1].Quantity > 5 || rows[1].StackSize != 1 {
+	if rows[1].Quantity < 2 || rows[1].Quantity > 5 || rows[1].StackSize != 1 {
 		t.Fatalf("unexpected equipment row: %#v", rows[1])
 	}
 }
