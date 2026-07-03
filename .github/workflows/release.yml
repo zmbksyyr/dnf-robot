@@ -1,0 +1,84 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: |
+            go.sum
+            tools/deploy-launcher/go.sum
+
+      - name: Test main project
+        run: go test ./...
+
+      - name: Test deploy launcher
+        working-directory: tools/deploy-launcher
+        run: go test ./...
+
+      - name: Prepare output
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+      - name: Build main program
+        shell: pwsh
+        run: go build -trimpath -ldflags="-s -w" -o dist/robot.exe ./cmd/robot
+
+      - name: Generate deploy launcher manifest resource
+        working-directory: tools/deploy-launcher
+        shell: pwsh
+        run: |
+          go install github.com/akavel/rsrc@latest
+          rsrc -manifest app.manifest -o rsrc.syso
+
+      - name: Build deploy launcher
+        working-directory: tools/deploy-launcher
+        shell: pwsh
+        run: go build -trimpath -ldflags="-s -w -H windowsgui" -o ../../dist/deploy-launcher.exe .
+
+      - name: Compress executables
+        shell: pwsh
+        run: |
+          choco install upx -y --no-progress
+          upx --best --lzma dist/robot.exe dist/deploy-launcher.exe
+
+      - name: Delete previous latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "latest"
+          $release = gh release view $tag --json id --jq .id 2>$null
+          if ($LASTEXITCODE -eq 0 -and $release) {
+            gh release delete $tag -y
+            git push --delete origin $tag 2>$null
+          }
+          $global:LASTEXITCODE = 0
+
+      - name: Create latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "latest"
+          git tag -f $tag
+          git push -f origin $tag
+          gh release create $tag `
+            --title "Latest Build" `
+            --notes "Auto-built from master branch" `
+            dist/robot.exe `
+            dist/deploy-launcher.exe
