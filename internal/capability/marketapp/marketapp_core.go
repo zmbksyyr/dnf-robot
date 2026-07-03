@@ -35,6 +35,9 @@ type App struct {
 	rand      *rand.Rand
 	stopAuto  chan struct{}
 	autoDone  chan struct{}
+
+	auctionQueue       []restockRow
+	auctionQueueSource string
 }
 
 type Planner interface {
@@ -213,10 +216,22 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 }
 
 func (a *App) Plan(req RestockRequest) (PlanResult, error) {
-	catalog, err := a.loadCatalog()
-	pvfReady := err == nil
-	if !pvfReady {
-		a.appendLog(LogEvent{Type: "pvf_catalog", Status: "fallback", Message: err.Error()})
+	market := strings.ToLower(strings.TrimSpace(req.Market))
+	needAuction := market == "" || market == "auction"
+	needCera := market == "" || market == "cera" || market == "gold"
+	catalogLoaded := false
+	pvfReady := false
+	var catalog map[uint32]catalogItem
+	if needCera || needAuction && !a.auctionQueueIsPVF() {
+		var err error
+		catalog, err = a.loadCatalog()
+		catalogLoaded = true
+		pvfReady = err == nil
+		if !pvfReady {
+			a.appendLog(LogEvent{Type: "pvf_catalog", Status: "fallback", Message: err.Error()})
+		}
+	} else {
+		pvfReady = true
 	}
 	occ, haveAuction, haveCera, err := a.loadSystemStock()
 	if err != nil {
@@ -224,19 +239,26 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 	}
 	result := PlanResult{GeneratedAt: time.Now()}
 	result.Summary.ExistingRecords = len(occ)
-	market := strings.ToLower(strings.TrimSpace(req.Market))
-	if market == "" || market == "auction" {
-		if pvfReady {
-			a.planAuction(a.catalogAuctionRows(catalog), catalog, haveAuction, occ, &result)
-		} else {
-			rows, seedErr := a.fallbackAuctionRows()
-			if seedErr != nil {
-				return PlanResult{}, seedErr
-			}
-			a.planAuction(rows, nil, haveAuction, occ, &result)
+	if needAuction {
+		maxActions := req.MaxActions
+		if maxActions <= 0 {
+			maxActions = a.cfg.Restock.MaxActions
 		}
+		rows, queueErr := a.nextAuctionQueueRows(pvfReady, catalog, haveAuction, maxActions)
+		if queueErr != nil {
+			return PlanResult{}, queueErr
+		}
+		a.planAuction(rows, catalog, haveAuction, occ, &result)
 	}
-	if market == "" || market == "cera" || market == "gold" {
+	if needCera {
+		if !catalogLoaded {
+			var err error
+			catalog, err = a.loadCatalog()
+			pvfReady = err == nil
+			if !pvfReady {
+				a.appendLog(LogEvent{Type: "pvf_catalog", Status: "fallback", Message: err.Error()})
+			}
+		}
 		ceraRows := a.cfg.Cera.Items
 		ceraCatalog := catalog
 		if itemInfoCatalog, itemInfoErr := a.loadItemInfoCatalog(a.cfg.CeraItemInfoPath); itemInfoErr == nil {
@@ -290,6 +312,9 @@ func limitActions(actions []Action, maxActions int) []Action {
 func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
+	if req.MaxActions <= 0 {
+		req.MaxActions = a.cfg.Restock.MaxActions
+	}
 	start := time.Now()
 	job := JobSummary{
 		ID:        fmt.Sprintf("restock-%d", start.UnixNano()),

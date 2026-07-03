@@ -589,7 +589,6 @@ func quoteIdent(v string) string {
 
 // ---- planner.go ----
 func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
-	var duplicateActions []Action
 	for _, row := range rows {
 		if row.ItemID == 0 || row.Quantity <= 0 || !row.Enabled {
 			continue
@@ -635,7 +634,8 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 		if isEquip {
 			batchInflate = float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
 		}
-		buildAction := func(pos int) Action {
+		for i := 0; i < targetRecords; i++ {
+			pos := i
 			count := int32(1)
 			if !isEquip {
 				if pos < targetRecords-1 {
@@ -667,7 +667,7 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			if source == "" {
 				source = "legacy_seed"
 			}
-			return Action{
+			result.Actions = append(result.Actions, Action{
 				Market:       "auction",
 				Kind:         item.Kind,
 				ItemID:       row.ItemID,
@@ -683,15 +683,10 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 				Upgrade:      upgrade,
 				ExtraAddInfo: extraAddInfo,
 				Source:       source,
-			}
-		}
-		result.Actions = append(result.Actions, buildAction(0))
-		for i := 1; i < targetRecords; i++ {
-			duplicateActions = append(duplicateActions, buildAction(i))
+			})
 		}
 		have[row.ItemID] = targetRecords
 	}
-	result.Actions = append(result.Actions, duplicateActions...)
 }
 
 func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
@@ -841,6 +836,64 @@ func cleanupLegacyMarketFiles(configDir string) {
 	_ = os.Remove(filepath.Join(configDir, "market_probe_pool.json"))
 }
 
+func (a *App) auctionQueueIsPVF() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.auctionQueueSource == "pvf" && len(a.auctionQueue) > 0
+}
+
+func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) ([]restockRow, error) {
+	a.mu.Lock()
+	needsLoad := len(a.auctionQueue) == 0 || pvfReady && a.auctionQueueSource != "pvf"
+	a.mu.Unlock()
+	if needsLoad {
+		candidates, source, err := a.auctionQueueCandidates(pvfReady, catalog)
+		if err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		if len(a.auctionQueue) == 0 || source == "pvf" && a.auctionQueueSource != "pvf" {
+			a.auctionQueue = append([]restockRow(nil), candidates...)
+			a.auctionQueueSource = source
+		}
+		a.mu.Unlock()
+	}
+
+	a.mu.Lock()
+	queueLen := len(a.auctionQueue)
+	selected := make([]restockRow, 0)
+	planned := 0
+	for i := 0; i < queueLen; i++ {
+		row := a.auctionQueue[0]
+		a.auctionQueue = append(a.auctionQueue[1:], row)
+		if have[row.ItemID] > 0 {
+			continue
+		}
+		records := auctionTargetRecords(row)
+		if maxActions > 0 && planned > 0 && planned+records > maxActions {
+			continue
+		}
+		selected = append(selected, row)
+		planned += records
+		if maxActions > 0 && planned >= maxActions {
+			break
+		}
+	}
+	a.mu.Unlock()
+	return selected, nil
+}
+
+func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) ([]restockRow, string, error) {
+	if pvfReady {
+		return a.catalogAuctionRows(catalog), "pvf", nil
+	}
+	rows, err := a.fallbackAuctionRows()
+	if err != nil {
+		return nil, "", err
+	}
+	return rows, "fallback", nil
+}
+
 func (a *App) catalogAuctionRows(catalog map[uint32]catalogItem) []restockRow {
 	ids := make([]uint32, 0, len(catalog))
 	for id, item := range catalog {
@@ -866,6 +919,17 @@ func (a *App) catalogAuctionRows(catalog map[uint32]catalogItem) []restockRow {
 		}
 	}
 	return rows
+}
+
+func auctionTargetRecords(row restockRow) int {
+	stackSize := row.StackSize
+	if stackSize <= 0 {
+		stackSize = 1
+	}
+	if row.Kind == "equipment" {
+		stackSize = 1
+	}
+	return (row.Quantity + stackSize - 1) / stackSize
 }
 
 func (a *App) fallbackAuctionRows() ([]restockRow, error) {

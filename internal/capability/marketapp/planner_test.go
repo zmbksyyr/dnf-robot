@@ -97,7 +97,7 @@ func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 	}
 }
 
-func TestPlanAuctionCoversAllItemsBeforeDuplicates(t *testing.T) {
+func TestPlanAuctionKeepsMissingItemBatchTogether(t *testing.T) {
 	app := testApp()
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
@@ -112,8 +112,41 @@ func TestPlanAuctionCoversAllItemsBeforeDuplicates(t *testing.T) {
 	if len(result.Actions) != 6 {
 		t.Fatalf("actions = %d, want 6", len(result.Actions))
 	}
-	if result.Actions[0].ItemID != 10075 || result.Actions[1].ItemID != 100050020 {
-		t.Fatalf("first pass did not cover both items before duplicates: %#v", result.Actions[:3])
+	for i := 0; i < 3; i++ {
+		if result.Actions[i].ItemID != 10075 {
+			t.Fatalf("low item batch was split: %#v", result.Actions[:4])
+		}
+	}
+	for i := 3; i < 6; i++ {
+		if result.Actions[i].ItemID != 100050020 {
+			t.Fatalf("high item batch was split: %#v", result.Actions[2:])
+		}
+	}
+}
+
+func TestAuctionQueueSkipsStockedItemsAndRotates(t *testing.T) {
+	app := testApp()
+	app.cfg.Restock.EquipmentQtyMin = 2
+	app.cfg.Restock.EquipmentQtyMax = 2
+	catalog := map[uint32]catalogItem{
+		10075:     {ItemID: 10075, Kind: "equipment", Level: 40, Attach: "trade", Slot: "coat", Price: 100},
+		100050020: {ItemID: 100050020, Kind: "equipment", Level: 80, Attach: "trade", Slot: "coat", Price: 100},
+	}
+
+	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{100050020: 1}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ItemID != 10075 {
+		t.Fatalf("selected rows = %#v, want only missing low item", rows)
+	}
+
+	rows, err = app.nextAuctionQueueRows(true, catalog, map[uint32]int{10075: 1}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ItemID != 100050020 {
+		t.Fatalf("queue did not rotate stocked item to the back: %#v", rows)
 	}
 }
 
