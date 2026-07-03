@@ -36,7 +36,11 @@ jobs:
 
       - name: Build main program
         shell: pwsh
-        run: go build -trimpath -ldflags="-s -w" -o dist/robot.exe ./cmd/robot
+        run: |
+          $env:GOOS = "linux"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -trimpath -ldflags="-s -w" -o dist/robot-linux-amd64 ./cmd/robot
 
       - name: Generate deploy launcher manifest resource
         working-directory: tools/deploy-launcher
@@ -54,7 +58,7 @@ jobs:
         shell: pwsh
         run: |
           choco install upx -y --no-progress
-          upx --best --lzma dist/robot.exe dist/deploy-launcher.exe
+          upx --best --lzma dist/robot-linux-amd64 dist/deploy-launcher.exe
 
       - name: Delete previous latest release
         env:
@@ -80,5 +84,5 @@ jobs:
           gh release create $tag `
             --title "Latest Build" `
             --notes "Auto-built from main branch" `
-            dist/robot.exe `
+            dist/robot-linux-amd64 `
             dist/deploy-launcher.exe
