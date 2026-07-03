@@ -1,0 +1,61 @@
+package robot
+
+import "testing"
+
+func TestUIDs(t *testing.T) {
+	got := UIDs([]Info{{UID: 1}, {UID: 3}})
+	if len(got) != 2 || got[0] != 1 || got[1] != 3 {
+		t.Fatalf("uids got %#v want [1 3]", got)
+	}
+}
+
+func TestNewCommandResult(t *testing.T) {
+	got := NewCommandResult(2)
+	if got.Requested != 2 || len(got.Robots) != 0 || cap(got.Robots) != 2 {
+		t.Fatalf("command result got requested=%d len=%d cap=%d", got.Requested, len(got.Robots), cap(got.Robots))
+	}
+}
+
+func TestOperationSummaries(t *testing.T) {
+	cmd := CommandResult{Requested: 3, Accepted: 2, Confirmed: 1, Failed: 1}
+	if got := CommandOperationSummary(cmd, nil); got != "requested=3 accepted=2 confirmed=1 failed=1" {
+		t.Fatalf("command summary got %q", got)
+	}
+	cleanup := CleanupResult{Candidates: []CleanupCandidate{{UID: 1}, {UID: 2}}, Deleted: 1, Skipped: 1}
+	if got := CleanupOperationSummary(cleanup, nil); got != "candidates=2 deleted=1 skipped=1" {
+		t.Fatalf("cleanup summary got %q", got)
+	}
+}
+
+func TestCopyRuntimeStatusMap(t *testing.T) {
+	src := map[int]RuntimeStatus{1: {UID: 1, StateName: "running"}}
+	got := CopyRuntimeStatusMap(src)
+	got[1] = RuntimeStatus{UID: 1, StateName: "stop"}
+	if src[1].StateName != "running" {
+		t.Fatalf("source map was mutated")
+	}
+}
+
+func TestRequestScopes(t *testing.T) {
+	if got := CommandRequestScope(CommandRequest{UIDs: []int{1, 2}}); got != "uids=2" {
+		t.Fatalf("command scope got %q", got)
+	}
+	if got := CommandRequestScope(CommandRequest{Count: 3}); got != "count=3" {
+		t.Fatalf("command count scope got %q", got)
+	}
+	if got := CleanupRequestScope(CleanupRequest{UIDs: []int{1}, Force: true}); got != "uids=1 force=true" {
+		t.Fatalf("cleanup uid scope got %q", got)
+	}
+	if got := CleanupRequestScope(CleanupRequest{MinUID: 10, MaxUID: 20}); got != "range=10-20 force=false" {
+		t.Fatalf("cleanup range scope got %q", got)
+	}
+}
+
+func TestIsStructuralOperation(t *testing.T) {
+	if !IsStructuralOperation(" cleanup ") {
+		t.Fatalf("cleanup should be structural")
+	}
+	if IsStructuralOperation("online") {
+		t.Fatalf("online should not be structural")
+	}
+}

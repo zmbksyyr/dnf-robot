@@ -1,0 +1,152 @@
+package scheduler
+
+import (
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
+	lifecyclecap "robot/internal/capability/robotlifecycle"
+	"robot/internal/shared"
+	"time"
+)
+
+func (m *RobotManager) lifecycleCreator() lifecyclecap.Creator {
+	return lifecyclecap.Creator{Env: lifecycleCreateEnv{manager: m}}
+}
+
+type lifecycleCreateEnv struct {
+	manager *RobotManager
+}
+
+func (e lifecycleCreateEnv) AllocateRobotIDs(count, uidStart int) (lifecyclecap.RobotIDAllocation, error) {
+	return e.manager.schemaRepo().AllocateRobotIDs(count, uidStart)
+}
+
+func (e lifecycleCreateEnv) AvatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error {
+	return e.manager.avatarFromCatalog(cid, level, job, rc)
+}
+
+func (e lifecycleCreateEnv) ApplyConfiguredLocation(info *robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem) {
+	e.manager.applyConfiguredLocation(info, rc, maps)
+}
+
+func (e lifecycleCreateEnv) Config() robotconfig.RuntimeConfig {
+	return e.manager.loadRobotConfig()
+}
+
+func (e lifecycleCreateEnv) CopyTemplateDefaults(cid int) error {
+	return e.manager.schemaRepo().CopyTemplateDefaults(cid)
+}
+
+func (e lifecycleCreateEnv) CreateBaseCharacter(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
+	return e.manager.schemaRepo().CreateBaseCharacter(info, rc)
+}
+
+func (e lifecycleCreateEnv) EnsureAccount(uid int, innerIP string) error {
+	return e.manager.schemaRepo().EnsureAccount(uid, innerIP)
+}
+
+func (e lifecycleCreateEnv) EnsureStorePermission(uid, cid int) error {
+	return e.manager.storePreparer().EnsureStorePermission(uid, cid)
+}
+
+func (e lifecycleCreateEnv) EnsureWorldHornByCID(cid int) error {
+	return e.manager.storePreparer().EnsureWorldHornByCID(cid)
+}
+
+func (e lifecycleCreateEnv) EnsureSchema() error {
+	return e.manager.repo().EnsureSchema()
+}
+
+func (e lifecycleCreateEnv) EquipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error {
+	return e.manager.equipFromCatalog(cid, level, job, rc)
+}
+
+func (e lifecycleCreateEnv) LoadMapCatalog() []shared.MapCatalogItem {
+	return e.manager.loadMapCatalog()
+}
+
+func (e lifecycleCreateEnv) PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
+	return e.manager.storePreparer().PopulateInventory(info, rc)
+}
+
+func (e lifecycleCreateEnv) RebuildCharacView(uid int) error {
+	return e.manager.schemaRepo().RebuildCharacView(uid)
+}
+
+func (e lifecycleCreateEnv) RegisterRobot(info robotcap.Info) error {
+	return e.manager.schemaRepo().RegisterRobot(info)
+}
+
+func (e lifecycleCreateEnv) RandomFrom(vals []int) int {
+	return e.manager.randomFrom(vals)
+}
+
+func (e lifecycleCreateEnv) RandomMap(maps []shared.MapCatalogItem, level int) (shared.MapCatalogItem, bool) {
+	return e.manager.randomMap(maps, level)
+}
+
+func (e lifecycleCreateEnv) RandBetween(min, max int) int {
+	return e.manager.randBetween(min, max)
+}
+
+func (e lifecycleCreateEnv) RobotGamePort() int {
+	if e.manager.cfg == nil {
+		return 0
+	}
+	return e.manager.cfg.RobotGamePort
+}
+
+func (e lifecycleCreateEnv) RobotInnerIP() string {
+	if e.manager.cfg == nil {
+		return ""
+	}
+	return e.manager.cfg.RobotInnerIP
+}
+
+func (e lifecycleCreateEnv) RobotName(uid int, used map[string]struct{}, rc robotconfig.RuntimeConfig) string {
+	return e.manager.robotName(uid, used, rc)
+}
+
+func (e lifecycleCreateEnv) UpsertDummy(info robotcap.Info, innerIP string) error {
+	return e.manager.schemaRepo().UpsertDummy(info, innerIP)
+}
+
+func (m *RobotManager) lifecycleCleaner(req robotcap.CleanupRequest) lifecyclecap.Cleaner {
+	return lifecyclecap.Cleaner{Env: lifecycleCleanupEnv{manager: m, request: req}}
+}
+
+type lifecycleCleanupEnv struct {
+	manager *RobotManager
+	request robotcap.CleanupRequest
+}
+
+func (e lifecycleCleanupEnv) BatchDeleteRobotData(uids, cids []int) error {
+	return e.manager.schemaRepo().BatchDeleteRobotData(uids, cids)
+}
+
+func (e lifecycleCleanupEnv) CleanupCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, error) {
+	return e.manager.schemaRepo().CleanupCandidates(req)
+}
+
+func (e lifecycleCleanupEnv) EnsureSchema() error {
+	return e.manager.repo().EnsureSchema()
+}
+
+func (e lifecycleCleanupEnv) PrepareDelete(uids []int) func() {
+	e.manager.markCleanupPending(uids)
+	if registry := e.manager.currentActorRegistry(); registry != nil {
+		registry.StopUIDs(uids, true)
+	} else {
+		_, _ = e.manager.sessionService().Logout(robotcap.CommandRequest{UIDs: uids})
+	}
+	if !e.request.InternalConfirmedBroken {
+		time.Sleep(5 * time.Second)
+	}
+	e.manager.autoMu.Lock()
+	for _, uid := range uids {
+		delete(e.manager.autoStoreBusy, uid)
+	}
+	e.manager.autoMu.Unlock()
+	return func() {
+		e.manager.clearCleanupPending(uids)
+	}
+}

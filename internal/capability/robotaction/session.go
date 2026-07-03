@@ -1,0 +1,199 @@
+package robotaction
+
+import (
+	"fmt"
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
+	"robot/internal/foundation/mathx"
+	"time"
+)
+
+type SessionService struct {
+	Env SessionEnv
+}
+
+type SessionEnv interface {
+	CountRuntimeRunning() int
+	EnsureWorldHorn(uid int) error
+	RobotConnectIP() string
+	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
+	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
+	SendLogout(uid int) error
+	SendOnline(userinfos []map[string]interface{}) error
+}
+
+func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
+	env := s.Env
+	robots, err := env.SelectRobots(req)
+	if err != nil {
+		return robotcap.CommandResult{}, err
+	}
+	result := robotcap.NewCommandResult(len(robots))
+	if rc.SystemPacketRatePerSec > 0 {
+		minInterval := 1000 / rc.SystemPacketRatePerSec
+		if minInterval > 0 && rc.OnlineDispatchIntervalMS < minInterval {
+			rc.OnlineDispatchIntervalMS = minInterval
+		}
+	}
+	if !store {
+		if len(robots) > rc.MaxOnlinePerCommand {
+			return result, fmt.Errorf("requested %d robots exceeds max_online_per_command=%d", len(robots), rc.MaxOnlinePerCommand)
+		}
+		running := env.CountRuntimeRunning()
+		alreadyRunning := 0
+		status := env.RuntimeStatusMap()
+		for _, robot := range robots {
+			if st, ok := status[robot.UID]; ok && robotcap.ActiveRuntimeStatus(st) {
+				alreadyRunning++
+			}
+		}
+		newLogins := len(robots) - alreadyRunning
+		if running+newLogins > rc.MaxOnlineRobots {
+			return result, fmt.Errorf("online limit exceeded: running=%d new=%d max_online_robots=%d", running, newLogins, rc.MaxOnlineRobots)
+		}
+	}
+	if rc.OnlineDispatchIntervalMS <= 0 {
+		userinfos := make([]map[string]interface{}, 0, len(robots))
+		for _, robot := range robots {
+			if err := env.EnsureWorldHorn(robot.UID); err != nil {
+				result.Failed++
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+				continue
+			}
+			userinfos = append(userinfos, s.onlinePayload(robot, rc, store))
+			result.Accepted++
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted"})
+		}
+		if err := env.SendOnline(userinfos); err != nil {
+			result.Failed = result.Accepted
+			result.Accepted = 0
+			for i := range result.Robots {
+				result.Robots[i].State = "failed"
+				result.Robots[i].Message = err.Error()
+			}
+		}
+	} else {
+		for _, robot := range robots {
+			if err := env.EnsureWorldHorn(robot.UID); err != nil {
+				result.Failed++
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+				continue
+			}
+			if err := env.SendOnline([]map[string]interface{}{s.onlinePayload(robot, rc, store)}); err == nil {
+				result.Accepted++
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted"})
+			} else {
+				result.Failed++
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+			}
+			time.Sleep(time.Duration(rc.OnlineDispatchIntervalMS) * time.Millisecond)
+		}
+	}
+	if result.Accepted == 0 || !confirm {
+		return result, nil
+	}
+	s.confirmOnline(&result, time.Duration(rc.OnlineConfirmTimeoutMS)*time.Millisecond)
+	return result, nil
+}
+
+func (s SessionService) Logout(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	robots, err := s.Env.SelectRobots(req)
+	if err != nil {
+		return robotcap.CommandResult{}, err
+	}
+	result := robotcap.NewCommandResult(len(robots))
+	for _, robot := range robots {
+		if err := s.Env.SendLogout(robot.UID); err == nil {
+			result.Accepted++
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted"})
+		} else {
+			result.Failed++
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+	status := s.Env.RuntimeStatusMap()
+	for i := range result.Robots {
+		if _, ok := status[result.Robots[i].UID]; !ok {
+			result.Robots[i].OK = true
+			result.Robots[i].State = "closed"
+			result.Confirmed++
+		} else if result.Robots[i].State == "accepted" {
+			result.Robots[i].State = "pending"
+			result.Robots[i].Message = "runtime connection still exists"
+			result.Failed++
+		}
+	}
+	return result, nil
+}
+
+func (s SessionService) ConfirmAccepted(result *robotcap.CommandResult, timeout time.Duration) {
+	s.confirmOnline(result, timeout)
+}
+
+func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.RuntimeConfig, store bool) map[string]interface{} {
+	return map[string]interface{}{
+		"birtharea":  robot.Area,
+		"birthvill":  robot.Village,
+		"birthx":     robot.X,
+		"birthy":     robot.Y,
+		"cid":        0,
+		"delay":      rc.LoginDelayMS,
+		"discost":    0,
+		"disopen":    0,
+		"id":         0,
+		"ip":         s.Env.RobotConnectIP(),
+		"maxreconn":  rc.MaxReconnect,
+		"port":       robot.Port,
+		"redelay":    rc.ReconnectDelayMS,
+		"storeopen":  mathx.BoolToInt(store),
+		"storetitle": fmt.Sprintf("bot-%d-store", robot.UID),
+		"uid":        robot.UID,
+	}
+}
+
+func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout time.Duration) {
+	if result == nil || result.Accepted == 0 {
+		return
+	}
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		confirmed := 0
+		status := s.Env.RuntimeStatusMap()
+		for _, robot := range result.Robots {
+			if st, ok := status[robot.UID]; ok && robotcap.ActiveRuntimeStatus(st) {
+				confirmed++
+			}
+		}
+		if confirmed >= result.Accepted {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	status := s.Env.RuntimeStatusMap()
+	result.Confirmed = 0
+	result.Failed = 0
+	for i := range result.Robots {
+		if result.Robots[i].State != "accepted" {
+			if !result.Robots[i].OK {
+				result.Failed++
+			}
+			continue
+		}
+		if st, ok := status[result.Robots[i].UID]; ok && robotcap.ActiveRuntimeStatus(st) {
+			result.Robots[i].OK = true
+			result.Robots[i].State = st.StateName
+			if result.Robots[i].State == "" {
+				result.Robots[i].State = "running"
+			}
+			result.Confirmed++
+		} else {
+			result.Robots[i].State = "pending"
+			result.Robots[i].Message = "not confirmed running"
+			result.Failed++
+		}
+	}
+}

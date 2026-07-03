@@ -1,0 +1,252 @@
+package store
+
+import (
+	"encoding/binary"
+	"fmt"
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
+	"robot/internal/shared"
+	"strings"
+)
+
+type Preparer struct {
+	Env PreparationEnv
+}
+
+type PreparationEnv interface {
+	EnsureStorePermissionRecord(uid, cid int) (PermissionStatus, error)
+	LoadInventory(cid int) ([]byte, error)
+	Logf(format string, args ...interface{})
+	RandBetween(min, max int) int
+	RandShuffle(n int, swap func(i, j int))
+	ReplaceStoreStall(uid int, title string, items []StallItem) (StallResult, error)
+	RepairRobotExpBounds(uid, cid int) (ExpRepairResult, error)
+	RobotCID(uid int) (int, error)
+	SaveInventory(cid int, capacity int, raw []byte) error
+	SaveInventoryRaw(cid int, raw []byte) error
+	StackableCatalog() []shared.EquipmentCatalogItem
+}
+
+func (p Preparer) PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
+	env := p.Env
+	plan := InventoryPlanFor(rc.StoreInventoryStartBox)
+	items := p.selectItemsForPlan(info, rc, plan)
+	if len(items) == 0 {
+		return nil
+	}
+	invRaw, err := env.LoadInventory(info.CID)
+	if err != nil || len(invRaw) < 249*61 {
+		invRaw = make([]byte, 249*61)
+	}
+	for _, startBox := range InventoryClearStartBoxes(plan.StartBox) {
+		for slot := 0; slot < rc.StoreItemSlots && slot < 24; slot++ {
+			boxIndex := startBox + slot
+			for _, rawIndex := range []int{boxIndex, boxIndex + 1, boxIndex + 2, boxIndex + 3} {
+				if rawIndex >= 0 && rawIndex < 249 {
+					clear(invRaw[rawIndex*61 : (rawIndex+1)*61])
+				}
+			}
+		}
+	}
+	for slot, item := range items {
+		boxIndex := plan.StartBox + slot
+		rawIndex := boxIndex + 2
+		if rawIndex < 0 || rawIndex >= 249 {
+			continue
+		}
+		count := env.RandBetween(rc.StoreItemCountMin, rc.StoreItemCountMax)
+		if count <= 0 {
+			count = 1
+		}
+		WriteInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], item, count, InventoryTypeForStackable(item, InventoryTypeForBoxIndex(boxIndex)))
+	}
+	env.Logf("[StorePrepare] uid=%d cid=%d store_plan=%s selected_items=%d slots=%d start_box=%d capacity=%d\n",
+		info.UID, info.CID, plan.Name, len(items), rc.StoreItemSlots, plan.StartBox, rc.InventoryCapacity)
+	return env.SaveInventory(info.CID, rc.InventoryCapacity, invRaw)
+}
+
+func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
+	env := p.Env
+	if err := p.EnsureStorePermission(info.UID, info.CID); err != nil {
+		return err
+	}
+	if err := p.PopulateInventory(info, rc); err != nil {
+		return err
+	}
+	invRaw, err := env.LoadInventory(info.CID)
+	if err != nil || len(invRaw) < 249*61 {
+		return fmt.Errorf("inventory not found for cid=%d", info.CID)
+	}
+	var foundItems []int
+	var stallItems []StallItem
+	plan := InventoryPlanFor(rc.StoreInventoryStartBox)
+	for slot := 0; slot < rc.StoreItemSlots && slot < 24; slot++ {
+		boxIndex := plan.StartBox + slot
+		rawIndex := boxIndex + 2
+		if rawIndex < 0 || rawIndex >= 249 {
+			continue
+		}
+		slotData := invRaw[rawIndex*61 : (rawIndex+1)*61]
+		boxType := int(binary.BigEndian.Uint16(slotData[0:2]))
+		itemID := int(binary.LittleEndian.Uint32(slotData[2:6]))
+		count := int(binary.LittleEndian.Uint32(slotData[7:11]))
+		if boxType > 0 && itemID > 0 && count > 0 {
+			price := env.RandBetween(rc.StorePriceMin, rc.StorePriceMax)
+			if price <= 0 {
+				price = 100000
+			}
+			stallItems = append(stallItems, StallItem{ItemID: itemID, Count: count, Price: price})
+			foundItems = append(foundItems, itemID)
+		}
+	}
+	if len(foundItems) == 0 {
+		env.Logf("[StorePrepare] uid=%d cid=%d store_plan=%s inventory_found=0\n", info.UID, info.CID, plan.Name)
+		return nil
+	}
+	title := fmt.Sprintf("tw-%d", info.UID%100000)
+	stallResult, err := env.ReplaceStoreStall(info.UID, title, stallItems)
+	if err != nil {
+		return err
+	}
+	env.Logf("[StorePrepare] uid=%d cid=%d store_plan=%s inventory_found=%d items=%v stall_rows=%d cfg_rows=%d title=%s\n",
+		info.UID, info.CID, plan.Name, len(foundItems), foundItems, stallResult.StallRows, stallResult.ConfigRows, title)
+	return nil
+}
+
+func (p Preparer) EnsureStorePermission(uid, cid int) error {
+	env := p.Env
+	result, err := env.RepairRobotExpBounds(uid, cid)
+	if err != nil {
+		return err
+	}
+	if result.Changed > 0 {
+		env.Logf("[StorePrepare] uid=%d cid=%d repaired_exp_bounds ref_rows=%d rows=%d\n", uid, cid, result.RefRows, result.Changed)
+	}
+	status, err := env.EnsureStorePermissionRecord(uid, cid)
+	if err != nil {
+		return err
+	}
+	env.Logf("[StorePrepare] uid=%d cid=%d permission premium=%d miles=%d prod_user=%d pu_user=%d event_entry=%d\n",
+		uid, cid, status.Premium, status.Miles, status.ProdUser, status.PUUser, status.EventEntry)
+	return nil
+}
+
+func (p Preparer) EnsureWorldHorn(uid int) error {
+	cid, err := p.Env.RobotCID(uid)
+	if err != nil {
+		return fmt.Errorf("world horn robot uid=%d not registered: %w", uid, err)
+	}
+	return p.EnsureWorldHornByCID(cid)
+}
+
+func (p Preparer) EnsureWorldHornByCID(cid int) error {
+	invRaw, err := p.Env.LoadInventory(cid)
+	if err != nil {
+		return fmt.Errorf("world horn inventory cid=%d: %w", cid, err)
+	}
+	if len(invRaw) < 249*61 {
+		return fmt.Errorf("world horn inventory blob is too short")
+	}
+	slot := invRaw[WorldHornRawIndex*61 : (WorldHornRawIndex+1)*61]
+	itemID := int(binary.LittleEndian.Uint32(slot[2:6]))
+	count := int(binary.LittleEndian.Uint32(slot[7:11]))
+	if int(binary.BigEndian.Uint16(slot[0:2])) == InventoryTypeForBoxIndex(WorldHornBoxIndex) && itemID == WorldHornItemID && count > 0 {
+		return nil
+	}
+	WriteInventoryStack(slot, shared.EquipmentCatalogItem{ID: WorldHornItemID}, WorldHornCount, InventoryTypeForBoxIndex(WorldHornBoxIndex))
+	if err := p.Env.SaveInventoryRaw(cid, invRaw); err != nil {
+		return fmt.Errorf("update world horn inventory cid=%d: %w", cid, err)
+	}
+	return nil
+}
+
+func (p Preparer) SelectItems(info robotcap.Info, rc robotconfig.RuntimeConfig) []shared.EquipmentCatalogItem {
+	return p.selectItemsForPlan(info, rc, InventoryPlanFor(rc.StoreInventoryStartBox))
+}
+
+func (p Preparer) selectItemsForPlan(info robotcap.Info, rc robotconfig.RuntimeConfig, plan InventoryPlan) []shared.EquipmentCatalogItem {
+	catalog := p.Env.StackableCatalog()
+	count := rc.StoreItemSlots
+	if count <= 0 {
+		count = 6
+	}
+	if count > 24 {
+		count = 24
+	}
+	var candidates []shared.EquipmentCatalogItem
+	var basicCandidates []shared.EquipmentCatalogItem
+	var fallback []shared.EquipmentCatalogItem
+	wantSlot := "material"
+	if InventoryTypeForBoxIndex(plan.StartBox) == 2 {
+		wantSlot = "waste"
+	}
+	for _, item := range catalog {
+		if item.ID <= 0 || item.Expire {
+			continue
+		}
+		if len(rc.StoreItemAllowIDs) > 0 && !intInSlice(rc.StoreItemAllowIDs, item.ID) {
+			continue
+		}
+		if intInSlice(rc.StoreItemDenyIDs, item.ID) {
+			continue
+		}
+		if item.NoTrade || item.NeedMaterial || item.BadName {
+			continue
+		}
+		if item.CanTrade != nil && !*item.CanTrade {
+			continue
+		}
+		if item.Level > 0 && item.Level > info.Level {
+			continue
+		}
+		if item.StackLimit == 1 {
+			continue
+		}
+		if !strings.EqualFold(item.Slot, wantSlot) {
+			continue
+		}
+		if wantSlot == "material" {
+			icon := strings.ToLower(item.Icon)
+			if item.FieldImage == "" || !strings.Contains(icon, "material.img") {
+				continue
+			}
+		}
+		if item.Trade || AttachPreferred(item.Attach) {
+			candidates = append(candidates, item)
+			if item.BasicMaterial {
+				basicCandidates = append(basicCandidates, item)
+			}
+			continue
+		}
+		if AttachAllowed(item.Attach) {
+			fallback = append(fallback, item)
+		}
+	}
+	if len(candidates) == 0 {
+		candidates = fallback
+	}
+	if len(basicCandidates) > 0 {
+		candidates = basicCandidates
+	}
+	if len(candidates) == 0 {
+		for _, id := range rc.StoreItemAllowIDs {
+			if id > 0 && !intInSlice(rc.StoreItemDenyIDs, id) {
+				candidates = append(candidates, shared.EquipmentCatalogItem{ID: id, Slot: wantSlot, Trade: true, StackLimit: 1000})
+			}
+		}
+	}
+	p.Env.RandShuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
+	if len(candidates) > count {
+		candidates = candidates[:count]
+	}
+	return candidates
+}
+
+func intInSlice(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}

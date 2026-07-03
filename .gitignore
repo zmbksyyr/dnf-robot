@@ -1,0 +1,16 @@
+# Go build/test artifacts
+*.exe
+*.test
+*.out
+coverage.out
+
+# Local runtime/config artifacts
+/config/
+logs/
+*.log
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

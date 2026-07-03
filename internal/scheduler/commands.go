@@ -1,0 +1,268 @@
+package scheduler
+
+import (
+	"fmt"
+	actormodel "robot/internal/actor"
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
+	"time"
+)
+
+func (m *RobotManager) OnlineManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	registry, robots, rc, early, err := m.prepareUserActorCommand(req, "online", true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
+	}
+	result := robotcap.NewCommandResult(len(robots))
+	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
+	for _, robot := range robots {
+		if !registry.HasUID(robot.UID) {
+			if !registry.AttachUID(robot.UID, 10*time.Second) {
+				result.Failed++
+				result.Robots = append(result.Robots, actorFullResult(robot, "online"))
+				continue
+			}
+		}
+		item, ok := registry.Command(robot.UID, actormodel.CommandOnline, timeout)
+		item.CID = robot.CID
+		if ok && (item.OK || item.State == "accepted" || item.State == "running") {
+			result.Accepted++
+			result.Robots = append(result.Robots, robotActionResult(robot, false, "accepted", ""))
+		} else {
+			result.Failed++
+			result.Robots = append(result.Robots, failedActorResult(robot, item, "online actor command failed"))
+		}
+	}
+	m.waitManagedConfirm(&result, time.Duration(rc.OnlineConfirmTimeoutMS)*time.Millisecond)
+	return result, nil
+}
+
+func (m *RobotManager) MoveManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	return m.actorCommandManaged(req, actormodel.CommandMove, "move")
+}
+
+func (m *RobotManager) ShoutManaged(req robotcap.CommandRequest, world bool) (robotcap.CommandResult, error) {
+	if world {
+		return m.actorCommandManaged(req, actormodel.CommandShoutWorld, "shout_world")
+	}
+	cmd := actormodel.CommandShoutLocal
+	name := "shout_local"
+	return m.actorCommandManaged(req, cmd, name)
+}
+
+func (m *RobotManager) ShoutBothManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	registry, robots, _, early, err := m.prepareUserActorCommand(req, "shout", true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
+	}
+	result := robotcap.NewCommandResult(len(robots))
+	timeout := time.Duration(m.loadRobotConfig().SystemManualActionTimeoutSec) * time.Second
+	for _, robot := range robots {
+		local, localOK := registry.Command(robot.UID, actormodel.CommandShoutLocal, timeout)
+		world, worldOK := registry.Command(robot.UID, actormodel.CommandShoutWorld, timeout)
+		if localOK && worldOK && local.OK && world.OK {
+			result.Accepted++
+			result.Confirmed++
+			result.Robots = append(result.Robots, robotActionResult(robot, true, "sent", ""))
+		} else {
+			result.Failed++
+			msg := "actor command failed"
+			if !localOK || !local.OK {
+				msg = local.Message
+				if msg == "" {
+					msg = local.State
+				}
+			} else if !worldOK || !world.OK {
+				msg = world.Message
+				if msg == "" {
+					msg = world.State
+				}
+			}
+			result.Robots = append(result.Robots, robotActionResult(robot, false, "failed", msg))
+		}
+	}
+	return result, nil
+}
+
+func (m *RobotManager) StoreManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	return m.actorCommandManaged(req, actormodel.CommandStore, "store")
+}
+
+func (m *RobotManager) LogoutManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	registry, robots, rc, early, err := m.prepareUserActorCommand(req, "logout", true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
+	}
+	result := robotcap.NewCommandResult(len(robots))
+	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
+	for _, robot := range robots {
+		item, ok := registry.LogoutUID(robot.UID, timeout)
+		item.CID = robot.CID
+		if ok && item.OK {
+			result.Accepted++
+			result.Confirmed++
+			result.Robots = append(result.Robots, item)
+		} else {
+			result.Failed++
+			result.Robots = append(result.Robots, failedActorResult(robot, item, "logout actor command failed"))
+		}
+	}
+	return result, nil
+}
+
+func (m *RobotManager) actorCommandManaged(req robotcap.CommandRequest, cmd actormodel.Command, action string) (robotcap.CommandResult, error) {
+	registry, robots, rc, early, err := m.prepareUserActorCommand(req, action, true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
+	}
+	result := robotcap.NewCommandResult(len(robots))
+	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
+	for _, robot := range robots {
+		item, ok := registry.Command(robot.UID, cmd, timeout)
+		item.CID = robot.CID
+		if ok && item.OK {
+			result.Accepted++
+			result.Confirmed++
+			result.Robots = append(result.Robots, item)
+		} else {
+			result.Failed++
+			result.Robots = append(result.Robots, failedActorResult(robot, item, fmt.Sprintf("%s actor command failed", action)))
+		}
+	}
+	return result, nil
+}
+
+func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, action string, attachInManual bool) (actorRegistry, []robotcap.Info, robotconfig.RuntimeConfig, *robotcap.CommandResult, error) {
+	registry := m.currentActorRegistry()
+	if registry == nil {
+		return nil, nil, robotconfig.RuntimeConfig{}, nil, errActorRegistryUnavailable
+	}
+	robots, err := m.repo().SelectRobots(req)
+	if err != nil {
+		return nil, nil, robotconfig.RuntimeConfig{}, nil, err
+	}
+	rc := m.loadRobotConfig()
+	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+		return nil, nil, rc, rejectedCommandResult(robots, "scheduler_busy", reason), nil
+	}
+	missing := make([]robotcap.Info, 0)
+	for _, robot := range robots {
+		if !registry.HasUID(robot.UID) {
+			missing = append(missing, robot)
+		}
+	}
+	if len(missing) == 0 {
+		return registry, robots, rc, nil, nil
+	}
+	if !attachInManual || m.autoActionsEnabled(rc) {
+		return nil, nil, rc, rejectedCommandResult(robots, "uid_not_attached", fmt.Sprintf("%s requires actor attachment", action)), nil
+	}
+	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+		return nil, nil, rc, rejectedCommandResult(robots, "scheduler_busy", reason), nil
+	}
+	end := m.beginActorContainerOp("manual_attach")
+	defer end()
+	target := len(registry.actorSnapshots()) + len(missing)
+	registry.EnsureActorSlots(rc, target)
+	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
+	out := robotcap.NewCommandResult(len(robots))
+	for _, robot := range missing {
+		if registry.AttachUID(robot.UID, timeout) {
+			continue
+		}
+		out.Failed++
+		out.Robots = append(out.Robots, actorFullResult(robot, action))
+	}
+	if out.Failed > 0 {
+		for _, robot := range robots {
+			if registry.HasUID(robot.UID) {
+				out.Accepted++
+				out.Robots = append(out.Robots, robotActionResult(robot, true, "attached", ""))
+			}
+		}
+		return nil, nil, rc, &out, nil
+	}
+	return registry, robots, rc, nil, nil
+}
+
+func (m *RobotManager) userActorCommandBusy(registry actorRegistry, rc robotconfig.RuntimeConfig) (bool, string) {
+	if op, _, active := m.structuralOperation(); active {
+		return true, "structural_op=" + op
+	}
+	if op, _, active := m.actorContainerOperation(); active {
+		return true, "actor_container=" + op
+	}
+	snapshots := registry.actorSnapshots()
+	manual := !m.autoActionsEnabled(rc)
+	target := robotconfig.TargetCapacity(rc)
+	actors := len(snapshots)
+	idle := 0
+	for _, snap := range snapshots {
+		if snap.UID <= 0 {
+			idle++
+		}
+		switch snap.State {
+		case actormodel.StateAssigned, actormodel.StateOnline, actormodel.StateReleasing:
+			return true, "actor_state=" + string(snap.State)
+		}
+	}
+	if !manual {
+		if actors < target {
+			return true, fmt.Sprintf("auto_filling actors=%d target=%d", actors, target)
+		}
+		if idle > 0 {
+			return true, fmt.Sprintf("auto_loading idle=%d", idle)
+		}
+	}
+	return false, ""
+}
+
+func rejectedCommandResult(robots []robotcap.Info, state, message string) *robotcap.CommandResult {
+	out := robotcap.NewCommandResult(len(robots))
+	out.Failed = len(robots)
+	for _, robot := range robots {
+		out.Robots = append(out.Robots, robotActionResult(robot, false, state, message))
+	}
+	return &out
+}
+
+func resultOrZero(result *robotcap.CommandResult) robotcap.CommandResult {
+	if result == nil {
+		return robotcap.CommandResult{}
+	}
+	return *result
+}
+
+func robotActionResult(robot robotcap.Info, ok bool, state, message string) robotcap.ActionResult {
+	return robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: ok, State: state, Message: message}
+}
+
+func failedActorResult(robot robotcap.Info, item robotcap.ActionResult, fallbackMessage string) robotcap.ActionResult {
+	if item.UID == 0 {
+		item.UID = robot.UID
+	}
+	if item.CID == 0 {
+		item.CID = robot.CID
+	}
+	if item.State == "" {
+		item.State = "failed"
+	}
+	if item.Message == "" {
+		item.Message = fallbackMessage
+	}
+	return item
+}
+
+func actorFullResult(robot robotcap.Info, action string) robotcap.ActionResult {
+	return robotcap.ActionResult{
+		UID:     robot.UID,
+		CID:     robot.CID,
+		OK:      false,
+		State:   "actor_full",
+		Message: fmt.Sprintf("%s requires an empty actor slot", action),
+	}
+}
+
+func (m *RobotManager) waitManagedConfirm(result *robotcap.CommandResult, timeout time.Duration) {
+	m.sessionService().ConfirmAccepted(result, timeout)
+}
