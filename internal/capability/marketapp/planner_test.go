@@ -3,6 +3,8 @@ package marketapp
 import (
 	"encoding/json"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -145,6 +147,47 @@ func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 	}
 	if rows[1].ItemID != 31056 || rows[1].Quantity < 2 || rows[1].Quantity > 5 || rows[1].StackSize != 1 {
 		t.Fatalf("unexpected equipment row: %#v", rows[1])
+	}
+}
+
+func TestLoadCatalogDoesNotPromoteItemInfoOnlyIDs(t *testing.T) {
+	dir := t.TempDir()
+	app := testApp()
+	app.configDir = dir
+	app.cfg.CeraItemInfoPath = filepath.Join(dir, "iteminfo.dat")
+	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{
+		{"id": 4000, "price": 7, "stack_limit": 1000},
+	})
+	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
+		{"id": 31056, "price": 100, "attach": "trade", "slot": "weapon"},
+	})
+	if err := os.WriteFile(app.cfg.CeraItemInfoPath, []byte("999999 1 1 1 `iteminfo only` `name2` 13006\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog, err := app.loadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := catalog[999999]; ok {
+		t.Fatalf("iteminfo-only id was promoted into auction catalog: %#v", catalog[999999])
+	}
+	if _, ok := catalog[4000]; !ok {
+		t.Fatal("stackable PVF id missing")
+	}
+	if _, ok := catalog[31056]; !ok {
+		t.Fatal("equipment PVF id missing")
+	}
+}
+
+func mustWriteJSON(t *testing.T, path string, value interface{}) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 

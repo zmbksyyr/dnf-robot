@@ -239,7 +239,13 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 	}
 	if market == "" || market == "cera" || market == "gold" {
 		ceraRows := a.cfg.Cera.Items
-		a.planCera(ceraRows, catalog, haveCera, occ, &result)
+		ceraCatalog := catalog
+		if itemInfoCatalog, itemInfoErr := a.loadItemInfoCatalog(a.cfg.CeraItemInfoPath); itemInfoErr == nil {
+			ceraCatalog = itemInfoCatalog
+		} else if !pvfReady {
+			ceraCatalog = nil
+		}
+		a.planCera(ceraRows, ceraCatalog, haveCera, occ, &result)
 	}
 	sort.Slice(result.Actions, func(i, j int) bool {
 		if result.Actions[i].Market == result.Actions[j].Market {
@@ -405,7 +411,6 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 		}
 		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
 	}
-	a.overlayItemInfoDAT(out, a.cfg.CeraItemInfoPath)
 	return out, nil
 }
 
@@ -421,10 +426,11 @@ func readPVFItems(path string) ([]pvfItem, error) {
 	return items, nil
 }
 
-func (a *App) overlayItemInfoDAT(items map[uint32]catalogItem, path string) {
+func (a *App) loadItemInfoCatalog(path string) (map[uint32]catalogItem, error) {
+	items := map[uint32]catalogItem{}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return
+		return nil, err
 	}
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
@@ -437,10 +443,12 @@ func (a *App) overlayItemInfoDAT(items map[uint32]catalogItem, path string) {
 			continue
 		}
 		id := uint32(id64)
-		if _, ok := items[id]; !ok {
-			items[id] = catalogItem{ItemID: id, Kind: "stackable"}
-		}
+		items[id] = catalogItem{ItemID: id, Kind: "stackable"}
 	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("iteminfo catalog is empty: %s", path)
+	}
+	return items, nil
 }
 
 // ---- config.go ----
