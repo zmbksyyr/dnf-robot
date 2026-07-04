@@ -221,17 +221,6 @@ func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) string 
 		}
 		res, err := app.InstallAuctionSearchGuard(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
-	case "marketPatchAuctionMemory":
-		app, err := requireMarketApp()
-		if err != nil {
-			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
-		}
-		var req marketapp.AuctionMemoryPatchRequest
-		if err := decodePayload(pkt, &req); err != nil {
-			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
-		}
-		res, err := app.PatchAuctionMemory(req)
-		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "autoStart":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SetAutoEnabled(true)})
 	case "autoStop":

@@ -26,7 +26,7 @@ type pvfManifest struct {
 	Runtime interface{} `json:"runtime,omitempty"`
 }
 
-const pvfExportVersion = 17
+const pvfExportVersion = 19
 
 const pvfItemInfoExportName = "pvf_iteminfo.dat"
 
@@ -250,8 +250,12 @@ func parsePVFItemInfoRows(text string) map[int][]string {
 func generatedItemInfoFields(item shared.EquipmentCatalogItem, stackable bool) []string {
 	fields := []string{strconv.Itoa(item.ID), strconv.Itoa(nonNegativeInt(item.Rarity))}
 	fields = append(fields, generatedItemInfoJobFlags(item, stackable)...)
+	level := nonNegativeInt(item.Level)
+	if level > 70 {
+		level = 70
+	}
 	fields = append(fields,
-		strconv.Itoa(nonNegativeInt(item.Level)),
+		strconv.Itoa(level),
 		generatedItemInfoName(item.Name, "item_"+strconv.Itoa(item.ID)),
 		generatedItemInfoName(item.Name2, "name2_"+strconv.Itoa(item.ID)),
 		strconv.Itoa(generatedItemInfoCategory(item, stackable)),
@@ -263,17 +267,6 @@ func generatedItemInfoJobFlags(item shared.EquipmentCatalogItem, stackable bool)
 	flags := make([]string, 11)
 	for i := range flags {
 		flags[i] = "1"
-	}
-	if stackable || len(item.UseJob) == 0 {
-		return flags
-	}
-	for i := range flags {
-		flags[i] = "0"
-	}
-	for _, job := range item.UseJob {
-		if job >= 0 && job < len(flags) {
-			flags[job] = "1"
-		}
 	}
 	return flags
 }

@@ -126,6 +126,10 @@ func TestPlanAuctionKeepsMissingItemBatchTogether(t *testing.T) {
 
 func TestAuctionQueueSkipsStockedItemsAndRotates(t *testing.T) {
 	app := testApp()
+	dir := t.TempDir()
+	app.configDir = dir
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	mustWriteText(t, app.cfg.ItemInfoTargets[0], "10075 0 1 1 1 1 1 1 1 1 1 1 1 40 `a` `a` 11001\r\n30075 0 1 1 1 1 1 1 1 1 1 1 1 70 `b` `b` 11001\r\n")
 	app.cfg.Restock.EquipmentQtyMin = 2
 	app.cfg.Restock.EquipmentQtyMax = 2
 	catalog := map[uint32]catalogItem{
@@ -147,6 +151,26 @@ func TestAuctionQueueSkipsStockedItemsAndRotates(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ItemID != 30075 {
 		t.Fatalf("queue did not rotate stocked item to the back: %#v", rows)
+	}
+}
+
+func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
+	app := testApp()
+	dir := t.TempDir()
+	app.configDir = dir
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	mustWriteText(t, app.cfg.ItemInfoTargets[0], "10075 0 1 1 1 1 1 1 1 1 1 1 1 40 `known` `known` 11001\r\n")
+	catalog := map[uint32]catalogItem{
+		10075:     {ItemID: 10075, Kind: "equipment", Level: 40, Attach: "trade", Slot: "coat", Price: 100},
+		100050020: {ItemID: 100050020, Kind: "equipment", Level: 80, Attach: "trade", Slot: "coat", Price: 100},
+	}
+
+	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ItemID != 10075 {
+		t.Fatalf("selected rows = %#v, want only current iteminfo intersection", rows)
 	}
 }
 
@@ -193,17 +217,17 @@ func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 		31057:     {ItemID: 31057, Kind: "blocked", Price: 100},
 	}
 	rows := app.catalogAuctionRows(catalog)
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want 2", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
 	}
-	if rows[0].ItemID != 31056 {
+	if rows[0].ItemID != 100050020 || rows[1].ItemID != 31056 {
 		t.Fatalf("equipment rows are not level-desc first: %#v", rows)
 	}
-	if rows[1].ItemID != 4000 || rows[1].Quantity != 500 || rows[1].StackSize != 500 {
+	if rows[2].ItemID != 4000 || rows[2].Quantity != 500 || rows[2].StackSize != 500 {
 		t.Fatalf("unexpected stackable row: %#v", rows[0])
 	}
-	if rows[0].Quantity < 2 || rows[0].Quantity > 5 || rows[0].StackSize != 1 {
-		t.Fatalf("unexpected equipment row: %#v", rows[0])
+	if rows[1].Quantity < 2 || rows[1].Quantity > 5 || rows[1].StackSize != 1 {
+		t.Fatalf("unexpected equipment row: %#v", rows[1])
 	}
 }
 
@@ -237,6 +261,13 @@ func mustWriteJSON(t *testing.T, path string, value interface{}) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustWriteText(t *testing.T, path, value string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(value), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -275,12 +306,12 @@ func TestKnownZeroSuccessEquipmentFilter(t *testing.T) {
 	}
 }
 
-func TestRiskyPVFItemFiltersAuctionUnsupportedHighLevelEquipment(t *testing.T) {
+func TestRiskyPVFItemAllowsHighLevelEquipmentWhenItemInfoCapsLevel(t *testing.T) {
 	if isRiskyPVFItem(catalogItem{Kind: "equipment", Level: 70, Attach: "sealing", Slot: "weapon"}) {
 		t.Fatal("level 70 equipment should be allowed")
 	}
-	if !isRiskyPVFItem(catalogItem{Kind: "equipment", Level: 71, Attach: "sealing", Slot: "weapon"}) {
-		t.Fatal("level 71+ equipment should be filtered")
+	if isRiskyPVFItem(catalogItem{Kind: "equipment", Level: 85, Attach: "sealing", Slot: "weapon"}) {
+		t.Fatal("level 85 equipment should be allowed after iteminfo level capping")
 	}
 	if isRiskyPVFItem(catalogItem{Kind: "stackable", Level: 99, Slot: "material"}) {
 		t.Fatal("stackable level should not use equipment level filter")

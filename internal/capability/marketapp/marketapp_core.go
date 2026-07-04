@@ -38,7 +38,6 @@ type App struct {
 
 	auctionQueue       []uint32
 	auctionQueueSource string
-	auctionPatchPID    int
 }
 
 type Planner interface {
@@ -129,7 +128,6 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		app.dbInit = tables
 		app.appendLog(LogEvent{Type: "db_init", Status: "success", Message: strings.Join(tables, ",")})
 	}
-	app.patchAuctionMemoryIfRunning("init")
 	return app, nil
 }
 
@@ -459,7 +457,7 @@ func DefaultConfig() Config {
 			"/home/dxf/auction/iteminfo.dat",
 			"/home/dxf/point/iteminfo.dat",
 		},
-		AutoSyncItemInfo: true,
+		AutoSyncItemInfo: false,
 		SystemOwner: SystemOwner{
 			IDBase:      90000001,
 			BuyerBase:   90100001,
@@ -538,7 +536,6 @@ func (c *Config) applyDefaults() {
 	d := DefaultConfig()
 	autoUnset := !c.Auto.Enabled && len(c.Auto.Markets) == 0 && c.Auto.InitialDelayMS == 0 && c.Auto.IntervalMS == 0 && c.Auto.MaxActions == 0 && c.Auto.MaxConcurrent == 0 && !c.Auto.ContinueOnError
 	collectorUnset := !c.Collector.Enabled && c.Collector.MaxActions == 0 && c.Collector.MaxConcurrent == 0 && c.Collector.MaxResultActions == 0 && c.Collector.PerItemDelayMS == 0 && !c.Collector.IncludeSystemOwners
-	itemInfoUnset := !c.AutoSyncItemInfo && c.ItemInfoSourcePath == "" && len(c.ItemInfoTargets) == 0
 	if c.ListenAddr == "" {
 		c.ListenAddr = d.ListenAddr
 	}
@@ -568,9 +565,6 @@ func (c *Config) applyDefaults() {
 	}
 	if len(c.ItemInfoTargets) == 0 {
 		c.ItemInfoTargets = d.ItemInfoTargets
-	}
-	if itemInfoUnset {
-		c.AutoSyncItemInfo = d.AutoSyncItemInfo
 	}
 	if c.SystemOwner.IDBase == 0 {
 		c.SystemOwner.IDBase = d.SystemOwner.IDBase
@@ -785,27 +779,6 @@ type AuctionSearchGuardResult struct {
 	Installed bool   `json:"installed"`
 	Changed   bool   `json:"changed"`
 	Message   string `json:"message,omitempty"`
-}
-
-type AuctionMemoryPatchRequest struct{}
-
-type AuctionMemoryPatchResult struct {
-	PID     int                       `json:"pid"`
-	Target  string                    `json:"target"`
-	Patched int                       `json:"patched"`
-	Entries []AuctionMemoryPatchEntry `json:"entries"`
-}
-
-type AuctionMemoryPatchEntry struct {
-	Name    string `json:"name"`
-	Address string `json:"address"`
-	Before  byte   `json:"before"`
-	After   byte   `json:"after"`
-	Expect  byte   `json:"expect"`
-	Value   byte   `json:"value"`
-	Changed bool   `json:"changed"`
-	OK      bool   `json:"ok"`
-	Message string `json:"message,omitempty"`
 }
 
 type ConfigUpdateRequest struct {

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"robot/internal/capability/pvf"
+	"strconv"
+	"strings"
 )
 
 // ---- iteminfo.go ----
@@ -70,8 +72,48 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	status := a.syncItemInfoDAT()
 	a.mu.Lock()
 	a.itemInfo = status
+	a.auctionQueue = nil
+	a.auctionQueueSource = ""
 	a.mu.Unlock()
 	return status
+}
+
+func (a *App) currentItemInfoIDs() (map[uint32]bool, string, error) {
+	for _, target := range a.cfg.ItemInfoTargets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		ids, err := readItemInfoIDs(target)
+		if err != nil {
+			continue
+		}
+		return ids, target, nil
+	}
+	return nil, "", fmt.Errorf("no readable iteminfo target")
+}
+
+func readItemInfoIDs(path string) (map[uint32]bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[uint32]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		id, err := strconv.ParseUint(fields[0], 10, 32)
+		if err != nil || id == 0 {
+			continue
+		}
+		ids[uint32(id)] = true
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("iteminfo target has no ids: %s", path)
+	}
+	return ids, nil
 }
 
 func (a *App) resolveConfigPath(path string) string {

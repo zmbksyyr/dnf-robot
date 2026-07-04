@@ -305,9 +305,6 @@ func marketServiceName(market string) string {
 
 func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) bool {
 	if tcpReady(addr, 500*time.Millisecond) {
-		if name == "auction" {
-			a.patchAuctionMemoryIfRunning("service_ready")
-		}
 		return true
 	}
 	if err := prepareMarketServiceDir(dir); err != nil {
@@ -327,9 +324,6 @@ func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) bo
 	for time.Now().Before(deadline) {
 		if tcpReady(addr, 500*time.Millisecond) {
 			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "ready", Message: addr})
-			if name == "auction" {
-				a.patchAuctionMemoryIfRunning("service_started")
-			}
 			return true
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -868,9 +862,6 @@ func isRiskyPVFItem(item catalogItem) bool {
 	if isKnownZeroSuccessEquipment(item) {
 		return true
 	}
-	if item.Kind == "equipment" && item.Level > 70 {
-		return true
-	}
 	switch item.ItemType {
 	case 2, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30:
 		return true
@@ -961,7 +952,14 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 
 func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) ([]uint32, string, error) {
 	if pvfReady {
-		return catalogAuctionIDs(catalog), "pvf", nil
+		itemInfoIDs, path, err := a.currentItemInfoIDs()
+		if err != nil {
+			a.appendLog(LogEvent{Type: "iteminfo_gate", Status: "blocked", Message: err.Error()})
+			return nil, "pvf_iteminfo_missing", nil
+		}
+		ids := catalogAuctionIDs(catalog, itemInfoIDs)
+		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: "active", Message: fmt.Sprintf("source=%s allowed=%d", path, len(ids))})
+		return ids, "pvf_iteminfo", nil
 	}
 	rows, err := a.fallbackAuctionRows()
 	if err != nil {
@@ -997,7 +995,7 @@ func (a *App) auctionRowForID(pvfReady bool, catalog map[uint32]catalogItem, id 
 }
 
 func (a *App) catalogAuctionRows(catalog map[uint32]catalogItem) []restockRow {
-	ids := catalogAuctionIDs(catalog)
+	ids := catalogAuctionIDs(catalog, nil)
 	rows := make([]restockRow, 0, len(ids))
 	for _, id := range ids {
 		if row, ok := a.catalogAuctionRow(catalog[id]); ok {
@@ -1007,9 +1005,12 @@ func (a *App) catalogAuctionRows(catalog map[uint32]catalogItem) []restockRow {
 	return rows
 }
 
-func catalogAuctionIDs(catalog map[uint32]catalogItem) []uint32 {
+func catalogAuctionIDs(catalog map[uint32]catalogItem, allowed map[uint32]bool) []uint32 {
 	ids := make([]uint32, 0, len(catalog))
 	for id, item := range catalog {
+		if allowed != nil && !allowed[id] {
+			continue
+		}
 		if marketCandidate(item) {
 			ids = append(ids, id)
 		}
