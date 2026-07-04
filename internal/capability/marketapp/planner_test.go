@@ -216,6 +216,11 @@ func TestLoadCatalogUsesPVFJSONOnly(t *testing.T) {
 	})
 	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
 		{"id": 31056, "price": 100, "attach": "trade", "slot": "weapon"},
+		{"id": 3100060, "price": 100, "attach": "trade", "slot": "amulet"},
+	})
+	mustWriteJSON(t, filepath.Join(dir, "pvf_iteminfo_catalog.json"), []map[string]interface{}{
+		{"id": 4000, "category": 13002},
+		{"id": 31056, "category": 10302},
 	})
 
 	catalog, err := app.loadCatalog()
@@ -227,6 +232,9 @@ func TestLoadCatalogUsesPVFJSONOnly(t *testing.T) {
 	}
 	if _, ok := catalog[31056]; !ok {
 		t.Fatal("equipment PVF id missing")
+	}
+	if _, ok := catalog[3100060]; ok {
+		t.Fatal("PVF id missing from iteminfo catalog was promoted")
 	}
 }
 

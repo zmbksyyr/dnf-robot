@@ -431,6 +431,13 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 		}
 		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
 	}
+	if itemInfoCatalog, err := a.loadItemInfoJSONCatalog(); err == nil {
+		for id := range out {
+			if _, ok := itemInfoCatalog[id]; !ok {
+				delete(out, id)
+			}
+		}
+	}
 	return out, nil
 }
 
