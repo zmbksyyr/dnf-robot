@@ -71,7 +71,16 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 		return status
 	}
 	a.cfg.ItemInfoSourcePath = sourcePath
-	status := a.syncItemInfoDAT()
+	status := a.itemInfoStatus()
+	if err := a.prepareItemInfoRelease(); err != nil {
+		status.Error = err.Error()
+		a.appendLog(LogEvent{Type: "iteminfo_prepare", Status: "failed", Message: status.Error})
+		a.mu.Lock()
+		a.itemInfo = status
+		a.mu.Unlock()
+		return status
+	}
+	status = a.syncItemInfoDAT()
 	a.mu.Lock()
 	a.itemInfo = status
 	a.auctionQueue = nil
@@ -79,6 +88,94 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	a.auctionQueueSource = ""
 	a.mu.Unlock()
 	return status
+}
+
+func (a *App) prepareItemInfoRelease() error {
+	wasAutoRunning := a.AutoRunning()
+	if wasAutoRunning {
+		a.StopAuto()
+		defer a.StartAuto()
+	}
+	a.jobMu.Lock()
+	defer a.jobMu.Unlock()
+	if err := a.clearSystemMarketStockBeforeItemInfo("auction", a.cfg.AuctionDB, "127.0.0.1:30803", "./df_auction_r"); err != nil {
+		return err
+	}
+	if err := a.clearSystemMarketStockBeforeItemInfo("cera", a.cfg.CeraDB, "127.0.0.1:30603", "./df_point_r"); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.auctionQueue = nil
+	a.auctionRejected = nil
+	a.auctionQueueSource = ""
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *App) clearSystemMarketStockBeforeItemInfo(market, dbName, addr, bin string) error {
+	count, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
+	if err != nil {
+		return fmt.Errorf("%s count system stock: %w", market, err)
+	}
+	if count <= 0 {
+		a.appendLog(LogEvent{Type: "iteminfo_prepare", Market: market, Status: "empty", Message: "system stock already empty"})
+		return nil
+	}
+	if tcpReady(addr, 500*time.Millisecond) && marketServicePID(bin) > 0 {
+		if err := a.collectSystemMarketStock(market, dbName, count); err != nil {
+			return err
+		}
+	} else {
+		deleted, err := a.repository.DeleteSystemStock(dbName, a.cfg.SystemOwner.IDBase)
+		if err != nil {
+			return fmt.Errorf("%s delete system stock: %w", market, err)
+		}
+		a.appendLog(LogEvent{Type: "iteminfo_prepare", Market: market, Status: "db_deleted", Message: fmt.Sprintf("rows=%d", deleted)})
+	}
+	return a.waitSystemStockEmpty(market, dbName, 30*time.Second)
+}
+
+func (a *App) collectSystemMarketStock(market, dbName string, expected int) error {
+	rows, err := a.repository.LoadSystemCollectRows(dbName, market, a.cfg.SystemOwner.IDBase)
+	if err != nil {
+		return fmt.Errorf("%s load system collect rows: %w", market, err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	result := PlanResult{GeneratedAt: time.Now()}
+	a.appendCollectActions(rows, &result)
+	jobID := fmt.Sprintf("iteminfo-collect-%s-%d", market, time.Now().UnixNano())
+	a.appendLog(LogEvent{Type: "iteminfo_prepare", JobID: jobID, Market: market, Status: "collect_start", Message: fmt.Sprintf("rows=%d expected=%d", len(rows), expected)})
+	failed, _, firstErr := a.executeActions(jobID, result.Actions, a.cfg.Collector.MaxConcurrent, true, &JobSummary{ID: jobID})
+	if firstErr != nil {
+		return fmt.Errorf("%s collect system stock failed=%d: %w", market, failed, firstErr)
+	}
+	if failed > 0 {
+		return fmt.Errorf("%s collect system stock failed actions=%d", market, failed)
+	}
+	a.appendLog(LogEvent{Type: "iteminfo_prepare", JobID: jobID, Market: market, Status: "collect_sent", Message: fmt.Sprintf("rows=%d", len(rows))})
+	return nil
+}
+
+func (a *App) waitSystemStockEmpty(market, dbName string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var last int
+	for {
+		count, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
+		if err != nil {
+			return fmt.Errorf("%s count system stock: %w", market, err)
+		}
+		last = count
+		if count == 0 {
+			a.appendLog(LogEvent{Type: "iteminfo_prepare", Market: market, Status: "clean", Message: "system stock empty"})
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s system stock not empty after cleanup: rows=%d", market, last)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func (a *App) currentItemInfoIDs() (map[uint32]bool, string, error) {

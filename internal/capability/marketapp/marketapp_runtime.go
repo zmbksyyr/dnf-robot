@@ -551,6 +551,14 @@ func (r SQLRepository) LoadCollectRows(dbName, market string, systemOwnerBase ui
 	if includeSystemOwners {
 		ownerClause = "owner_id >= 0 AND ? >= 0"
 	}
+	return r.loadCollectRowsWhere(dbName, market, ownerClause, systemOwnerBase)
+}
+
+func (r SQLRepository) LoadSystemCollectRows(dbName, market string, systemOwnerBase uint32) ([]collectRow, error) {
+	return r.loadCollectRowsWhere(dbName, market, "owner_id >= ?", systemOwnerBase)
+}
+
+func (r SQLRepository) loadCollectRowsWhere(dbName, market, ownerClause string, systemOwnerBase uint32) ([]collectRow, error) {
 	extraClause := ""
 	if market == "cera" {
 		extraClause = " AND price = -1 AND instant_price > 0"
@@ -584,7 +592,7 @@ func (r SQLRepository) LoadCollectRows(dbName, market string, systemOwnerBase ui
 		if instant.Valid {
 			row.InstantPrice = int32(instant.Int64)
 		}
-		if row.AuctionID == 0 || row.OwnerID >= systemOwnerBase && !includeSystemOwners {
+		if row.AuctionID == 0 {
 			continue
 		}
 		if row.InstantPrice <= 0 {
@@ -596,6 +604,30 @@ func (r SQLRepository) LoadCollectRows(dbName, market string, systemOwnerBase ui
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+func (r SQLRepository) CountSystemStock(dbName string, systemOwnerBase uint32) (int, error) {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s.`auction_main` WHERE owner_id >= ?", quoteIdent(dbName))
+	var count int
+	if err := r.db.QueryRow(query, systemOwnerBase).Scan(&count); err != nil {
+		if isMissingTable(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return count, nil
+}
+
+func (r SQLRepository) DeleteSystemStock(dbName string, systemOwnerBase uint32) (int64, error) {
+	query := fmt.Sprintf("DELETE FROM %s.`auction_main` WHERE owner_id >= ?", quoteIdent(dbName))
+	res, err := r.db.Exec(query, systemOwnerBase)
+	if err != nil {
+		if isMissingTable(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (a *App) appendCollectActions(rows []collectRow, result *PlanResult) {
