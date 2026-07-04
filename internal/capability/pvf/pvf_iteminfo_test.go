@@ -1,6 +1,7 @@
 package pvf
 
 import (
+	"robot/internal/shared"
 	"strings"
 	"testing"
 )
@@ -40,4 +41,37 @@ func TestParsePVFItemInfoCatalog(t *testing.T) {
 	if got[1].ID != 2675336 || got[1].Category != 13002 || got[1].Name != "100萬金幣" {
 		t.Fatalf("unexpected gold item: %#v", got[1])
 	}
+}
+
+func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) {
+	raw := "2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `100萬金幣` `100萬金幣` 13002\r\n"
+	got := formatExtendedPVFItemInfoDAT(raw, []shared.EquipmentCatalogItem{
+		{ID: 3100060, Level: 90, Rarity: 4, ItemType: 8, Slot: "amulet", Path: "equipment/ancient/halin/3100060.equ"},
+		{ID: 35500001, Level: 90, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 3, Path: "equipment/character/fighter/weapon/boxglove/35500001.equ", UseJob: []int{1, 7}},
+		{ID: 100050203, Level: 85, Rarity: 4, ItemType: 3, Slot: "coat", Path: "equipment/character/common/jacket/cloth/100050203.equ"},
+	}, []shared.EquipmentCatalogItem{
+		{ID: 5057, Level: 1, Rarity: 1, Slot: "recipe", Path: "stackable/recipe/rcp_cloth_piece2.stk"},
+	})
+	lines := strings.Split(strings.TrimSpace(got), "\r\n")
+	if len(lines) != 5 {
+		t.Fatalf("lines = %d, want 5: %q", len(lines), got)
+	}
+	assertLineContains(t, lines, "2675336 ", "13002")
+	assertLineContains(t, lines, "3100060 ", "12001")
+	assertLineContains(t, lines, "35500001 ", "10205")
+	assertLineContains(t, lines, "100050203 ", "11002")
+	assertLineContains(t, lines, "5057 ", "31305")
+}
+
+func assertLineContains(t *testing.T, lines []string, prefix, want string) {
+	t.Helper()
+	for _, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			if !strings.HasSuffix(line, " "+want) {
+				t.Fatalf("line %q does not end with category %s", line, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing line prefix %q in %#v", prefix, lines)
 }

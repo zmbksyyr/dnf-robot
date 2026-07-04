@@ -26,7 +26,7 @@ type pvfManifest struct {
 	Runtime interface{} `json:"runtime,omitempty"`
 }
 
-const pvfExportVersion = 14
+const pvfExportVersion = 15
 
 const pvfItemInfoExportName = "pvf_iteminfo.dat"
 const pvfItemInfoCatalogExportName = "pvf_iteminfo_catalog.json"
@@ -74,7 +74,7 @@ func EnsureExports(dfGameR, configDir string) error {
 	if err := WriteJSON(filepath.Join(configDir, "pvf_map_catalog.json"), maps); err != nil {
 		return err
 	}
-	if err := writePVFItemInfoExports(configDir, archive); err != nil {
+	if err := writePVFItemInfoExports(configDir, archive, equipment, stackable); err != nil {
 		return err
 	}
 	return WriteJSON(manifestPath, manifest)
@@ -130,11 +130,11 @@ func removeObsoletePVFExports(configDir string) {
 	}
 }
 
-func writePVFItemInfoExports(configDir string, archive *pvfArchive) error {
+func writePVFItemInfoExports(configDir string, archive *pvfArchive, equipment, stackable []shared.EquipmentCatalogItem) error {
 	if archive == nil {
 		return nil
 	}
-	text := formatPVFItemInfoDAT(archive.text("etc/iteminfo.dat"))
+	text := formatExtendedPVFItemInfoDAT(archive.text("etc/iteminfo.dat"), equipment, stackable)
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -155,7 +155,8 @@ func ExportPVFItemInfoDAT(pvfPath, configDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := writePVFItemInfoExports(configDir, archive); err != nil {
+	equipment, stackable, _ := extractPVFData(archive)
+	if err := writePVFItemInfoExports(configDir, archive, equipment, stackable); err != nil {
 		return "", err
 	}
 	return filepath.Join(configDir, pvfItemInfoExportName), nil
@@ -184,6 +185,276 @@ func formatPVFItemInfoDAT(text string) string {
 		return text
 	}
 	return strings.Join(rows, "\r\n") + "\r\n"
+}
+
+func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.EquipmentCatalogItem) string {
+	raw := parsePVFItemInfoRows(formatPVFItemInfoDAT(rawText))
+	type row struct {
+		id   int
+		text string
+	}
+	rows := make([]row, 0, len(raw)+len(equipment)+len(stackable))
+	seen := make(map[int]bool, len(raw)+len(equipment)+len(stackable))
+	for id, fields := range raw {
+		rows = append(rows, row{id: id, text: strings.Join(fields, " ")})
+		seen[id] = true
+	}
+	for _, item := range equipment {
+		if item.ID <= 0 || seen[item.ID] {
+			continue
+		}
+		rows = append(rows, row{id: item.ID, text: strings.Join(generatedItemInfoFields(item, false), " ")})
+		seen[item.ID] = true
+	}
+	for _, item := range stackable {
+		if item.ID <= 0 || seen[item.ID] {
+			continue
+		}
+		rows = append(rows, row{id: item.ID, text: strings.Join(generatedItemInfoFields(item, true), " ")})
+		seen[item.ID] = true
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].id < rows[j].id })
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.text)
+	}
+	return strings.Join(out, "\r\n") + "\r\n"
+}
+
+func parsePVFItemInfoRows(text string) map[int][]string {
+	tokens := tokenizePVFItemInfo(text)
+	rows := make(map[int][]string, len(tokens)/17)
+	for i := 0; i+16 < len(tokens); {
+		if tokens[i] == "#PVF_File" {
+			i++
+			continue
+		}
+		id, err := strconv.Atoi(tokens[i])
+		if err != nil {
+			i++
+			continue
+		}
+		if _, err := strconv.Atoi(tokens[i+16]); err != nil {
+			i++
+			continue
+		}
+		fields := append([]string(nil), tokens[i:i+17]...)
+		rows[id] = fields
+		i += 17
+	}
+	return rows
+}
+
+func generatedItemInfoFields(item shared.EquipmentCatalogItem, stackable bool) []string {
+	fields := []string{strconv.Itoa(item.ID), strconv.Itoa(nonNegativeInt(item.Rarity))}
+	fields = append(fields, generatedItemInfoJobFlags(item, stackable)...)
+	fields = append(fields,
+		strconv.Itoa(nonNegativeInt(item.Level)),
+		generatedItemInfoName(item.Name, "item_"+strconv.Itoa(item.ID)),
+		generatedItemInfoName(item.Name2, "name2_"+strconv.Itoa(item.ID)),
+		strconv.Itoa(generatedItemInfoCategory(item, stackable)),
+	)
+	return fields
+}
+
+func generatedItemInfoJobFlags(item shared.EquipmentCatalogItem, stackable bool) []string {
+	flags := make([]string, 11)
+	for i := range flags {
+		flags[i] = "1"
+	}
+	if stackable || len(item.UseJob) == 0 {
+		return flags
+	}
+	for i := range flags {
+		flags[i] = "0"
+	}
+	for _, job := range item.UseJob {
+		if job >= 0 && job < len(flags) {
+			flags[job] = "1"
+		}
+	}
+	return flags
+}
+
+func generatedItemInfoName(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "ErrorString") {
+		value = fallback
+	}
+	value = strings.ReplaceAll(value, "`", "'")
+	return "`" + value + "`"
+}
+
+func generatedItemInfoCategory(item shared.EquipmentCatalogItem, stackable bool) int {
+	if stackable {
+		return generatedStackableItemInfoCategory(item)
+	}
+	return generatedEquipmentItemInfoCategory(item)
+}
+
+func generatedEquipmentItemInfoCategory(item shared.EquipmentCatalogItem) int {
+	path := normalizePVFPath(item.Path)
+	parts := strings.Split(path, "/")
+	slot := strings.ToLower(item.Slot)
+	if slot == "weapon" {
+		return 10000 + equipmentCharacterCategoryCode(parts)*100 + nonNegativeInt(item.SubType) + 2
+	}
+	if armorClass := armorCategoryClass(parts); armorClass >= 0 {
+		if suffix := armorCategorySuffix(slot, armorClass); suffix > 0 {
+			if armorClass == 0 {
+				return 11000 + suffix
+			}
+			return 11000 + armorClass*100 + suffix
+		}
+	}
+	switch slot {
+	case "amulet":
+		return 12001
+	case "ring":
+		return 12002
+	case "wrist":
+		return 12003
+	case "titlename", "title", "title name":
+		return 12004
+	case "creature":
+		return 14001
+	case "support":
+		return 32001
+	case "magic stone":
+		return 32100
+	}
+	if strings.Contains(slot, "avatar") {
+		return generatedAvatarCategory(parts, slot)
+	}
+	return 11000 + nonNegativeInt(item.ItemType)
+}
+
+func generatedStackableItemInfoCategory(item shared.EquipmentCatalogItem) int {
+	path := normalizePVFPath(item.Path)
+	slot := strings.ToLower(item.Slot)
+	switch {
+	case strings.HasPrefix(path, "stackable/cash/"):
+		return 13001
+	case strings.HasPrefix(path, "stackable/recipe/") || strings.Contains(slot, "recipe"):
+		return 31305
+	case strings.HasPrefix(path, "stackable/monstercard/") || strings.Contains(slot, "material expert job"):
+		return 33004
+	case strings.HasPrefix(path, "stackable/professional/bead/") || strings.Contains(slot, "enchant waste"):
+		return 33003
+	case strings.HasPrefix(path, "stackable/material/") || strings.Contains(slot, "material"):
+		return 13002
+	default:
+		return 13006
+	}
+}
+
+func equipmentCharacterCategoryCode(parts []string) int {
+	for i, part := range parts {
+		if part == "character" || part == "character21" {
+			if i+1 >= len(parts) {
+				break
+			}
+			switch parts[i+1] {
+			case "swordman":
+				return 1
+			case "fighter":
+				return 2
+			case "gunner":
+				return 3
+			case "mage":
+				return 4
+			case "priest":
+				return 5
+			case "thief":
+				return 6
+			}
+		}
+	}
+	return 0
+}
+
+func armorCategoryClass(parts []string) int {
+	for _, part := range parts {
+		switch part {
+		case "cloth":
+			return 0
+		case "leather":
+			return 1
+		case "larmor":
+			return 2
+		case "harmor":
+			return 3
+		case "plate":
+			return 4
+		}
+	}
+	return -1
+}
+
+func armorCategorySuffix(slot string, armorClass int) int {
+	switch slot {
+	case "coat":
+		if armorClass == 0 {
+			return 2
+		}
+		return 1
+	case "shoulder":
+		if armorClass == 0 {
+			return 3
+		}
+		return 2
+	case "pants":
+		if armorClass == 0 {
+			return 4
+		}
+		return 3
+	case "shoes":
+		if armorClass == 0 {
+			return 5
+		}
+		return 4
+	case "waist":
+		if armorClass == 0 {
+			return 6
+		}
+		return 5
+	default:
+		return 0
+	}
+}
+
+func generatedAvatarCategory(parts []string, slot string) int {
+	charCode := equipmentCharacterCategoryCode(parts)
+	if charCode <= 0 {
+		charCode = 1
+	}
+	slotSuffix := map[string]int{
+		"hatavatar":    2,
+		"hairavatar":   3,
+		"faceavatar":   4,
+		"coatavatar":   5,
+		"pantsavatar":  6,
+		"shoesavatar":  7,
+		"breastavatar": 8,
+		"waistavatar":  9,
+		"skinavatar":   10,
+	}[slot]
+	if slotSuffix == 0 {
+		slotSuffix = 1
+	}
+	for _, part := range parts {
+		if part == "at_avatar" {
+			return 15000 + slotSuffix
+		}
+	}
+	return 23000 + charCode*100 + slotSuffix
+}
+
+func nonNegativeInt(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 func tokenizePVFItemInfo(text string) []string {
