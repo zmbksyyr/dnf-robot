@@ -269,6 +269,9 @@ func (a *App) ensureMarketServices(markets []string) {
 
 func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) {
 	if tcpReady(addr, 500*time.Millisecond) {
+		if name == "auction" {
+			a.patchAuctionMemoryIfRunning("service_ready")
+		}
 		return
 	}
 	cmd := exec.Command(bin, args...)
@@ -285,6 +288,9 @@ func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) {
 	for time.Now().Before(deadline) {
 		if tcpReady(addr, 500*time.Millisecond) {
 			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "ready", Message: addr})
+			if name == "auction" {
+				a.patchAuctionMemoryIfRunning("service_started")
+			}
 			return
 		}
 		time.Sleep(500 * time.Millisecond)

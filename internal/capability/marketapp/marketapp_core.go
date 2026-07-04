@@ -38,6 +38,7 @@ type App struct {
 
 	auctionQueue       []restockRow
 	auctionQueueSource string
+	auctionPatchPID    int
 }
 
 type Planner interface {
@@ -127,6 +128,7 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		app.dbInit = tables
 		app.appendLog(LogEvent{Type: "db_init", Status: "success", Message: strings.Join(tables, ",")})
 	}
+	app.patchAuctionMemoryIfRunning("init")
 	return app, nil
 }
 
@@ -806,11 +808,6 @@ type CollectRequest struct {
 	MaxActions      int    `json:"max_actions,omitempty"`
 	MaxConcurrent   int    `json:"max_concurrent,omitempty"`
 	ContinueOnError bool   `json:"continue_on_error,omitempty"`
-}
-
-type PVFUpgradeSeparateRequest struct {
-	Path   string `json:"path,omitempty"`
-	Target int    `json:"target,omitempty"`
 }
 
 type AuctionSearchGuardRequest struct {

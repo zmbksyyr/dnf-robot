@@ -29,6 +29,41 @@ func (a *App) PatchAuctionMemory(AuctionMemoryPatchRequest) (AuctionMemoryPatchR
 	if err != nil {
 		return AuctionMemoryPatchResult{}, err
 	}
+	return a.patchAuctionMemoryPID(pid)
+}
+
+func (a *App) patchAuctionMemoryIfRunning(source string) {
+	pid, err := pidOfAuction()
+	if err != nil {
+		a.appendLog(LogEvent{Type: "auction_memory_patch", Status: "skipped", Message: fmt.Sprintf("%s: %v", source, err)})
+		return
+	}
+	a.mu.Lock()
+	if a.auctionPatchPID == pid {
+		a.mu.Unlock()
+		return
+	}
+	a.mu.Unlock()
+	result, err := a.patchAuctionMemoryPID(pid)
+	if err != nil {
+		a.appendLog(LogEvent{Type: "auction_memory_patch", Status: "failed", Message: fmt.Sprintf("%s pid=%d: %v", source, pid, err)})
+		return
+	}
+	allOK := len(result.Entries) == len(auctionMemoryPatchSpecs)
+	for _, entry := range result.Entries {
+		if !entry.OK {
+			allOK = false
+			break
+		}
+	}
+	if allOK {
+		a.mu.Lock()
+		a.auctionPatchPID = pid
+		a.mu.Unlock()
+	}
+}
+
+func (a *App) patchAuctionMemoryPID(pid int) (AuctionMemoryPatchResult, error) {
 	result := AuctionMemoryPatchResult{
 		PID:    pid,
 		Target: fmt.Sprintf("/proc/%d/mem", pid),

@@ -210,28 +210,6 @@ func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) string 
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
 		return wrapResult(map[string]interface{}{"ok": true, "result": app.SyncItemInfoDAT()})
-	case "marketPVFUpgradeSeparateStatus":
-		app, err := requireMarketApp()
-		if err != nil {
-			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
-		}
-		var req marketapp.PVFUpgradeSeparateRequest
-		if err := decodePayload(pkt, &req); err != nil {
-			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
-		}
-		res, err := app.PVFUpgradeSeparateStatus(req)
-		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
-	case "marketPVFPatchUpgradeSeparate":
-		app, err := requireMarketApp()
-		if err != nil {
-			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
-		}
-		var req marketapp.PVFUpgradeSeparateRequest
-		if err := decodePayload(pkt, &req); err != nil {
-			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
-		}
-		res, err := app.PVFPatchUpgradeSeparate(req)
-		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "marketInstallAuctionGuard":
 		app, err := requireMarketApp()
 		if err != nil {
