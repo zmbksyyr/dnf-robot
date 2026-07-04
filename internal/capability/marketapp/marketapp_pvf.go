@@ -81,6 +81,12 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 		return status
 	}
 	status = a.syncItemInfoDAT()
+	if status.Error == "" {
+		if err := a.restartMarketServicesAfterItemInfo(); err != nil {
+			status.Error = err.Error()
+			a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "failed", Message: status.Error})
+		}
+	}
 	a.mu.Lock()
 	a.itemInfo = status
 	a.auctionQueue = nil
@@ -88,6 +94,21 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	a.auctionQueueSource = ""
 	a.mu.Unlock()
 	return status
+}
+
+func (a *App) ClearSystemMarketStock() (ClearSystemStockResult, error) {
+	wasAutoRunning := a.AutoRunning()
+	if wasAutoRunning {
+		a.StopAuto()
+		defer a.StartAuto()
+	}
+	a.jobMu.Lock()
+	defer a.jobMu.Unlock()
+	result, err := a.clearSystemMarketStockLocked("market_clear")
+	if err == nil {
+		a.resetAuctionQueues()
+	}
+	return result, err
 }
 
 func (a *App) prepareItemInfoRelease() error {
@@ -98,67 +119,76 @@ func (a *App) prepareItemInfoRelease() error {
 	}
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
-	if err := a.clearSystemMarketStockBeforeItemInfo("auction", a.cfg.AuctionDB, "127.0.0.1:30803", "./df_auction_r"); err != nil {
+	if _, err := a.clearSystemMarketStockLocked("iteminfo_prepare"); err != nil {
 		return err
 	}
-	if err := a.clearSystemMarketStockBeforeItemInfo("cera", a.cfg.CeraDB, "127.0.0.1:30603", "./df_point_r"); err != nil {
-		return err
-	}
+	a.resetAuctionQueues()
+	return nil
+}
+
+func (a *App) resetAuctionQueues() {
 	a.mu.Lock()
 	a.auctionQueue = nil
 	a.auctionRejected = nil
 	a.auctionQueueSource = ""
 	a.mu.Unlock()
-	return nil
 }
 
-func (a *App) clearSystemMarketStockBeforeItemInfo(market, dbName, addr, bin string) error {
+func (a *App) clearSystemMarketStockLocked(logType string) (ClearSystemStockResult, error) {
+	result := ClearSystemStockResult{}
+	markets := []struct {
+		name string
+		db   string
+	}{
+		{name: "auction", db: a.cfg.AuctionDB},
+		{name: "cera", db: a.cfg.CeraDB},
+	}
+	for _, market := range markets {
+		item, err := a.deleteSystemMarketStock(logType, market.name, market.db)
+		result.Markets = append(result.Markets, item)
+		result.Deleted += item.Deleted
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+func (a *App) deleteSystemMarketStock(logType, market, dbName string) (ClearSystemMarketResult, error) {
+	result := ClearSystemMarketResult{Market: market, DBName: dbName}
 	count, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
 	if err != nil {
-		return fmt.Errorf("%s count system stock: %w", market, err)
+		result.Status = "count_failed"
+		return result, fmt.Errorf("%s count system stock: %w", market, err)
 	}
+	result.Before = count
 	if count <= 0 {
-		a.appendLog(LogEvent{Type: "iteminfo_prepare", Market: market, Status: "empty", Message: "system stock already empty"})
-		return nil
+		result.Status = "empty"
+		a.appendLog(LogEvent{Type: logType, Market: market, Status: result.Status, Message: "system stock already empty"})
+		return result, nil
 	}
-	if tcpReady(addr, 500*time.Millisecond) && marketServicePID(bin) > 0 {
-		if err := a.collectSystemMarketStock(market, dbName, count); err != nil {
-			return err
-		}
-	} else {
-		deleted, err := a.repository.DeleteSystemStock(dbName, a.cfg.SystemOwner.IDBase)
-		if err != nil {
-			return fmt.Errorf("%s delete system stock: %w", market, err)
-		}
-		a.appendLog(LogEvent{Type: "iteminfo_prepare", Market: market, Status: "db_deleted", Message: fmt.Sprintf("rows=%d", deleted)})
-	}
-	return a.waitSystemStockEmpty(market, dbName, 30*time.Second)
-}
-
-func (a *App) collectSystemMarketStock(market, dbName string, expected int) error {
-	rows, err := a.repository.LoadSystemCollectRows(dbName, market, a.cfg.SystemOwner.IDBase)
+	deleted, err := a.repository.DeleteSystemStock(dbName, a.cfg.SystemOwner.IDBase)
 	if err != nil {
-		return fmt.Errorf("%s load system collect rows: %w", market, err)
+		result.Status = "delete_failed"
+		return result, fmt.Errorf("%s delete system stock: %w", market, err)
 	}
-	if len(rows) == 0 {
-		return nil
+	result.Deleted = deleted
+	a.appendLog(LogEvent{Type: logType, Market: market, Status: "db_deleted", Message: fmt.Sprintf("rows=%d", deleted)})
+	if err := a.waitSystemStockEmpty(logType, market, dbName, 30*time.Second); err != nil {
+		result.Status = "wait_failed"
+		return result, err
 	}
-	result := PlanResult{GeneratedAt: time.Now()}
-	a.appendCollectActions(rows, &result)
-	jobID := fmt.Sprintf("iteminfo-collect-%s-%d", market, time.Now().UnixNano())
-	a.appendLog(LogEvent{Type: "iteminfo_prepare", JobID: jobID, Market: market, Status: "collect_start", Message: fmt.Sprintf("rows=%d expected=%d", len(rows), expected)})
-	failed, _, firstErr := a.executeActions(jobID, result.Actions, a.cfg.Collector.MaxConcurrent, true, &JobSummary{ID: jobID})
-	if firstErr != nil {
-		return fmt.Errorf("%s collect system stock failed=%d: %w", market, failed, firstErr)
+	after, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
+	if err != nil {
+		result.Status = "count_after_failed"
+		return result, fmt.Errorf("%s count system stock after delete: %w", market, err)
 	}
-	if failed > 0 {
-		return fmt.Errorf("%s collect system stock failed actions=%d", market, failed)
-	}
-	a.appendLog(LogEvent{Type: "iteminfo_prepare", JobID: jobID, Market: market, Status: "collect_sent", Message: fmt.Sprintf("rows=%d", len(rows))})
-	return nil
+	result.After = after
+	result.Status = "db_deleted"
+	return result, nil
 }
 
-func (a *App) waitSystemStockEmpty(market, dbName string, timeout time.Duration) error {
+func (a *App) waitSystemStockEmpty(logType, market, dbName string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var last int
 	for {
@@ -168,7 +198,7 @@ func (a *App) waitSystemStockEmpty(market, dbName string, timeout time.Duration)
 		}
 		last = count
 		if count == 0 {
-			a.appendLog(LogEvent{Type: "iteminfo_prepare", Market: market, Status: "clean", Message: "system stock empty"})
+			a.appendLog(LogEvent{Type: logType, Market: market, Status: "clean", Message: "system stock empty"})
 			return nil
 		}
 		if time.Now().After(deadline) {

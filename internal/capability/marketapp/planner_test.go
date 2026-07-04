@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testApp() *App {
@@ -23,6 +24,33 @@ func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	}
 	if strings.Contains(string(data), "unknown_per_cycle") {
 		t.Fatalf("restock config still exposes unknown_per_cycle: %s", data)
+	}
+}
+
+func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
+	repo := &clearStockRepository{counts: map[string]int{
+		DefaultConfig().AuctionDB: 3,
+		DefaultConfig().CeraDB:    2,
+	}}
+	app := testApp()
+	app.repository = repo
+	app.configDir = t.TempDir()
+	app.auctionQueue = []uint32{1001}
+	app.auctionRejected = []uint32{1002}
+	app.auctionQueueSource = "pvf"
+
+	result, err := app.ClearSystemMarketStock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 5 {
+		t.Fatalf("deleted = %d, want 5", result.Deleted)
+	}
+	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionQueueSource != "" {
+		t.Fatalf("queues not reset: queue=%v rejected=%v source=%q", app.auctionQueue, app.auctionRejected, app.auctionQueueSource)
+	}
+	if repo.collectCalls != 0 {
+		t.Fatalf("system stock clear used collect path, calls=%d", repo.collectCalls)
 	}
 }
 
@@ -397,3 +425,37 @@ func TestRiskyPVFItemAllowsHighLevelEquipmentWhenItemInfoCapsLevel(t *testing.T)
 		t.Fatal("stackable level should not use equipment level filter")
 	}
 }
+
+type clearStockRepository struct {
+	counts       map[string]int
+	collectCalls int
+}
+
+func (r *clearStockRepository) EnsureMarketTables([]string, time.Time) ([]string, error) {
+	return nil, nil
+}
+
+func (r *clearStockRepository) LoadCollectRows(string, string, uint32, bool) ([]collectRow, error) {
+	return nil, nil
+}
+
+func (r *clearStockRepository) LoadSystemCollectRows(string, string, uint32) ([]collectRow, error) {
+	r.collectCalls++
+	return nil, nil
+}
+
+func (r *clearStockRepository) LoadMarketStock(string, uint32, map[uint32]int) (map[uint32]int, error) {
+	return nil, nil
+}
+
+func (r *clearStockRepository) CountSystemStock(dbName string, _ uint32) (int, error) {
+	return r.counts[dbName], nil
+}
+
+func (r *clearStockRepository) DeleteSystemStock(dbName string, _ uint32) (int64, error) {
+	count := r.counts[dbName]
+	r.counts[dbName] = 0
+	return int64(count), nil
+}
+
+var _ Repository = (*clearStockRepository)(nil)

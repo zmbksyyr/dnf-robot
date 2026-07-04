@@ -209,7 +209,15 @@ func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) string 
 		if err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
-		return wrapResult(map[string]interface{}{"ok": true, "result": app.SyncItemInfoDAT()})
+		res := app.SyncItemInfoDAT()
+		return wrapResult(map[string]interface{}{"ok": res.Error == "", "error": res.Error, "result": res})
+	case "marketClearSystemStock":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+		}
+		res, err := app.ClearSystemMarketStock()
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "marketInstallAuctionGuard":
 		app, err := requireMarketApp()
 		if err != nil {

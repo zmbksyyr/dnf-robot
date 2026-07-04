@@ -801,6 +801,20 @@ type AuctionSearchGuardResult struct {
 	Message   string `json:"message,omitempty"`
 }
 
+type ClearSystemStockResult struct {
+	Markets []ClearSystemMarketResult `json:"markets"`
+	Deleted int64                     `json:"deleted"`
+}
+
+type ClearSystemMarketResult struct {
+	Market  string `json:"market"`
+	DBName  string `json:"db_name"`
+	Before  int    `json:"before"`
+	Deleted int64  `json:"deleted"`
+	After   int    `json:"after"`
+	Status  string `json:"status"`
+}
+
 type ConfigUpdateRequest struct {
 	AutoEnabled      *bool    `json:"auto_enabled,omitempty"`
 	CollectorEnabled *bool    `json:"collector_enabled,omitempty"`
