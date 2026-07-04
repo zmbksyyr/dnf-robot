@@ -859,7 +859,7 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 		}
 		a.mu.Lock()
 		if len(a.auctionQueue) == 0 || source == "pvf" && a.auctionQueueSource != "pvf" {
-			a.auctionQueue = append([]restockRow(nil), candidates...)
+			a.auctionQueue = append([]uint32(nil), candidates...)
 			a.auctionQueueSource = source
 		}
 		a.mu.Unlock()
@@ -870,9 +870,13 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 	selected := make([]restockRow, 0)
 	planned := 0
 	for i := 0; i < queueLen; i++ {
-		row := a.auctionQueue[0]
-		a.auctionQueue = append(a.auctionQueue[1:], row)
-		if have[row.ItemID] > 0 {
+		id := a.auctionQueue[0]
+		a.auctionQueue = append(a.auctionQueue[1:], id)
+		if have[id] > 0 {
+			continue
+		}
+		row, ok := a.auctionRowForID(pvfReady, catalog, id)
+		if !ok {
 			continue
 		}
 		records := auctionTargetRecords(row)
@@ -889,18 +893,55 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 	return selected, nil
 }
 
-func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) ([]restockRow, string, error) {
+func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) ([]uint32, string, error) {
 	if pvfReady {
-		return a.catalogAuctionRows(catalog), "pvf", nil
+		return catalogAuctionIDs(catalog), "pvf", nil
 	}
 	rows, err := a.fallbackAuctionRows()
 	if err != nil {
 		return nil, "", err
 	}
-	return rows, "fallback", nil
+	ids := make([]uint32, 0, len(rows))
+	for _, row := range rows {
+		if row.ItemID != 0 {
+			ids = append(ids, row.ItemID)
+		}
+	}
+	return ids, "fallback", nil
+}
+
+func (a *App) auctionRowForID(pvfReady bool, catalog map[uint32]catalogItem, id uint32) (restockRow, bool) {
+	if pvfReady {
+		item, ok := catalog[id]
+		if !ok {
+			return restockRow{}, false
+		}
+		return a.catalogAuctionRow(item)
+	}
+	rows, err := a.fallbackAuctionRows()
+	if err != nil {
+		return restockRow{}, false
+	}
+	for _, row := range rows {
+		if row.ItemID == id {
+			return row, true
+		}
+	}
+	return restockRow{}, false
 }
 
 func (a *App) catalogAuctionRows(catalog map[uint32]catalogItem) []restockRow {
+	ids := catalogAuctionIDs(catalog)
+	rows := make([]restockRow, 0, len(ids))
+	for _, id := range ids {
+		if row, ok := a.catalogAuctionRow(catalog[id]); ok {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func catalogAuctionIDs(catalog map[uint32]catalogItem) []uint32 {
 	ids := make([]uint32, 0, len(catalog))
 	for id, item := range catalog {
 		if marketCandidate(item) {
@@ -918,13 +959,7 @@ func (a *App) catalogAuctionRows(catalog map[uint32]catalogItem) []restockRow {
 		}
 		return left.ItemID < right.ItemID
 	})
-	rows := make([]restockRow, 0, len(ids))
-	for _, id := range ids {
-		if row, ok := a.catalogAuctionRow(catalog[id]); ok {
-			rows = append(rows, row)
-		}
-	}
-	return rows
+	return ids
 }
 
 func auctionTargetRecords(row restockRow) int {

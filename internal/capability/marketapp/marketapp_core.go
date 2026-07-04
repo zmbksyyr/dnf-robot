@@ -35,7 +35,7 @@ type App struct {
 	stopAuto  chan struct{}
 	autoDone  chan struct{}
 
-	auctionQueue       []restockRow
+	auctionQueue       []uint32
 	auctionQueueSource string
 	auctionPatchPID    int
 }

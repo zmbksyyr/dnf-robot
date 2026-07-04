@@ -26,10 +26,9 @@ type pvfManifest struct {
 	Runtime interface{} `json:"runtime,omitempty"`
 }
 
-const pvfExportVersion = 16
+const pvfExportVersion = 17
 
 const pvfItemInfoExportName = "pvf_iteminfo.dat"
-const pvfItemInfoCatalogExportName = "pvf_iteminfo_catalog.json"
 
 type pvfFile struct {
 	Name string
@@ -96,7 +95,7 @@ func buildPVFManifest(path string, stat os.FileInfo) (pvfManifest, error) {
 }
 
 func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) bool {
-	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json", pvfItemInfoExportName, pvfItemInfoCatalogExportName} {
+	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json", pvfItemInfoExportName} {
 		path := filepath.Join(configDir, name)
 		stat, err := os.Stat(path)
 		if err != nil || stat.Size() <= 5 {
@@ -125,7 +124,7 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 }
 
 func removeObsoletePVFExports(configDir string) {
-	for _, name := range []string{"equipment_catalog.json", "stackable_catalog.json", "map_catalog.json"} {
+	for _, name := range []string{"equipment_catalog.json", "stackable_catalog.json", "map_catalog.json", "pvf_iteminfo_catalog.json"} {
 		_ = os.Remove(filepath.Join(configDir, name))
 	}
 }
@@ -141,7 +140,7 @@ func writePVFItemInfoExports(configDir string, archive *pvfArchive, equipment, s
 	if err := os.WriteFile(filepath.Join(configDir, pvfItemInfoExportName), []byte(text), 0644); err != nil {
 		return err
 	}
-	return WriteJSON(filepath.Join(configDir, pvfItemInfoCatalogExportName), parsePVFItemInfoCatalog(text))
+	return nil
 }
 
 func ExportPVFItemInfoDAT(pvfPath, configDir string) (string, error) {
@@ -488,60 +487,6 @@ func tokenizePVFItemInfo(text string) []string {
 		tokens = append(tokens, text[start:i])
 	}
 	return tokens
-}
-
-func parsePVFItemInfoCatalog(text string) []shared.ItemInfoCatalogItem {
-	tokens := tokenizePVFItemInfo(text)
-	items := make([]shared.ItemInfoCatalogItem, 0, len(tokens)/17)
-	for i := 0; i+16 < len(tokens); {
-		if tokens[i] == "#PVF_File" {
-			i++
-			continue
-		}
-		id, err := strconv.Atoi(tokens[i])
-		if err != nil {
-			i++
-			continue
-		}
-		category, err := strconv.Atoi(tokens[i+16])
-		if err != nil {
-			i++
-			continue
-		}
-		rarity, _ := strconv.Atoi(tokens[i+1])
-		level, _ := strconv.Atoi(tokens[i+13])
-		item := shared.ItemInfoCatalogItem{
-			ID:       id,
-			Rarity:   rarity,
-			UseJob:   parseItemInfoJobFlags(tokens[i+2 : i+13]),
-			Level:    level,
-			Name:     unquotePVFItemInfo(tokens[i+14]),
-			Name2:    unquotePVFItemInfo(tokens[i+15]),
-			Category: category,
-		}
-		items = append(items, item)
-		i += 17
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
-	return items
-}
-
-func parseItemInfoJobFlags(fields []string) []int {
-	jobs := make([]int, 0, len(fields))
-	for i, field := range fields {
-		if field == "1" {
-			jobs = append(jobs, i)
-		}
-	}
-	return jobs
-}
-
-func unquotePVFItemInfo(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) >= 2 && value[0] == '`' && value[len(value)-1] == '`' {
-		return value[1 : len(value)-1]
-	}
-	return value
 }
 
 func isPVFSpace(b byte) bool {
