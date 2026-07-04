@@ -5,12 +5,11 @@ VM-local random stability pressure for the robot system.
 
 Compatible with the VM's default Python 2.7 and modern Python 3.
 
-Default compressed scenario:
-- run 1 hour
+Default full scenario:
+- run 1 hour by default; all scenario intervals are scaled by --hours
 - sample CPU/status/resource counters every 10 seconds
 - collect filtered robot/web/resource logs every 5 minutes
-- run short extreme phases: smoke, market service fault, target ramp,
-  manual/auto collision, cleanup, monitor fault, game fault, robot restart
+- run service, market, DB, web/API, cleanup, monitor, game and robot fault phases
 - every fault is expected to self-heal within a few minutes
 
 Run on the VM:
@@ -47,7 +46,10 @@ KEYWORDS = [
     "web admin exited",
     "WebAdmin",
     "database is closed",
+    "db_init",
     "market_service",
+    "iteminfo",
+    "RegistItem",
     "cannot assign requested address",
     "too many open files",
     "connection reset",
@@ -133,6 +135,14 @@ def json_text(value, limit):
     return raw
 
 
+def shell_quote(value):
+    return "'" + safe_text(value).replace("'", "'\\''") + "'"
+
+
+def sanitize_name(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", safe_text(value)).strip("_") or "snapshot"
+
+
 class RobotAPI(object):
     def __init__(self, host, port, timeout):
         self.host = host
@@ -184,6 +194,12 @@ class StabilityRun(object):
             self.samples.writerow(dict((k, k) for k in SAMPLE_FIELDS))
         self.deleted_total = 0
         self.started = time.time()
+        self.total_sec = max(int(args.hours * 3600), 600)
+        self.baseline_dir = os.path.join(self.out_dir, "baseline")
+        self.snapshot_dir = os.path.join(self.out_dir, "snapshots")
+        if not os.path.isdir(self.snapshot_dir):
+            os.makedirs(self.snapshot_dir)
+        self.results = []
 
     def log(self, message):
         line = u"[%s] %s" % (now_text(), safe_text(message))
@@ -193,12 +209,13 @@ class StabilityRun(object):
     def run(self):
         random.seed(self.args.seed or int(time.time() * 1000000))
         self.log("start out_dir=%s args=%s" % (self.out_dir, vars(self.args)))
+        self.prepare_baseline()
         self.ensure_auto()
         next_target = time.time() + random.randint(self.args.target_min_interval, self.args.target_max_interval)
         next_cleanup = time.time() + random.randint(self.args.cleanup_min_interval, self.args.cleanup_max_interval)
         next_log_snapshot = time.time()
         next_sample = 0
-        end_at = time.time() + self.args.hours * 3600
+        end_at = time.time() + self.total_sec
         scenario = self.scenario_events()
         fired = {}
         try:
@@ -215,12 +232,7 @@ class StabilityRun(object):
                         continue
                     if now - self.started >= event["at"]:
                         fired[event["name"]] = True
-                        self.log("scenario event start name=%s at=%ss" % (event["name"], event["at"]))
-                        try:
-                            event["fn"]()
-                        except Exception as exc:
-                            self.log("scenario event error name=%s err=%r" % (event["name"], exc))
-                        self.log("scenario event done name=%s" % event["name"])
+                        self.run_event(event)
                 if now >= next_target:
                     self.random_target()
                     next_target = now + random.randint(self.args.target_min_interval, self.args.target_max_interval)
@@ -231,52 +243,217 @@ class StabilityRun(object):
         except KeyboardInterrupt:
             self.log("interrupted by user")
         finally:
+            self.collect_logs("before_final_recover")
+            self.final_recover_environment()
+            self.collect_logs("final")
+            self.write_report()
             self.write_summary()
             self.events.close()
             self.samples_file.close()
 
-    def scenario_events(self):
-        if self.args.scenario == "random":
-            return []
-        if self.args.scenario == "compressed":
-            return self.compressed_events()
-        return [
-            {"name": "target20", "at": 0, "fn": lambda: self.set_target(20)},
-            {"name": "smoke_actions", "at": 2 * 60, "fn": self.smoke_actions},
-            {"name": "target100", "at": 10 * 60, "fn": lambda: self.set_target(100)},
-            {"name": "target600", "at": 30 * 60, "fn": lambda: self.set_target(600)},
-            {"name": "market_fault", "at": 60 * 60, "fn": self.market_fault},
-            {"name": "monitor_fault", "at": 90 * 60, "fn": self.monitor_fault},
-            {"name": "game_port_fault", "at": 150 * 60, "fn": self.game_port_fault},
-            {"name": "shrink100", "at": 240 * 60, "fn": lambda: self.set_target(100)},
-            {"name": "reexpand600", "at": 270 * 60, "fn": lambda: self.set_target(600)},
-            {"name": "robot_restart", "at": 330 * 60, "fn": self.robot_restart},
-            {"name": "custom_key_test", "at": 360 * 60, "fn": self.custom_key_test},
-            {"name": "final_reexpand600", "at": 390 * 60, "fn": lambda: self.set_target(600)},
-        ]
+    def run_event(self, event):
+        name = event["name"]
+        self.log("scenario event start name=%s at=%ss" % (name, event["at"]))
+        before_path = self.write_snapshot(name + "_before")
+        started = time.time()
+        err = ""
+        recovered = False
+        try:
+            event["fn"]()
+            recovered = self.check_recovered(name)
+        except Exception as exc:
+            err = repr(exc)
+            self.log("scenario event error name=%s err=%s" % (name, err))
+            recovered = self.check_recovered(name)
+        after_path = self.write_snapshot(name + "_after")
+        result = {
+            "name": name,
+            "started_at": datetime.datetime.fromtimestamp(started).isoformat(),
+            "duration_sec": int(time.time() - started),
+            "recovered": recovered,
+            "error": err,
+            "before": before_path,
+            "after": after_path,
+        }
+        self.results.append(result)
+        self.log("scenario event done name=%s recovered=%s error=%s" % (name, recovered, err))
 
-    def compressed_events(self):
+    def check_recovered(self, event):
+        api = self.safe_call("systemStatus", {})
+        market = self.market_status_result()
+        ports = self.port_snapshot()
+        ok = bool(isinstance(api, dict) and api.get("ok"))
+        game_ok = bool(ports.get("10011"))
+        market_ok = self.market_services_ready(market)
+        if not ok:
+            self.log("recover_check event=%s failed reason=robot_api api=%s" % (event, json_text(api, 1000)))
+        if not game_ok:
+            self.log("recover_check event=%s failed reason=game_port ports=%s" % (event, ports))
+        if not market_ok:
+            self.log("recover_check event=%s failed reason=market_services services=%s" % (event, json_text((market.get("services") or {}), 1400)))
+        return bool(ok and game_ok and market_ok)
+
+    def write_snapshot(self, label):
+        snap = self.snapshot(label)
+        path = os.path.join(self.snapshot_dir, sanitize_name(label) + ".json")
+        raw = json.dumps(snap, ensure_ascii=False, indent=2, sort_keys=True)
+        if not isinstance(raw, type(u"")):
+            raw = raw.decode("utf-8")
+        io.open(path, "w", encoding="utf-8").write(raw)
+        self.log("snapshot label=%s path=%s" % (label, path))
+        return path
+
+    def snapshot(self, label):
+        return {
+            "label": label,
+            "time": now_text(),
+            "api": self.api_snapshot(),
+            "ports": self.port_snapshot(),
+            "processes": self.shell("pgrep -af '/root/robot|df_game_r|df_monitor_r|df_auction_r|df_point_r|mysqld' || true", 20, log_output=False)[:4000],
+            "files": self.file_snapshot(),
+            "db": self.db_snapshot(),
+            "tcp": self.shell("ss -ant | awk 'NR>1 {c[$1]++} END {for (k in c) print k,c[k]}'", 20, log_output=False)[:2000],
+            "disk": self.shell("df -h / /root /home 2>/dev/null || df -h", 20, log_output=False)[:2000],
+        }
+
+    def api_snapshot(self):
+        data = {}
+        for command in ("systemStatus", "autoStatus", "schedulerStatus", "databaseStatus", "marketStatus"):
+            data[command] = self.safe_call(command, {})
+        return data
+
+    def port_snapshot(self):
+        out = self.shell("ss -ltn", 20, log_output=False)
+        return {
+            "8111": int(":8111" in out),
+            "8112": int(":8112" in out),
+            "10011": int(":10011" in out),
+            "30303": int(":30303" in out),
+            "30603": int(":30603" in out),
+            "30803": int(":30803" in out),
+        }
+
+    def file_snapshot(self):
+        paths = [
+            "/root/robot",
+            "/root/run",
+            "/root/stop",
+            "/root/config/market_config.json",
+            "/root/config/pvf_equipment_catalog.json",
+            "/root/config/pvf_stackable_catalog.json",
+            "/root/config/pvf_iteminfo.dat",
+            "/home/neople/auction/iteminfo.dat",
+            "/home/neople/point/iteminfo.dat",
+            "/dp2/Script.pvf",
+            "/home/neople/game/Script.pvf",
+        ]
+        quoted = " ".join(shell_quote(p) for p in paths)
+        return self.shell("for f in %s; do [ -e \"$f\" ] && stat -c '%%n size=%%s mode=%%a mtime=%%Y' \"$f\" && md5sum \"$f\" 2>/dev/null | cut -d' ' -f1 | sed 's/^/md5=/' || echo \"$f missing\"; done" % quoted, 60, log_output=False)[:8000]
+
+    def db_snapshot(self):
+        query = (
+            "SELECT 'auction_count',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main;"
+            "SELECT 'cera_count',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main;"
+            "SELECT 'auction_system',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001;"
+            "SELECT 'cera_system',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main WHERE owner_id>=90000001;"
+            "SHOW COLUMNS FROM taiwan_cain_auction_gold.auction_main;"
+            "SHOW COLUMNS FROM taiwan_cain_auction_cera.auction_main;"
+        )
+        return self.shell("mysql -ugame -puu5!^%%jg -e %s" % shell_quote(query), 60, log_output=False)[:12000]
+
+    def prepare_baseline(self):
+        if not os.path.isdir(self.baseline_dir):
+            os.makedirs(self.baseline_dir)
+        self.log("prepare_baseline begin dir=%s" % self.baseline_dir)
+        self.shell("cp -af /root/config %s/root_config 2>/dev/null || true" % shell_quote(self.baseline_dir), 120)
+        self.shell("mkdir -p %s/home_neople_auction %s/home_neople_point; cp -af /home/neople/auction/iteminfo.dat %s/home_neople_auction/iteminfo.dat 2>/dev/null || true; cp -af /home/neople/point/iteminfo.dat %s/home_neople_point/iteminfo.dat 2>/dev/null || true" % (shell_quote(self.baseline_dir), shell_quote(self.baseline_dir), shell_quote(self.baseline_dir), shell_quote(self.baseline_dir)), 60)
+        self.backup_market_database("baseline")
+        restore_path = os.path.join(self.baseline_dir, "restore_baseline.sh")
+        restore = """#!/bin/sh
+set -e
+BASE=%s
+rm -rf /root/config
+cp -af "$BASE/root_config" /root/config 2>/dev/null || mkdir -p /root/config
+cp -af "$BASE/home_neople_auction/iteminfo.dat" /home/neople/auction/iteminfo.dat 2>/dev/null || true
+cp -af "$BASE/home_neople_point/iteminfo.dat" /home/neople/point/iteminfo.dat 2>/dev/null || true
+if [ -s "$BASE/market_robot_stock.sql" ]; then mysql -ugame -puu5!^%%jg < "$BASE/market_robot_stock.sql"; fi
+echo RESTORED
+""" % shell_quote(self.baseline_dir)
+        try:
+            fh = io.open(restore_path, "w", encoding="utf-8")
+            fh.write(restore)
+            fh.close()
+            os.chmod(restore_path, 0o755)
+        except Exception as exc:
+            self.log("prepare_baseline restore_script_error err=%r" % (exc,))
+        self.log("prepare_baseline done restore=%s" % restore_path)
+
+    def final_recover_environment(self):
+        self.log("final_recover_environment begin")
+        restore_path = os.path.join(self.baseline_dir, "restore_baseline.sh")
+        if os.path.isfile(restore_path):
+            self.shell("sh %s" % shell_quote(restore_path), 180)
+        else:
+            self.log("final_recover_environment missing restore script=%s" % restore_path)
+        self.shell("cd /root && (./run >/tmp/vm_random_final_run.log 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
+        self.robot_restart_without_target("final_recover_robot")
+        self.wait_robot_api("final_recover_api", 90, 5)
+        self.market_enable_auto(max_concurrent=8)
+        self.wait_market_services("final_recover_market", 240, 10)
+        self.sample_with_event("final_recover_done")
+        self.log("final_recover_environment done")
+
+    def wait_robot_api(self, event, timeout_sec=90, interval_sec=5):
+        self.log("wait_robot_api start event=%s timeout=%s" % (event, timeout_sec))
+        deadline = time.time() + timeout_sec
+        last = {}
+        while time.time() < deadline:
+            last = self.safe_call("systemStatus", {})
+            if isinstance(last, dict) and last.get("ok"):
+                self.log("wait_robot_api ready event=%s result=%s" % (event, json_text(last, 1200)))
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_robot_api timeout event=%s last=%s" % (event, json_text(last, 1200)))
+        return False
+
+    def scenario_events(self):
         high = self.args.target_max
         mid = max(self.args.target_min, min(high, max(100, high // 2)))
         return [
             {"name": "target20", "at": 0, "fn": lambda: self.set_target(20)},
-            {"name": "smoke_actions", "at": 90, "fn": self.smoke_actions},
-            {"name": "market_fault", "at": 5 * 60, "fn": self.market_fault},
-            {"name": "target_mid", "at": 9 * 60, "fn": lambda: self.set_target(mid)},
-            {"name": "manual_collision", "at": 13 * 60, "fn": self.manual_collision},
-            {"name": "target_high", "at": 17 * 60, "fn": lambda: self.set_target(high)},
-            {"name": "cleanup_burst", "at": 23 * 60, "fn": self.cleanup_burst},
-            {"name": "monitor_fault", "at": 29 * 60, "fn": self.monitor_fault},
-            {"name": "game_port_fault", "at": 38 * 60, "fn": self.game_port_fault},
-            {"name": "robot_restart", "at": 50 * 60, "fn": self.robot_restart},
-            {"name": "final_target_mid", "at": 56 * 60, "fn": lambda: self.set_target(mid)},
+            {"name": "smoke_actions", "at": self.event_at(0.03), "fn": self.smoke_actions},
+            {"name": "announcement_check", "at": self.event_at(0.07), "fn": self.announcement_check},
+            {"name": "market_fault", "at": self.event_at(0.10), "fn": self.market_fault},
+            {"name": "pvf_file_fault", "at": self.event_at(0.20), "fn": self.pvf_file_fault},
+            {"name": "market_button_flow", "at": self.event_at(0.27), "fn": self.market_button_flow},
+            {"name": "target_mid", "at": self.event_at(0.34), "fn": lambda: self.set_target(mid)},
+            {"name": "manual_collision", "at": self.event_at(0.40), "fn": self.manual_collision},
+            {"name": "db_stock_external_clear", "at": self.event_at(0.46), "fn": self.db_stock_external_clear},
+            {"name": "db_schema_drift", "at": self.event_at(0.52), "fn": self.db_schema_drift},
+            {"name": "target_high", "at": self.event_at(0.58), "fn": lambda: self.set_target(high)},
+            {"name": "cleanup_burst", "at": self.event_at(0.64), "fn": self.cleanup_burst},
+            {"name": "config_dir_fault", "at": self.event_at(0.70), "fn": self.config_dir_fault},
+            {"name": "web_api_fault", "at": self.event_at(0.76), "fn": self.web_api_fault},
+            {"name": "port_conflict_fault", "at": self.event_at(0.81), "fn": self.port_conflict_fault},
+            {"name": "mysql_restart_fault", "at": self.event_at(0.86), "fn": self.mysql_restart_fault},
+            {"name": "monitor_fault", "at": self.event_at(0.90), "fn": self.monitor_fault},
+            {"name": "game_port_fault", "at": self.event_at(0.93), "fn": self.game_port_fault},
+            {"name": "robot_restart", "at": self.event_at(0.96), "fn": self.robot_restart},
+            {"name": "custom_key_test", "at": self.event_at(0.975), "fn": self.custom_key_test},
+            {"name": "final_target_mid", "at": self.event_at(0.98), "fn": lambda: self.set_target(mid)},
         ]
 
+    def event_at(self, ratio):
+        if ratio <= 0:
+            return 0
+        return int(min(max(self.total_sec * ratio, 1), max(self.total_sec - 30, 1)))
+
+    def scaled_seconds(self, low, high):
+        value = int(self.total_sec / 40)
+        return max(low, min(high, value))
+
     def ensure_auto(self):
-        if self.args.scenario == "full":
-            self.set_target(20)
-            return
-        self.set_target(random.randint(self.args.target_min, self.args.target_max))
+        self.set_target(20)
 
     def set_target(self, target):
         payload = {"updates": {"auto.auto_target_online_count": str(target), "auto.auto_actions": "true"}}
@@ -285,11 +462,16 @@ class StabilityRun(object):
         res = self.safe_call("autoStart", {})
         self.log("autoStart result=%s" % json_text(res, 1200))
         self.sample_with_event("after_set_target:%s" % target)
-        if self.args.scenario == "full" and target >= 100:
-            self.burst_sample("set_target:%s" % target, 60, 5)
 
     def random_target(self):
         self.set_target(random.randint(self.args.target_min, self.args.target_max))
+
+    def announcement_check(self):
+        self.log("announcement_check begin")
+        res = self.safe_call("systemAnnouncement", {})
+        self.log("announcement_check result=%s" % json_text(res, 1600))
+        self.sample_with_event("announcement_check")
+        self.burst_sample("announcement_recover", self.scaled_seconds(30, 90), 10)
 
     def market_fault(self):
         self.log("market_fault begin")
@@ -297,11 +479,13 @@ class StabilityRun(object):
         self.market_fault_kill_services()
         self.market_fault_missing_iteminfo()
         self.market_fault_bad_iteminfo()
+        self.market_fault_stale_db_iteminfo()
         self.market_fault_missing_catalog()
+        self.market_fault_partial_catalog()
         self.market_fault_bad_config()
         self.market_enable_auto(max_concurrent=8)
         self.wait_market_services("market_fault_final_recover", 180, 10)
-        self.burst_sample("market_fault_final", 60, 10)
+        self.burst_sample("market_fault_final", self.scaled_seconds(30, 90), 10)
         self.log("market_fault done")
 
     def market_enable_auto(self, max_concurrent=8):
@@ -386,6 +570,26 @@ class StabilityRun(object):
             self.market_enable_auto(max_concurrent=8)
             self.wait_market_services("market_bad_iteminfo_recover", 180, 10)
 
+    def market_fault_stale_db_iteminfo(self):
+        self.log("market_fault_stale_db_iteminfo begin")
+        backups = [
+            self.backup_file("/home/neople/auction/iteminfo.dat"),
+            self.backup_file("/home/neople/point/iteminfo.dat"),
+        ]
+        try:
+            self.market_enable_auto(max_concurrent=8)
+            self.burst_sample("market_stale_before", self.scaled_seconds(20, 60), 10)
+            bad = "printf '1 0 1 1 1 1 1 1 1 1 1 1 1 1 `bad` `bad` 1\\n' > /home/neople/auction/iteminfo.dat; cp -f /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat"
+            self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; " + bad + "; sleep 3", 30)
+            self.market_enable_auto(max_concurrent=4)
+            self.burst_sample("market_stale_db_iteminfo", self.scaled_seconds(30, 90), 10)
+        finally:
+            self.restore_file("/home/neople/auction/iteminfo.dat", backups[0])
+            self.restore_file("/home/neople/point/iteminfo.dat", backups[1])
+            self.safe_call("marketClearSystemStock", {})
+            self.market_enable_auto(max_concurrent=8)
+            self.wait_market_services("market_stale_db_iteminfo_recover", 180, 10)
+
     def market_fault_missing_catalog(self):
         self.log("market_fault_missing_catalog begin")
         paths = [
@@ -404,6 +608,25 @@ class StabilityRun(object):
             for path, backup in zip(paths, backups):
                 self.restore_file(path, backup)
             self.sample_with_event("market_catalog_restored")
+
+    def market_fault_partial_catalog(self):
+        self.log("market_fault_partial_catalog begin")
+        paths = [
+            "/root/config/pvf_equipment_catalog.json",
+            "/root/config/pvf_stackable_catalog.json",
+            "/root/config/pvf_iteminfo.dat",
+        ]
+        backups = [self.backup_file(path) for path in paths]
+        try:
+            self.shell("printf '[{\"id\":1,\"price\":1' > /root/config/pvf_equipment_catalog.json; printf '[{\"id\":2' > /root/config/pvf_stackable_catalog.json; printf '1 broken partial' > /root/config/pvf_iteminfo.dat", 20)
+            self.sample_with_event("market_partial_catalog_written")
+            res = self.safe_call("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 128, "max_concurrent": 4, "continue_on_error": True})
+            self.log("market_partial_catalog restock result=%s" % json_text(res, 2200))
+            self.burst_sample("market_partial_catalog", self.scaled_seconds(20, 60), 10)
+        finally:
+            for path, backup in zip(paths, backups):
+                self.restore_file(path, backup)
+            self.sample_with_event("market_partial_catalog_restored")
 
     def market_fault_bad_config(self):
         self.log("market_fault_bad_config begin")
@@ -425,6 +648,105 @@ class StabilityRun(object):
         for _ in range(3):
             self.random_cleanup()
             self.burst_sample("cleanup_burst", 20, 5)
+
+    def market_button_flow(self):
+        self.log("market_button_flow begin")
+        self.market_enable_auto(max_concurrent=8)
+        res = self.safe_call("marketClearSystemStock", {})
+        self.log("market_button_flow clear_stock result=%s" % json_text(res, 2400))
+        self.sample_with_event("market_clear_stock")
+        self.market_enable_auto(max_concurrent=8)
+        self.burst_sample("market_after_clear_stock", self.scaled_seconds(30, 90), 10)
+        res = self.safe_call("marketSyncItemInfo", {})
+        self.log("market_button_flow sync_iteminfo result=%s" % json_text(res, 2400))
+        self.sample_with_event("market_sync_iteminfo")
+        self.wait_market_services("market_sync_iteminfo_recover", 240, 10)
+        self.market_enable_auto(max_concurrent=8)
+
+    def pvf_file_fault(self):
+        self.log("pvf_file_fault begin")
+        candidates = ["/dp2/Script.pvf", "/home/neople/game/Script.pvf"]
+        backups = []
+        for path in candidates:
+            backups.append((path, self.backup_file(path)))
+        try:
+            self.shell("for f in /dp2/Script.pvf /home/neople/game/Script.pvf; do [ -e \"$f\" ] && printf 'encrypted-or-broken-pvf' > \"$f\" || true; done", 30)
+            self.sample_with_event("pvf_broken_written")
+            res = self.safe_call("marketSyncItemInfo", {})
+            self.log("pvf_file_fault sync_iteminfo result=%s" % json_text(res, 2200))
+            self.burst_sample("pvf_file_fault", self.scaled_seconds(20, 60), 10)
+        finally:
+            for path, backup in backups:
+                self.restore_file(path, backup)
+            self.robot_restart_without_target("pvf_file_fault_restore_robot")
+            self.market_enable_auto(max_concurrent=8)
+
+    def db_stock_external_clear(self):
+        self.log("db_stock_external_clear begin")
+        dump = self.backup_market_database("before_db_stock_external_clear")
+        self.sample_with_event("db_stock_clear_before")
+        self.shell("mysql -ugame -puu5!^%jg -e \"DELETE FROM taiwan_cain_auction_gold.auction_main WHERE owner_id >= 90000001; DELETE FROM taiwan_cain_auction_cera.auction_main WHERE owner_id >= 90000001;\"", 60)
+        self.sample_with_event("db_stock_clear_after")
+        self.market_enable_auto(max_concurrent=8)
+        self.burst_sample("db_stock_clear_recover", self.scaled_seconds(60, 180), 10)
+        self.restore_market_database(dump, "after_db_stock_external_clear")
+        self.market_enable_auto(max_concurrent=8)
+        self.sample_with_event("db_stock_clear_restored")
+
+    def db_schema_drift(self):
+        self.log("db_schema_drift begin")
+        self.backup_market_database("before_db_schema_drift")
+        try:
+            self.shell("mysql -ugame -puu5!^%jg -e \"ALTER TABLE taiwan_cain_auction_gold.auction_main ADD COLUMN vm_random_dummy INT NULL; ALTER TABLE taiwan_cain_auction_cera.auction_main ADD COLUMN vm_random_dummy INT NULL;\" || true", 120)
+            self.sample_with_event("db_schema_drift_added")
+            self.market_enable_auto(max_concurrent=4)
+            self.burst_sample("db_schema_drift", self.scaled_seconds(20, 60), 10)
+        finally:
+            self.shell("mysql -ugame -puu5!^%jg -e \"ALTER TABLE taiwan_cain_auction_gold.auction_main DROP COLUMN vm_random_dummy; ALTER TABLE taiwan_cain_auction_cera.auction_main DROP COLUMN vm_random_dummy;\" || true", 120)
+            self.sample_with_event("db_schema_drift_restored")
+
+    def config_dir_fault(self):
+        self.log("config_dir_fault begin")
+        backup = "/root/config.vm_random_backup_%s" % int(time.time() * 1000)
+        try:
+            self.shell("cp -af /root/config %s; rm -rf /root/config; mkdir -p /root/config; printf '{broken config dir' > /root/config/market_config.json" % shell_quote(backup), 120)
+            self.sample_with_event("config_dir_fault_broken")
+            self.robot_restart_without_target("config_dir_fault_restart")
+            self.burst_sample("config_dir_fault", self.scaled_seconds(20, 60), 10)
+        finally:
+            self.shell("rm -rf /root/config; [ -d %s ] && mv %s /root/config || true" % (shell_quote(backup), shell_quote(backup)), 120)
+            self.robot_restart_without_target("config_dir_fault_restore")
+            self.market_enable_auto(max_concurrent=8)
+
+    def web_api_fault(self):
+        self.log("web_api_fault begin")
+        self.sample_with_event("web_api_fault_before")
+        self.shell("pkill -TERM -f '/root/robot --web-admin' || true; sleep 5; pgrep -af '/root/robot' || true; ss -lntp | grep -E ':(8111|8112)' || true", 30)
+        for command in ("systemStatus", "autoStatus", "marketStatus", "databaseStatus"):
+            res = self.safe_call(command, {})
+            self.log("web_api_fault api command=%s result=%s" % (command, json_text(res, 1200)))
+        self.robot_restart_without_target("web_api_fault_restart")
+        self.burst_sample("web_api_fault_recover", self.scaled_seconds(30, 90), 10)
+
+    def port_conflict_fault(self):
+        self.log("port_conflict_fault begin")
+        self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; sleep 5", 30)
+        cmd = "python - <<'PY'\nimport socket,time\ns=[]\nfor p in (30603,30803):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(30)\nPY"
+        self.shell(cmd + " &", 5)
+        self.sample_with_event("port_conflict_bound")
+        self.market_enable_auto(max_concurrent=4)
+        self.burst_sample("port_conflict_fault", self.scaled_seconds(30, 60), 10)
+        self.shell("pkill -f \"time.sleep\\(30\\)\" || true; sleep 3", 20)
+        self.market_enable_auto(max_concurrent=8)
+        self.wait_market_services("port_conflict_recover", 180, 10)
+
+    def mysql_restart_fault(self):
+        self.log("mysql_restart_fault begin")
+        self.sample_with_event("mysql_restart_before")
+        self.shell("(service mysql restart || service mysqld restart || /etc/init.d/mysqld restart || true); sleep 15; pgrep -af 'mysqld|mariadbd' || true", 180)
+        self.wait_robot_api("mysql_restart_api", 120, 5)
+        self.market_enable_auto(max_concurrent=8)
+        self.burst_sample("mysql_restart_recover", self.scaled_seconds(30, 90), 10)
 
     def manual_collision(self):
         status = self.safe_call("robotsStatus", {"count": 100})
@@ -539,11 +861,11 @@ class StabilityRun(object):
         self.sample_with_event("game_port_fault_stop")
         self.shell("cd /root && (./stop >/tmp/vm_random_stop_game.log 2>&1 || true); sleep 15; ss -lntp | grep ':10011' || true; pgrep -af 'df_game_r' || true", 180)
         self.sample_with_event("game_port_down")
-        time.sleep(45 if self.args.scenario == "compressed" else 120)
+        time.sleep(self.scaled_seconds(45, 120))
         self.log("game_port_fault restore /root/run")
         self.shell("cd /root && (./run >/tmp/vm_random_run_game.log 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303)' || true; pgrep -af 'df_game_r|df_monitor_r' || true", 240)
         self.sample_with_event("game_port_fault_restore")
-        self.burst_sample("game_port_fault_recover", 120 if self.args.scenario == "compressed" else 60, 10 if self.args.scenario == "compressed" else 5)
+        self.burst_sample("game_port_fault_recover", self.scaled_seconds(60, 120), 10)
 
     def backup_file(self, path):
         backup = "%s.vm_random_backup_%s" % (path, int(time.time() * 1000))
@@ -562,6 +884,32 @@ class StabilityRun(object):
         script = "[ -e '%s' ] && cp -af '%s' '%s' && rm -f '%s' && echo RESTORED || echo MISSING_BACKUP" % (backup, backup, path, backup)
         out = self.shell(script, 20)
         self.log("restore_file path=%s backup=%s output=%s" % (path, backup, out[:400]))
+
+    def backup_market_database(self, label):
+        path = os.path.join(self.baseline_dir, "%s_market_robot_stock.sql" % label)
+        latest = os.path.join(self.baseline_dir, "market_robot_stock.sql")
+        command = """
+OUT=%s
+{
+  echo 'DELETE FROM taiwan_cain_auction_gold.auction_main WHERE owner_id >= 90000001;';
+  echo 'DELETE FROM taiwan_cain_auction_cera.auction_main WHERE owner_id >= 90000001;';
+  mysqldump -ugame -puu5!^%%jg --skip-triggers --no-create-info --replace --where='owner_id >= 90000001' taiwan_cain_auction_gold auction_main 2>/dev/null || true;
+  mysqldump -ugame -puu5!^%%jg --skip-triggers --no-create-info --replace --where='owner_id >= 90000001' taiwan_cain_auction_cera auction_main 2>/dev/null || true;
+} > "$OUT"
+cp -f "$OUT" %s
+ls -l "$OUT" %s
+""" % (shell_quote(path), shell_quote(latest), shell_quote(latest))
+        out = self.shell(command, 120)
+        self.log("backup_market_database label=%s path=%s output=%s" % (label, path, out[:800]))
+        return path
+
+    def restore_market_database(self, dump_path, label):
+        if not dump_path:
+            self.log("restore_market_database skipped label=%s empty_dump" % label)
+            return
+        command = "[ -s %s ] && mysql -ugame -puu5!^%%jg < %s && echo DB_RESTORED || echo DB_BACKUP_MISSING" % (shell_quote(dump_path), shell_quote(dump_path))
+        out = self.shell(command, 120)
+        self.log("restore_market_database label=%s dump=%s output=%s" % (label, dump_path, out[:800]))
 
     def robot_restart_without_target(self, label):
         self.log("robot_restart_without_target begin label=%s" % label)
@@ -585,7 +933,7 @@ ss -lntp | grep -E ':(8111|8112|10011|30303|30603|30803)' || true
         self.robot_restart_without_target("robot_restart")
         time.sleep(20)
         self.set_target(self.args.target_max)
-        self.burst_sample("robot_restart_recover", 120 if self.args.scenario == "compressed" else 60, 10 if self.args.scenario == "compressed" else 5)
+        self.burst_sample("robot_restart_recover", self.scaled_seconds(60, 120), 10)
 
     def custom_key_test(self):
         self.log("custom_key_test begin")
@@ -962,6 +1310,7 @@ tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth 
         return text
 
     def write_summary(self):
+        failures = [item for item in self.results if item.get("error") or not item.get("recovered")]
         summary = {
             "started_at": datetime.datetime.fromtimestamp(self.started).isoformat(),
             "finished_at": datetime.datetime.now().isoformat(),
@@ -969,6 +1318,8 @@ tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth 
             "deleted_total": self.deleted_total,
             "out_dir": self.out_dir,
             "args": vars(self.args),
+            "events": self.results,
+            "failure_count": len(failures),
         }
         path = os.path.join(self.out_dir, "summary.json")
         raw = json.dumps(summary, ensure_ascii=False, indent=2)
@@ -977,11 +1328,52 @@ tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth 
         io.open(path, "w", encoding="utf-8").write(raw)
         self.log("summary %s" % json_text(summary, 2000))
 
+    def write_report(self):
+        failures = [item for item in self.results if item.get("error") or not item.get("recovered")]
+        failures_path = os.path.join(self.out_dir, "failures.json")
+        raw = json.dumps(failures, ensure_ascii=False, indent=2)
+        if not isinstance(raw, type(u"")):
+            raw = raw.decode("utf-8")
+        io.open(failures_path, "w", encoding="utf-8").write(raw)
+
+        lines = []
+        lines.append("# Stability Report")
+        lines.append("")
+        lines.append("- started_at: %s" % datetime.datetime.fromtimestamp(self.started).isoformat())
+        lines.append("- finished_at: %s" % datetime.datetime.now().isoformat())
+        lines.append("- duration_sec: %s" % int(time.time() - self.started))
+        lines.append("- events: %s" % len(self.results))
+        lines.append("- failures: %s" % len(failures))
+        lines.append("")
+        lines.append("## Events")
+        lines.append("")
+        for item in self.results:
+            status = "FAIL" if item.get("error") or not item.get("recovered") else "OK"
+            lines.append("- %s %s duration=%ss recovered=%s error=%s" % (
+                status,
+                item.get("name"),
+                item.get("duration_sec"),
+                item.get("recovered"),
+                item.get("error") or "",
+            ))
+            lines.append("  before: %s" % item.get("before"))
+            lines.append("  after: %s" % item.get("after"))
+        lines.append("")
+        lines.append("## Failure Details")
+        lines.append("")
+        if failures:
+            for item in failures:
+                lines.append("- %s recovered=%s error=%s" % (item.get("name"), item.get("recovered"), item.get("error") or ""))
+        else:
+            lines.append("No failed scenario events.")
+        report_path = os.path.join(self.out_dir, "report.md")
+        io.open(report_path, "w", encoding="utf-8").write(u"\n".join(lines) + u"\n")
+        self.log("write_report report=%s failures=%s" % (report_path, failures_path))
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="VM-local random stability pressure script")
     parser.add_argument("--hours", type=float, default=1.0)
-    parser.add_argument("--scenario", choices=["compressed", "full", "random"], default="compressed")
     parser.add_argument("--robot-host", default="127.0.0.1")
     parser.add_argument("--robot-port", type=int, default=8111)
     parser.add_argument("--api-timeout", type=float, default=20.0)
