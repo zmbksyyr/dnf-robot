@@ -147,6 +147,8 @@ func (a *App) Config() Config {
 }
 
 func (a *App) Status() Status {
+	a.refreshMarketServiceStatus("auction", "127.0.0.1:30803", "/home/neople/auction", "./df_auction_r")
+	a.refreshMarketServiceStatus("point", "127.0.0.1:30603", "/home/neople/point", "./df_point_r")
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return Status{

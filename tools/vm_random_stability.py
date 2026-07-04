@@ -738,12 +738,12 @@ echo RESTORED
     def port_conflict_fault(self):
         self.log("port_conflict_fault begin")
         self.stop_market_services()
-        cmd = "(python - <<'PY'\nimport socket,time\ns=[]\nfor p in (30603,30803):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(90)\nPY\n) &"
+        cmd = "cat >/tmp/vm_random_port_conflict.py <<'PY'\nimport socket,time\ns=[]\nfor p in (30603,30803):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(90)\nPY\nnohup python /tmp/vm_random_port_conflict.py >/tmp/vm_random_port_conflict.log 2>&1 &"
         self.shell(cmd, 5)
         self.sample_with_event("port_conflict_bound")
         self.market_enable_auto(max_concurrent=4)
         self.burst_sample("port_conflict_fault", self.scaled_seconds(30, 60), 10)
-        self.shell("pkill -f \"time.sleep\\(30\\)\" || true; sleep 3", 20)
+        self.shell("pkill -f /tmp/vm_random_port_conflict.py || true; rm -f /tmp/vm_random_port_conflict.py; sleep 3", 20)
         self.market_enable_auto(max_concurrent=8)
         self.wait_market_services("port_conflict_recover", 180, 10)
 
@@ -1309,13 +1309,13 @@ tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth 
                 out = proc.communicate()[0] or b""
                 text = out.decode("utf-8", "replace") if not isinstance(out, str) else out
                 if log_output:
-                    self.log("shell_timeout command=%s output=%s" % (command[:160], text[:2000]))
+                    self.log("shell_timeout command=%s output=%s" % (safe_text(command)[:160], safe_text(text)[:2000]))
                 return text
             time.sleep(1)
         out = proc.communicate()[0] or b""
         text = out.decode("utf-8", "replace") if not isinstance(out, str) else out
         if log_output:
-            self.log("shell command=%s output=%s" % (command[:160], text[:2000]))
+            self.log("shell command=%s output=%s" % (safe_text(command)[:160], safe_text(text)[:2000]))
         return text
 
     def write_summary(self):
