@@ -9,7 +9,7 @@ import (
 const (
 	systemAnnouncementName     = "系统"
 	systemAnnouncementSenderID = uint16(1)
-	systemAnnouncementInterval = 5 * time.Minute
+	systemAnnouncementInterval = time.Minute
 
 	SystemAnnouncementMegaphone       = "megaphone"
 	SystemAnnouncementWebNoticeSingle = "web_notice_single"
