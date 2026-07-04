@@ -402,66 +402,36 @@ func compactJob(job *JobSummary) *JobSummary {
 }
 
 func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
-	out, err := a.loadItemInfoCatalog(a.resolveConfigPath(a.cfg.ItemInfoSourcePath))
+	out := map[uint32]catalogItem{}
+	stackable, err := readPVFItems(filepath.Join(a.configDir, "pvf_stackable_catalog.json"))
 	if err != nil {
 		return nil, err
 	}
-	stackable, err := readPVFItems(filepath.Join(a.configDir, "pvf_stackable_catalog.json"))
-	if err == nil {
-		mergePVFItemsIntoCatalog(out, stackable, "stackable")
-	}
-	equipment, err := readPVFItems(filepath.Join(a.configDir, "pvf_equipment_catalog.json"))
-	if err == nil {
-		mergePVFItemsIntoCatalog(out, equipment, "equipment")
-	}
-	return out, nil
-}
-
-func mergePVFItemsIntoCatalog(catalog map[uint32]catalogItem, items []pvfItem, kind string) {
-	for _, item := range items {
+	for _, item := range stackable {
 		if item.ID <= 0 {
 			continue
 		}
-		id := uint32(item.ID)
-		current, ok := catalog[id]
-		if !ok {
+		kind := "stackable"
+		if item.BadName || item.NoTrade || item.Expire {
+			kind = "blocked"
+		}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
+	}
+	equipment, err := readPVFItems(filepath.Join(a.configDir, "pvf_equipment_catalog.json"))
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range equipment {
+		if item.ID <= 0 {
 			continue
 		}
-		if current.Kind == "" {
-			current.Kind = kind
-		}
+		kind := "equipment"
 		if item.BadName || item.NoTrade || item.Expire {
-			current.Kind = "blocked"
+			kind = "blocked"
 		}
-		if current.Level <= 0 {
-			current.Level = item.Level
-		}
-		if current.ItemType <= 0 {
-			current.ItemType = item.ItemType
-		}
-		if current.SubType <= 0 {
-			current.SubType = item.SubType
-		}
-		if current.Slot == "" {
-			current.Slot = item.Slot
-		}
-		if current.Attach == "" {
-			current.Attach = item.Attach
-		}
-		if current.Rarity <= 0 {
-			current.Rarity = item.Rarity
-		}
-		if current.StackLimit <= 0 {
-			current.StackLimit = item.StackLimit
-		}
-		if current.Price <= 0 {
-			current.Price = int32(item.Price)
-		}
-		if current.Value <= 0 {
-			current.Value = int32(item.Value)
-		}
-		catalog[id] = current
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
 	}
+	return out, nil
 }
 
 func readPVFItems(path string) ([]pvfItem, error) {
@@ -482,125 +452,23 @@ func (a *App) loadItemInfoCatalog(path string) (map[uint32]catalogItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	tokens := tokenizeItemInfo(string(data))
-	for i := 0; i+16 < len(tokens); {
-		if tokens[i] == "#PVF_File" {
-			i++
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
 			continue
 		}
-		id64, err := strconv.ParseUint(tokens[i], 10, 32)
+		id64, err := strconv.ParseUint(fields[0], 10, 32)
 		if err != nil || id64 == 0 {
-			i++
-			continue
-		}
-		category, err := strconv.Atoi(tokens[i+16])
-		if err != nil {
-			i++
 			continue
 		}
 		id := uint32(id64)
-		level, _ := strconv.Atoi(tokens[i+13])
-		rarity, _ := strconv.Atoi(tokens[i+1])
-		item := catalogItem{
-			ItemID: id,
-			Name:   unquoteItemInfoName(tokens[i+14]),
-			Kind:   kindFromItemInfoCategory(category),
-			Level:  level,
-			Rarity: rarity,
-		}
-		applyItemInfoCategory(&item, category)
-		items[id] = item
-		i += 17
+		items[id] = catalogItem{ItemID: id, Kind: "stackable"}
 	}
 	if len(items) == 0 {
 		return nil, fmt.Errorf("iteminfo catalog is empty: %s", path)
 	}
 	return items, nil
-}
-
-func tokenizeItemInfo(text string) []string {
-	tokens := make([]string, 0, 1024)
-	for i := 0; i < len(text); {
-		for i < len(text) && (text[i] == ' ' || text[i] == '\t' || text[i] == '\r' || text[i] == '\n') {
-			i++
-		}
-		if i >= len(text) {
-			break
-		}
-		if text[i] == '`' {
-			start := i
-			i++
-			for i < len(text) && text[i] != '`' {
-				i++
-			}
-			if i < len(text) {
-				i++
-			}
-			tokens = append(tokens, text[start:i])
-			continue
-		}
-		start := i
-		for i < len(text) && text[i] != ' ' && text[i] != '\t' && text[i] != '\r' && text[i] != '\n' {
-			i++
-		}
-		tokens = append(tokens, text[start:i])
-	}
-	return tokens
-}
-
-func unquoteItemInfoName(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) >= 2 && value[0] == '`' && value[len(value)-1] == '`' {
-		return value[1 : len(value)-1]
-	}
-	return value
-}
-
-func kindFromItemInfoCategory(category int) string {
-	switch {
-	case category >= 10000 && category < 12000:
-		return "equipment"
-	case category >= 13000:
-		return "stackable"
-	default:
-		return "stackable"
-	}
-}
-
-func applyItemInfoCategory(item *catalogItem, category int) {
-	if item == nil {
-		return
-	}
-	if category >= 10000 && category < 11000 {
-		item.ItemType = 1
-		item.Slot = "weapon"
-		item.SubType = category - 10000
-		return
-	}
-	switch category {
-	case 11001:
-		item.ItemType, item.Slot = 2, "titlename"
-	case 11002:
-		item.ItemType, item.Slot = 3, "coat"
-	case 11003:
-		item.ItemType, item.Slot = 4, "pants"
-	case 11004:
-		item.ItemType, item.Slot = 5, "shoes"
-	case 11005:
-		item.ItemType, item.Slot = 6, "waist"
-	case 11006:
-		item.ItemType, item.Slot = 7, "shoulder"
-	case 11007:
-		item.ItemType, item.Slot = 8, "amulet"
-	case 11008:
-		item.ItemType, item.Slot = 9, "wrist"
-	case 11009:
-		item.ItemType, item.Slot = 10, "ring"
-	case 11010:
-		item.ItemType, item.Slot = 11, "support"
-	case 11011:
-		item.ItemType, item.Slot = 12, "magic stone"
-	}
 }
 
 // ---- config.go ----

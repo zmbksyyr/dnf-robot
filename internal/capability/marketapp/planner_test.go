@@ -207,21 +207,18 @@ func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 	}
 }
 
-func TestLoadCatalogUsesItemInfoAsAuthoritativeSource(t *testing.T) {
+func TestLoadCatalogDoesNotPromoteItemInfoOnlyIDs(t *testing.T) {
 	dir := t.TempDir()
 	app := testApp()
 	app.configDir = dir
-	app.cfg.ItemInfoSourcePath = filepath.Join(dir, "iteminfo.dat")
+	app.cfg.CeraItemInfoPath = filepath.Join(dir, "iteminfo.dat")
 	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{
 		{"id": 4000, "price": 7, "stack_limit": 1000},
 	})
 	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
 		{"id": 31056, "price": 100, "attach": "trade", "slot": "weapon"},
 	})
-	if err := os.WriteFile(app.cfg.ItemInfoSourcePath, []byte(
-		"4000 1 1 1 1 1 1 1 1 1 1 1 1 1 `stackable` `name2` 13006\r\n"+
-			"31056 2 1 1 1 1 1 1 1 1 1 1 1 40 `weapon` `name2` 10000\r\n"+
-			"999999 1 1 1 1 1 1 1 1 1 1 1 1 80 `iteminfo only` `name2` 11002\r\n"), 0644); err != nil {
+	if err := os.WriteFile(app.cfg.CeraItemInfoPath, []byte("999999 1 1 1 `iteminfo only` `name2` 13006\r\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -229,18 +226,14 @@ func TestLoadCatalogUsesItemInfoAsAuthoritativeSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	itemInfoOnly, ok := catalog[999999]
-	if !ok {
-		t.Fatal("iteminfo-only id missing")
+	if _, ok := catalog[999999]; ok {
+		t.Fatalf("iteminfo-only id was promoted into auction catalog: %#v", catalog[999999])
 	}
-	if itemInfoOnly.Kind != "equipment" || itemInfoOnly.Level != 80 || itemInfoOnly.Slot != "coat" {
-		t.Fatalf("iteminfo metadata not parsed: %#v", itemInfoOnly)
+	if _, ok := catalog[4000]; !ok {
+		t.Fatal("stackable PVF id missing")
 	}
-	if catalog[4000].Kind != "stackable" || catalog[4000].Price != 7 || catalog[4000].StackLimit != 1000 {
-		t.Fatalf("stackable PVF metadata not merged: %#v", catalog[4000])
-	}
-	if catalog[31056].Kind != "equipment" || catalog[31056].Price != 100 || catalog[31056].Attach != "trade" {
-		t.Fatalf("equipment PVF metadata not merged: %#v", catalog[31056])
+	if _, ok := catalog[31056]; !ok {
+		t.Fatal("equipment PVF id missing")
 	}
 }
 
