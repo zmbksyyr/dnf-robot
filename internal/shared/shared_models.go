@@ -5,6 +5,8 @@ import "time"
 // ---- catalog.go ----
 type EquipmentCatalogItem struct {
 	ID            int    `json:"id"`
+	Name          string `json:"name,omitempty"`
+	Name2         string `json:"name2,omitempty"`
 	Path          string `json:"path,omitempty"`
 	Level         int    `json:"level"`
 	ItemType      int    `json:"item_type"`

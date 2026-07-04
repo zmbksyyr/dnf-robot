@@ -1,6 +1,7 @@
 package pvf
 
 import (
+	"robot/internal/shared"
 	"strings"
 	"testing"
 )
@@ -24,5 +25,22 @@ func TestFormatPVFItemInfoDAT(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[1], "3038 ") || !strings.HasSuffix(lines[1], " 13002") {
 		t.Fatalf("unexpected second line: %q", lines[1])
+	}
+}
+
+func TestFormatPVFCatalogItemInfoDATGeneratesFromCatalog(t *testing.T) {
+	got := formatPVFCatalogItemInfoDAT([]shared.EquipmentCatalogItem{
+		{ID: 100050020, Name: "known", Level: 80, Rarity: 0, ItemType: 3, Slot: "coat", Path: "equipment/character/common/jacket/cloth/100050020.equ"},
+		{ID: 3100060, Name: "halin", Level: 90, Rarity: 4, ItemType: 8, Slot: "amulet", Path: "equipment/ancient/halin/3100060.equ"},
+	}, nil)
+	lines := strings.Split(strings.TrimSpace(got), "\r\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d, want 2: %q", len(lines), got)
+	}
+	if !strings.HasPrefix(lines[0], "3100060 ") {
+		t.Fatalf("rows not generated from catalog: %q", got)
+	}
+	if !strings.Contains(lines[0], "4 1 1 1 1 1 1 1 1 1 1 1 90 `halin` `name2_3100060` 11007") {
+		t.Fatalf("generated row did not carry level, names, and category: %q", lines[0])
 	}
 }
