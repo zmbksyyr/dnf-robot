@@ -1048,20 +1048,50 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 		}
 		a.mu.Lock()
 		if len(a.auctionQueue) == 0 || source == "pvf" && a.auctionQueueSource != "pvf" {
-			a.auctionQueue = append([]uint32(nil), candidates...)
+			candidateSet := idSet(candidates)
+			a.auctionRejected = filterQueueBySet(a.auctionRejected, candidateSet)
+			a.auctionQueue = filterQueueExcludeSet(candidates, idSet(a.auctionRejected))
 			a.auctionQueueSource = source
 		}
 		a.mu.Unlock()
 	}
 
 	a.mu.Lock()
-	queueLen := len(a.auctionQueue)
+	selected := make([]restockRow, 0)
+
+	normalBudget, rejectedBudget := splitAuctionBudgets(maxActions)
+	selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionQueue, pvfReady, catalog, have, normalBudget, false)...)
+	if maxActions <= 0 || rejectedBudget != 0 {
+		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionRejected, pvfReady, catalog, have, rejectedBudget, true)...)
+	}
+	a.mu.Unlock()
+	return selected, nil
+}
+
+func splitAuctionBudgets(maxActions int) (int, int) {
+	if maxActions <= 0 {
+		return 0, 0
+	}
+	rejected := maxActions / 10
+	if rejected <= 0 {
+		return maxActions, 0
+	}
+	return maxActions - rejected, rejected
+}
+
+func (a *App) selectAuctionRowsFromQueue(queue *[]uint32, pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int, rejected bool) []restockRow {
+	queueLen := len(*queue)
 	selected := make([]restockRow, 0)
 	planned := 0
 	for i := 0; i < queueLen; i++ {
-		id := a.auctionQueue[0]
-		a.auctionQueue = append(a.auctionQueue[1:], id)
+		id := (*queue)[0]
+		*queue = (*queue)[1:]
 		if have[id] > 0 {
+			if rejected {
+				a.appendAuctionNormalLocked(id)
+			} else {
+				*queue = append(*queue, id)
+			}
 			continue
 		}
 		row, ok := a.auctionRowForID(pvfReady, catalog, id)
@@ -1070,16 +1100,89 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 		}
 		records := auctionTargetRecords(row)
 		if maxActions > 0 && planned > 0 && planned+records > maxActions {
+			*queue = append(*queue, id)
 			continue
 		}
 		selected = append(selected, row)
 		planned += records
+		*queue = append(*queue, id)
 		if maxActions > 0 && planned >= maxActions {
 			break
 		}
 	}
-	a.mu.Unlock()
-	return selected, nil
+	return selected
+}
+
+func (a *App) markAuctionExplicitRejected(itemID uint32) {
+	if itemID == 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.auctionQueue = removeQueueID(a.auctionQueue, itemID)
+	if !queueContains(a.auctionRejected, itemID) {
+		a.auctionRejected = append(a.auctionRejected, itemID)
+	}
+}
+
+func (a *App) appendAuctionNormalLocked(itemID uint32) {
+	if itemID == 0 || queueContains(a.auctionQueue, itemID) {
+		return
+	}
+	a.auctionQueue = append(a.auctionQueue, itemID)
+}
+
+func idSet(ids []uint32) map[uint32]bool {
+	out := make(map[uint32]bool, len(ids))
+	for _, id := range ids {
+		if id != 0 {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+func filterQueueBySet(ids []uint32, keep map[uint32]bool) []uint32 {
+	out := ids[:0]
+	seen := map[uint32]bool{}
+	for _, id := range ids {
+		if id != 0 && keep[id] && !seen[id] {
+			out = append(out, id)
+			seen[id] = true
+		}
+	}
+	return out
+}
+
+func filterQueueExcludeSet(ids []uint32, exclude map[uint32]bool) []uint32 {
+	out := make([]uint32, 0, len(ids))
+	seen := map[uint32]bool{}
+	for _, id := range ids {
+		if id != 0 && !exclude[id] && !seen[id] {
+			out = append(out, id)
+			seen[id] = true
+		}
+	}
+	return out
+}
+
+func removeQueueID(ids []uint32, itemID uint32) []uint32 {
+	out := ids[:0]
+	for _, id := range ids {
+		if id != itemID {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func queueContains(ids []uint32, itemID uint32) bool {
+	for _, id := range ids {
+		if id == itemID {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) ([]uint32, string, error) {
@@ -1402,6 +1505,9 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 					}
 					entry.Reason = res.ResultReason
 					entry.Result = res.Raw
+					if task.action.Market == "auction" && task.action.Operation != "collect" && !entry.OK && entry.Reason != nil {
+						a.markAuctionExplicitRejected(task.action.ItemID)
+					}
 					a.appendLog(LogEvent{Type: "action", JobID: jobID, Market: task.action.Market, ItemID: task.action.ItemID, AuctionID: res.AuctionID, OK: &entry.OK, Reason: byteValue(entry.Reason)})
 					record(entry, nil)
 				}

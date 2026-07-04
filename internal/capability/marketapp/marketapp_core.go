@@ -24,21 +24,21 @@ type App struct {
 	dfGameR    string
 	executors  ActionExecutorFactory
 
-	mu              lockhub.Locker
-	jobMu           lockhub.Locker
-	autoMu          lockhub.Locker
-	autoRun         bool
-	lastJob         *JobSummary
-	dbInit          []string
-	dbInitErr       string
-	itemInfo        ItemInfoSyncStatus
-	itemInfoPreview ItemInfoPreviewStatus
-	services        map[string]MarketServiceStatus
-	rand            *rand.Rand
-	stopAuto        chan struct{}
-	autoDone        chan struct{}
+	mu        lockhub.Locker
+	jobMu     lockhub.Locker
+	autoMu    lockhub.Locker
+	autoRun   bool
+	lastJob   *JobSummary
+	dbInit    []string
+	dbInitErr string
+	itemInfo  ItemInfoSyncStatus
+	services  map[string]MarketServiceStatus
+	rand      *rand.Rand
+	stopAuto  chan struct{}
+	autoDone  chan struct{}
 
 	auctionQueue       []uint32
+	auctionRejected    []uint32
 	auctionQueueSource string
 }
 
@@ -146,20 +146,19 @@ func (a *App) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return Status{
-		ConfigPath:      a.configPath,
-		LogPath:         marketLogPath(a.configDir),
-		ListenAddr:      a.cfg.ListenAddr,
-		Auto:            a.cfg.Auto,
-		Collector:       a.cfg.Collector,
-		Restock:         a.cfg.Restock,
-		AutoRunning:     a.AutoRunning(),
-		Ready:           true,
-		DBInit:          append([]string(nil), a.dbInit...),
-		DBInitError:     a.dbInitErr,
-		ItemInfo:        a.itemInfo,
-		ItemInfoPreview: a.itemInfoPreview,
-		Services:        cloneServiceStatusMap(a.services),
-		LastJob:         compactJob(a.lastJob),
+		ConfigPath:  a.configPath,
+		LogPath:     marketLogPath(a.configDir),
+		ListenAddr:  a.cfg.ListenAddr,
+		Auto:        a.cfg.Auto,
+		Collector:   a.cfg.Collector,
+		Restock:     a.cfg.Restock,
+		AutoRunning: a.AutoRunning(),
+		Ready:       true,
+		DBInit:      append([]string(nil), a.dbInit...),
+		DBInitError: a.dbInitErr,
+		ItemInfo:    a.itemInfo,
+		Services:    cloneServiceStatusMap(a.services),
+		LastJob:     compactJob(a.lastJob),
 	}
 }
 
@@ -811,21 +810,20 @@ type ConfigUpdateRequest struct {
 }
 
 type Status struct {
-	ConfigPath      string                         `json:"config_path"`
-	LogPath         string                         `json:"log_path"`
-	ListenAddr      string                         `json:"listen_addr"`
-	Auto            AutoCfg                        `json:"auto"`
-	Collector       CollectorCfg                   `json:"collector"`
-	Restock         RestockCfg                     `json:"restock"`
-	AutoRunning     bool                           `json:"auto_running"`
-	Ready           bool                           `json:"ready"`
-	DBInit          []string                       `json:"db_init,omitempty"`
-	DBInitError     string                         `json:"db_init_error,omitempty"`
-	ItemInfo        ItemInfoSyncStatus             `json:"iteminfo"`
-	ItemInfoPreview ItemInfoPreviewStatus          `json:"iteminfo_preview"`
-	Services        map[string]MarketServiceStatus `json:"services,omitempty"`
-	LastJob         *JobSummary                    `json:"last_job,omitempty"`
-	LogTail         []LogEvent                     `json:"log_tail,omitempty"`
+	ConfigPath  string                         `json:"config_path"`
+	LogPath     string                         `json:"log_path"`
+	ListenAddr  string                         `json:"listen_addr"`
+	Auto        AutoCfg                        `json:"auto"`
+	Collector   CollectorCfg                   `json:"collector"`
+	Restock     RestockCfg                     `json:"restock"`
+	AutoRunning bool                           `json:"auto_running"`
+	Ready       bool                           `json:"ready"`
+	DBInit      []string                       `json:"db_init,omitempty"`
+	DBInitError string                         `json:"db_init_error,omitempty"`
+	ItemInfo    ItemInfoSyncStatus             `json:"iteminfo"`
+	Services    map[string]MarketServiceStatus `json:"services,omitempty"`
+	LastJob     *JobSummary                    `json:"last_job,omitempty"`
+	LogTail     []LogEvent                     `json:"log_tail,omitempty"`
 }
 
 type ItemInfoSyncStatus struct {
@@ -834,23 +832,6 @@ type ItemInfoSyncStatus struct {
 	Synced     int      `json:"synced"`
 	Skipped    int      `json:"skipped"`
 	Error      string   `json:"error,omitempty"`
-}
-
-type ItemInfoPreviewStatus struct {
-	SourcePath      string `json:"source_path,omitempty"`
-	TargetPath      string `json:"target_path,omitempty"`
-	SourceIDs       int    `json:"source_ids"`
-	TargetIDs       int    `json:"target_ids"`
-	AddedIDs        int    `json:"added_ids"`
-	OverwrittenIDs  int    `json:"overwritten_ids"`
-	PreservedIDs    int    `json:"preserved_ids"`
-	Level70Rows     int    `json:"level_70_rows"`
-	AllJobRows      int    `json:"all_job_rows"`
-	DuplicateSource int    `json:"duplicate_source"`
-	InvalidSource   int    `json:"invalid_source"`
-	DuplicateTarget int    `json:"duplicate_target"`
-	InvalidTarget   int    `json:"invalid_target"`
-	Error           string `json:"error,omitempty"`
 }
 
 type MarketServiceStatus struct {

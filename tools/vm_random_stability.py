@@ -97,6 +97,11 @@ SAMPLE_FIELDS = [
     "market_auto",
     "market_last_status",
     "market_last_error",
+    "market_auction_status",
+    "market_auction_open",
+    "market_point_status",
+    "market_point_open",
+    "market_services_ready",
     "load1",
     "load5",
     "load15",
@@ -240,6 +245,7 @@ class StabilityRun(object):
             {"name": "smoke_actions", "at": 2 * 60, "fn": self.smoke_actions},
             {"name": "target100", "at": 10 * 60, "fn": lambda: self.set_target(100)},
             {"name": "target600", "at": 30 * 60, "fn": lambda: self.set_target(600)},
+            {"name": "market_fault", "at": 60 * 60, "fn": self.market_fault},
             {"name": "monitor_fault", "at": 90 * 60, "fn": self.monitor_fault},
             {"name": "game_port_fault", "at": 150 * 60, "fn": self.game_port_fault},
             {"name": "shrink100", "at": 240 * 60, "fn": lambda: self.set_target(100)},
@@ -286,15 +292,133 @@ class StabilityRun(object):
         self.set_target(random.randint(self.args.target_min, self.args.target_max))
 
     def market_fault(self):
-        self.log("market_fault stop auction/point services")
-        self.sample_with_event("market_fault_stop")
-        self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; sleep 8; ss -lntp | grep -E ':(30603|30803)' || true", 40)
-        self.sample_with_event("market_fault_down")
-        res = self.safe_call("marketConfigUpdate", {"auto_enabled": True, "max_concurrent": 4, "continue_on_error": True, "markets": ["auction", "cera"]})
-        self.log("market_fault enable_auto result=%s" % json_text(res, 1600))
+        self.log("market_fault begin")
+        self.market_enable_auto(max_concurrent=8)
+        self.market_fault_kill_services()
+        self.market_fault_missing_iteminfo()
+        self.market_fault_bad_iteminfo()
+        self.market_fault_missing_catalog()
+        self.market_fault_bad_config()
+        self.market_enable_auto(max_concurrent=8)
+        self.wait_market_services("market_fault_final_recover", 180, 10)
+        self.burst_sample("market_fault_final", 60, 10)
+        self.log("market_fault done")
+
+    def market_enable_auto(self, max_concurrent=8):
+        res = self.safe_call("marketConfigUpdate", {
+            "auto_enabled": True,
+            "interval_ms": 60000,
+            "max_actions": 10000,
+            "max_concurrent": max_concurrent,
+            "continue_on_error": True,
+            "markets": ["auction", "cera"],
+        })
+        self.log("market_enable_auto result=%s" % json_text(res, 1600))
         res = self.safe_call("marketStart", {})
-        self.log("market_fault marketStart result=%s" % json_text(res, 1600))
-        self.burst_sample("market_fault_recover", 150, 10)
+        self.log("marketStart result=%s" % json_text(res, 1600))
+        return res
+
+    def market_status_result(self):
+        res = self.safe_call("marketStatus", {})
+        return (res.get("result") or {}) if isinstance(res, dict) else {}
+
+    def market_services_ready(self, status=None):
+        if status is None:
+            status = self.market_status_result()
+        services = status.get("services") or {}
+        auction = services.get("auction") or {}
+        point = services.get("point") or {}
+        return bool(auction.get("status") == "ready" and auction.get("listening") and point.get("status") == "ready" and point.get("listening"))
+
+    def wait_market_services(self, event, timeout_sec=180, interval_sec=10):
+        self.log("wait_market_services start event=%s timeout=%s" % (event, timeout_sec))
+        deadline = time.time() + timeout_sec
+        last = {}
+        while time.time() < deadline:
+            status = self.market_status_result()
+            last = status
+            self.sample_with_event(event)
+            if self.market_services_ready(status):
+                self.log("wait_market_services ready event=%s status=%s" % (event, json_text(status.get("services") or {}, 1400)))
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_market_services timeout event=%s status=%s" % (event, json_text((last or {}).get("services") or last, 1800)))
+        return False
+
+    def market_fault_kill_services(self):
+        self.log("market_fault_kill_services begin")
+        self.sample_with_event("market_kill_before")
+        self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; sleep 8; ss -lntp | grep -E ':(30603|30803)' || true", 40)
+        self.sample_with_event("market_kill_down")
+        self.market_enable_auto(max_concurrent=8)
+        self.wait_market_services("market_kill_recover", 180, 10)
+
+    def market_fault_missing_iteminfo(self):
+        self.log("market_fault_missing_iteminfo begin")
+        backups = [
+            self.backup_file("/home/neople/auction/iteminfo.dat"),
+            self.backup_file("/home/neople/point/iteminfo.dat"),
+        ]
+        try:
+            self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; rm -f /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat; sleep 3", 30)
+            self.market_enable_auto(max_concurrent=4)
+            self.burst_sample("market_missing_iteminfo_down", 60, 10)
+        finally:
+            self.restore_file("/home/neople/auction/iteminfo.dat", backups[0])
+            self.restore_file("/home/neople/point/iteminfo.dat", backups[1])
+            self.market_enable_auto(max_concurrent=8)
+            self.wait_market_services("market_missing_iteminfo_recover", 180, 10)
+
+    def market_fault_bad_iteminfo(self):
+        self.log("market_fault_bad_iteminfo begin")
+        backups = [
+            self.backup_file("/home/neople/auction/iteminfo.dat"),
+            self.backup_file("/home/neople/point/iteminfo.dat"),
+        ]
+        try:
+            bad = "printf 'bad iteminfo\\n1 broken row\\n999999999 0 x x x\\n' > /home/neople/auction/iteminfo.dat; cp -f /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat"
+            self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; " + bad + "; sleep 3", 30)
+            self.market_enable_auto(max_concurrent=4)
+            self.burst_sample("market_bad_iteminfo_down", 60, 10)
+        finally:
+            self.restore_file("/home/neople/auction/iteminfo.dat", backups[0])
+            self.restore_file("/home/neople/point/iteminfo.dat", backups[1])
+            self.market_enable_auto(max_concurrent=8)
+            self.wait_market_services("market_bad_iteminfo_recover", 180, 10)
+
+    def market_fault_missing_catalog(self):
+        self.log("market_fault_missing_catalog begin")
+        paths = [
+            "/root/config/pvf_equipment_catalog.json",
+            "/root/config/pvf_stackable_catalog.json",
+            "/root/config/pvf_iteminfo.dat",
+        ]
+        backups = [self.backup_file(path) for path in paths]
+        try:
+            self.shell("rm -f /root/config/pvf_equipment_catalog.json /root/config/pvf_stackable_catalog.json /root/config/pvf_iteminfo.dat", 20)
+            self.sample_with_event("market_catalog_removed")
+            res = self.safe_call("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 128, "max_concurrent": 4, "continue_on_error": True})
+            self.log("market_missing_catalog restock result=%s" % json_text(res, 2200))
+            self.burst_sample("market_missing_catalog_fallback", 60, 10)
+        finally:
+            for path, backup in zip(paths, backups):
+                self.restore_file(path, backup)
+            self.sample_with_event("market_catalog_restored")
+
+    def market_fault_bad_config(self):
+        self.log("market_fault_bad_config begin")
+        path = "/root/config/market_config.json"
+        backup = self.backup_file(path)
+        try:
+            self.shell("printf '{bad market config\\n' > %s" % path, 10)
+            self.sample_with_event("market_bad_config_written")
+            self.robot_restart_without_target("market_bad_config_restart")
+            self.burst_sample("market_bad_config_down", 40, 10)
+        finally:
+            self.restore_file(path, backup)
+            self.robot_restart_without_target("market_bad_config_restore_restart")
+            self.market_enable_auto(max_concurrent=8)
+            self.wait_market_services("market_bad_config_recover", 180, 10)
 
     def cleanup_burst(self):
         self.log("cleanup_burst begin")
@@ -421,9 +545,27 @@ class StabilityRun(object):
         self.sample_with_event("game_port_fault_restore")
         self.burst_sample("game_port_fault_recover", 120 if self.args.scenario == "compressed" else 60, 10 if self.args.scenario == "compressed" else 5)
 
-    def robot_restart(self):
-        self.log("robot_restart begin")
-        self.sample_with_event("robot_restart_stop")
+    def backup_file(self, path):
+        backup = "%s.vm_random_backup_%s" % (path, int(time.time() * 1000))
+        script = "[ -e '%s' ] && cp -af '%s' '%s' && echo '%s' || true" % (path, path, backup, backup)
+        out = self.shell(script, 20)
+        if backup in out:
+            self.log("backup_file path=%s backup=%s" % (path, backup))
+            return backup
+        self.log("backup_file missing path=%s" % path)
+        return ""
+
+    def restore_file(self, path, backup):
+        if not backup:
+            self.log("restore_file skipped path=%s backup_empty" % path)
+            return
+        script = "[ -e '%s' ] && cp -af '%s' '%s' && rm -f '%s' && echo RESTORED || echo MISSING_BACKUP" % (backup, backup, path, backup)
+        out = self.shell(script, 20)
+        self.log("restore_file path=%s backup=%s output=%s" % (path, backup, out[:400]))
+
+    def robot_restart_without_target(self, label):
+        self.log("robot_restart_without_target begin label=%s" % label)
+        self.sample_with_event(label + "_stop")
         script = r"""
 pids=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
@@ -431,11 +573,16 @@ sleep 8
 left=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 nohup /root/robot > /root/robot_stdout.log 2>&1 &
-sleep 10
-pgrep -af '/root/robot|df_game_r|df_monitor_r' || true
-ss -lntp | grep -E ':(8111|8112|10011|30303)' || true
+sleep 12
+pgrep -af '/root/robot|df_game_r|df_monitor_r|df_auction_r|df_point_r' || true
+ss -lntp | grep -E ':(8111|8112|10011|30303|30603|30803)' || true
 """
         self.shell(script, 120)
+        self.sample_with_event(label + "_started")
+
+    def robot_restart(self):
+        self.log("robot_restart begin")
+        self.robot_restart_without_target("robot_restart")
         time.sleep(20)
         self.set_target(self.args.target_max)
         self.burst_sample("robot_restart_recover", 120 if self.args.scenario == "compressed" else 60, 10 if self.args.scenario == "compressed" else 5)
@@ -687,6 +834,14 @@ echo "KEYS_RESTORED"
             last = market.get("last_job") or {}
             row["market_last_status"] = last.get("status")
             row["market_last_error"] = (last.get("error") or market.get("db_init_error") or "")[:160]
+            services = market.get("services") or {}
+            auction = services.get("auction") or {}
+            point = services.get("point") or {}
+            row["market_auction_status"] = auction.get("status")
+            row["market_auction_open"] = int(bool(auction.get("listening")))
+            row["market_point_status"] = point.get("status")
+            row["market_point_open"] = int(bool(point.get("listening")))
+            row["market_services_ready"] = int(bool(auction.get("status") == "ready" and auction.get("listening") and point.get("status") == "ready" and point.get("listening")))
         except Exception as exc:
             if not row.get("api_error"):
                 row["api_error"] = "marketStatus:%r" % (exc,)
@@ -759,6 +914,11 @@ echo '===== robot log filtered ====='
 tail -n %s /root/config/log_robot 2>/dev/null | grep -a -E '%s' | tail -n 200 || true
 echo '===== market log filtered ====='
 tail -n %s /root/config/market_log.jsonl 2>/dev/null | grep -a -E 'market_service|job_end|auto_run|cannot assign requested address|too many open files|connection reset' | tail -n 160 || true
+echo '===== market service logs ====='
+tail -n 80 /root/config/market_auction_service.log 2>/dev/null || true
+tail -n 80 /root/config/market_point_service.log 2>/dev/null || true
+echo '===== market files ====='
+ls -l /root/config/market_config.json /root/config/pvf_*catalog.json /root/config/pvf_iteminfo.dat /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat 2>/dev/null || true
 echo '===== web stdout filtered ====='
 tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth rejected|web admin exited' | tail -n 120 || true
 """ % (

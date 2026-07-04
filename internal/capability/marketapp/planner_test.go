@@ -174,36 +174,83 @@ func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
 	}
 }
 
-func TestInspectItemInfoDATCountsSafetySignals(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "iteminfo.dat")
-	mustWriteText(t, path, "100 0 1 1 1 1 1 1 1 1 1 1 1 70 `a` `a` 13002\r\nbad row\r\n100 0 1 0 1 1 1 1 1 1 1 1 1 80 `b` `b` 13002\r\n")
+func TestAuctionRejectedQueueUsesTenPercentBudget(t *testing.T) {
+	app := testApp()
+	app.cfg.Restock.EquipmentQtyMin = 1
+	app.cfg.Restock.EquipmentQtyMax = 1
+	catalog := map[uint32]catalogItem{}
+	normalIDs := []uint32{}
+	for i := uint32(1); i <= 20; i++ {
+		id := 10000 + i
+		normalIDs = append(normalIDs, id)
+		catalog[id] = catalogItem{ItemID: id, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100}
+	}
+	rejectedIDs := []uint32{20001, 20002, 20003}
+	for _, id := range rejectedIDs {
+		catalog[id] = catalogItem{ItemID: id, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100}
+	}
+	app.auctionQueue = append([]uint32(nil), normalIDs...)
+	app.auctionRejected = append([]uint32(nil), rejectedIDs...)
+	app.auctionQueueSource = "pvf"
 
-	got, err := inspectItemInfoDAT(path)
+	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.IDs) != 1 || got.Duplicates != 1 || got.Invalid != 1 {
-		t.Fatalf("unexpected id counts: %#v", got)
+	if len(rows) != 10 {
+		t.Fatalf("rows = %d, want 10", len(rows))
 	}
-	if got.Level70Rows != 1 || got.AllJobRows != 1 {
-		t.Fatalf("unexpected safety counts: %#v", got)
+	normal, rejected := 0, 0
+	rejectedSet := idSet(rejectedIDs)
+	for _, row := range rows {
+		if rejectedSet[row.ItemID] {
+			rejected++
+		} else {
+			normal++
+		}
+	}
+	if normal != 9 || rejected != 1 {
+		t.Fatalf("budget split normal=%d rejected=%d, want 9/1 rows=%#v", normal, rejected, rows)
 	}
 }
 
-func TestPreviewItemInfoDATComparesSourceAndTarget(t *testing.T) {
-	dir := t.TempDir()
+func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
 	app := testApp()
-	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "target.dat")}
-	source := filepath.Join(dir, "source.dat")
-	mustWriteText(t, source, "100 0 1 1 1 1 1 1 1 1 1 1 1 70 `a` `a` 13002\r\n200 0 1 1 1 1 1 1 1 1 1 1 1 70 `b` `b` 13002\r\n")
-	mustWriteText(t, app.cfg.ItemInfoTargets[0], "100 0 1 1 1 1 1 1 1 1 1 1 1 70 `a` `a` 13002\r\n300 0 1 1 1 1 1 1 1 1 1 1 1 70 `c` `c` 13002\r\n")
-
-	got := app.previewItemInfoDAT(source)
-	if got.Error != "" {
-		t.Fatal(got.Error)
+	app.cfg.Restock.EquipmentQtyMin = 1
+	app.cfg.Restock.EquipmentQtyMax = 1
+	catalog := map[uint32]catalogItem{
+		10075: {ItemID: 10075, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100},
+		30075: {ItemID: 30075, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100},
 	}
-	if got.SourceIDs != 2 || got.TargetIDs != 2 || got.AddedIDs != 1 || got.OverwrittenIDs != 1 || got.PreservedIDs != 1 {
-		t.Fatalf("unexpected preview: %#v", got)
+	app.auctionQueue = []uint32{10075}
+	app.auctionRejected = []uint32{30075}
+	app.auctionQueueSource = "pvf"
+
+	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{30075: 1}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ItemID != 10075 {
+		t.Fatalf("selected rows = %#v, want only normal missing item", rows)
+	}
+	if len(app.auctionRejected) != 0 {
+		t.Fatalf("rejected queue = %#v, want empty", app.auctionRejected)
+	}
+	if !queueContains(app.auctionQueue, 30075) {
+		t.Fatalf("stocked rejected item did not return to normal queue: %#v", app.auctionQueue)
+	}
+}
+
+func TestMarkAuctionExplicitRejectedMovesID(t *testing.T) {
+	app := testApp()
+	app.auctionQueue = []uint32{10075, 30075, 10075}
+	app.markAuctionExplicitRejected(10075)
+
+	if queueContains(app.auctionQueue, 10075) {
+		t.Fatalf("normal queue still contains rejected id: %#v", app.auctionQueue)
+	}
+	if len(app.auctionRejected) != 1 || app.auctionRejected[0] != 10075 {
+		t.Fatalf("rejected queue = %#v, want [10075]", app.auctionRejected)
 	}
 }
 
