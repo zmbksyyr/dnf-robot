@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/lockhub"
-	"robot/internal/shared"
 	"strings"
 	"time"
 )
@@ -262,13 +261,7 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 			}
 		}
 		ceraRows := a.cfg.Cera.Items
-		ceraCatalog := catalog
-		if itemInfoCatalog, itemInfoErr := a.loadItemInfoJSONCatalog(); itemInfoErr == nil {
-			ceraCatalog = itemInfoCatalog
-		} else if !pvfReady {
-			ceraCatalog = nil
-		}
-		a.planCera(ceraRows, ceraCatalog, haveCera, occ, &result)
+		a.planCera(ceraRows, nil, haveCera, occ, &result)
 	}
 	result.Actions = limitActions(result.Actions, req.MaxActions)
 	result.Summary = PlanSummary{Actions: len(result.Actions), Skipped: len(result.Skipped), ExistingRecords: result.Summary.ExistingRecords}
@@ -444,34 +437,6 @@ func readPVFItems(path string) ([]pvfItem, error) {
 		return nil, err
 	}
 	return items, nil
-}
-
-func (a *App) loadItemInfoJSONCatalog() (map[uint32]catalogItem, error) {
-	data, err := os.ReadFile(filepath.Join(a.configDir, "pvf_iteminfo_catalog.json"))
-	if err != nil {
-		return nil, fmt.Errorf("read pvf_iteminfo_catalog.json: %w", err)
-	}
-	var rows []shared.ItemInfoCatalogItem
-	if err := json.Unmarshal(data, &rows); err != nil {
-		return nil, err
-	}
-	out := make(map[uint32]catalogItem, len(rows))
-	for _, row := range rows {
-		if row.ID <= 0 {
-			continue
-		}
-		out[uint32(row.ID)] = catalogItem{
-			ItemID: uint32(row.ID),
-			Name:   row.Name,
-			Kind:   "stackable",
-			Level:  row.Level,
-			Rarity: row.Rarity,
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("pvf_iteminfo_catalog.json is empty")
-	}
-	return out, nil
 }
 
 // ---- config.go ----

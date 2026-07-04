@@ -44,7 +44,8 @@ func TestParsePVFItemInfoCatalog(t *testing.T) {
 }
 
 func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) {
-	raw := "2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `100萬金幣` `100萬金幣` 13002\r\n"
+	raw := "2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `100萬金幣` `100萬金幣` 13002\r\n" +
+		"3100060 0 1 1 1 1 1 1 1 1 1 1 1 90 `raw` `raw2` 99999\r\n"
 	got := formatExtendedPVFItemInfoDAT(raw, []shared.EquipmentCatalogItem{
 		{ID: 3100060, Level: 90, Rarity: 4, ItemType: 8, Slot: "amulet", Path: "equipment/ancient/halin/3100060.equ"},
 		{ID: 35500001, Level: 90, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 3, Path: "equipment/character/fighter/weapon/boxglove/35500001.equ", UseJob: []int{1, 7}},
@@ -58,6 +59,9 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 	}
 	assertLineContains(t, lines, "2675336 ", "13002")
 	assertLineContains(t, lines, "3100060 ", "12001")
+	if strings.Contains(got, "99999") || strings.Contains(got, "`raw`") {
+		t.Fatalf("raw iteminfo row was not overwritten by PVF generated row: %q", got)
+	}
 	assertLineContains(t, lines, "35500001 ", "10205")
 	assertLineContains(t, lines, "100050203 ", "11002")
 	assertLineContains(t, lines, "5057 ", "31305")

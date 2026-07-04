@@ -26,7 +26,7 @@ type pvfManifest struct {
 	Runtime interface{} `json:"runtime,omitempty"`
 }
 
-const pvfExportVersion = 15
+const pvfExportVersion = 16
 
 const pvfItemInfoExportName = "pvf_iteminfo.dat"
 const pvfItemInfoCatalogExportName = "pvf_iteminfo_catalog.json"
@@ -195,23 +195,26 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 	}
 	rows := make([]row, 0, len(raw)+len(equipment)+len(stackable))
 	seen := make(map[int]bool, len(raw)+len(equipment)+len(stackable))
-	for id, fields := range raw {
-		rows = append(rows, row{id: id, text: strings.Join(fields, " ")})
-		seen[id] = true
-	}
 	for _, item := range equipment {
-		if item.ID <= 0 || seen[item.ID] {
+		if item.ID <= 0 {
 			continue
 		}
 		rows = append(rows, row{id: item.ID, text: strings.Join(generatedItemInfoFields(item, false), " ")})
 		seen[item.ID] = true
 	}
 	for _, item := range stackable {
-		if item.ID <= 0 || seen[item.ID] {
+		if item.ID <= 0 {
 			continue
 		}
 		rows = append(rows, row{id: item.ID, text: strings.Join(generatedItemInfoFields(item, true), " ")})
 		seen[item.ID] = true
+	}
+	for id, fields := range raw {
+		if seen[id] {
+			continue
+		}
+		rows = append(rows, row{id: id, text: strings.Join(fields, " ")})
+		seen[id] = true
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].id < rows[j].id })
 	out := make([]string, 0, len(rows))
