@@ -174,6 +174,39 @@ func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
 	}
 }
 
+func TestInspectItemInfoDATCountsSafetySignals(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "iteminfo.dat")
+	mustWriteText(t, path, "100 0 1 1 1 1 1 1 1 1 1 1 1 70 `a` `a` 13002\r\nbad row\r\n100 0 1 0 1 1 1 1 1 1 1 1 1 80 `b` `b` 13002\r\n")
+
+	got, err := inspectItemInfoDAT(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.IDs) != 1 || got.Duplicates != 1 || got.Invalid != 1 {
+		t.Fatalf("unexpected id counts: %#v", got)
+	}
+	if got.Level70Rows != 1 || got.AllJobRows != 1 {
+		t.Fatalf("unexpected safety counts: %#v", got)
+	}
+}
+
+func TestPreviewItemInfoDATComparesSourceAndTarget(t *testing.T) {
+	dir := t.TempDir()
+	app := testApp()
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "target.dat")}
+	source := filepath.Join(dir, "source.dat")
+	mustWriteText(t, source, "100 0 1 1 1 1 1 1 1 1 1 1 1 70 `a` `a` 13002\r\n200 0 1 1 1 1 1 1 1 1 1 1 1 70 `b` `b` 13002\r\n")
+	mustWriteText(t, app.cfg.ItemInfoTargets[0], "100 0 1 1 1 1 1 1 1 1 1 1 1 70 `a` `a` 13002\r\n300 0 1 1 1 1 1 1 1 1 1 1 1 70 `c` `c` 13002\r\n")
+
+	got := app.previewItemInfoDAT(source)
+	if got.Error != "" {
+		t.Fatal(got.Error)
+	}
+	if got.SourceIDs != 2 || got.TargetIDs != 2 || got.AddedIDs != 1 || got.OverwrittenIDs != 1 || got.PreservedIDs != 1 {
+		t.Fatalf("unexpected preview: %#v", got)
+	}
+}
+
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 	app := testApp()
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)

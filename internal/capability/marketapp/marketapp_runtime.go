@@ -15,6 +15,7 @@ import (
 	"robot/internal/foundation/lockhub"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -304,32 +305,160 @@ func marketServiceName(market string) string {
 }
 
 func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) bool {
+	status := MarketServiceStatus{Name: name, Addr: addr, Dir: dir, Bin: bin, CheckedAt: time.Now(), LogPath: a.marketServiceLogPath(name)}
 	if tcpReady(addr, 500*time.Millisecond) {
+		status.Listening = true
+		status.PID = marketServicePID(bin)
+		if status.PID <= 0 {
+			status.Status = "port_ready_process_missing"
+			status.Message = "port is listening but target process was not found"
+			a.setMarketServiceStatus(status)
+			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+			return false
+		}
+		status.Status = "ready"
+		status.Message = "already listening"
+		a.setMarketServiceStatus(status)
 		return true
 	}
 	if err := prepareMarketServiceDir(dir); err != nil {
-		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "prepare_failed", Message: err.Error()})
+		status.Status = "prepare_failed"
+		status.Message = err.Error()
+		a.setMarketServiceStatus(status)
+		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
 		return false
 	}
-	cmdline := marketServiceShellCommand(bin, args)
+	status.StartedAt = time.Now()
+	cmdline := marketServiceShellCommand(bin, args, status.LogPath)
 	cmd := exec.Command("/bin/sh", "-c", cmdline)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "start_failed", Message: err.Error()})
+		status.Status = "start_failed"
+		status.Message = err.Error()
+		a.setMarketServiceStatus(status)
+		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
 		return false
 	}
 	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "start", Message: fmt.Sprintf("addr=%s output=%s", addr, strings.TrimSpace(string(out)))})
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if tcpReady(addr, 500*time.Millisecond) {
-			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "ready", Message: addr})
+			status.Listening = true
+			status.PID = marketServicePID(bin)
+			time.Sleep(8 * time.Second)
+			status.CheckedAt = time.Now()
+			status.Listening = tcpReady(addr, 500*time.Millisecond)
+			status.PID = marketServicePID(bin)
+			if hasMarketServiceFailure(status.LogPath) {
+				status.Status = "regist_item_failed"
+				status.Message = "service log contains RegistItem failure"
+				a.setMarketServiceStatus(status)
+				a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+				return false
+			}
+			if status.PID <= 0 {
+				status.Status = "process_exited"
+				status.Message = "process exited during startup stability window"
+				a.setMarketServiceStatus(status)
+				a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+				return false
+			}
+			if !status.Listening {
+				status.Status = "port_ready_but_unstable"
+				status.Message = "port stopped listening during startup stability window"
+				a.setMarketServiceStatus(status)
+				a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+				return false
+			}
+			status.Status = "ready"
+			status.Message = addr
+			a.setMarketServiceStatus(status)
+			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
 			return true
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "not_ready", Message: addr})
+	status.Status = "start_timeout"
+	status.Message = addr
+	a.setMarketServiceStatus(status)
+	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
 	return false
+}
+
+func (a *App) refreshMarketServiceStatus(name, addr, dir, bin string) {
+	status := MarketServiceStatus{
+		Name:      name,
+		Addr:      addr,
+		Dir:       dir,
+		Bin:       bin,
+		CheckedAt: time.Now(),
+		LogPath:   a.marketServiceLogPath(name),
+		PID:       marketServicePID(bin),
+		Listening: tcpReady(addr, 300*time.Millisecond),
+	}
+	switch {
+	case status.Listening && status.PID > 0:
+		status.Status = "ready"
+		status.Message = "already listening"
+	case status.Listening:
+		status.Status = "port_ready_process_missing"
+		status.Message = "port is listening but target process was not found"
+	case status.PID > 0:
+		status.Status = "process_without_port"
+		status.Message = "target process exists but port is not listening"
+	default:
+		status.Status = "down"
+		status.Message = "not running"
+	}
+	a.setMarketServiceStatus(status)
+}
+
+func (a *App) marketServiceLogPath(name string) string {
+	if a.configDir == "" {
+		return filepath.Join(os.TempDir(), "robot_market_"+name+".log")
+	}
+	return filepath.Join(a.configDir, "market_"+name+"_service.log")
+}
+
+func (a *App) setMarketServiceStatus(status MarketServiceStatus) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.services == nil {
+		a.services = map[string]MarketServiceStatus{}
+	}
+	a.services[status.Name] = status
+}
+
+func marketServicePID(bin string) int {
+	name := filepath.Base(strings.TrimSpace(bin))
+	if name == "" || name == "." || name == "/" {
+		return 0
+	}
+	out, err := exec.Command("pidof", name).Output()
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
+func hasMarketServiceFailure(logPath string) bool {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(string(data))
+	return strings.Contains(text, "fail to registitem") ||
+		strings.Contains(text, "process exits") ||
+		strings.Contains(text, "fatal")
 }
 
 func prepareMarketServiceDir(dir string) error {
@@ -348,13 +477,16 @@ func prepareMarketServiceDir(dir string) error {
 	return nil
 }
 
-func marketServiceShellCommand(bin string, args []string) string {
+func marketServiceShellCommand(bin string, args []string, outputPath string) string {
 	parts := make([]string, 0, len(args)+2)
 	parts = append(parts, shellQuote(bin))
 	for _, arg := range args {
 		parts = append(parts, shellQuote(arg))
 	}
-	return "nohup " + strings.Join(parts, " ") + " >/dev/null 2>&1 &"
+	if outputPath == "" {
+		outputPath = "/dev/null"
+	}
+	return "nohup " + strings.Join(parts, " ") + " >" + shellQuote(outputPath) + " 2>&1 &"
 }
 
 func shellQuote(v string) string {
@@ -1131,37 +1263,35 @@ func mergeStringMap(dst *map[string]string, defaults map[string]string) {
 		*dst = map[string]string{}
 	}
 	for key, value := range defaults {
-		if (*dst)[key] == "" {
-			(*dst)[key] = value
-		}
+		(*dst)[key] = value
 	}
 }
 
 func defaultRestockComments() map[string]string {
 	return map[string]string{
-		"_summary":              "Auction restock uses PVF candidates minus current DB stock. If PVF export is unavailable, embedded base IDs and prices are used as fallback.",
-		"stack_sizes":           "Stackable item count candidates. The actual count is clamped by PVF stack_limit when available.",
-		"equipment_qty_min":     "Minimum auction records generated for each missing equipment item.",
-		"equipment_qty_max":     "Maximum auction records generated for each missing equipment item.",
-		"equipment_inflate_min": "Equipment base price multiplier lower bound.",
-		"equipment_inflate_max": "Equipment base price multiplier upper bound.",
+		"_summary":              "Normal auction uses PVF for item data and the current auction iteminfo.dat as the environment boundary. Candidate IDs are PVF auctionable IDs intersected with iteminfo.dat IDs; clicking ItemInfo explicitly releases the generated compatible dat and expands that boundary.",
+		"stack_sizes":           "Stackable listing count candidates, such as material bundles. The selected count is clamped by PVF stack_limit when available.",
+		"equipment_qty_min":     "Minimum duplicate records generated for each missing equipment item after the DB shows no system stock for that item.",
+		"equipment_qty_max":     "Maximum duplicate records generated for each missing equipment item after the DB shows no system stock for that item.",
+		"equipment_inflate_min": "Lower equipment base price multiplier. PVF price/value remains the base.",
+		"equipment_inflate_max": "Upper equipment base price multiplier. PVF price/value remains the base.",
 		"upgrade_min":           "Minimum random equipment upgrade value written to the auction packet.",
 		"upgrade_max":           "Maximum random equipment upgrade value written to the auction packet.",
-		"refine_min":            "Minimum random equipment ExtraAddInfo value written to the auction packet.",
-		"refine_max":            "Maximum random equipment ExtraAddInfo value written to the auction packet.",
-		"upgrade_price_rate":    "Price increase per upgrade level.",
-		"refine_price_rate":     "Price increase per ExtraAddInfo level.",
-		"rand_low":              "Final price random lower multiplier.",
-		"rand_high":             "Final price random upper multiplier.",
-		"max_actions":           "Maximum actions per restock round. Default is 10000; use 0 to send the full DB gap.",
-		"max_concurrent":        "Concurrent auction register workers.",
+		"refine_min":            "Minimum random equipment ExtraAddInfo/refine value written to the auction packet.",
+		"refine_max":            "Maximum random equipment ExtraAddInfo/refine value written to the auction packet.",
+		"upgrade_price_rate":    "Additional equipment price rate per upgrade level.",
+		"refine_price_rate":     "Additional equipment price rate per ExtraAddInfo/refine level.",
+		"rand_low":              "Final random price multiplier lower bound for both stackable and equipment listings.",
+		"rand_high":             "Final random price multiplier upper bound for both stackable and equipment listings.",
+		"max_actions":           "Maximum register packets per restock round. Default is 10000; use 0 only when a caller intentionally wants the full DB gap.",
+		"max_concurrent":        "Concurrent auction register workers. This controls send pressure, not item selection.",
 		"max_result_actions":    "Maximum action details retained in job result to keep UI/log payload bounded.",
 		"per_item_delay_ms":     "Optional delay between actions in each worker. 0 means no intentional delay.",
 	}
 }
 func defaultCeraComments() map[string]string {
 	return map[string]string{
-		"_summary":      "Gold consignment uses the fixed item list below. PVF is used only to verify item existence when PVF export is available.",
+		"_summary":      "Gold consignment uses the fixed item list below. It is separate from normal auction item selection and does not use the PVF/iteminfo intersection gate.",
 		"items":         "Gold package list. Entries with enabled=false are kept in config but not restocked.",
 		"item_id":       "Gold package item ID.",
 		"name":          "Display label used only for identification in config and logs.",
