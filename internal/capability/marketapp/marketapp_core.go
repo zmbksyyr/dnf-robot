@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/lockhub"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -263,9 +262,7 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 		}
 		ceraRows := a.cfg.Cera.Items
 		ceraCatalog := catalog
-		if itemInfoCatalog, itemInfoErr := a.loadItemInfoCatalog(a.cfg.CeraItemInfoPath); itemInfoErr == nil {
-			ceraCatalog = itemInfoCatalog
-		} else if !pvfReady {
+		if !pvfReady {
 			ceraCatalog = nil
 		}
 		a.planCera(ceraRows, ceraCatalog, haveCera, occ, &result)
@@ -446,31 +443,6 @@ func readPVFItems(path string) ([]pvfItem, error) {
 	return items, nil
 }
 
-func (a *App) loadItemInfoCatalog(path string) (map[uint32]catalogItem, error) {
-	items := map[uint32]catalogItem{}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) == 0 {
-			continue
-		}
-		id64, err := strconv.ParseUint(fields[0], 10, 32)
-		if err != nil || id64 == 0 {
-			continue
-		}
-		id := uint32(id64)
-		items[id] = catalogItem{ItemID: id, Kind: "stackable"}
-	}
-	if len(items) == 0 {
-		return nil, fmt.Errorf("iteminfo catalog is empty: %s", path)
-	}
-	return items, nil
-}
-
 // ---- config.go ----
 func DefaultConfig() Config {
 	return Config{
@@ -490,7 +462,6 @@ func DefaultConfig() Config {
 			"/home/dxf/point/iteminfo.dat",
 		},
 		AutoSyncItemInfo: true,
-		CeraItemInfoPath: "/home/neople/point/iteminfo.dat",
 		SystemOwner: SystemOwner{
 			IDBase:      90000001,
 			BuyerBase:   90100001,
@@ -602,9 +573,6 @@ func (c *Config) applyDefaults() {
 	}
 	if itemInfoUnset {
 		c.AutoSyncItemInfo = d.AutoSyncItemInfo
-	}
-	if c.CeraItemInfoPath == "" {
-		c.CeraItemInfoPath = d.CeraItemInfoPath
 	}
 	if c.SystemOwner.IDBase == 0 {
 		c.SystemOwner.IDBase = d.SystemOwner.IDBase
@@ -732,7 +700,6 @@ type Config struct {
 	ItemInfoSourcePath string       `json:"iteminfo_source_path"`
 	ItemInfoTargets    []string     `json:"iteminfo_targets"`
 	AutoSyncItemInfo   bool         `json:"auto_sync_iteminfo"`
-	CeraItemInfoPath   string       `json:"cera_iteminfo_path"`
 	SystemOwner        SystemOwner  `json:"system_owner"`
 	Collector          CollectorCfg `json:"collector"`
 	Restock            RestockCfg   `json:"restock"`

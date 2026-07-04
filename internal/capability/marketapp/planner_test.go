@@ -207,27 +207,20 @@ func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 	}
 }
 
-func TestLoadCatalogDoesNotPromoteItemInfoOnlyIDs(t *testing.T) {
+func TestLoadCatalogUsesPVFJSONOnly(t *testing.T) {
 	dir := t.TempDir()
 	app := testApp()
 	app.configDir = dir
-	app.cfg.CeraItemInfoPath = filepath.Join(dir, "iteminfo.dat")
 	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{
 		{"id": 4000, "price": 7, "stack_limit": 1000},
 	})
 	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
 		{"id": 31056, "price": 100, "attach": "trade", "slot": "weapon"},
 	})
-	if err := os.WriteFile(app.cfg.CeraItemInfoPath, []byte("999999 1 1 1 `iteminfo only` `name2` 13006\r\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 
 	catalog, err := app.loadCatalog()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, ok := catalog[999999]; ok {
-		t.Fatalf("iteminfo-only id was promoted into auction catalog: %#v", catalog[999999])
 	}
 	if _, ok := catalog[4000]; !ok {
 		t.Fatal("stackable PVF id missing")
