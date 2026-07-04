@@ -21,6 +21,7 @@ type App struct {
 	configPath string
 	configDir  string
 	pvfPath    string
+	dfGameR    string
 	executors  ActionExecutorFactory
 
 	mu        lockhub.Locker
@@ -113,6 +114,7 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		configPath: path,
 		configDir:  sys.ConfigDir,
 		pvfPath:    filepath.Join(filepath.Dir(sys.DFGameR), "Script.pvf"),
+		dfGameR:    sys.DFGameR,
 		executors:  executors,
 		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		stopAuto:   make(chan struct{}),

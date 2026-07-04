@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"robot/internal/foundation/lockhub"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -205,6 +206,10 @@ func (a *App) runAutoOnce() {
 	if len(markets) == 0 {
 		markets = []string{"auction", "cera"}
 	}
+	if !a.dfGameRRunning() {
+		a.appendLog(LogEvent{Type: "auto", Status: "game_down", Message: "df_game_r is not running; market services skipped"})
+		return
+	}
 	a.ensureMarketServices(markets)
 	for _, market := range markets {
 		market = strings.ToLower(strings.TrimSpace(market))
@@ -242,6 +247,22 @@ func (a *App) runAutoOnce() {
 		}
 		a.appendLog(LogEvent{Type: "auto_run", JobID: job.ID, Market: market, Status: status, Message: msg})
 	}
+}
+
+func (a *App) dfGameRRunning() bool {
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	name := filepath.Base(strings.TrimSpace(a.dfGameR))
+	if name == "." || name == "/" || name == "" {
+		name = "df_game_r"
+	}
+	out, err := exec.Command("pidof", name).Output()
+	if err == nil && len(strings.Fields(string(out))) > 0 {
+		return true
+	}
+	out, err = exec.Command("pgrep", "-f", "(^|/)"+regexp.QuoteMeta(name)+"( |$)").Output()
+	return err == nil && len(strings.Fields(string(out))) > 0
 }
 
 func (a *App) ensureMarketServices(markets []string) {
