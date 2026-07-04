@@ -210,10 +210,14 @@ func (a *App) runAutoOnce() {
 		a.appendLog(LogEvent{Type: "auto", Status: "game_down", Message: "df_game_r is not running; market services skipped"})
 		return
 	}
-	a.ensureMarketServices(markets)
+	ready := a.ensureMarketServices(markets)
 	for _, market := range markets {
 		market = strings.ToLower(strings.TrimSpace(market))
 		if market == "" {
+			continue
+		}
+		if !ready[marketServiceName(market)] {
+			a.appendLog(LogEvent{Type: "auto", Status: "service_down", Market: market, Message: "market service is not ready; job skipped"})
 			continue
 		}
 		if a.cfg.Collector.Enabled {
@@ -265,7 +269,8 @@ func (a *App) dfGameRRunning() bool {
 	return err == nil && len(strings.Fields(string(out))) > 0
 }
 
-func (a *App) ensureMarketServices(markets []string) {
+func (a *App) ensureMarketServices(markets []string) map[string]bool {
+	ready := map[string]bool{}
 	needAuction := false
 	needPoint := false
 	for _, market := range markets {
@@ -281,42 +286,85 @@ func (a *App) ensureMarketServices(markets []string) {
 		needPoint = true
 	}
 	if needAuction {
-		a.ensureMarketService("auction", "127.0.0.1:30803", "/home/neople/auction", "./df_auction_r", []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"})
+		ready["auction"] = a.ensureMarketService("auction", "127.0.0.1:30803", "/home/neople/auction", "./df_auction_r", []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"})
 	}
 	if needPoint {
-		a.ensureMarketService("point", "127.0.0.1:30603", "/home/neople/point", "./df_point_r", []string{"./cfg/point_cain.cfg", "start", "df_point_r"})
+		ready["point"] = a.ensureMarketService("point", "127.0.0.1:30603", "/home/neople/point", "./df_point_r", []string{"./cfg/point_cain.cfg", "start", "df_point_r"})
+	}
+	return ready
+}
+
+func marketServiceName(market string) string {
+	switch strings.ToLower(strings.TrimSpace(market)) {
+	case "cera", "gold", "point":
+		return "point"
+	default:
+		return "auction"
 	}
 }
 
-func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) {
+func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) bool {
 	if tcpReady(addr, 500*time.Millisecond) {
 		if name == "auction" {
 			a.patchAuctionMemoryIfRunning("service_ready")
 		}
-		return
+		return true
 	}
-	cmd := exec.Command(bin, args...)
+	if err := prepareMarketServiceDir(dir); err != nil {
+		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "prepare_failed", Message: err.Error()})
+		return false
+	}
+	cmdline := marketServiceShellCommand(bin, args)
+	cmd := exec.Command("/bin/sh", "-c", cmdline)
 	cmd.Dir = dir
-	if err := cmd.Start(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "start_failed", Message: err.Error()})
-		return
+		return false
 	}
-	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "start", Message: fmt.Sprintf("pid=%d addr=%s", cmd.Process.Pid, addr)})
-	go func() {
-		_ = cmd.Wait()
-	}()
-	deadline := time.Now().Add(12 * time.Second)
+	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "start", Message: fmt.Sprintf("addr=%s output=%s", addr, strings.TrimSpace(string(out)))})
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if tcpReady(addr, 500*time.Millisecond) {
 			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "ready", Message: addr})
 			if name == "auction" {
 				a.patchAuctionMemoryIfRunning("service_started")
 			}
-			return
+			return true
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "not_ready", Message: addr})
+	return false
+}
+
+func prepareMarketServiceDir(dir string) error {
+	if err := os.Chmod(dir, 0777); err != nil && !os.IsPermission(err) {
+		return err
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "pid", "*.pid"))
+	if err != nil {
+		return err
+	}
+	for _, path := range matches {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func marketServiceShellCommand(bin string, args []string) string {
+	parts := make([]string, 0, len(args)+2)
+	parts = append(parts, shellQuote(bin))
+	for _, arg := range args {
+		parts = append(parts, shellQuote(arg))
+	}
+	return "nohup " + strings.Join(parts, " ") + " >/dev/null 2>&1 &"
+}
+
+func shellQuote(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'"
 }
 
 func tcpReady(addr string, timeout time.Duration) bool {
@@ -820,6 +868,9 @@ func isRiskyPVFItem(item catalogItem) bool {
 	if isKnownZeroSuccessEquipment(item) {
 		return true
 	}
+	if item.Kind == "equipment" && item.Level > 70 {
+		return true
+	}
 	switch item.ItemType {
 	case 2, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30:
 		return true
@@ -861,12 +912,6 @@ func cleanupLegacyMarketFiles(configDir string) {
 	_ = os.Remove(filepath.Join(configDir, "market_pool.json"))
 	_ = os.Remove(filepath.Join(configDir, "market_restock.json"))
 	_ = os.Remove(filepath.Join(configDir, "market_probe_pool.json"))
-}
-
-func (a *App) auctionQueueIsPVF() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.auctionQueueSource == "pvf" && len(a.auctionQueue) > 0
 }
 
 func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) ([]restockRow, error) {

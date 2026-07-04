@@ -225,7 +225,7 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 	catalogLoaded := false
 	pvfReady := false
 	var catalog map[uint32]catalogItem
-	if needCera || needAuction && !a.auctionQueueIsPVF() {
+	if needCera || needAuction {
 		var err error
 		catalog, err = a.loadCatalog()
 		catalogLoaded = true
