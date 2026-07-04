@@ -230,6 +230,26 @@ func TestLoadCatalogUsesPVFJSONOnly(t *testing.T) {
 	}
 }
 
+func TestLoadItemInfoJSONCatalogIncludesGoldPackages(t *testing.T) {
+	dir := t.TempDir()
+	app := testApp()
+	app.configDir = dir
+	mustWriteJSON(t, filepath.Join(dir, "pvf_iteminfo_catalog.json"), []map[string]interface{}{
+		{"id": 2675336, "rarity": 2, "level": 1, "name": "100w_gold", "category": 13002},
+	})
+
+	catalog, err := app.loadItemInfoJSONCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := catalog[2675336]; !ok {
+		t.Fatal("gold package id missing from iteminfo json catalog")
+	}
+	if catalog[2675336].Kind != "stackable" {
+		t.Fatalf("unexpected iteminfo catalog kind: %#v", catalog[2675336])
+	}
+}
+
 func mustWriteJSON(t *testing.T, path string, value interface{}) {
 	t.Helper()
 	data, err := json.Marshal(value)

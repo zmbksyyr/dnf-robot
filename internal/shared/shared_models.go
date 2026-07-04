@@ -36,6 +36,16 @@ type EquipmentCatalogItem struct {
 	UseJob        []int  `json:"use_job,omitempty"`
 }
 
+type ItemInfoCatalogItem struct {
+	ID       int    `json:"id"`
+	Rarity   int    `json:"rarity"`
+	UseJob   []int  `json:"use_job,omitempty"`
+	Level    int    `json:"level"`
+	Name     string `json:"name,omitempty"`
+	Name2    string `json:"name2,omitempty"`
+	Category int    `json:"category"`
+}
+
 type MapCatalogItem struct {
 	Village int  `json:"village"`
 	Area    int  `json:"area"`
