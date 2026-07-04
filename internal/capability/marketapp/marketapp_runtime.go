@@ -119,20 +119,60 @@ func (a *App) StartAuto() {
 	a.stopAuto = make(chan struct{})
 	a.autoDone = make(chan struct{})
 	a.autoRun = true
+	a.autoStop = false
 	go a.autoLoop()
 }
 
 func (a *App) StopAuto() {
+	a.stopAutoWithWait(true)
+}
+
+func (a *App) StopAutoAsync() {
+	a.stopAutoWithWait(false)
+}
+
+func (a *App) RestartAutoAsync() {
+	a.autoMu.Lock()
+	if !a.autoRun {
+		a.autoMu.Unlock()
+		a.StartAuto()
+		return
+	}
+	if a.autoStop {
+		done := a.autoDone
+		a.autoMu.Unlock()
+		go func() {
+			<-done
+			a.StartAuto()
+		}()
+		return
+	}
+	stop := a.stopAuto
+	done := a.autoDone
+	a.autoStop = true
+	close(stop)
+	a.autoMu.Unlock()
+	go func() {
+		<-done
+		a.StartAuto()
+	}()
+}
+
+func (a *App) stopAutoWithWait(wait bool) {
 	a.autoMu.Lock()
 	if !a.autoRun {
 		a.autoMu.Unlock()
 		return
 	}
-	stop := a.stopAuto
+	if !a.autoStop {
+		close(a.stopAuto)
+		a.autoStop = true
+	}
 	done := a.autoDone
-	close(stop)
 	a.autoMu.Unlock()
-	<-done
+	if wait {
+		<-done
+	}
 }
 
 func (a *App) Shutdown() {
@@ -142,6 +182,7 @@ func (a *App) Shutdown() {
 func (a *App) markAutoStopped() {
 	a.autoMu.Lock()
 	a.autoRun = false
+	a.autoStop = false
 	a.autoMu.Unlock()
 }
 
@@ -704,7 +745,11 @@ func (a *App) appendCollectActions(rows []collectRow, result *PlanResult) {
 }
 
 func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
-	a.jobMu.Lock()
+	if !a.jobMu.TryLock() {
+		job := busyMarketJob("collect")
+		a.setLastJob(job)
+		return job, fmt.Errorf(job.Error)
+	}
 	defer a.jobMu.Unlock()
 	start := time.Now()
 	job := JobSummary{

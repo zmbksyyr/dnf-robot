@@ -97,12 +97,12 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 }
 
 func (a *App) ClearSystemMarketStock() (ClearSystemStockResult, error) {
-	wasAutoRunning := a.AutoRunning()
-	if wasAutoRunning {
-		a.StopAuto()
-		defer a.StartAuto()
+	if a.AutoRunning() {
+		a.StopAutoAsync()
 	}
-	a.jobMu.Lock()
+	if !a.jobMu.TryLock() {
+		return ClearSystemStockResult{}, fmt.Errorf("market job already running")
+	}
 	defer a.jobMu.Unlock()
 	result, err := a.clearSystemMarketStockLocked("market_clear")
 	if err == nil {
@@ -112,12 +112,12 @@ func (a *App) ClearSystemMarketStock() (ClearSystemStockResult, error) {
 }
 
 func (a *App) prepareItemInfoRelease() error {
-	wasAutoRunning := a.AutoRunning()
-	if wasAutoRunning {
-		a.StopAuto()
-		defer a.StartAuto()
+	if a.AutoRunning() {
+		a.StopAutoAsync()
 	}
-	a.jobMu.Lock()
+	if !a.jobMu.TryLock() {
+		return fmt.Errorf("market job already running")
+	}
 	defer a.jobMu.Unlock()
 	if _, err := a.clearSystemMarketStockLocked("iteminfo_prepare"); err != nil {
 		return err

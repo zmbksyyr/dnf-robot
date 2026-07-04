@@ -532,10 +532,14 @@ echo RESTORED
     def market_fault_kill_services(self):
         self.log("market_fault_kill_services begin")
         self.sample_with_event("market_kill_before")
-        self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; sleep 8; ss -lntp | grep -E ':(30603|30803)' || true", 40)
+        self.stop_market_services()
         self.sample_with_event("market_kill_down")
         self.market_enable_auto(max_concurrent=8)
         self.wait_market_services("market_kill_recover", 180, 10)
+
+    def stop_market_services(self):
+        script = "for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -TERM $p || true; done; sleep 8; for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -KILL $p || true; done; ss -lntp | grep -E ':(30603|30803)' || true; pgrep -af 'df_auction_r|df_point_r' || true"
+        self.shell(script, 40)
 
     def market_fault_missing_iteminfo(self):
         self.log("market_fault_missing_iteminfo begin")
@@ -544,7 +548,8 @@ echo RESTORED
             self.backup_file("/home/neople/point/iteminfo.dat"),
         ]
         try:
-            self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; rm -f /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat; sleep 3", 30)
+            self.stop_market_services()
+            self.shell("rm -f /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat; sleep 3", 30)
             self.market_enable_auto(max_concurrent=4)
             self.burst_sample("market_missing_iteminfo_down", 60, 10)
         finally:
@@ -561,7 +566,8 @@ echo RESTORED
         ]
         try:
             bad = "printf 'bad iteminfo\\n1 broken row\\n999999999 0 x x x\\n' > /home/neople/auction/iteminfo.dat; cp -f /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat"
-            self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; " + bad + "; sleep 3", 30)
+            self.stop_market_services()
+            self.shell(bad + "; sleep 3", 30)
             self.market_enable_auto(max_concurrent=4)
             self.burst_sample("market_bad_iteminfo_down", 60, 10)
         finally:
@@ -580,7 +586,8 @@ echo RESTORED
             self.market_enable_auto(max_concurrent=8)
             self.burst_sample("market_stale_before", self.scaled_seconds(20, 60), 10)
             bad = "printf '1 0 1 1 1 1 1 1 1 1 1 1 1 1 `bad` `bad` 1\\n' > /home/neople/auction/iteminfo.dat; cp -f /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat"
-            self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; " + bad + "; sleep 3", 30)
+            self.stop_market_services()
+            self.shell(bad + "; sleep 3", 30)
             self.market_enable_auto(max_concurrent=4)
             self.burst_sample("market_stale_db_iteminfo", self.scaled_seconds(30, 90), 10)
         finally:
@@ -730,9 +737,9 @@ echo RESTORED
 
     def port_conflict_fault(self):
         self.log("port_conflict_fault begin")
-        self.shell("pkill -TERM -f './df_auction_r' || true; pkill -TERM -f './df_point_r' || true; sleep 5", 30)
-        cmd = "python - <<'PY'\nimport socket,time\ns=[]\nfor p in (30603,30803):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(30)\nPY"
-        self.shell(cmd + " &", 5)
+        self.stop_market_services()
+        cmd = "(python - <<'PY'\nimport socket,time\ns=[]\nfor p in (30603,30803):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(90)\nPY\n) &"
+        self.shell(cmd, 5)
         self.sample_with_event("port_conflict_bound")
         self.market_enable_auto(max_concurrent=4)
         self.burst_sample("port_conflict_fault", self.scaled_seconds(30, 60), 10)
@@ -893,7 +900,9 @@ OUT=%s
 {
   echo 'DELETE FROM taiwan_cain_auction_gold.auction_main WHERE owner_id >= 90000001;';
   echo 'DELETE FROM taiwan_cain_auction_cera.auction_main WHERE owner_id >= 90000001;';
+  echo 'USE taiwan_cain_auction_gold;';
   mysqldump -ugame -puu5!^%%jg --skip-triggers --no-create-info --replace --where='owner_id >= 90000001' taiwan_cain_auction_gold auction_main 2>/dev/null || true;
+  echo 'USE taiwan_cain_auction_cera;';
   mysqldump -ugame -puu5!^%%jg --skip-triggers --no-create-info --replace --where='owner_id >= 90000001' taiwan_cain_auction_cera auction_main 2>/dev/null || true;
 } > "$OUT"
 cp -f "$OUT" %s

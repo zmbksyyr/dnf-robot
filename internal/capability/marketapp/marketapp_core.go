@@ -28,6 +28,7 @@ type App struct {
 	jobMu     lockhub.Locker
 	autoMu    lockhub.Locker
 	autoRun   bool
+	autoStop  bool
 	lastJob   *JobSummary
 	dbInit    []string
 	dbInitErr string
@@ -176,7 +177,7 @@ func (a *App) SetAutoEnabled(enabled bool) (Status, error) {
 	if enabled {
 		a.StartAuto()
 	} else {
-		a.StopAuto()
+		a.StopAutoAsync()
 	}
 	return a.Status(), nil
 }
@@ -218,8 +219,12 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if err != nil {
 		return a.Status(), err
 	}
-	a.StopAuto()
 	if cfg.Auto.Enabled {
+		a.RestartAutoAsync()
+	} else {
+		a.StopAutoAsync()
+	}
+	if cfg.Auto.Enabled && !a.AutoRunning() {
 		a.StartAuto()
 	}
 	return a.Status(), nil
@@ -313,8 +318,24 @@ func limitActions(actions []Action, maxActions int) []Action {
 	return actions
 }
 
+func busyMarketJob(kind string) JobSummary {
+	now := time.Now()
+	return JobSummary{
+		ID:        fmt.Sprintf("%s-busy-%d", kind, now.UnixNano()),
+		Kind:      kind,
+		Status:    "busy",
+		Error:     "market job already running",
+		StartedAt: now,
+		EndedAt:   now,
+	}
+}
+
 func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
-	a.jobMu.Lock()
+	if !a.jobMu.TryLock() {
+		job := busyMarketJob("restock")
+		a.setLastJob(job)
+		return job, fmt.Errorf(job.Error)
+	}
 	defer a.jobMu.Unlock()
 	if req.MaxActions <= 0 {
 		req.MaxActions = a.cfg.Restock.MaxActions
