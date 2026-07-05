@@ -376,10 +376,24 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 			return false
 		}
-		status.Status = MarketServiceStatusReady
-		status.Message = "already listening"
-		a.setMarketServiceStatus(status)
-		return true
+		if staleReason := a.marketServiceStaleItemInfoReason(service, status.PID); staleReason != "" {
+			status.Status = MarketServiceStatusDown
+			status.Message = staleReason
+			a.setMarketServiceStatus(status)
+			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: "stale_iteminfo_restart", Message: staleReason})
+			if err := a.stopMarketServiceForItemInfo(service.name, service.addr, service.bin); err != nil {
+				status.Status = MarketServiceStatusStartFailed
+				status.Message = err.Error()
+				a.setMarketServiceStatus(status)
+				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
+				return false
+			}
+		} else {
+			status.Status = MarketServiceStatusReady
+			status.Message = "already listening"
+			a.setMarketServiceStatus(status)
+			return true
+		}
 	}
 	if err := prepareMarketServiceDir(service.dir); err != nil {
 		status.Status = MarketServiceStatusPrepareFailed
@@ -478,6 +492,39 @@ func (a *App) refreshMarketServiceStatus(service marketServiceSpec) {
 		status.Message = "not running"
 	}
 	a.setMarketServiceStatus(status)
+}
+
+func (a *App) marketServiceStaleItemInfoReason(service marketServiceSpec, pid int) string {
+	if runtime.GOOS != "linux" || pid <= 0 {
+		return ""
+	}
+	path := a.itemInfoTargetForService(service.name)
+	if path == "" {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	started, err := linuxProcessStartTime(pid)
+	if err != nil {
+		return ""
+	}
+	if !info.ModTime().After(started.Add(time.Second)) {
+		return ""
+	}
+	return fmt.Sprintf("%s is newer than %s start: iteminfo=%s service=%s", filepath.Base(path), service.name, info.ModTime().Format(time.RFC3339), started.Format(time.RFC3339))
+}
+
+func (a *App) itemInfoTargetForService(serviceName string) string {
+	needle := "/" + serviceName + "/"
+	for _, target := range a.cfg.ItemInfoTargets {
+		target = strings.TrimSpace(target)
+		if target != "" && strings.Contains(filepath.ToSlash(target), needle) {
+			return target
+		}
+	}
+	return ""
 }
 
 type marketServiceSpec struct {
