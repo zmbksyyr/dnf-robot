@@ -299,7 +299,7 @@ func (w Workflow) waitDisplay(uid int, rc robotconfig.RuntimeConfig, shouldStop 
 			return false, StoreReasonCancelled
 		}
 		st, ok := env.RuntimeStatusMap()[uid]
-		if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
+		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 			return false, StoreReasonRuntimeStopped
 		}
 		if st.StoreDisplayAck {
