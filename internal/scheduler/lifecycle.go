@@ -213,7 +213,7 @@ func (m *RobotManager) BeginOperationGuarded(typ, scope string, structural bool)
 		scope = strings.TrimSpace(scope)
 		if structural {
 			for _, existing := range m.operations {
-				if existing.State != "running" || !robotcap.IsStructuralOperation(existing.Type) {
+				if existing.State != robotcap.OperationStateRunning || !robotcap.IsStructuralOperation(existing.Type) {
 					continue
 				}
 				err = fmt.Errorf("%w: %s %s", errOperationConflict, existing.Type, existing.Scope)
@@ -225,7 +225,7 @@ func (m *RobotManager) BeginOperationGuarded(typ, scope string, structural bool)
 			ID:        m.nextOperationID,
 			Type:      typ,
 			Scope:     scope,
-			State:     "running",
+			State:     robotcap.OperationStateRunning,
 			StartedAt: now,
 			UpdatedAt: now,
 		}
@@ -263,17 +263,17 @@ func (m *RobotManager) CompleteOperation(id int64, summary string, err error) ro
 			m.operations[i].FinishedAt = now
 			m.operations[i].Summary = strings.TrimSpace(summary)
 			if err != nil {
-				m.operations[i].State = "failed"
+				m.operations[i].State = robotcap.OperationStateFailed
 				m.operations[i].Error = err.Error()
 			} else {
-				m.operations[i].State = "done"
+				m.operations[i].State = robotcap.OperationStateDone
 			}
 			op = m.operations[i]
 			return nil
 		}
-		op = robotcap.OperationStatus{ID: id, State: "unknown", Summary: strings.TrimSpace(summary), UpdatedAt: now}
+		op = robotcap.OperationStatus{ID: id, State: robotcap.OperationStateUnknown, Summary: strings.TrimSpace(summary), UpdatedAt: now}
 		if err != nil {
-			op.State = "failed"
+			op.State = robotcap.OperationStateFailed
 			op.Error = err.Error()
 		}
 		return nil

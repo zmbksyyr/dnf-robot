@@ -27,6 +27,20 @@ func TestOperationSummaries(t *testing.T) {
 	}
 }
 
+func TestOperationStateConstants(t *testing.T) {
+	tests := map[string]string{
+		OperationStateRunning: "running",
+		OperationStateDone:    "done",
+		OperationStateFailed:  "failed",
+		OperationStateUnknown: "unknown",
+	}
+	for got, want := range tests {
+		if got != want {
+			t.Fatalf("operation state got %q want %q", got, want)
+		}
+	}
+}
+
 func TestCopyRuntimeStatusMap(t *testing.T) {
 	src := map[int]RuntimeStatus{1: {UID: 1, StateName: "running"}}
 	got := CopyRuntimeStatusMap(src)

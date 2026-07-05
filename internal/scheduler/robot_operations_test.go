@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"errors"
+	robotcap "robot/internal/capability/robot"
 	"testing"
 	"time"
 )
@@ -11,21 +12,21 @@ var errTestOperation = errors.New("operation failed")
 func TestRobotOperationsTrackRecentStatus(t *testing.T) {
 	m := &RobotManager{}
 	op := m.BeginOperation("cleanup", "uids=2")
-	if op.ID != 1 || op.State != "running" || op.Type != "cleanup" {
+	if op.ID != 1 || op.State != robotcap.OperationStateRunning || op.Type != "cleanup" {
 		t.Fatalf("begin op got id=%d state=%s type=%s", op.ID, op.State, op.Type)
 	}
 	done := m.CompleteOperation(op.ID, "deleted=2", nil)
-	if done.State != "done" || done.Summary != "deleted=2" || done.FinishedAt.IsZero() {
+	if done.State != robotcap.OperationStateDone || done.Summary != "deleted=2" || done.FinishedAt.IsZero() {
 		t.Fatalf("done op got state=%s summary=%q finished=%s", done.State, done.Summary, done.FinishedAt)
 	}
 	recent := m.RecentOperation()
-	if recent.ID != op.ID || recent.State != "done" {
+	if recent.ID != op.ID || recent.State != robotcap.OperationStateDone {
 		t.Fatalf("recent op got id=%d state=%s", recent.ID, recent.State)
 	}
 	failed := m.BeginOperation("online", "count=1")
 	m.CompleteOperation(failed.ID, "", errTestOperation)
 	recent = m.RecentOperation()
-	if recent.ID != failed.ID || recent.State != "failed" || recent.Error == "" {
+	if recent.ID != failed.ID || recent.State != robotcap.OperationStateFailed || recent.Error == "" {
 		t.Fatalf("failed recent got id=%d state=%s err=%q", recent.ID, recent.State, recent.Error)
 	}
 }
@@ -76,14 +77,14 @@ func TestTrackedStructuralOperationMaintainsBothStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin tracked structural op failed: %v", err)
 	}
-	if op.ID == 0 || op.State != "running" {
+	if op.ID == 0 || op.State != robotcap.OperationStateRunning {
 		t.Fatalf("operation got id=%d state=%s", op.ID, op.State)
 	}
 	if activeOp, _, active := m.structuralOperation(); !active || activeOp != "cleanup" {
 		t.Fatalf("structural op got active=%v op=%q", active, activeOp)
 	}
 	done := finish("deleted=2", nil)
-	if done.State != "done" || done.Summary != "deleted=2" {
+	if done.State != robotcap.OperationStateDone || done.Summary != "deleted=2" {
 		t.Fatalf("finished op got state=%s summary=%q", done.State, done.Summary)
 	}
 	if activeOp, _, active := m.structuralOperation(); active || activeOp != "" {

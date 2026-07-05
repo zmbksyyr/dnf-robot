@@ -57,6 +57,24 @@ actor:{slot}
 uid:{uid}
 ```
 
+## 状态来源
+
+当前已收敛：
+
+```text
+OperationStatus.State -> capability/robot OperationState* 常量
+```
+
+下一步继续审计：
+
+```text
+RuntimeStatus.StateName
+Actor State
+SchedulerStatus.Mode
+marketapp Status/Policy/ServiceStatus
+ActionResult.State
+```
+
 ## Legacy 白名单
 
 这些不是目标形态，只是当前运行路径暂时保留：
@@ -75,6 +93,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 - scheduler 根包仍有 `database/sql` 聚合点，后续应继续向 repository 边界收敛。
 - marketapp 是最大功能岛，后续需要单独做状态和自愈审计。
 - scheduler/repository 的锁资源名已经集中为常量，后续不允许重新散落字符串。
+- OperationStatus 状态已经从 scheduler 字符串收敛到 capability/robot 常量。
 
 ## 本轮验证
 

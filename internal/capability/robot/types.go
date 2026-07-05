@@ -254,6 +254,13 @@ type OperationStatus struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+const (
+	OperationStateRunning = "running"
+	OperationStateDone    = "done"
+	OperationStateFailed  = "failed"
+	OperationStateUnknown = "unknown"
+)
+
 type ConfigUpdateRequest struct {
 	Text    string                 `json:"text"`
 	Updates map[string]interface{} `json:"updates"`
