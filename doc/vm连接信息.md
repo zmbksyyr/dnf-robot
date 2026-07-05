@@ -6,7 +6,7 @@ This file is for AI agents and maintainers.
 
 - This file is UTF-8 text. Do not call it garbled.
 - Read docs with UTF-8.
-- Before any VM, deploy, or debug task, read this file and `doc/调试.md`.
+- Before any VM, deploy, or debug task, read this file, `tools/随机稳定性压测脚本.md`, and `tools/vm_random_stability.py`.
 - Use Python `paramiko` for SSH, upload, and remote commands.
 - Do not use PowerShell `ssh` or `scp` for VM work.
 - Use `vmrun` only for VM snapshot/start operations.
@@ -15,6 +15,7 @@ This file is for AI agents and maintainers.
 - Before deploy, record the git commit.
 - Before deploy, back up `/root/robot`.
 - After deploy, check process, ports, and logs.
+- Use the stability pressure script for debug and long tests. Do not use old manual debug docs.
 
 ## Quick Card
 
@@ -107,6 +108,20 @@ ss -lntp | grep -E ':(8111|8112|10011|30803|30603)'
 tail -n 80 /root/robot_stdout.log
 tail -n 80 /root/config/log_robot
 tail -n 80 /root/config/market_log.jsonl
+```
+
+## Stability Test
+
+Use this script instead of old manual debug docs:
+
+- local source: `tools/vm_random_stability.py`
+- VM path: `/root/vm_random_stability.py`
+- call guide: `tools/随机稳定性压测脚本.md`
+
+Common VM command:
+
+```sh
+python /root/vm_random_stability.py --hours 1
 ```
 
 ## Deploy Must Pass

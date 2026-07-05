@@ -3,7 +3,8 @@
 Before any VM, deploy, or debug task, read:
 
 - `doc/vm连接信息.md`
-- `doc/调试.md`
+- `tools/随机稳定性压测脚本.md`
+- `tools/vm_random_stability.py`
 
 Must follow:
 
@@ -14,6 +15,7 @@ Must follow:
 - Do not restore VM snapshots unless the user asks.
 - Deploy only after recording the git commit and backing up `/root/robot`.
 - After deploy, check process, ports, and logs.
+- Use the stability pressure script for debug and long tests. Do not use old manual debug docs.
 
 Fast VM card:
 
