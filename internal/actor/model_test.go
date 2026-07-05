@@ -7,6 +7,23 @@ import (
 	robotcap "robot/internal/capability/robot"
 )
 
+func TestActorStateConstants(t *testing.T) {
+	tests := map[State]string{
+		StateIdle:      "idle",
+		StateOffline:   "attached_offline",
+		StateAssigned:  "assigned",
+		StateOnline:    "online",
+		StateRunning:   "running",
+		StateBusy:      "busy",
+		StateReleasing: "releasing",
+	}
+	for got, want := range tests {
+		if string(got) != want {
+			t.Fatalf("actor state got %q want %q", got, want)
+		}
+	}
+}
+
 func TestEvaluateStatusFailureCount(t *testing.T) {
 	now := time.Now()
 	status := EvaluateStatus(Snapshot{
