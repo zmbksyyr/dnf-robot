@@ -880,6 +880,8 @@ type Status struct {
 
 type MarketPolicyStatus struct {
 	Market               string    `json:"market"`
+	Health               string    `json:"health"`
+	Completion           int       `json:"completion"`
 	Mode                 string    `json:"mode"`
 	Reason               string    `json:"reason,omitempty"`
 	DBKinds              int       `json:"db_kinds"`

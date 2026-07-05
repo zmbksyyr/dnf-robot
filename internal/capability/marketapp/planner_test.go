@@ -519,6 +519,26 @@ func TestMarketPolicyDegradesAfterRepeatedActionFailures(t *testing.T) {
 	}
 }
 
+func TestMarketPolicyHealthCompletion(t *testing.T) {
+	status := MarketPolicyStatus{Market: "auction", Mode: marketPolicyModeNormal, DBKinds: 10, Candidates: 20, CandidateSource: "iteminfo.dat"}
+	status.applyHealth()
+	if status.Health != "healthy" || status.Completion != 100 {
+		t.Fatalf("healthy status = %#v", status)
+	}
+
+	status = MarketPolicyStatus{Market: "auction", Mode: marketPolicyModeRecover, DBKinds: 0, Candidates: 20, CandidateSource: "iteminfo.dat"}
+	status.applyHealth()
+	if status.Health != "blocked" || status.Completion != 40 {
+		t.Fatalf("blocked status = %#v", status)
+	}
+
+	status = MarketPolicyStatus{Market: "auction", Mode: marketPolicyModeNormal, DBKinds: 10, Candidates: 20, CandidateSource: "iteminfo.dat", LastActionResults: 20, LastActionFailed: 10}
+	status.applyHealth()
+	if status.Health != "warning" || status.Completion != 70 {
+		t.Fatalf("warning status = %#v", status)
+	}
+}
+
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 	app := testApp()
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)

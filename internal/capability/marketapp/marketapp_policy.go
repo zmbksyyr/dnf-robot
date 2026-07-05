@@ -130,6 +130,7 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 		status.QueueRejected = len(a.auctionRejected)
 		status.QueueSource = a.auctionQueueSource
 	}
+	status.applyHealth()
 	return status
 }
 
@@ -209,6 +210,7 @@ func (a *App) observeAuctionCandidates() marketCandidateSnapshot {
 }
 
 func (a *App) setMarketPolicyStatus(status MarketPolicyStatus) {
+	status.applyHealth()
 	a.mu.Lock()
 	if a.policy == nil {
 		a.policy = map[string]MarketPolicyStatus{}
@@ -240,6 +242,7 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 	if a.policy == nil {
 		a.policy = map[string]MarketPolicyStatus{}
 	}
+	status.applyHealth()
 	prev, hadPrev := a.policy[market]
 	a.policy[market] = status
 	a.mu.Unlock()
@@ -264,6 +267,7 @@ func (a *App) recordMarketPolicyJob(market string, job JobSummary) {
 	status.LastActionResults = len(job.Actions)
 	status.LastActionFailed = countFailedActionEntries(job.Actions)
 	status.UpdatedAt = time.Now()
+	status.applyHealth()
 	a.policy[market] = status
 	a.mu.Unlock()
 }
@@ -290,6 +294,42 @@ func countFailedActionEntries(entries []ActionEntry) int {
 		}
 	}
 	return failed
+}
+
+func (s *MarketPolicyStatus) applyHealth() {
+	switch s.Mode {
+	case marketPolicyModeDegraded:
+		s.Health = "degraded"
+		s.Completion = 50
+	case marketPolicyModeRecover:
+		s.Health = "recovering"
+		s.Completion = 80
+	default:
+		s.Health = "healthy"
+		s.Completion = 100
+	}
+	if s.Market == "auction" {
+		if s.CandidateSource != "" && s.Candidates <= 0 {
+			s.Health = "blocked"
+			s.Completion = minPositive(s.Completion, 40)
+		}
+		if s.DBKinds <= 0 && s.Mode != marketPolicyModeNormal {
+			s.Health = "blocked"
+			s.Completion = minPositive(s.Completion, 40)
+		}
+	}
+	if s.LastActionResults >= 20 && s.LastActionFailed*2 >= s.LastActionResults {
+		s.Completion = minPositive(s.Completion, 70)
+		if s.Health == "healthy" {
+			s.Health = "warning"
+		}
+	}
+	if s.Completion < 0 {
+		s.Completion = 0
+	}
+	if s.Completion > 100 {
+		s.Completion = 100
+	}
 }
 
 func normalizeMarketName(market string) string {

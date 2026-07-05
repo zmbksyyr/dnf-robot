@@ -115,6 +115,8 @@ SAMPLE_FIELDS = [
     "market_auction_stagnant",
     "market_auction_policy",
     "market_auction_policy_reason",
+    "market_auction_health",
+    "market_auction_completion",
     "market_auction_failure_rounds",
     "market_auction_last_job",
     "market_auction_last_plan",
@@ -124,6 +126,8 @@ SAMPLE_FIELDS = [
     "market_cera_kinds",
     "market_cera_policy",
     "market_cera_policy_reason",
+    "market_cera_health",
+    "market_cera_completion",
     "market_cera_last_job",
     "market_cera_last_plan",
     "market_cera_last_results",
@@ -1225,7 +1229,7 @@ echo "KEYS_RESTORED"
         row = self.sample_row()
         self.writerow(row)
         self.log(
-            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
+            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s health=%s/%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s health=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
             % (
                 row.get("target"),
                 row.get("actors"),
@@ -1237,6 +1241,8 @@ echo "KEYS_RESTORED"
                 row.get("market_auction_records"),
                 row.get("market_auction_kinds"),
                 row.get("market_auction_candidates"),
+                row.get("market_auction_health"),
+                row.get("market_auction_completion"),
                 row.get("market_auction_policy"),
                 row.get("market_auction_stagnant"),
                 row.get("market_auction_failure_rounds"),
@@ -1245,6 +1251,8 @@ echo "KEYS_RESTORED"
                 row.get("market_auction_last_failed"),
                 row.get("market_cera_records"),
                 row.get("market_cera_kinds"),
+                row.get("market_cera_health"),
+                row.get("market_cera_completion"),
                 row.get("market_cera_policy"),
                 row.get("market_cera_last_plan"),
                 row.get("market_cera_last_results"),
@@ -1444,6 +1452,8 @@ echo "KEYS_RESTORED"
             row["market_auction_stagnant"] = auction_policy.get("stagnant_rounds", "")
             row["market_auction_policy"] = auction_policy.get("mode", "")
             row["market_auction_policy_reason"] = (auction_policy.get("reason") or "")[:160]
+            row["market_auction_health"] = auction_policy.get("health", "")
+            row["market_auction_completion"] = auction_policy.get("completion", "")
             row["market_auction_failure_rounds"] = auction_policy.get("action_failure_rounds", "")
             row["market_auction_last_job"] = auction_policy.get("last_job_status", "")
             row["market_auction_last_plan"] = auction_policy.get("last_plan_actions", "")
@@ -1451,6 +1461,8 @@ echo "KEYS_RESTORED"
             row["market_auction_last_failed"] = auction_policy.get("last_action_failed", "")
             row["market_cera_policy"] = cera_policy.get("mode", "")
             row["market_cera_policy_reason"] = (cera_policy.get("reason") or "")[:160]
+            row["market_cera_health"] = cera_policy.get("health", "")
+            row["market_cera_completion"] = cera_policy.get("completion", "")
             row["market_cera_last_job"] = cera_policy.get("last_job_status", "")
             row["market_cera_last_plan"] = cera_policy.get("last_plan_actions", "")
             row["market_cera_last_results"] = cera_policy.get("last_action_results", "")
