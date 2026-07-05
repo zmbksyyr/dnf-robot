@@ -34,6 +34,40 @@ func TestMarketJobStatusConstants(t *testing.T) {
 	}
 }
 
+func TestMarketLogStatusConstants(t *testing.T) {
+	tests := map[string]string{
+		marketLogStatusActive:           "active",
+		marketLogStatusBlocked:          "blocked",
+		marketLogStatusClean:            "clean",
+		marketLogStatusCountAfterFailed: "count_after_failed",
+		marketLogStatusCountFailed:      "count_failed",
+		marketLogStatusDBDeleted:        "db_deleted",
+		marketLogStatusDeleteFailed:     "delete_failed",
+		marketLogStatusDisabled:         "disabled",
+		marketLogStatusEmpty:            "empty",
+		marketLogStatusExists:           "exists",
+		marketLogStatusFailed:           "failed",
+		marketLogStatusFallback:         "fallback",
+		marketLogStatusGameDown:         "game_down",
+		marketLogStatusInstalled:        "installed",
+		marketLogStatusKilled:           "killed",
+		marketLogStatusQueueReset:       "queue_reset",
+		marketLogStatusServiceDown:      "service_down",
+		marketLogStatusSkipped:          "skipped",
+		marketLogStatusStart:            "start",
+		marketLogStatusStopSkipped:      "stop_skipped",
+		marketLogStatusStopped:          "stopped",
+		marketLogStatusSuccess:          "success",
+		marketLogStatusSynced:           "synced",
+		marketLogStatusWaitFailed:       "wait_failed",
+	}
+	for got, want := range tests {
+		if got != want {
+			t.Fatalf("market log status got %q want %q", got, want)
+		}
+	}
+}
+
 func TestMarketServiceStatusConstants(t *testing.T) {
 	tests := map[string]string{
 		MarketServiceStatusReady:                   "ready",

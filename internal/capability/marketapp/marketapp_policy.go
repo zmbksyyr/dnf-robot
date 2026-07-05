@@ -67,7 +67,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	switch {
 	case status.ZeroCandidateRounds == 2:
 		a.resetAuctionQueues()
-		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_candidate_recovery"})
+		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: marketLogStatusQueueReset, Message: "zero_candidate_recovery"})
 		status.Reason = "auction candidates stayed zero; auction queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.ZeroCandidateRounds >= 3:
@@ -76,7 +76,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	switch {
 	case status.StagnantRounds == 2:
 		a.resetAuctionQueues()
-		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "stagnant_growth_recovery"})
+		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: marketLogStatusQueueReset, Message: "stagnant_growth_recovery"})
 		status.Reason = "auction kinds stopped growing below candidate count; auction queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.StagnantRounds >= 3:
@@ -92,7 +92,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	switch {
 	case status.ZeroKindRounds == 2:
 		a.resetAuctionQueues()
-		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_kind_recovery"})
+		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: marketLogStatusQueueReset, Message: "zero_kind_recovery"})
 		status.Reason = "auction kinds stayed zero; auction queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.ZeroKindRounds >= 3:

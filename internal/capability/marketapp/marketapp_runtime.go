@@ -92,7 +92,7 @@ func (a *App) InstallAuctionSearchGuard(req AuctionSearchGuardRequest) (AuctionS
 	if bytes.Contains(data, []byte(auctionSearchGuardBegin)) {
 		result.Installed = true
 		result.Message = "auction search hook guard already installed"
-		a.appendLog(LogEvent{Type: "auction_guard", Status: "exists", Message: path})
+		a.appendLog(LogEvent{Type: "auction_guard", Status: marketLogStatusExists, Message: path})
 		return result, nil
 	}
 	backup := fmt.Sprintf("%s.bak_auction_guard_%s", path, time.Now().Format("20060102-150405"))
@@ -110,7 +110,7 @@ func (a *App) InstallAuctionSearchGuard(req AuctionSearchGuardRequest) (AuctionS
 	result.Installed = true
 	result.Changed = true
 	result.Message = "auction search hook guard installed; restart df_game_r to apply"
-	a.appendLog(LogEvent{Type: "auction_guard", Status: "installed", Message: fmt.Sprintf("%s backup=%s", path, backup)})
+	a.appendLog(LogEvent{Type: "auction_guard", Status: marketLogStatusInstalled, Message: fmt.Sprintf("%s backup=%s", path, backup)})
 	return result, nil
 }
 
@@ -217,7 +217,7 @@ func (a *App) autoLoop() {
 	intervalMS := a.cfg.Auto.IntervalMS
 	a.stateMu.Unlock()
 	if !enabled {
-		a.appendLog(LogEvent{Type: "auto", Status: "disabled"})
+		a.appendLog(LogEvent{Type: "auto", Status: marketLogStatusDisabled})
 		return
 	}
 	initial := time.Duration(initialMS) * time.Millisecond
@@ -251,7 +251,7 @@ func (a *App) runAutoOnce() {
 		a.dbInit = tables
 		a.dbInitErr = err.Error()
 		a.stateMu.Unlock()
-		a.appendLog(LogEvent{Type: "db_init", Status: "failed", Message: err.Error()})
+		a.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusFailed, Message: err.Error()})
 	} else {
 		a.stateMu.Lock()
 		a.dbInit = tables
@@ -263,7 +263,7 @@ func (a *App) runAutoOnce() {
 		markets = []string{"auction", "cera"}
 	}
 	if !a.dfGameRRunning() {
-		a.appendLog(LogEvent{Type: "auto", Status: "game_down", Message: "df_game_r is not running; market services skipped"})
+		a.appendLog(LogEvent{Type: "auto", Status: marketLogStatusGameDown, Message: "df_game_r is not running; market services skipped"})
 		for _, market := range markets {
 			a.markMarketPolicyBlocked(market, "df_game_r is not running")
 		}
@@ -276,13 +276,13 @@ func (a *App) runAutoOnce() {
 			continue
 		}
 		if !ready[marketServiceName(market)] {
-			a.appendLog(LogEvent{Type: "auto", Status: "service_down", Market: market, Message: "market service is not ready; job skipped"})
+			a.appendLog(LogEvent{Type: "auto", Status: marketLogStatusServiceDown, Market: market, Message: "market service is not ready; job skipped"})
 			a.markMarketPolicyBlocked(market, "market service is not ready")
 			continue
 		}
 		policy := a.marketAutoPolicy(market, a.cfg.Auto)
 		if a.cfg.Collector.Enabled {
-			a.appendLog(LogEvent{Type: "auto_collect", Market: market, Status: "start"})
+			a.appendLog(LogEvent{Type: "auto_collect", Market: market, Status: marketLogStatusStart})
 			job, err := a.CollectOnce(CollectRequest{
 				Market:          market,
 				Execute:         true,
@@ -297,7 +297,7 @@ func (a *App) runAutoOnce() {
 			}
 			a.appendLog(LogEvent{Type: "auto_collect", JobID: job.ID, Market: market, Status: status, Message: msg})
 		}
-		a.appendLog(LogEvent{Type: "auto_run", Market: market, Status: "start"})
+		a.appendLog(LogEvent{Type: "auto_run", Market: market, Status: marketLogStatusStart})
 		job, err := a.RestockOnce(RestockRequest{
 			Market:          market,
 			Execute:         true,
@@ -400,7 +400,7 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 		a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 		return false
 	}
-	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: "start", Message: fmt.Sprintf("addr=%s output=%s", service.addr, strings.TrimSpace(string(out)))})
+	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: marketLogStatusStart, Message: fmt.Sprintf("addr=%s output=%s", service.addr, strings.TrimSpace(string(out)))})
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if tcpReady(service.addr, 500*time.Millisecond) {
@@ -506,7 +506,7 @@ func marketServiceSpecByName(name string) (marketServiceSpec, bool) {
 
 func (a *App) restartMarketServicesAfterItemInfo() error {
 	if runtime.GOOS != "linux" {
-		a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "skipped", Message: "market service restart is linux only"})
+		a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusSkipped, Message: "market service restart is linux only"})
 		return nil
 	}
 	for _, service := range marketServiceSpecs() {
@@ -517,7 +517,7 @@ func (a *App) restartMarketServicesAfterItemInfo() error {
 			return fmt.Errorf("%s restart failed: service is not ready", service.name)
 		}
 	}
-	a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "success", Message: "auction and point services restarted"})
+	a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusSuccess, Message: "auction and point services restarted"})
 	return nil
 }
 
@@ -528,14 +528,14 @@ func (a *App) stopMarketServiceForItemInfo(name, addr, bin string) error {
 	}
 	pid := marketServicePID(bin)
 	if pid <= 0 && !tcpReady(addr, 200*time.Millisecond) {
-		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "stop_skipped", Message: "process and port are already down"})
+		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusStopSkipped, Message: "process and port are already down"})
 		return nil
 	}
 	_ = exec.Command("pkill", "-TERM", "-x", process).Run()
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if marketServicePID(bin) <= 0 && !tcpReady(addr, 200*time.Millisecond) {
-			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "stopped", Message: process})
+			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusStopped, Message: process})
 			return nil
 		}
 		time.Sleep(300 * time.Millisecond)
@@ -544,7 +544,7 @@ func (a *App) stopMarketServiceForItemInfo(name, addr, bin string) error {
 	deadline = time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if marketServicePID(bin) <= 0 && !tcpReady(addr, 200*time.Millisecond) {
-			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "killed", Message: process})
+			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusKilled, Message: process})
 			return nil
 		}
 		time.Sleep(300 * time.Millisecond)
@@ -1583,11 +1583,11 @@ func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogIt
 	if pvfReady {
 		itemInfoIDs, path, err := a.currentItemInfoIDs()
 		if err != nil {
-			a.appendLog(LogEvent{Type: "iteminfo_gate", Status: "blocked", Message: err.Error()})
+			a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusBlocked, Message: err.Error()})
 			return nil, nil, "pvf_iteminfo_missing", nil
 		}
 		normal, special := catalogAuctionIDsByType(catalog, itemInfoIDs)
-		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: "active", Message: fmt.Sprintf("source=%s allowed=%d special=%d", path, len(normal)+len(special), len(special))})
+		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusActive, Message: fmt.Sprintf("source=%s allowed=%d special=%d", path, len(normal)+len(special), len(special))})
 		return normal, special, "pvf_iteminfo", nil
 	}
 	rows, err := a.fallbackAuctionRows()

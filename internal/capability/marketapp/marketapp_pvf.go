@@ -24,13 +24,13 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 	status := a.itemInfoStatus()
 	if status.SourcePath == "" {
 		status.Error = "iteminfo source path is empty"
-		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: "failed", Message: status.Error})
+		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
 		return status
 	}
 	source, err := os.ReadFile(status.SourcePath)
 	if err != nil {
 		status.Error = fmt.Sprintf("read source %s: %v", status.SourcePath, err)
-		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: "failed", Message: status.Error})
+		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
 		return status
 	}
 	for _, target := range status.Targets {
@@ -49,13 +49,13 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 		}
 		if err := os.WriteFile(target, source, 0644); err != nil {
 			status.Error = fmt.Sprintf("write target %s: %v", target, err)
-			a.appendLog(LogEvent{Type: "iteminfo_sync", Status: "failed", Message: status.Error})
+			a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
 			return status
 		}
 		status.Synced++
-		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: "synced", Message: target})
+		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusSynced, Message: target})
 	}
-	a.appendLog(LogEvent{Type: "iteminfo_sync", Status: "success", Message: fmt.Sprintf("synced=%d skipped=%d", status.Synced, status.Skipped)})
+	a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusSuccess, Message: fmt.Sprintf("synced=%d skipped=%d", status.Synced, status.Skipped)})
 	return status
 }
 
@@ -64,7 +64,7 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	if err != nil {
 		status := a.itemInfoStatus()
 		status.Error = fmt.Sprintf("export source %s: %v", a.pvfPath, err)
-		a.appendLog(LogEvent{Type: "iteminfo_export", Status: "failed", Message: status.Error})
+		a.appendLog(LogEvent{Type: "iteminfo_export", Status: marketLogStatusFailed, Message: status.Error})
 		a.stateMu.Lock()
 		a.itemInfo = status
 		a.stateMu.Unlock()
@@ -74,7 +74,7 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	status := a.itemInfoStatus()
 	if err := a.prepareItemInfoRelease(); err != nil {
 		status.Error = err.Error()
-		a.appendLog(LogEvent{Type: "iteminfo_prepare", Status: "failed", Message: status.Error})
+		a.appendLog(LogEvent{Type: "iteminfo_prepare", Status: marketLogStatusFailed, Message: status.Error})
 		a.stateMu.Lock()
 		a.itemInfo = status
 		a.stateMu.Unlock()
@@ -84,7 +84,7 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	if status.Error == "" {
 		if err := a.restartMarketServicesAfterItemInfo(); err != nil {
 			status.Error = err.Error()
-			a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "failed", Message: status.Error})
+			a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusFailed, Message: status.Error})
 		}
 	}
 	a.stateMu.Lock()
@@ -173,28 +173,28 @@ func (a *App) deleteSystemCreatureItems(logType string) (ClearSystemMarketResult
 	result := ClearSystemMarketResult{Market: market, DBName: a.cfg.GameDB}
 	count, err := a.repository.CountSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
 	if err != nil {
-		result.Status = "count_failed"
+		result.Status = marketLogStatusCountFailed
 		return result, fmt.Errorf("%s count system instances: %w", market, err)
 	}
 	result.Before = count
 	if count <= 0 {
-		result.Status = "empty"
+		result.Status = marketLogStatusEmpty
 		a.appendLog(LogEvent{Type: logType, Market: market, Status: result.Status, Message: "system creature instances already empty"})
 		return result, nil
 	}
 	deleted, err := a.repository.DeleteSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
 	if err != nil {
-		result.Status = "delete_failed"
+		result.Status = marketLogStatusDeleteFailed
 		return result, fmt.Errorf("%s delete system instances: %w", market, err)
 	}
 	result.Deleted = deleted
 	after, err := a.repository.CountSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
 	if err != nil {
-		result.Status = "count_after_failed"
+		result.Status = marketLogStatusCountAfterFailed
 		return result, fmt.Errorf("%s count system instances after delete: %w", market, err)
 	}
 	result.After = after
-	result.Status = "db_deleted"
+	result.Status = marketLogStatusDBDeleted
 	a.appendLog(LogEvent{Type: logType, Market: market, Status: result.Status, Message: fmt.Sprintf("rows=%d", deleted)})
 	return result, nil
 }
@@ -203,33 +203,33 @@ func (a *App) deleteSystemMarketStock(logType, market, dbName string) (ClearSyst
 	result := ClearSystemMarketResult{Market: market, DBName: dbName}
 	count, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
 	if err != nil {
-		result.Status = "count_failed"
+		result.Status = marketLogStatusCountFailed
 		return result, fmt.Errorf("%s count system stock: %w", market, err)
 	}
 	result.Before = count
 	if count <= 0 {
-		result.Status = "empty"
+		result.Status = marketLogStatusEmpty
 		a.appendLog(LogEvent{Type: logType, Market: market, Status: result.Status, Message: "system stock already empty"})
 		return result, nil
 	}
 	deleted, err := a.repository.DeleteSystemStock(dbName, a.cfg.SystemOwner.IDBase)
 	if err != nil {
-		result.Status = "delete_failed"
+		result.Status = marketLogStatusDeleteFailed
 		return result, fmt.Errorf("%s delete system stock: %w", market, err)
 	}
 	result.Deleted = deleted
-	a.appendLog(LogEvent{Type: logType, Market: market, Status: "db_deleted", Message: fmt.Sprintf("rows=%d", deleted)})
+	a.appendLog(LogEvent{Type: logType, Market: market, Status: marketLogStatusDBDeleted, Message: fmt.Sprintf("rows=%d", deleted)})
 	if err := a.waitSystemStockEmpty(logType, market, dbName, 30*time.Second); err != nil {
-		result.Status = "wait_failed"
+		result.Status = marketLogStatusWaitFailed
 		return result, err
 	}
 	after, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
 	if err != nil {
-		result.Status = "count_after_failed"
+		result.Status = marketLogStatusCountAfterFailed
 		return result, fmt.Errorf("%s count system stock after delete: %w", market, err)
 	}
 	result.After = after
-	result.Status = "db_deleted"
+	result.Status = marketLogStatusDBDeleted
 	return result, nil
 }
 
@@ -243,7 +243,7 @@ func (a *App) waitSystemStockEmpty(logType, market, dbName string, timeout time.
 		}
 		last = count
 		if count == 0 {
-			a.appendLog(LogEvent{Type: logType, Market: market, Status: "clean", Message: "system stock empty"})
+			a.appendLog(LogEvent{Type: logType, Market: market, Status: marketLogStatusClean, Message: "system stock empty"})
 			return nil
 		}
 		if time.Now().After(deadline) {

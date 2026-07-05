@@ -139,10 +139,10 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	if tables, err := app.repository.EnsureMarketTables(app.marketDBNames(), time.Now()); err != nil {
 		app.dbInit = tables
 		app.dbInitErr = err.Error()
-		app.appendLog(LogEvent{Type: "db_init", Status: "failed", Message: err.Error()})
+		app.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusFailed, Message: err.Error()})
 	} else {
 		app.dbInit = tables
-		app.appendLog(LogEvent{Type: "db_init", Status: "success", Message: strings.Join(tables, ",")})
+		app.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusSuccess, Message: strings.Join(tables, ",")})
 	}
 	app.refreshMarketServiceStatuses()
 	return app, nil
@@ -253,7 +253,7 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 		catalogLoaded = true
 		pvfReady = err == nil
 		if !pvfReady {
-			a.appendLog(LogEvent{Type: "pvf_catalog", Status: "fallback", Message: err.Error()})
+			a.appendLog(LogEvent{Type: "pvf_catalog", Status: marketLogStatusFallback, Message: err.Error()})
 		}
 	} else {
 		pvfReady = true
@@ -281,7 +281,7 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 			catalog, err = a.loadCatalog()
 			pvfReady = err == nil
 			if !pvfReady {
-				a.appendLog(LogEvent{Type: "pvf_catalog", Status: "fallback", Message: err.Error()})
+				a.appendLog(LogEvent{Type: "pvf_catalog", Status: marketLogStatusFallback, Message: err.Error()})
 			}
 		}
 		ceraRows := a.cfg.Cera.Items
@@ -966,6 +966,33 @@ const (
 	MarketJobStatusPlanned       = "planned"
 	MarketJobStatusPartialFailed = "partial_failed"
 	MarketJobStatusSuccess       = "success"
+)
+
+const (
+	marketLogStatusActive           = "active"
+	marketLogStatusBlocked          = "blocked"
+	marketLogStatusClean            = "clean"
+	marketLogStatusCountAfterFailed = "count_after_failed"
+	marketLogStatusCountFailed      = "count_failed"
+	marketLogStatusDBDeleted        = "db_deleted"
+	marketLogStatusDeleteFailed     = "delete_failed"
+	marketLogStatusDisabled         = "disabled"
+	marketLogStatusEmpty            = "empty"
+	marketLogStatusExists           = "exists"
+	marketLogStatusFailed           = "failed"
+	marketLogStatusFallback         = "fallback"
+	marketLogStatusGameDown         = "game_down"
+	marketLogStatusInstalled        = "installed"
+	marketLogStatusKilled           = "killed"
+	marketLogStatusQueueReset       = "queue_reset"
+	marketLogStatusServiceDown      = "service_down"
+	marketLogStatusSkipped          = "skipped"
+	marketLogStatusStart            = "start"
+	marketLogStatusStopSkipped      = "stop_skipped"
+	marketLogStatusStopped          = "stopped"
+	marketLogStatusSuccess          = "success"
+	marketLogStatusSynced           = "synced"
+	marketLogStatusWaitFailed       = "wait_failed"
 )
 
 type PlanResult struct {
