@@ -10,7 +10,7 @@ import (
 )
 
 type Ledger struct {
-	mu         lockhub.Locker
+	indexMu    lockhub.Locker
 	actors     map[int]*Actor
 	uidActors  map[int]*Actor
 	blockedUID map[int]struct{}
@@ -48,33 +48,33 @@ func (l *Ledger) AddActorForTest(actor *Actor) {
 	if actor == nil {
 		return
 	}
-	l.mu.Lock()
+	l.indexMu.Lock()
 	l.actors[actor.SlotIDValue()] = actor
-	l.mu.Unlock()
+	l.indexMu.Unlock()
 }
 
 func (l *Ledger) ActorCountForTest() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	return len(l.actors)
 }
 
 func (l *Ledger) LeaseCountForTest() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	return len(l.uidActors)
 }
 
 func (l *Ledger) IsBlockedForTest(uid int) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	_, ok := l.blockedUID[uid]
 	return ok
 }
 
 func (l *Ledger) LeaseSnapshots() []LeaseSnapshot {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	leases := make([]LeaseSnapshot, 0, len(l.uidActors))
 	for uid, actor := range l.uidActors {
 		if uid > 0 && actor != nil {
@@ -118,8 +118,8 @@ func (l *Ledger) Counts(now time.Time, rc robotconfig.RuntimeConfig) LedgerCount
 }
 
 func (l *Ledger) BlockLeaseIfCurrent(uid int, actor *Actor) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	if l.uidActors[uid] != actor {
 		return false
 	}
@@ -129,17 +129,17 @@ func (l *Ledger) BlockLeaseIfCurrent(uid int, actor *Actor) bool {
 }
 
 func (l *Ledger) UnblockUID(uid int) {
-	l.mu.Lock()
+	l.indexMu.Lock()
 	delete(l.blockedUID, uid)
-	l.mu.Unlock()
+	l.indexMu.Unlock()
 }
 
 func (l *Ledger) BlockedUIDs(limit int) []int {
 	if limit <= 0 {
 		return nil
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	uids := make([]int, 0, limit)
 	for uid := range l.blockedUID {
 		uids = append(uids, uid)
@@ -151,8 +151,8 @@ func (l *Ledger) BlockedUIDs(limit int) []int {
 }
 
 func (l *Ledger) BlockedCount() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	return len(l.blockedUID)
 }
 
@@ -160,8 +160,8 @@ func (l *Ledger) TryLeaseUID(uid int, actor *Actor) bool {
 	if uid <= 0 {
 		return false
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	if _, blocked := l.blockedUID[uid]; blocked {
 		return false
 	}
@@ -176,35 +176,35 @@ func (l *Ledger) UnleaseUID(uid int, actor *Actor) {
 	if uid <= 0 {
 		return
 	}
-	l.mu.Lock()
+	l.indexMu.Lock()
 	if actor == nil || l.uidActors[uid] == actor || l.uidActors[uid] == nil {
 		delete(l.uidActors, uid)
 	}
-	l.mu.Unlock()
+	l.indexMu.Unlock()
 }
 
 func (l *Ledger) RemoveLeaseIfActor(uid int, actor *Actor) {
-	l.mu.Lock()
+	l.indexMu.Lock()
 	if l.uidActors[uid] == actor {
 		delete(l.uidActors, uid)
 	}
-	l.mu.Unlock()
+	l.indexMu.Unlock()
 }
 
 func (l *Ledger) BlockUID(uid int) {
 	if uid <= 0 {
 		return
 	}
-	l.mu.Lock()
+	l.indexMu.Lock()
 	l.blockedUID[uid] = struct{}{}
-	l.mu.Unlock()
+	l.indexMu.Unlock()
 }
 
 func (l *Ledger) EnsureAutoActorSlots(runtime RobotRuntime, rc robotconfig.RuntimeConfig, target int, status map[int]robotcap.RuntimeStatus) []*Actor {
 	if target < 0 {
 		target = 0
 	}
-	l.mu.Lock()
+	l.indexMu.Lock()
 	current := 0
 	pending := 0
 	for _, actor := range l.actors {
@@ -236,7 +236,7 @@ func (l *Ledger) EnsureAutoActorSlots(runtime RobotRuntime, rc robotconfig.Runti
 	}
 	current += added
 	if current <= target {
-		l.mu.Unlock()
+		l.indexMu.Unlock()
 		return nil
 	}
 	var candidates []*Actor
@@ -260,13 +260,13 @@ func (l *Ledger) EnsureAutoActorSlots(runtime RobotRuntime, rc robotconfig.Runti
 			delete(l.uidActors, uid)
 		}
 	}
-	l.mu.Unlock()
+	l.indexMu.Unlock()
 	return extra
 }
 
 func (l *Ledger) ActorPointers() []*Actor {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	actors := make([]*Actor, 0, len(l.actors))
 	for _, actor := range l.actors {
 		actors = append(actors, actor)
@@ -275,8 +275,8 @@ func (l *Ledger) ActorPointers() []*Actor {
 }
 
 func (l *Ledger) ActorForUID(uid int) *Actor {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	return l.uidActors[uid]
 }
 
@@ -284,8 +284,8 @@ func (l *Ledger) HasUID(uid int) bool {
 	if uid <= 0 {
 		return false
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	return l.uidActors[uid] != nil
 }
 
@@ -293,8 +293,8 @@ func (l *Ledger) ReserveEmptyAutoActor(uid int) (*Actor, bool, bool) {
 	if uid <= 0 {
 		return nil, false, false
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	if existing := l.uidActors[uid]; existing != nil {
 		return existing, true, true
 	}
@@ -317,8 +317,8 @@ func (l *Ledger) ReserveEmptyAutoActor(uid int) (*Actor, bool, bool) {
 }
 
 func (l *Ledger) AutoActorPointers() []*Actor {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	actors := make([]*Actor, 0, len(l.actors))
 	for _, actor := range l.actors {
 		if actor.ModeValue() == ModeAuto {
@@ -343,16 +343,16 @@ func (l *Ledger) FilterBlockedRuntimeStatus(status map[int]robotcap.RuntimeStatu
 	if len(status) == 0 {
 		return
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	for uid := range l.blockedUID {
 		delete(status, uid)
 	}
 }
 
 func (l *Ledger) DetachAutoActors() []*Actor {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	actors := make([]*Actor, 0, len(l.actors))
 	for slotID, actor := range l.actors {
 		if actor.ModeValue() != ModeAuto {
@@ -371,8 +371,8 @@ func (l *Ledger) DetachSomeAutoActors(status map[int]robotcap.RuntimeStatus, lim
 	if limit <= 0 {
 		return nil
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	var candidates []*Actor
 	for _, actor := range l.actors {
 		if actor.ModeValue() == ModeAuto {
@@ -404,8 +404,8 @@ func (l *Ledger) DetachSomeAutoActors(status map[int]robotcap.RuntimeStatus, lim
 }
 
 func (l *Ledger) DetachAllActors() []*Actor {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	actors := make([]*Actor, 0, len(l.actors))
 	for slotID, actor := range l.actors {
 		actors = append(actors, actor)
@@ -416,8 +416,8 @@ func (l *Ledger) DetachAllActors() []*Actor {
 }
 
 func (l *Ledger) DetachUID(uid int) *Actor {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	actor := l.uidActors[uid]
 	if actor != nil {
 		delete(l.uidActors, uid)
@@ -433,8 +433,8 @@ func (l *Ledger) DetachUIDs(uids []int) ([]*Actor, []int) {
 	seen := make(map[int]struct{}, len(uids))
 	actors := make([]*Actor, 0, len(uids))
 	missing := make([]int, 0)
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	for _, uid := range uids {
 		if uid <= 0 {
 			continue
@@ -463,8 +463,8 @@ func (l *Ledger) ActorOwnsUID(uid int) bool {
 	if l.ActorForUID(uid) != nil {
 		return true
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	for _, actor := range l.actors {
 		if actor.UIDValue() == uid {
 			return true

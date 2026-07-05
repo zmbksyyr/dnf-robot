@@ -17,7 +17,7 @@ type Actor struct {
 	state   State
 	runtime RobotRuntime
 	rand    *rand.Rand
-	mu      lockhub.Locker
+	stateMu lockhub.Locker
 	cmds    chan request
 	ctrls   chan control
 	stop    chan struct{}

@@ -419,8 +419,8 @@ func (a *Actor) releaseCurrentUID() int {
 }
 
 func (a *Actor) resetForUID(uid int) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	a.uid = uid
 	a.clearAutoScheduleLocked()
 	a.lastOnlineTry = time.Time{}
@@ -438,8 +438,8 @@ func (a *Actor) resetForUID(uid int) {
 }
 
 func (a *Actor) clearAutoSchedule() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	a.clearAutoScheduleLocked()
 }
 
@@ -452,49 +452,49 @@ func (a *Actor) clearAutoScheduleLocked() {
 }
 
 func (a *Actor) setReleaseRequested(v bool) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.releaseRequested = v
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) releaseRequestedValue() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.releaseRequested
 }
 
 func (a *Actor) setOnlineDesired(v bool) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.onlineDesired = v
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) onlineDesiredValue() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.onlineDesired
 }
 
 func (a *Actor) markOnlineHealthy() {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.failures = 0
 	a.firstFailureAt = time.Time{}
 	a.lastOnlineTry = time.Time{}
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) clearOnlineAttempt() {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.lastOnlineTry = time.Time{}
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) markOnlinePending(now time.Time) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	if a.firstFailureAt.IsZero() {
 		a.firstFailureAt = now
 	}
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) onlineConfirmPending(uid int, now time.Time, rc robotconfig.RuntimeConfig) bool {
@@ -536,74 +536,74 @@ func (a *Actor) onlineAttemptTimedOut(uid int, now time.Time, rc robotconfig.Run
 }
 
 func (a *Actor) lastOnlineTryValue() time.Time {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.lastOnlineTry
 }
 
 func (a *Actor) setLastOnlineTry(t time.Time) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.lastOnlineTry = t
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) storeExpired(now time.Time) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return !a.storeUntil.IsZero() && now.After(a.storeUntil)
 }
 
 func (a *Actor) storeUntilMissing() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.storeUntil.IsZero()
 }
 
 func (a *Actor) clearStoreUntil() {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.storeUntil = time.Time{}
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) setStoreUntil(t time.Time) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.storeUntil = t
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) setNextStore(t time.Time) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.nextStore = t
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) nextWorldShoutDue(now time.Time, rc robotconfig.RuntimeConfig) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.randomizedDue(&a.nextWorldShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 }
 
 func (a *Actor) nextLocalShoutDue(now time.Time, rc robotconfig.RuntimeConfig) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.randomizedDue(&a.nextLocalShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 }
 
 func (a *Actor) nextStoreDue(now time.Time, rc robotconfig.RuntimeConfig) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.randomizedDue(&a.nextStore, now, rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec)
 }
 
 func (a *Actor) nextMoveDue(now time.Time, rc robotconfig.RuntimeConfig) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.randomizedDue(&a.nextMove, now, rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
 }
 
 func (a *Actor) recordFailure(now time.Time) int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	a.failures++
 	if a.firstFailureAt.IsZero() {
 		a.firstFailureAt = now
@@ -618,7 +618,7 @@ func (a *Actor) runBusy(kind string, fn func()) {
 }
 
 func (a *Actor) setBusy(v bool, kind string) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.busy = v
 	a.busyKind = kind
 	if v {
@@ -630,24 +630,24 @@ func (a *Actor) setBusy(v bool, kind string) {
 			a.state = StateOffline
 		}
 	}
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) busyValue() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.busy
 }
 
 func (a *Actor) setState(state State) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.state = state
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) snapshot() Snapshot {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return Snapshot{
 		SlotID:         a.slotID,
 		UID:            a.uid,
@@ -663,8 +663,8 @@ func (a *Actor) snapshot() Snapshot {
 }
 
 func (a *Actor) uidValue() int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.uid
 }
 
@@ -676,14 +676,14 @@ func (a *Actor) slotIDValue() int {
 }
 
 func (a *Actor) modeValue() Mode {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.mode
 }
 
 func (a *Actor) stateValue() State {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.state
 }
 
@@ -769,37 +769,37 @@ func (a *Actor) MarkOnlineHealthy() {
 }
 
 func (a *Actor) SetBusyForTest(busy bool) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.busy = busy
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) SetStateForTest(state State) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.state = state
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) SetFailuresForTest(failures int) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.failures = failures
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) SetFirstFailureAtForTest(firstFailureAt time.Time) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.firstFailureAt = firstFailureAt
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) SetLastOnlineTryForTest(lastOnlineTry time.Time) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.lastOnlineTry = lastOnlineTry
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) SetNextStoreForTest(nextStore time.Time) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.nextStore = nextStore
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }

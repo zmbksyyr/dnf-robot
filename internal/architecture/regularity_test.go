@@ -85,6 +85,17 @@ func TestActionResultStatesUseNamedConstants(t *testing.T) {
 func TestMarketAppLocksUsePurposeNames(t *testing.T) {
 	root := repoRoot(t)
 	path := filepath.Join(root, "internal", "capability", "marketapp", "marketapp_core.go")
+	assertStructHasNoGenericLockField(t, path, "App")
+}
+
+func TestActorLocksUsePurposeNames(t *testing.T) {
+	root := repoRoot(t)
+	assertStructHasNoGenericLockField(t, filepath.Join(root, "internal", "actor", "actor_core.go"), "Actor")
+	assertStructHasNoGenericLockField(t, filepath.Join(root, "internal", "actor", "ledger.go"), "Ledger")
+}
+
+func assertStructHasNoGenericLockField(t *testing.T, path, structName string) {
+	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	if err != nil {
 		t.Fatalf("parse %s: %v", path, err)
@@ -96,7 +107,7 @@ func TestMarketAppLocksUsePurposeNames(t *testing.T) {
 		}
 		for _, spec := range gen.Specs {
 			typeSpec, ok := spec.(*ast.TypeSpec)
-			if !ok || typeSpec.Name.Name != "App" {
+			if !ok || typeSpec.Name.Name != structName {
 				continue
 			}
 			st, ok := typeSpec.Type.(*ast.StructType)
@@ -106,7 +117,7 @@ func TestMarketAppLocksUsePurposeNames(t *testing.T) {
 			for _, field := range st.Fields.List {
 				for _, name := range field.Names {
 					if name.Name == "mu" {
-						t.Errorf("%s App lock field uses generic name mu; use a purpose name such as stateMu/jobMu/autoMu", path)
+						t.Errorf("%s %s lock field uses generic name mu; use a purpose name", path, structName)
 					}
 				}
 			}
