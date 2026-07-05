@@ -442,6 +442,38 @@ func TestMarketPolicyBlockedStateRecordsReason(t *testing.T) {
 	}
 }
 
+func TestRecordMarketPolicyJobKeepsPolicyAndAddsFeedback(t *testing.T) {
+	app := testApp()
+	app.configDir = t.TempDir()
+	app.policy = map[string]MarketPolicyStatus{
+		"auction": {
+			Market:              "auction",
+			Mode:                marketPolicyModeRecover,
+			Reason:              "recovering",
+			DBKinds:             10,
+			EffectiveMaxActions: 100,
+		},
+	}
+	app.recordMarketPolicyJob("auction", JobSummary{
+		Status: "partial_failed",
+		Error:  "1 actions failed",
+		Plan:   &PlanSummary{Actions: 3},
+		Actions: []ActionEntry{
+			{OK: true},
+			{OK: false},
+			{OK: true, Error: "write timeout"},
+		},
+	})
+
+	status := app.policy["auction"]
+	if status.Mode != marketPolicyModeRecover || status.Reason != "recovering" || status.DBKinds != 10 {
+		t.Fatalf("policy judgement was overwritten: %#v", status)
+	}
+	if status.LastJobStatus != "partial_failed" || status.LastJobError != "1 actions failed" || status.LastPlanActions != 3 || status.LastActionResults != 3 || status.LastActionFailed != 2 {
+		t.Fatalf("job feedback not recorded: %#v", status)
+	}
+}
+
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 	app := testApp()
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)

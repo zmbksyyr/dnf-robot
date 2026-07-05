@@ -894,6 +894,11 @@ type MarketPolicyStatus struct {
 	QueueSource          string    `json:"queue_source,omitempty"`
 	EffectiveMaxActions  int       `json:"effective_max_actions"`
 	EffectiveConcurrency int       `json:"effective_concurrency"`
+	LastJobStatus        string    `json:"last_job_status,omitempty"`
+	LastJobError         string    `json:"last_job_error,omitempty"`
+	LastPlanActions      int       `json:"last_plan_actions,omitempty"`
+	LastActionResults    int       `json:"last_action_results,omitempty"`
+	LastActionFailed     int       `json:"last_action_failed,omitempty"`
 	UpdatedAt            time.Time `json:"updated_at,omitempty"`
 }
 

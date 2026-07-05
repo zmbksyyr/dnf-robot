@@ -308,6 +308,7 @@ func (a *App) runAutoOnce() {
 			msg = err.Error()
 		}
 		a.appendLog(LogEvent{Type: "auto_run", JobID: job.ID, Market: market, Status: status, Message: msg})
+		a.recordMarketPolicyJob(market, job)
 	}
 }
 

@@ -221,6 +221,26 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 	}
 }
 
+func (a *App) recordMarketPolicyJob(market string, job JobSummary) {
+	market = normalizeMarketName(market)
+	a.mu.Lock()
+	if a.policy == nil {
+		a.policy = map[string]MarketPolicyStatus{}
+	}
+	status := a.policy[market]
+	status.Market = market
+	status.LastJobStatus = job.Status
+	status.LastJobError = job.Error
+	if job.Plan != nil {
+		status.LastPlanActions = job.Plan.Actions
+	}
+	status.LastActionResults = len(job.Actions)
+	status.LastActionFailed = countFailedActionEntries(job.Actions)
+	status.UpdatedAt = time.Now()
+	a.policy[market] = status
+	a.mu.Unlock()
+}
+
 func (a *App) currentMarketKinds(market string) (int, error) {
 	occ := map[uint32]int{}
 	switch normalizeMarketName(market) {
@@ -233,6 +253,16 @@ func (a *App) currentMarketKinds(market string) (int, error) {
 	default:
 		return 0, nil
 	}
+}
+
+func countFailedActionEntries(entries []ActionEntry) int {
+	failed := 0
+	for _, entry := range entries {
+		if !entry.OK || entry.Error != "" {
+			failed++
+		}
+	}
+	return failed
 }
 
 func normalizeMarketName(market string) string {
