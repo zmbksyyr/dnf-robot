@@ -115,10 +115,18 @@ SAMPLE_FIELDS = [
     "market_auction_stagnant",
     "market_auction_policy",
     "market_auction_policy_reason",
+    "market_auction_last_job",
+    "market_auction_last_plan",
+    "market_auction_last_results",
+    "market_auction_last_failed",
     "market_cera_records",
     "market_cera_kinds",
     "market_cera_policy",
     "market_cera_policy_reason",
+    "market_cera_last_job",
+    "market_cera_last_plan",
+    "market_cera_last_results",
+    "market_cera_last_failed",
     "load1",
     "load5",
     "load15",
@@ -1216,7 +1224,7 @@ echo "KEYS_RESTORED"
         row = self.sample_row()
         self.writerow(row)
         self.log(
-            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s policy=%s stg=%s cera=%s/%s policy=%s load=%s/%s/%s top=%s hits=%s api_error=%s"
+            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s policy=%s stg=%s act=%s/%s/%s cera=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
             % (
                 row.get("target"),
                 row.get("actors"),
@@ -1230,9 +1238,15 @@ echo "KEYS_RESTORED"
                 row.get("market_auction_candidates"),
                 row.get("market_auction_policy"),
                 row.get("market_auction_stagnant"),
+                row.get("market_auction_last_plan"),
+                row.get("market_auction_last_results"),
+                row.get("market_auction_last_failed"),
                 row.get("market_cera_records"),
                 row.get("market_cera_kinds"),
                 row.get("market_cera_policy"),
+                row.get("market_cera_last_plan"),
+                row.get("market_cera_last_results"),
+                row.get("market_cera_last_failed"),
                 row.get("load1"),
                 row.get("load5"),
                 row.get("load15"),
@@ -1428,8 +1442,16 @@ echo "KEYS_RESTORED"
             row["market_auction_stagnant"] = auction_policy.get("stagnant_rounds", "")
             row["market_auction_policy"] = auction_policy.get("mode", "")
             row["market_auction_policy_reason"] = (auction_policy.get("reason") or "")[:160]
+            row["market_auction_last_job"] = auction_policy.get("last_job_status", "")
+            row["market_auction_last_plan"] = auction_policy.get("last_plan_actions", "")
+            row["market_auction_last_results"] = auction_policy.get("last_action_results", "")
+            row["market_auction_last_failed"] = auction_policy.get("last_action_failed", "")
             row["market_cera_policy"] = cera_policy.get("mode", "")
             row["market_cera_policy_reason"] = (cera_policy.get("reason") or "")[:160]
+            row["market_cera_last_job"] = cera_policy.get("last_job_status", "")
+            row["market_cera_last_plan"] = cera_policy.get("last_plan_actions", "")
+            row["market_cera_last_results"] = cera_policy.get("last_action_results", "")
+            row["market_cera_last_failed"] = cera_policy.get("last_action_failed", "")
         except Exception as exc:
             if not row.get("api_error"):
                 row["api_error"] = "marketStatus:%r" % (exc,)
