@@ -59,7 +59,7 @@ func (s ShoutService) ShoutOne(req robotcap.CommandRequest, world bool) (robotca
 	time.Sleep(500 * time.Millisecond)
 	status := env.RuntimeStatusMap()
 	for i := range result.Robots {
-		if !strings.EqualFold(result.Robots[i].State, "accepted") {
+		if !strings.EqualFold(result.Robots[i].State, robotcap.ActionStateAccepted) {
 			continue
 		}
 		if st, ok := status[result.Robots[i].UID]; ok && robotcap.ActiveRuntimeStatus(st) {

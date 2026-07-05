@@ -112,7 +112,7 @@ func (s MoveService) AutoMove(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 	}
 	steps := s.Env.RandBetween(mathx.MaxInt(2, rc.MoveSteps-1), mathx.MinInt(8, rc.MoveSteps+2))
 	for step := 1; step <= steps; step++ {
-		if st, ok := s.Env.RuntimeStatusMap()[info.UID]; ok && (st.RobotType == 2 || st.RobotType == 3 || st.StateName != "running") {
+		if st, ok := s.Env.RuntimeStatusMap()[info.UID]; ok && (st.RobotType == 2 || st.RobotType == 3 || st.StateName != robotcap.RuntimeStateRunning) {
 			return
 		}
 		speed := s.Env.RandBetween(rc.MoveSpeedMin, rc.MoveSpeedMax)
