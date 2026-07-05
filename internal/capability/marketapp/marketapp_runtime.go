@@ -512,13 +512,20 @@ func (a *App) stopMarketService(name, addr, bin string) error {
 		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "stop_skipped", Message: "process is not running"})
 		return nil
 	}
-	if err := exec.Command("pkill", "-x", process).Run(); err != nil {
-		return fmt.Errorf("%s stop failed: %w", name, err)
-	}
-	deadline := time.Now().Add(10 * time.Second)
+	_ = exec.Command("pkill", "-TERM", "-x", process).Run()
+	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if marketServicePID(bin) <= 0 && !tcpReady(addr, 200*time.Millisecond) {
 			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "stopped", Message: process})
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	_ = exec.Command("pkill", "-KILL", "-x", process).Run()
+	deadline = time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if marketServicePID(bin) <= 0 && !tcpReady(addr, 200*time.Millisecond) {
+			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "killed", Message: process})
 			return nil
 		}
 		time.Sleep(300 * time.Millisecond)
