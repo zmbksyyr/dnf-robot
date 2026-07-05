@@ -116,6 +116,33 @@ func TestMarketPolicyModeConstants(t *testing.T) {
 	}
 }
 
+func TestMarketFactConstants(t *testing.T) {
+	tests := []struct {
+		got  string
+		want string
+	}{
+		{marketNameAuction, "auction"},
+		{marketNameCera, "cera"},
+		{marketAliasGold, "gold"},
+		{marketAliasPoint, "point"},
+		{marketServiceNameAuction, "auction"},
+		{marketServiceNamePoint, "point"},
+		{marketQueueSourcePVFItemInfo, "pvf_iteminfo"},
+		{marketQueueSourcePVFItemInfoMissing, "pvf_iteminfo_missing"},
+		{marketQueueSourceFallback, "fallback"},
+		{marketRowSourcePVF, "pvf"},
+		{marketRowSourceFallbackSeed, "fallback_seed"},
+		{marketActionSourceLegacySeed, "legacy_seed"},
+		{marketActionSourceCeraConfig, "cera_config"},
+		{marketCandidateSourceUnavailable, "unavailable"},
+	}
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Fatalf("market fact constant got %q want %q", tt.got, tt.want)
+		}
+	}
+}
+
 func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	data, err := json.Marshal(DefaultConfig().Restock)
 	if err != nil {

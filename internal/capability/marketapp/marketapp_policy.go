@@ -49,11 +49,11 @@ func (a *App) marketAutoPolicy(market string, cfg AutoCfg) marketAutoPolicy {
 	}
 
 	candidates := marketCandidateSnapshot{}
-	if market == "auction" {
+	if market == marketNameAuction {
 		candidates = a.observeAuctionCandidates()
 	}
 	status := a.nextMarketPolicyStatus(market, kinds, candidates, policy)
-	if market == "auction" {
+	if market == marketNameAuction {
 		policy = a.applyAuctionPolicyActions(candidates, &status, policy)
 	}
 	a.setMarketPolicyStatus(status)
@@ -67,7 +67,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	switch {
 	case status.ZeroCandidateRounds == 2:
 		a.resetAuctionQueues()
-		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: marketLogStatusQueueReset, Message: "zero_candidate_recovery"})
+		a.appendLog(LogEvent{Type: "market_policy", Market: marketNameAuction, Status: marketLogStatusQueueReset, Message: "zero_candidate_recovery"})
 		status.Reason = "auction candidates stayed zero; auction queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.ZeroCandidateRounds >= 3:
@@ -76,7 +76,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	switch {
 	case status.StagnantRounds == 2:
 		a.resetAuctionQueues()
-		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: marketLogStatusQueueReset, Message: "stagnant_growth_recovery"})
+		a.appendLog(LogEvent{Type: "market_policy", Market: marketNameAuction, Status: marketLogStatusQueueReset, Message: "stagnant_growth_recovery"})
 		status.Reason = "auction kinds stopped growing below candidate count; auction queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.StagnantRounds >= 3:
@@ -92,7 +92,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	switch {
 	case status.ZeroKindRounds == 2:
 		a.resetAuctionQueues()
-		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: marketLogStatusQueueReset, Message: "zero_kind_recovery"})
+		a.appendLog(LogEvent{Type: "market_policy", Market: marketNameAuction, Status: marketLogStatusQueueReset, Message: "zero_kind_recovery"})
 		status.Reason = "auction kinds stayed zero; auction queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.ZeroKindRounds >= 3:
@@ -135,7 +135,7 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 		EffectiveConcurrency: policy.MaxConcurrent,
 		UpdatedAt:            time.Now(),
 	}
-	if market == "auction" {
+	if market == marketNameAuction {
 		status.QueueNormal = len(a.auctionQueue)
 		status.QueueSpecial = len(a.auctionSpecialQueue)
 		status.QueueRejected = len(a.auctionRejected)
@@ -167,7 +167,7 @@ func nextMarketPolicyState(market string, kinds int, candidates marketCandidateS
 			state.mode = marketPolicyModeRecover
 		}
 	}
-	if market == "auction" && candidates.Error == "" && candidates.Count <= 0 {
+	if market == marketNameAuction && candidates.Error == "" && candidates.Count <= 0 {
 		state.zeroCandidateRounds = prev.ZeroCandidateRounds + 1
 		if state.reason == "" {
 			state.reason = "auction has zero candidate item kinds"
@@ -176,7 +176,7 @@ func nextMarketPolicyState(market string, kinds int, candidates marketCandidateS
 			state.mode = marketPolicyModeRecover
 		}
 	}
-	if market == "auction" && candidates.Error == "" && candidates.Count > kinds && kinds > 0 && !prev.UpdatedAt.IsZero() && kinds <= prev.DBKinds {
+	if market == marketNameAuction && candidates.Error == "" && candidates.Count > kinds && kinds > 0 && !prev.UpdatedAt.IsZero() && kinds <= prev.DBKinds {
 		state.stagnantRounds = prev.StagnantRounds + 1
 		if state.reason == "" {
 			state.reason = "auction item kinds are not growing below candidate count"
@@ -209,13 +209,13 @@ func (a *App) observeAuctionCandidates() marketCandidateSnapshot {
 	if err != nil {
 		rows, fallbackErr := a.fallbackAuctionRows()
 		if fallbackErr != nil {
-			return marketCandidateSnapshot{Source: "unavailable", Error: fmt.Sprintf("auction catalog unavailable: %v; fallback unavailable: %v", err, fallbackErr)}
+			return marketCandidateSnapshot{Source: marketCandidateSourceUnavailable, Error: fmt.Sprintf("auction catalog unavailable: %v; fallback unavailable: %v", err, fallbackErr)}
 		}
-		return marketCandidateSnapshot{Count: countEnabledAuctionRows(rows), Source: "fallback"}
+		return marketCandidateSnapshot{Count: countEnabledAuctionRows(rows), Source: marketQueueSourceFallback}
 	}
 	itemInfoIDs, path, err := a.currentItemInfoIDs()
 	if err != nil {
-		return marketCandidateSnapshot{Source: "pvf_iteminfo_missing", Error: err.Error()}
+		return marketCandidateSnapshot{Source: marketQueueSourcePVFItemInfoMissing, Error: err.Error()}
 	}
 	normal, special := catalogAuctionCandidateCounts(catalog, itemInfoIDs)
 	return marketCandidateSnapshot{Count: normal, Special: special, Source: path}
@@ -246,7 +246,7 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 		UpdatedAt:   time.Now(),
 		QueueSource: "",
 	}
-	if market == "auction" {
+	if market == marketNameAuction {
 		status.QueueNormal = len(a.auctionQueue)
 		status.QueueSpecial = len(a.auctionSpecialQueue)
 		status.QueueRejected = len(a.auctionRejected)
@@ -288,10 +288,10 @@ func (a *App) recordMarketPolicyJob(market string, job JobSummary) {
 func (a *App) currentMarketKinds(market string) (int, error) {
 	occ := map[uint32]int{}
 	switch normalizeMarketName(market) {
-	case "auction":
+	case marketNameAuction:
 		have, err := a.repository.LoadMarketStock(a.cfg.AuctionDB, a.cfg.SystemOwner.IDBase, occ)
 		return len(have), err
-	case "cera":
+	case marketNameCera:
 		have, err := a.repository.LoadMarketStock(a.cfg.CeraDB, a.cfg.SystemOwner.IDBase, occ)
 		return len(have), err
 	default:
@@ -321,7 +321,7 @@ func (s *MarketPolicyStatus) applyHealth() {
 		s.Health = marketPolicyHealthHealthy
 		s.Completion = 100
 	}
-	if s.Market == "auction" {
+	if s.Market == marketNameAuction {
 		if s.CandidateSource != "" && s.Candidates <= 0 {
 			s.Health = marketPolicyHealthBlocked
 			s.Completion = minPositive(s.Completion, 40)
@@ -347,10 +347,10 @@ func (s *MarketPolicyStatus) applyHealth() {
 
 func normalizeMarketName(market string) string {
 	switch strings.ToLower(strings.TrimSpace(market)) {
-	case "cera", "gold", "point":
-		return "cera"
-	case "", "auction":
-		return "auction"
+	case marketNameCera, marketAliasGold, marketAliasPoint:
+		return marketNameCera
+	case "", marketNameAuction:
+		return marketNameAuction
 	default:
 		return strings.ToLower(strings.TrimSpace(market))
 	}

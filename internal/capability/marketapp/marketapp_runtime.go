@@ -260,7 +260,7 @@ func (a *App) runAutoOnce() {
 	}
 	markets := a.cfg.Auto.Markets
 	if len(markets) == 0 {
-		markets = []string{"auction", "cera"}
+		markets = []string{marketNameAuction, marketNameCera}
 	}
 	if !a.dfGameRRunning() {
 		a.appendLog(LogEvent{Type: "auto", Status: marketLogStatusGameDown, Message: "df_game_r is not running; market services skipped"})
@@ -355,10 +355,10 @@ func (a *App) ensureMarketServices(markets []string) map[string]bool {
 
 func marketServiceName(market string) string {
 	switch strings.ToLower(strings.TrimSpace(market)) {
-	case "cera", "gold", "point":
-		return "point"
-	case "", "auction":
-		return "auction"
+	case marketNameCera, marketAliasGold, marketAliasPoint:
+		return marketServiceNamePoint
+	case "", marketNameAuction:
+		return marketServiceNameAuction
 	default:
 		return ""
 	}
@@ -490,8 +490,8 @@ type marketServiceSpec struct {
 
 func marketServiceSpecs() []marketServiceSpec {
 	return []marketServiceSpec{
-		{name: "auction", addr: "127.0.0.1:30803", dir: "/home/neople/auction", bin: "./df_auction_r", args: []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"}},
-		{name: "point", addr: "127.0.0.1:30603", dir: "/home/neople/point", bin: "./df_point_r", args: []string{"./cfg/point_cain.cfg", "start", "df_point_r"}},
+		{name: marketServiceNameAuction, addr: "127.0.0.1:30803", dir: "/home/neople/auction", bin: "./df_auction_r", args: []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"}},
+		{name: marketServiceNamePoint, addr: "127.0.0.1:30603", dir: "/home/neople/point", bin: "./df_point_r", args: []string{"./cfg/point_cain.cfg", "start", "df_point_r"}},
 	}
 }
 
@@ -654,15 +654,15 @@ type collectRow struct {
 func (a *App) CollectPlan(req CollectRequest) (PlanResult, error) {
 	result := PlanResult{GeneratedAt: time.Now()}
 	market := strings.ToLower(strings.TrimSpace(req.Market))
-	if market == "" || market == "auction" {
-		rows, err := a.repository.LoadCollectRows(a.cfg.AuctionDB, "auction", a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
+	if market == "" || market == marketNameAuction {
+		rows, err := a.repository.LoadCollectRows(a.cfg.AuctionDB, marketNameAuction, a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
 		if err != nil {
 			return PlanResult{}, err
 		}
 		a.appendCollectActions(rows, &result)
 	}
-	if market == "" || market == "cera" || market == "gold" {
-		rows, err := a.repository.LoadCollectRows(a.cfg.CeraDB, "cera", a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
+	if market == "" || market == marketNameCera || market == marketAliasGold {
+		rows, err := a.repository.LoadCollectRows(a.cfg.CeraDB, marketNameCera, a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
 		if err != nil {
 			return PlanResult{}, err
 		}
@@ -671,9 +671,9 @@ func (a *App) CollectPlan(req CollectRequest) (PlanResult, error) {
 	result.Summary.Actions = len(result.Actions)
 	for _, action := range result.Actions {
 		switch action.Market {
-		case "auction":
+		case marketNameAuction:
 			result.Summary.AuctionActions++
-		case "cera":
+		case marketNameCera:
 			result.Summary.CeraActions++
 		}
 	}
@@ -698,7 +698,7 @@ func (r SQLRepository) LoadSystemCollectRows(dbName, market string, systemOwnerB
 
 func (r SQLRepository) loadCollectRowsWhere(dbName, market, ownerClause string, systemOwnerBase uint32) ([]collectRow, error) {
 	extraClause := ""
-	if market == "cera" {
+	if market == marketNameCera {
 		extraClause = " AND price = -1 AND instant_price > 0"
 	}
 	query := fmt.Sprintf(
@@ -1056,7 +1056,7 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			item.Name = row.Name
 		}
 		if item.Kind == "blocked" {
-			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "not_auctionable"})
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "not_auctionable"})
 			continue
 		}
 		if special := specialAuctionKind(item); special != "" {
@@ -1064,12 +1064,12 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			continue
 		}
 		if isRiskyPVFItem(item) {
-			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "risky_special_type"})
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "risky_special_type"})
 			continue
 		}
 		isEquip := item.Kind == "equipment"
 		if row.SealFlag != 0 && !isEquip {
-			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: row.Name, Reason: "requires_add_info"})
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: row.Name, Reason: "requires_add_info"})
 			continue
 		}
 		stackSize := row.StackSize
@@ -1122,10 +1122,10 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			ownerID := a.pickOwner(occ)
 			source := row.Source
 			if source == "" {
-				source = "legacy_seed"
+				source = marketActionSourceLegacySeed
 			}
 			result.Actions = append(result.Actions, Action{
-				Market:       "auction",
+				Market:       marketNameAuction,
 				Kind:         item.Kind,
 				ItemID:       row.ItemID,
 				Name:         item.Name,
@@ -1163,7 +1163,7 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 		unit := a.auctionUnitPrice(row.SystemPrice, true, batchInflate, 0, 0)
 		ownerID := a.pickOwner(occ)
 		action := Action{
-			Market:       "auction",
+			Market:       marketNameAuction,
 			Kind:         special,
 			ItemID:       row.ItemID,
 			Name:         item.Name,
@@ -1179,7 +1179,7 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 		if special == "creature" {
 			uiID, err := a.repository.CreateCreatureItem(a.cfg.GameDB, ownerID, row.ItemID)
 			if err != nil {
-				result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "creature_instance_failed"})
+				result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "creature_instance_failed"})
 				continue
 			}
 			action.CountAddInfo = uiID
@@ -1201,7 +1201,7 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 		}
 		if catalog != nil {
 			if _, ok := catalog[row.ItemID]; !ok {
-				result.Skipped = append(result.Skipped, SkippedItem{Market: "cera", ItemID: row.ItemID, Name: row.Label, Reason: "missing_from_pvf"})
+				result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameCera, ItemID: row.ItemID, Name: row.Label, Reason: "missing_from_pvf"})
 				continue
 			}
 		}
@@ -1211,8 +1211,8 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 			ownerID := a.pickOwner(occ)
 			price := a.price(row.RestockPrice)
 			result.Actions = append(result.Actions, Action{
-				Market:       "cera",
-				Kind:         "gold",
+				Market:       marketNameCera,
+				Kind:         marketAliasGold,
 				ItemID:       row.ItemID,
 				Name:         row.Label,
 				Count:        1,
@@ -1223,7 +1223,7 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 				CountAddInfo: 1,
 				StartPrice:   -1,
 				InstantPrice: price,
-				Source:       "cera_config",
+				Source:       marketActionSourceCeraConfig,
 			})
 		}
 	}
@@ -1381,7 +1381,7 @@ func cleanupLegacyMarketFiles(configDir string) {
 
 func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) ([]restockRow, error) {
 	a.stateMu.Lock()
-	needsLoad := len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || pvfReady && a.auctionQueueSource != "pvf_iteminfo"
+	needsLoad := len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || pvfReady && a.auctionQueueSource != marketQueueSourcePVFItemInfo
 	a.stateMu.Unlock()
 	if needsLoad {
 		normal, special, source, err := a.auctionQueueCandidates(pvfReady, catalog)
@@ -1389,7 +1389,7 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 			return nil, err
 		}
 		a.stateMu.Lock()
-		if len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || source == "pvf_iteminfo" && a.auctionQueueSource != "pvf_iteminfo" {
+		if len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || source == marketQueueSourcePVFItemInfo && a.auctionQueueSource != marketQueueSourcePVFItemInfo {
 			candidateSet := idSet(append(append([]uint32{}, normal...), special...))
 			a.auctionRejected = filterQueueBySet(a.auctionRejected, candidateSet)
 			rejectedSet := idSet(a.auctionRejected)
@@ -1584,11 +1584,11 @@ func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogIt
 		itemInfoIDs, path, err := a.currentItemInfoIDs()
 		if err != nil {
 			a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusBlocked, Message: err.Error()})
-			return nil, nil, "pvf_iteminfo_missing", nil
+			return nil, nil, marketQueueSourcePVFItemInfoMissing, nil
 		}
 		normal, special := catalogAuctionIDsByType(catalog, itemInfoIDs)
 		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusActive, Message: fmt.Sprintf("source=%s allowed=%d special=%d", path, len(normal)+len(special), len(special))})
-		return normal, special, "pvf_iteminfo", nil
+		return normal, special, marketQueueSourcePVFItemInfo, nil
 	}
 	rows, err := a.fallbackAuctionRows()
 	if err != nil {
@@ -1600,7 +1600,7 @@ func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogIt
 			ids = append(ids, row.ItemID)
 		}
 	}
-	return ids, nil, "fallback", nil
+	return ids, nil, marketQueueSourceFallback, nil
 }
 
 func (a *App) auctionRowForID(pvfReady bool, catalog map[uint32]catalogItem, id uint32) (restockRow, bool) {
@@ -1725,7 +1725,7 @@ func (a *App) fallbackAuctionRows() ([]restockRow, error) {
 			Quantity:    stack,
 			StackSize:   stack,
 			Enabled:     true,
-			Source:      "fallback_seed",
+			Source:      marketRowSourceFallbackSeed,
 			Kind:        "stackable",
 		})
 	}
@@ -1740,7 +1740,7 @@ func (a *App) catalogAuctionRow(item catalogItem) (restockRow, bool) {
 		ItemID:      item.ItemID,
 		SystemPrice: marketBasePrice(item),
 		Enabled:     true,
-		Source:      "pvf",
+		Source:      marketRowSourcePVF,
 		Kind:        item.Kind,
 		Level:       item.Level,
 		ItemType:    item.ItemType,
@@ -2039,7 +2039,7 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 					}
 					entry.Reason = res.ResultReason
 					entry.Result = res.Raw
-					if task.action.Market == "auction" && task.action.Operation != "collect" && !entry.OK && entry.Reason != nil {
+					if task.action.Market == marketNameAuction && task.action.Operation != "collect" && !entry.OK && entry.Reason != nil {
 						a.markAuctionExplicitRejected(task.action.ItemID)
 					}
 					record(entry, nil)

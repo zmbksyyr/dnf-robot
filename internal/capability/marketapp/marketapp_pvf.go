@@ -148,8 +148,8 @@ func (a *App) clearSystemMarketStockLocked(logType string) (ClearSystemStockResu
 		name string
 		db   string
 	}{
-		{name: "auction", db: a.cfg.AuctionDB},
-		{name: "cera", db: a.cfg.CeraDB},
+		{name: marketNameAuction, db: a.cfg.AuctionDB},
+		{name: marketNameCera, db: a.cfg.CeraDB},
 	}
 	for _, market := range markets {
 		item, err := a.deleteSystemMarketStock(logType, market.name, market.db)
@@ -279,7 +279,7 @@ func (a *App) auctionServiceLoadedItemInfo(path string) error {
 	if err != nil {
 		return err
 	}
-	auction, ok := marketServiceSpecByName("auction")
+	auction, ok := marketServiceSpecByName(marketServiceNameAuction)
 	if !ok {
 		return fmt.Errorf("auction service spec not found")
 	}

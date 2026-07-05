@@ -242,8 +242,8 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 
 func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 	market := strings.ToLower(strings.TrimSpace(req.Market))
-	needAuction := market == "" || market == "auction"
-	needCera := market == "" || market == "cera" || market == "gold"
+	needAuction := market == "" || market == marketNameAuction
+	needCera := market == "" || market == marketNameCera || market == marketAliasGold
 	catalogLoaded := false
 	pvfReady := false
 	var catalog map[uint32]catalogItem
@@ -290,10 +290,10 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 	result.Actions = limitActions(result.Actions, req.MaxActions)
 	result.Summary = PlanSummary{Actions: len(result.Actions), Skipped: len(result.Skipped), ExistingRecords: result.Summary.ExistingRecords}
 	for _, action := range result.Actions {
-		if action.Market == "auction" {
+		if action.Market == marketNameAuction {
 			result.Summary.AuctionActions++
 		}
-		if action.Market == "cera" {
+		if action.Market == marketNameCera {
 			result.Summary.CeraActions++
 		}
 		switch action.Kind {
@@ -554,7 +554,7 @@ func DefaultConfig() Config {
 		},
 		Auto: AutoCfg{
 			Enabled:         true,
-			Markets:         []string{"auction", "cera"},
+			Markets:         []string{marketNameAuction, marketNameCera},
 			InitialDelayMS:  3000,
 			IntervalMS:      60000,
 			MaxActions:      10000,
@@ -966,6 +966,32 @@ const (
 	MarketJobStatusPlanned       = "planned"
 	MarketJobStatusPartialFailed = "partial_failed"
 	MarketJobStatusSuccess       = "success"
+)
+
+const (
+	marketNameAuction = "auction"
+	marketNameCera    = "cera"
+)
+
+const (
+	marketAliasGold  = "gold"
+	marketAliasPoint = "point"
+)
+
+const (
+	marketServiceNameAuction = "auction"
+	marketServiceNamePoint   = "point"
+)
+
+const (
+	marketQueueSourcePVFItemInfo        = "pvf_iteminfo"
+	marketQueueSourcePVFItemInfoMissing = "pvf_iteminfo_missing"
+	marketQueueSourceFallback           = "fallback"
+	marketRowSourcePVF                  = "pvf"
+	marketRowSourceFallbackSeed         = "fallback_seed"
+	marketActionSourceLegacySeed        = "legacy_seed"
+	marketActionSourceCeraConfig        = "cera_config"
+	marketCandidateSourceUnavailable    = "unavailable"
 )
 
 const (
