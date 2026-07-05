@@ -1058,10 +1058,10 @@ echo RESTORED
         backup = "/root/config.vm_random_backup_%s" % int(time.time() * 1000)
         try:
             script = """
-pids=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+pids=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 sleep 5
-left=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+left=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 cp -af /root/config %s 2>/dev/null || true
 mkdir -p /root/config
@@ -1074,10 +1074,10 @@ printf '{broken config dir' > /root/config/market_config.json
             self.burst_sample("config_dir_fault", self.scaled_seconds(20, 60), 10)
         finally:
             script = """
-pids=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+pids=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 sleep 5
-left=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+left=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 mkdir -p /root/config
 find /root/config -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
@@ -1413,10 +1413,10 @@ ls -l "$OUT" %s
         self.log("robot_restart_without_target begin label=%s" % label)
         self.sample_with_event(label + "_stop")
         script = r"""
-pids=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+pids=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 sleep 8
-left=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+left=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 nohup /root/robot > /root/robot_stdout.log 2>&1 &
 sleep 12
@@ -1679,7 +1679,7 @@ echo "KEYS_RESTORED"
             )
         except Exception as exc:
             row["api_error"] = repr(exc)
-        row["robot_pid_cpu"] = self.proc_pid_cpu("/root/robot")
+        row["robot_pid_cpu"] = self.proc_pid_cpu("^/root/robot$|^./robot$")
         row["df_game_cpu"] = self.proc_pid_cpu("df_game_r")
         row["auction_cpu"] = self.proc_pid_cpu("df_auction_r")
         row["point_cpu"] = self.proc_pid_cpu("df_point_r")
@@ -1809,7 +1809,7 @@ echo "KEYS_RESTORED"
 
     def robot_fd_count(self):
         try:
-            out = subprocess.check_output("pgrep -f '^/root/robot$' | head -1", shell=True)
+            out = subprocess.check_output("pgrep -f '^/root/robot$|^./robot$' | head -1", shell=True)
             if not isinstance(out, str):
                 out = out.decode("utf-8", "replace")
             pid = out.strip()
@@ -1832,7 +1832,7 @@ ss -ant | awk 'NR>1 {c[$1]++} END {for (k in c) print k,c[k]}'
 echo '===== tcp hot ports ====='
 ss -ant | grep -E ':(8111|8112|10011|30603|30803)' | head -n 120 || true
 echo '===== fds ====='
-for p in $(pgrep -f '^/root/robot$|df_game_r|df_auction_r|df_point_r' 2>/dev/null); do echo "$p $(ps -p $p -o comm=) fds=$(ls /proc/$p/fd 2>/dev/null | wc -l)"; done
+for p in $(pgrep -f '^/root/robot$|^./robot$|df_game_r|df_auction_r|df_point_r' 2>/dev/null); do echo "$p $(ps -p $p -o comm=) fds=$(ls /proc/$p/fd 2>/dev/null | wc -l)"; done
 echo '===== robot log filtered ====='
 tail -n %s /root/config/log_robot 2>/dev/null | grep -a -E '%s' | tail -n 200 || true
 echo '===== market log filtered ====='
