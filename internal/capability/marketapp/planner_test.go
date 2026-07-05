@@ -474,6 +474,29 @@ func TestRecordMarketPolicyJobKeepsPolicyAndAddsFeedback(t *testing.T) {
 	}
 }
 
+func TestNextMarketPolicyStateIsPureCounterLogic(t *testing.T) {
+	prev := MarketPolicyStatus{
+		DBKinds:             10,
+		StagnantRounds:      1,
+		ZeroCandidateRounds: 1,
+		UpdatedAt:           time.Now(),
+	}
+	state := nextMarketPolicyState("auction", 10, marketCandidateSnapshot{Count: 20}, prev)
+	if state.mode != marketPolicyModeRecover || state.stagnantRounds != 2 || state.kindDelta != 0 {
+		t.Fatalf("stagnant state = %#v", state)
+	}
+
+	state = nextMarketPolicyState("auction", 11, marketCandidateSnapshot{Count: 20}, prev)
+	if state.stagnantRounds != 0 || state.kindDelta != 1 || state.mode != marketPolicyModeNormal {
+		t.Fatalf("growth state = %#v", state)
+	}
+
+	state = nextMarketPolicyState("auction", 10, marketCandidateSnapshot{Count: 0}, prev)
+	if state.zeroCandidateRounds != 2 || state.mode != marketPolicyModeRecover {
+		t.Fatalf("zero candidate state = %#v", state)
+	}
+}
+
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 	app := testApp()
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)
