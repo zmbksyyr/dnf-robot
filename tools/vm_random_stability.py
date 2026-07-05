@@ -111,8 +111,14 @@ SAMPLE_FIELDS = [
     "market_services_ready",
     "market_auction_records",
     "market_auction_kinds",
+    "market_auction_candidates",
+    "market_auction_stagnant",
+    "market_auction_policy",
+    "market_auction_policy_reason",
     "market_cera_records",
     "market_cera_kinds",
+    "market_cera_policy",
+    "market_cera_policy_reason",
     "load1",
     "load5",
     "load15",
@@ -1210,7 +1216,7 @@ echo "KEYS_RESTORED"
         row = self.sample_row()
         self.writerow(row)
         self.log(
-            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cera=%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
+            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s policy=%s stg=%s cera=%s/%s policy=%s load=%s/%s/%s top=%s hits=%s api_error=%s"
             % (
                 row.get("target"),
                 row.get("actors"),
@@ -1221,8 +1227,12 @@ echo "KEYS_RESTORED"
                 row.get("market_auto"),
                 row.get("market_auction_records"),
                 row.get("market_auction_kinds"),
+                row.get("market_auction_candidates"),
+                row.get("market_auction_policy"),
+                row.get("market_auction_stagnant"),
                 row.get("market_cera_records"),
                 row.get("market_cera_kinds"),
+                row.get("market_cera_policy"),
                 row.get("load1"),
                 row.get("load5"),
                 row.get("load15"),
@@ -1411,6 +1421,15 @@ echo "KEYS_RESTORED"
             row["market_auction_kinds"] = counts.get("auction_kinds", "")
             row["market_cera_records"] = counts.get("cera_records", "")
             row["market_cera_kinds"] = counts.get("cera_kinds", "")
+            policy = market.get("policy") or {}
+            auction_policy = policy.get("auction") or {}
+            cera_policy = policy.get("cera") or {}
+            row["market_auction_candidates"] = auction_policy.get("candidates", "")
+            row["market_auction_stagnant"] = auction_policy.get("stagnant_rounds", "")
+            row["market_auction_policy"] = auction_policy.get("mode", "")
+            row["market_auction_policy_reason"] = (auction_policy.get("reason") or "")[:160]
+            row["market_cera_policy"] = cera_policy.get("mode", "")
+            row["market_cera_policy_reason"] = (cera_policy.get("reason") or "")[:160]
         except Exception as exc:
             if not row.get("api_error"):
                 row["api_error"] = "marketStatus:%r" % (exc,)
