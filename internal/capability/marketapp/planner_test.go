@@ -34,6 +34,26 @@ func TestMarketJobStatusConstants(t *testing.T) {
 	}
 }
 
+func TestMarketServiceStatusConstants(t *testing.T) {
+	tests := map[string]string{
+		MarketServiceStatusReady:                   "ready",
+		MarketServiceStatusDown:                    "down",
+		MarketServiceStatusPortReadyProcessMissing: "port_ready_process_missing",
+		MarketServiceStatusProcessWithoutPort:      "process_without_port",
+		MarketServiceStatusPrepareFailed:           "prepare_failed",
+		MarketServiceStatusStartFailed:             "start_failed",
+		MarketServiceStatusRegistItemFailed:        "regist_item_failed",
+		MarketServiceStatusProcessExited:           "process_exited",
+		MarketServiceStatusPortReadyButUnstable:    "port_ready_but_unstable",
+		MarketServiceStatusStartTimeout:            "start_timeout",
+	}
+	for got, want := range tests {
+		if got != want {
+			t.Fatalf("market service status got %q want %q", got, want)
+		}
+	}
+}
+
 func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	data, err := json.Marshal(DefaultConfig().Restock)
 	if err != nil {

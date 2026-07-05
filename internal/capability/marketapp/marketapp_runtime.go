@@ -370,19 +370,19 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 		status.Listening = true
 		status.PID = marketServicePID(service.bin)
 		if status.PID <= 0 {
-			status.Status = "port_ready_process_missing"
+			status.Status = MarketServiceStatusPortReadyProcessMissing
 			status.Message = "port is listening but target process was not found"
 			a.setMarketServiceStatus(status)
 			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 			return false
 		}
-		status.Status = "ready"
+		status.Status = MarketServiceStatusReady
 		status.Message = "already listening"
 		a.setMarketServiceStatus(status)
 		return true
 	}
 	if err := prepareMarketServiceDir(service.dir); err != nil {
-		status.Status = "prepare_failed"
+		status.Status = MarketServiceStatusPrepareFailed
 		status.Message = err.Error()
 		a.setMarketServiceStatus(status)
 		a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
@@ -394,7 +394,7 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 	cmd.Dir = service.dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		status.Status = "start_failed"
+		status.Status = MarketServiceStatusStartFailed
 		status.Message = err.Error()
 		a.setMarketServiceStatus(status)
 		a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
@@ -411,27 +411,27 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 			status.Listening = tcpReady(service.addr, 500*time.Millisecond)
 			status.PID = marketServicePID(service.bin)
 			if hasMarketServiceFailure(status.LogPath) {
-				status.Status = "regist_item_failed"
+				status.Status = MarketServiceStatusRegistItemFailed
 				status.Message = "service log contains RegistItem failure"
 				a.setMarketServiceStatus(status)
 				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 				return false
 			}
 			if status.PID <= 0 {
-				status.Status = "process_exited"
+				status.Status = MarketServiceStatusProcessExited
 				status.Message = "process exited during startup stability window"
 				a.setMarketServiceStatus(status)
 				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 				return false
 			}
 			if !status.Listening {
-				status.Status = "port_ready_but_unstable"
+				status.Status = MarketServiceStatusPortReadyButUnstable
 				status.Message = "port stopped listening during startup stability window"
 				a.setMarketServiceStatus(status)
 				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 				return false
 			}
-			status.Status = "ready"
+			status.Status = MarketServiceStatusReady
 			status.Message = service.addr
 			a.setMarketServiceStatus(status)
 			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
@@ -439,7 +439,7 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	status.Status = "start_timeout"
+	status.Status = MarketServiceStatusStartTimeout
 	status.Message = service.addr
 	a.setMarketServiceStatus(status)
 	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
@@ -465,16 +465,16 @@ func (a *App) refreshMarketServiceStatus(service marketServiceSpec) {
 	}
 	switch {
 	case status.Listening && status.PID > 0:
-		status.Status = "ready"
+		status.Status = MarketServiceStatusReady
 		status.Message = "already listening"
 	case status.Listening:
-		status.Status = "port_ready_process_missing"
+		status.Status = MarketServiceStatusPortReadyProcessMissing
 		status.Message = "port is listening but target process was not found"
 	case status.PID > 0:
-		status.Status = "process_without_port"
+		status.Status = MarketServiceStatusProcessWithoutPort
 		status.Message = "target process exists but port is not listening"
 	default:
-		status.Status = "down"
+		status.Status = MarketServiceStatusDown
 		status.Message = "not running"
 	}
 	a.setMarketServiceStatus(status)

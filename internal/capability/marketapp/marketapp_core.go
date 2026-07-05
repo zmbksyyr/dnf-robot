@@ -934,6 +934,19 @@ type MarketServiceStatus struct {
 	Message   string    `json:"message,omitempty"`
 }
 
+const (
+	MarketServiceStatusReady                   = "ready"
+	MarketServiceStatusDown                    = "down"
+	MarketServiceStatusPortReadyProcessMissing = "port_ready_process_missing"
+	MarketServiceStatusProcessWithoutPort      = "process_without_port"
+	MarketServiceStatusPrepareFailed           = "prepare_failed"
+	MarketServiceStatusStartFailed             = "start_failed"
+	MarketServiceStatusRegistItemFailed        = "regist_item_failed"
+	MarketServiceStatusProcessExited           = "process_exited"
+	MarketServiceStatusPortReadyButUnstable    = "port_ready_but_unstable"
+	MarketServiceStatusStartTimeout            = "start_timeout"
+)
+
 type JobSummary struct {
 	ID        string        `json:"id"`
 	Kind      string        `json:"kind"`

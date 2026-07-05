@@ -65,6 +65,7 @@ uid:{uid}
 OperationStatus.State -> capability/robot OperationState* 常量
 RuntimeStatus.StateName -> capability/robot RuntimeState* 常量
 marketapp JobSummary.Status -> capability/marketapp MarketJobStatus* 常量
+marketapp MarketServiceStatus.Status -> capability/marketapp MarketServiceStatus* 常量
 ```
 
 下一步继续审计：
@@ -72,7 +73,7 @@ marketapp JobSummary.Status -> capability/marketapp MarketJobStatus* 常量
 ```text
 Actor State
 SchedulerStatus.Mode
-marketapp Status/Policy/ServiceStatus
+marketapp Status/Policy
 ActionResult.State
 ```
 
@@ -97,6 +98,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 - OperationStatus 状态已经从 scheduler 字符串收敛到 capability/robot 常量。
 - RuntimeStatus 状态名已经从 actor/scheduler 字符串判断收敛到 capability/robot 常量。
 - marketapp JobSummary 状态已经从 restock/collect 字符串收敛到 MarketJobStatus 常量。
+- marketapp MarketServiceStatus 状态已经从服务检测字符串赋值收敛到 MarketServiceStatus 常量。
 
 ## 本轮验证
 
