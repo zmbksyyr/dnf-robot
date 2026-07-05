@@ -112,6 +112,7 @@ SAMPLE_FIELDS = [
     "market_auction_records",
     "market_auction_kinds",
     "market_auction_candidates",
+    "market_auction_special_candidates",
     "market_auction_stagnant",
     "market_auction_policy",
     "market_auction_policy_reason",
@@ -1229,7 +1230,7 @@ echo "KEYS_RESTORED"
         row = self.sample_row()
         self.writerow(row)
         self.log(
-            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s health=%s/%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s health=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
+            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s special=%s health=%s/%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s health=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
             % (
                 row.get("target"),
                 row.get("actors"),
@@ -1241,6 +1242,7 @@ echo "KEYS_RESTORED"
                 row.get("market_auction_records"),
                 row.get("market_auction_kinds"),
                 row.get("market_auction_candidates"),
+                row.get("market_auction_special_candidates"),
                 row.get("market_auction_health"),
                 row.get("market_auction_completion"),
                 row.get("market_auction_policy"),
@@ -1449,6 +1451,7 @@ echo "KEYS_RESTORED"
             auction_policy = policy.get("auction") or {}
             cera_policy = policy.get("cera") or {}
             row["market_auction_candidates"] = auction_policy.get("candidates", "")
+            row["market_auction_special_candidates"] = auction_policy.get("special_candidates", "")
             row["market_auction_stagnant"] = auction_policy.get("stagnant_rounds", "")
             row["market_auction_policy"] = auction_policy.get("mode", "")
             row["market_auction_policy_reason"] = (auction_policy.get("reason") or "")[:160]

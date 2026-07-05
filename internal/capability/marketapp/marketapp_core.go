@@ -299,6 +299,8 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 			result.Summary.Missing++
 		case "risky_special_type":
 			result.Summary.Risky++
+		case "special_requires_handler":
+			result.Summary.Special++
 		case "not_auctionable":
 			result.Summary.NotAuctionable++
 		}
@@ -887,6 +889,7 @@ type MarketPolicyStatus struct {
 	DBKinds              int       `json:"db_kinds"`
 	KindDelta            int       `json:"kind_delta,omitempty"`
 	Candidates           int       `json:"candidates,omitempty"`
+	SpecialCandidates    int       `json:"special_candidates,omitempty"`
 	CandidateSource      string    `json:"candidate_source,omitempty"`
 	ZeroKindRounds       int       `json:"zero_kind_rounds,omitempty"`
 	ZeroCandidateRounds  int       `json:"zero_candidate_rounds,omitempty"`
@@ -953,6 +956,7 @@ type PlanSummary struct {
 	Skipped         int `json:"skipped"`
 	Missing         int `json:"missing"`
 	Risky           int `json:"risky"`
+	Special         int `json:"special"`
 	NotAuctionable  int `json:"not_auctionable"`
 	ExistingRecords int `json:"existing_records"`
 }

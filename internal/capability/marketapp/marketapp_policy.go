@@ -18,9 +18,10 @@ type marketAutoPolicy struct {
 }
 
 type marketCandidateSnapshot struct {
-	Count  int
-	Source string
-	Error  string
+	Count   int
+	Special int
+	Source  string
+	Error   string
 }
 
 func (a *App) marketAutoPolicy(market string, cfg AutoCfg) marketAutoPolicy {
@@ -116,6 +117,7 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 		DBKinds:              kinds,
 		KindDelta:            state.kindDelta,
 		Candidates:           candidates.Count,
+		SpecialCandidates:    candidates.Special,
 		CandidateSource:      candidates.Source,
 		ZeroKindRounds:       state.zeroKindRounds,
 		ZeroCandidateRounds:  state.zeroCandidateRounds,
@@ -206,7 +208,8 @@ func (a *App) observeAuctionCandidates() marketCandidateSnapshot {
 	if err != nil {
 		return marketCandidateSnapshot{Source: "pvf_iteminfo_missing", Error: err.Error()}
 	}
-	return marketCandidateSnapshot{Count: len(catalogAuctionIDs(catalog, itemInfoIDs)), Source: path}
+	normal, special := catalogAuctionCandidateCounts(catalog, itemInfoIDs)
+	return marketCandidateSnapshot{Count: normal, Special: special, Source: path}
 }
 
 func (a *App) setMarketPolicyStatus(status MarketPolicyStatus) {

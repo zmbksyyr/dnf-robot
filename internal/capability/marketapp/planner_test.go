@@ -572,6 +572,22 @@ func TestPlanCeraUsesPointBuyNowShape(t *testing.T) {
 	}
 }
 
+func TestPlanAuctionSkipsSpecialTypesForDedicatedHandler(t *testing.T) {
+	app := testApp()
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		2001: {ItemID: 2001, Kind: "equipment", ItemType: 2, Slot: "title name", Attach: "trade", Price: 100},
+	}
+	app.planAuction([]restockRow{{ItemID: 2001, Quantity: 1, Enabled: true}}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 0 || len(result.Skipped) != 1 {
+		t.Fatalf("special plan actions=%#v skipped=%#v", result.Actions, result.Skipped)
+	}
+	if result.Skipped[0].Reason != "special_requires_handler" {
+		t.Fatalf("special skip reason = %q", result.Skipped[0].Reason)
+	}
+}
+
 func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 	app := testApp()
 	app.cfg.Restock.StackSizes = []int{500}
@@ -668,6 +684,39 @@ func TestKnownZeroSuccessEquipmentFilter(t *testing.T) {
 		if got := isKnownZeroSuccessEquipment(tt.item); got != tt.want {
 			t.Fatalf("%s filter = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestSpecialAuctionKindClassifiesReferenceTypes(t *testing.T) {
+	cases := []struct {
+		name string
+		item catalogItem
+		want string
+	}{
+		{name: "title", item: catalogItem{Kind: "equipment", ItemType: 2, Slot: "title name"}, want: "title"},
+		{name: "creature", item: catalogItem{Kind: "equipment", ItemType: 30, Slot: "creature"}, want: "creature"},
+		{name: "avatar", item: catalogItem{Kind: "equipment", ItemType: 23, Slot: "coatavatar"}, want: "avatar"},
+		{name: "artifact red", item: catalogItem{Kind: "equipment", Slot: "artifact red"}, want: "artifact red"},
+		{name: "normal weapon", item: catalogItem{Kind: "equipment", ItemType: 1, Slot: "weapon"}, want: ""},
+	}
+	for _, tt := range cases {
+		if got := specialAuctionKind(tt.item); got != tt.want {
+			t.Fatalf("%s special kind = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCatalogAuctionCandidateCountsSeparatesSpecialTypes(t *testing.T) {
+	catalog := map[uint32]catalogItem{
+		1001: {ItemID: 1001, Kind: "equipment", ItemType: 1, Slot: "weapon", Attach: "trade"},
+		2001: {ItemID: 2001, Kind: "equipment", ItemType: 2, Slot: "title name", Attach: "trade"},
+		3001: {ItemID: 3001, Kind: "equipment", ItemType: 30, Slot: "creature", Attach: "trade"},
+		4001: {ItemID: 4001, Kind: "equipment", Slot: "artifact red", Attach: "trade"},
+		5001: {ItemID: 5001, Kind: "blocked", ItemType: 1, Slot: "weapon"},
+	}
+	normal, special := catalogAuctionCandidateCounts(catalog, map[uint32]bool{1001: true, 2001: true, 3001: true, 4001: true, 5001: true})
+	if normal != 1 || special != 3 {
+		t.Fatalf("candidate counts normal=%d special=%d, want 1/3", normal, special)
 	}
 }
 

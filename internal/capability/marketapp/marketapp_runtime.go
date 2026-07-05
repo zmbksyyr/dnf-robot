@@ -952,6 +952,10 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "not_auctionable"})
 			continue
 		}
+		if specialAuctionKind(item) != "" {
+			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "special_requires_handler"})
+			continue
+		}
 		if isRiskyPVFItem(item) {
 			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "risky_special_type"})
 			continue
@@ -1144,6 +1148,25 @@ func isRiskyPVFItem(item catalogItem) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func specialAuctionKind(item catalogItem) string {
+	if item.Kind != "equipment" {
+		return ""
+	}
+	slot := strings.ToLower(strings.TrimSpace(item.Slot))
+	switch {
+	case item.ItemType == 2 || slot == "titlename" || slot == "title" || slot == "title name":
+		return "title"
+	case item.ItemType == 30 || slot == "creature":
+		return "creature"
+	case item.ItemType >= 20 && item.ItemType <= 29 || strings.Contains(slot, "avatar"):
+		return "avatar"
+	case slot == "artifact red" || slot == "artifact blue" || slot == "artifact green":
+		return slot
+	default:
+		return ""
 	}
 }
 
@@ -1435,6 +1458,25 @@ func catalogAuctionIDs(catalog map[uint32]catalogItem, allowed map[uint32]bool) 
 		return left.ItemID < right.ItemID
 	})
 	return ids
+}
+
+func catalogAuctionCandidateCounts(catalog map[uint32]catalogItem, allowed map[uint32]bool) (normal int, special int) {
+	for id, item := range catalog {
+		if allowed != nil && !allowed[id] {
+			continue
+		}
+		if item.ItemID == 0 || item.Kind == "blocked" {
+			continue
+		}
+		if specialAuctionKind(item) != "" {
+			special++
+			continue
+		}
+		if !isRiskyPVFItem(item) {
+			normal++
+		}
+	}
+	return normal, special
 }
 
 func auctionTargetRecords(row restockRow) int {
