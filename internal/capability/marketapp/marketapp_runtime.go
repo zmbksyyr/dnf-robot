@@ -333,25 +333,22 @@ func (a *App) dfGameRRunning() bool {
 
 func (a *App) ensureMarketServices(markets []string) map[string]bool {
 	ready := map[string]bool{}
-	needAuction := false
-	needPoint := false
+	needed := map[string]bool{}
 	for _, market := range markets {
-		switch strings.ToLower(strings.TrimSpace(market)) {
-		case "", "auction":
-			needAuction = true
-		case "cera", "gold", "point":
-			needPoint = true
+		name := marketServiceName(market)
+		if name != "" {
+			needed[name] = true
 		}
 	}
 	if len(markets) == 0 {
-		needAuction = true
-		needPoint = true
+		for _, service := range marketServiceSpecs() {
+			needed[service.name] = true
+		}
 	}
-	if needAuction {
-		ready["auction"] = a.ensureMarketService("auction", "127.0.0.1:30803", "/home/neople/auction", "./df_auction_r", []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"})
-	}
-	if needPoint {
-		ready["point"] = a.ensureMarketService("point", "127.0.0.1:30603", "/home/neople/point", "./df_point_r", []string{"./cfg/point_cain.cfg", "start", "df_point_r"})
+	for _, service := range marketServiceSpecs() {
+		if needed[service.name] {
+			ready[service.name] = a.ensureMarketService(service)
+		}
 	}
 	return ready
 }
@@ -360,21 +357,23 @@ func marketServiceName(market string) string {
 	switch strings.ToLower(strings.TrimSpace(market)) {
 	case "cera", "gold", "point":
 		return "point"
-	default:
+	case "", "auction":
 		return "auction"
+	default:
+		return ""
 	}
 }
 
-func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) bool {
-	status := MarketServiceStatus{Name: name, Addr: addr, Dir: dir, Bin: bin, CheckedAt: time.Now(), LogPath: a.marketServiceLogPath(name)}
-	if tcpReady(addr, 500*time.Millisecond) {
+func (a *App) ensureMarketService(service marketServiceSpec) bool {
+	status := MarketServiceStatus{Name: service.name, Addr: service.addr, Dir: service.dir, Bin: service.bin, CheckedAt: time.Now(), LogPath: a.marketServiceLogPath(service.name)}
+	if tcpReady(service.addr, 500*time.Millisecond) {
 		status.Listening = true
-		status.PID = marketServicePID(bin)
+		status.PID = marketServicePID(service.bin)
 		if status.PID <= 0 {
 			status.Status = "port_ready_process_missing"
 			status.Message = "port is listening but target process was not found"
 			a.setMarketServiceStatus(status)
-			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 			return false
 		}
 		status.Status = "ready"
@@ -382,81 +381,87 @@ func (a *App) ensureMarketService(name, addr, dir, bin string, args []string) bo
 		a.setMarketServiceStatus(status)
 		return true
 	}
-	if err := prepareMarketServiceDir(dir); err != nil {
+	if err := prepareMarketServiceDir(service.dir); err != nil {
 		status.Status = "prepare_failed"
 		status.Message = err.Error()
 		a.setMarketServiceStatus(status)
-		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+		a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 		return false
 	}
 	status.StartedAt = time.Now()
-	cmdline := marketServiceShellCommand(bin, args, status.LogPath)
+	cmdline := marketServiceShellCommand(service.bin, service.args, status.LogPath)
 	cmd := exec.Command("/bin/sh", "-c", cmdline)
-	cmd.Dir = dir
+	cmd.Dir = service.dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		status.Status = "start_failed"
 		status.Message = err.Error()
 		a.setMarketServiceStatus(status)
-		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+		a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 		return false
 	}
-	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "start", Message: fmt.Sprintf("addr=%s output=%s", addr, strings.TrimSpace(string(out)))})
+	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: "start", Message: fmt.Sprintf("addr=%s output=%s", service.addr, strings.TrimSpace(string(out)))})
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if tcpReady(addr, 500*time.Millisecond) {
+		if tcpReady(service.addr, 500*time.Millisecond) {
 			status.Listening = true
-			status.PID = marketServicePID(bin)
+			status.PID = marketServicePID(service.bin)
 			time.Sleep(8 * time.Second)
 			status.CheckedAt = time.Now()
-			status.Listening = tcpReady(addr, 500*time.Millisecond)
-			status.PID = marketServicePID(bin)
+			status.Listening = tcpReady(service.addr, 500*time.Millisecond)
+			status.PID = marketServicePID(service.bin)
 			if hasMarketServiceFailure(status.LogPath) {
 				status.Status = "regist_item_failed"
 				status.Message = "service log contains RegistItem failure"
 				a.setMarketServiceStatus(status)
-				a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 				return false
 			}
 			if status.PID <= 0 {
 				status.Status = "process_exited"
 				status.Message = "process exited during startup stability window"
 				a.setMarketServiceStatus(status)
-				a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 				return false
 			}
 			if !status.Listening {
 				status.Status = "port_ready_but_unstable"
 				status.Message = "port stopped listening during startup stability window"
 				a.setMarketServiceStatus(status)
-				a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 				return false
 			}
 			status.Status = "ready"
-			status.Message = addr
+			status.Message = service.addr
 			a.setMarketServiceStatus(status)
-			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 			return true
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	status.Status = "start_timeout"
-	status.Message = addr
+	status.Message = service.addr
 	a.setMarketServiceStatus(status)
-	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: status.Status, Message: status.Message})
+	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 	return false
 }
 
-func (a *App) refreshMarketServiceStatus(name, addr, dir, bin string) {
+func (a *App) refreshMarketServiceStatuses() {
+	for _, service := range marketServiceSpecs() {
+		a.refreshMarketServiceStatus(service)
+	}
+}
+
+func (a *App) refreshMarketServiceStatus(service marketServiceSpec) {
 	status := MarketServiceStatus{
-		Name:      name,
-		Addr:      addr,
-		Dir:       dir,
-		Bin:       bin,
+		Name:      service.name,
+		Addr:      service.addr,
+		Dir:       service.dir,
+		Bin:       service.bin,
 		CheckedAt: time.Now(),
-		LogPath:   a.marketServiceLogPath(name),
-		PID:       marketServicePID(bin),
-		Listening: tcpReady(addr, 300*time.Millisecond),
+		LogPath:   a.marketServiceLogPath(service.name),
+		PID:       marketServicePID(service.bin),
+		Listening: tcpReady(service.addr, 300*time.Millisecond),
 	}
 	switch {
 	case status.Listening && status.PID > 0:
@@ -483,11 +488,20 @@ type marketServiceSpec struct {
 	args []string
 }
 
-func itemInfoMarketServices() []marketServiceSpec {
+func marketServiceSpecs() []marketServiceSpec {
 	return []marketServiceSpec{
 		{name: "auction", addr: "127.0.0.1:30803", dir: "/home/neople/auction", bin: "./df_auction_r", args: []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"}},
 		{name: "point", addr: "127.0.0.1:30603", dir: "/home/neople/point", bin: "./df_point_r", args: []string{"./cfg/point_cain.cfg", "start", "df_point_r"}},
 	}
+}
+
+func marketServiceSpecByName(name string) (marketServiceSpec, bool) {
+	for _, service := range marketServiceSpecs() {
+		if service.name == name {
+			return service, true
+		}
+	}
+	return marketServiceSpec{}, false
 }
 
 func (a *App) restartMarketServicesAfterItemInfo() error {
@@ -495,11 +509,11 @@ func (a *App) restartMarketServicesAfterItemInfo() error {
 		a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "skipped", Message: "market service restart is linux only"})
 		return nil
 	}
-	for _, service := range itemInfoMarketServices() {
+	for _, service := range marketServiceSpecs() {
 		if err := a.stopMarketServiceForItemInfo(service.name, service.addr, service.bin); err != nil {
 			return err
 		}
-		if !a.ensureMarketService(service.name, service.addr, service.dir, service.bin, service.args) {
+		if !a.ensureMarketService(service) {
 			return fmt.Errorf("%s restart failed: service is not ready", service.name)
 		}
 	}

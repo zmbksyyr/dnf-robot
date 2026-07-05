@@ -144,8 +144,7 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		app.dbInit = tables
 		app.appendLog(LogEvent{Type: "db_init", Status: "success", Message: strings.Join(tables, ",")})
 	}
-	app.refreshMarketServiceStatus("auction", "127.0.0.1:30803", "/home/neople/auction", "./df_auction_r")
-	app.refreshMarketServiceStatus("point", "127.0.0.1:30603", "/home/neople/point", "./df_point_r")
+	app.refreshMarketServiceStatuses()
 	return app, nil
 }
 
@@ -156,8 +155,7 @@ func (a *App) Config() Config {
 }
 
 func (a *App) Status() Status {
-	a.refreshMarketServiceStatus("auction", "127.0.0.1:30803", "/home/neople/auction", "./df_auction_r")
-	a.refreshMarketServiceStatus("point", "127.0.0.1:30603", "/home/neople/point", "./df_point_r")
+	a.refreshMarketServiceStatuses()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return Status{
@@ -317,16 +315,6 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 	}
 	a.appendLog(LogEvent{Type: "plan_preview", Market: market, Summary: &result.Summary})
 	return result, nil
-}
-
-func actionCapacity(maxActions, current int) int {
-	if maxActions <= 0 {
-		return -1
-	}
-	if current >= maxActions {
-		return 0
-	}
-	return maxActions - current
 }
 
 func limitActions(actions []Action, maxActions int) []Action {

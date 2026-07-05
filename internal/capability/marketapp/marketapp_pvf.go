@@ -279,7 +279,11 @@ func (a *App) auctionServiceLoadedItemInfo(path string) error {
 	if err != nil {
 		return err
 	}
-	pid := marketServicePID("./df_auction_r")
+	auction, ok := marketServiceSpecByName("auction")
+	if !ok {
+		return fmt.Errorf("auction service spec not found")
+	}
+	pid := marketServicePID(auction.bin)
 	if pid <= 0 {
 		return nil
 	}
