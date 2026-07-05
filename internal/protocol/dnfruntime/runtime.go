@@ -2,7 +2,6 @@ package dnfruntime
 
 import (
 	"encoding/json"
-	"robot/internal/capability/keypair"
 	robotcap "robot/internal/capability/robot"
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
@@ -309,9 +308,14 @@ type RobotService interface {
 }
 
 var robotSvc RobotService
+var loginKeyProvider func(uid int) string
 
 func SetRobotService(svc RobotService) {
 	robotSvc = svc
+}
+
+func SetLoginKeyProvider(provider func(uid int) string) {
+	loginKeyProvider = provider
 }
 
 func listDoll(key string) Result {
@@ -437,7 +441,10 @@ func msgOnLine(keyData string) Result {
 		if !ok || uid <= 0 {
 			continue
 		}
-		loginkey := keypair.GetLoginKey(uid)
+		var loginkey string
+		if loginKeyProvider != nil {
+			loginkey = loginKeyProvider(uid)
+		}
 		if len(loginkey) > 0 {
 			userinfo["token"] = loginkey
 		}

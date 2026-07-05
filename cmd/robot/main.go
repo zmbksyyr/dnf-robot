@@ -76,6 +76,7 @@ func main() {
 		os.Exit(1)
 	}
 	keypair.SetRuntimeKeySink(dnf.SetRSAKey)
+	dnfruntime.SetLoginKeyProvider(keypair.GetLoginKey)
 
 	initRSA(cfg)
 

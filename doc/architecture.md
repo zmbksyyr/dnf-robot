@@ -89,7 +89,7 @@ lockhub resource names
 这些不是目标形态，只是当前运行路径暂时保留：
 
 ```text
-internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
+internal/protocol/dnfruntime/runtime.go  -> capability/robot
 ```
 
 下一轮不能扩大白名单，只能减少白名单。
@@ -99,6 +99,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 - `internal/bootstrap` 已纳入架构矩阵。
 - protocol 仍有一个反向依赖 capability 的历史点。
 - auctionapp 执行器已经从 protocol 移到 composition，作为协议和市场能力之间的装配桥。
+- dnfruntime 已经去掉 keypair 反向依赖，登录 key 由启动层注入。
 - scheduler 根包已经不再 import `database/sql`；SQL repository 由启动层装配，具体实现留在 scheduler/repository。
 - marketapp 是最大功能岛，后续需要单独做状态和自愈审计。
 - scheduler/repository 的锁资源名已经集中为常量，后续不允许重新散落字符串。

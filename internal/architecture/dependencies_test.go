@@ -55,7 +55,6 @@ var allowedLayerImports = []struct {
 
 var legacyLayerImports = map[string][]string{
 	"internal/protocol/dnfruntime/runtime.go": {
-		"robot/internal/capability/keypair",
 		"robot/internal/capability/robot",
 	},
 }
