@@ -333,6 +333,42 @@ func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
 	}
 }
 
+func TestMarketPolicyTracksZeroAuctionCandidates(t *testing.T) {
+	dir := t.TempDir()
+	app := testApp()
+	app.configDir = dir
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
+		app.cfg.AuctionDB: {10075: 1},
+	}}
+	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{})
+	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
+		{"id": 10075, "price": 100, "attach": "trade", "slot": "weapon"},
+	})
+	mustWriteText(t, filepath.Join(dir, "iteminfo.dat"), "99999 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n")
+	app.auctionQueue = []uint32{10075}
+	app.auctionQueueSource = "pvf_iteminfo"
+
+	first := app.marketAutoPolicy("auction", app.cfg.Auto)
+	if first.MaxActions != app.cfg.Auto.MaxActions || first.MaxConcurrent != app.cfg.Auto.MaxConcurrent {
+		t.Fatalf("first zero candidate policy changed pressure: %#v", first)
+	}
+
+	_ = app.marketAutoPolicy("auction", app.cfg.Auto)
+	if len(app.auctionQueue) != 0 || app.auctionQueueSource != "" {
+		t.Fatalf("second zero candidate round did not reset queue: queue=%v source=%q", app.auctionQueue, app.auctionQueueSource)
+	}
+
+	third := app.marketAutoPolicy("auction", app.cfg.Auto)
+	if third.MaxActions != 2000 || third.MaxConcurrent != 4 {
+		t.Fatalf("third zero candidate pressure = %#v, want 2000/4", third)
+	}
+	status := app.policy["auction"]
+	if status.ZeroCandidateRounds != 3 || status.Candidates != 0 || status.CandidateSource == "" {
+		t.Fatalf("candidate policy status = %#v", status)
+	}
+}
+
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 	app := testApp()
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)

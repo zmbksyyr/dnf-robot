@@ -17,6 +17,12 @@ type marketAutoPolicy struct {
 	MaxConcurrent int
 }
 
+type marketCandidateSnapshot struct {
+	Count  int
+	Source string
+	Error  string
+}
+
 func (a *App) marketAutoPolicy(market string, cfg AutoCfg) marketAutoPolicy {
 	market = normalizeMarketName(market)
 	policy := marketAutoPolicy{MaxActions: cfg.MaxActions, MaxConcurrent: cfg.MaxConcurrent}
@@ -33,8 +39,34 @@ func (a *App) marketAutoPolicy(market string, cfg AutoCfg) marketAutoPolicy {
 		return policy
 	}
 
-	status := a.nextMarketPolicyStatus(market, kinds, policy)
+	candidates := marketCandidateSnapshot{}
 	if market == "auction" {
+		candidates = a.observeAuctionCandidates()
+	}
+	status := a.nextMarketPolicyStatus(market, kinds, candidates, policy)
+	if market == "auction" {
+		if candidates.Error != "" {
+			status.Mode = marketPolicyModeDegraded
+			status.Reason = candidates.Error
+			policy.MaxActions = minPositive(policy.MaxActions, 2000)
+			policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
+			status.EffectiveMaxActions = policy.MaxActions
+			status.EffectiveConcurrency = policy.MaxConcurrent
+		}
+		if candidates.Error == "" && status.ZeroCandidateRounds == 2 {
+			a.resetAuctionQueues()
+			a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_candidate_recovery"})
+			status.Reason = "auction candidates stayed zero; auction queues rebuilt"
+			status.Mode = marketPolicyModeRecover
+		}
+		if candidates.Error == "" && status.ZeroCandidateRounds >= 3 {
+			status.Mode = marketPolicyModeDegraded
+			status.Reason = "auction candidates still zero; send pressure reduced"
+			policy.MaxActions = minPositive(policy.MaxActions, 2000)
+			policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
+			status.EffectiveMaxActions = policy.MaxActions
+			status.EffectiveConcurrency = policy.MaxConcurrent
+		}
 		if status.ZeroKindRounds == 2 {
 			a.resetAuctionQueues()
 			a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_kind_recovery"})
@@ -54,12 +86,13 @@ func (a *App) marketAutoPolicy(market string, cfg AutoCfg) marketAutoPolicy {
 	return policy
 }
 
-func (a *App) nextMarketPolicyStatus(market string, kinds int, policy marketAutoPolicy) MarketPolicyStatus {
+func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates marketCandidateSnapshot, policy marketAutoPolicy) MarketPolicyStatus {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	prev := a.policy[market]
 	zeroRounds := 0
+	zeroCandidates := 0
 	mode := marketPolicyModeNormal
 	reason := ""
 	if kinds <= 0 {
@@ -69,13 +102,25 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, policy marketAuto
 			mode = marketPolicyModeRecover
 		}
 	}
+	if market == "auction" && candidates.Error == "" && candidates.Count <= 0 {
+		zeroCandidates = prev.ZeroCandidateRounds + 1
+		if reason == "" {
+			reason = "auction has zero candidate item kinds"
+		}
+		if zeroCandidates > 1 {
+			mode = marketPolicyModeRecover
+		}
+	}
 
 	status := MarketPolicyStatus{
 		Market:               market,
 		Mode:                 mode,
 		Reason:               reason,
 		DBKinds:              kinds,
+		Candidates:           candidates.Count,
+		CandidateSource:      candidates.Source,
 		ZeroKindRounds:       zeroRounds,
+		ZeroCandidateRounds:  zeroCandidates,
 		EffectiveMaxActions:  policy.MaxActions,
 		EffectiveConcurrency: policy.MaxConcurrent,
 		UpdatedAt:            time.Now(),
@@ -86,6 +131,22 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, policy marketAuto
 		status.QueueSource = a.auctionQueueSource
 	}
 	return status
+}
+
+func (a *App) observeAuctionCandidates() marketCandidateSnapshot {
+	catalog, err := a.loadCatalog()
+	if err != nil {
+		rows, fallbackErr := a.fallbackAuctionRows()
+		if fallbackErr != nil {
+			return marketCandidateSnapshot{Source: "unavailable", Error: fmt.Sprintf("auction catalog unavailable: %v; fallback unavailable: %v", err, fallbackErr)}
+		}
+		return marketCandidateSnapshot{Count: countEnabledAuctionRows(rows), Source: "fallback"}
+	}
+	itemInfoIDs, path, err := a.currentItemInfoIDs()
+	if err != nil {
+		return marketCandidateSnapshot{Source: "pvf_iteminfo_missing", Error: err.Error()}
+	}
+	return marketCandidateSnapshot{Count: len(catalogAuctionIDs(catalog, itemInfoIDs)), Source: path}
 }
 
 func (a *App) setMarketPolicyStatus(status MarketPolicyStatus) {
@@ -135,4 +196,14 @@ func minPositive(v, limit int) int {
 		return v
 	}
 	return limit
+}
+
+func countEnabledAuctionRows(rows []restockRow) int {
+	count := 0
+	for _, row := range rows {
+		if row.ItemID != 0 && row.Enabled {
+			count++
+		}
+	}
+	return count
 }

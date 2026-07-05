@@ -883,7 +883,10 @@ type MarketPolicyStatus struct {
 	Mode                 string    `json:"mode"`
 	Reason               string    `json:"reason,omitempty"`
 	DBKinds              int       `json:"db_kinds"`
+	Candidates           int       `json:"candidates,omitempty"`
+	CandidateSource      string    `json:"candidate_source,omitempty"`
 	ZeroKindRounds       int       `json:"zero_kind_rounds,omitempty"`
+	ZeroCandidateRounds  int       `json:"zero_candidate_rounds,omitempty"`
 	QueueNormal          int       `json:"queue_normal,omitempty"`
 	QueueRejected        int       `json:"queue_rejected,omitempty"`
 	QueueSource          string    `json:"queue_source,omitempty"`
