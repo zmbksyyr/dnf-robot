@@ -57,18 +57,18 @@ func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm 
 		for _, robot := range robots {
 			if err := env.EnsureWorldHorn(robot.UID); err != nil {
 				result.Failed++
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue
 			}
 			userinfos = append(userinfos, s.onlinePayload(robot, rc, store))
 			result.Accepted++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted"})
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 		}
 		if err := env.SendOnline(userinfos); err != nil {
 			result.Failed = result.Accepted
 			result.Accepted = 0
 			for i := range result.Robots {
-				result.Robots[i].State = "failed"
+				result.Robots[i].State = robotcap.ActionStateFailed
 				result.Robots[i].Message = err.Error()
 			}
 		}
@@ -76,15 +76,15 @@ func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm 
 		for _, robot := range robots {
 			if err := env.EnsureWorldHorn(robot.UID); err != nil {
 				result.Failed++
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue
 			}
 			if err := env.SendOnline([]map[string]interface{}{s.onlinePayload(robot, rc, store)}); err == nil {
 				result.Accepted++
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted"})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 			} else {
 				result.Failed++
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 			}
 			time.Sleep(time.Duration(rc.OnlineDispatchIntervalMS) * time.Millisecond)
 		}
@@ -105,10 +105,10 @@ func (s SessionService) Logout(req robotcap.CommandRequest) (robotcap.CommandRes
 	for _, robot := range robots {
 		if err := s.Env.SendLogout(robot.UID); err == nil {
 			result.Accepted++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted"})
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 		} else {
 			result.Failed++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 		}
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -116,10 +116,10 @@ func (s SessionService) Logout(req robotcap.CommandRequest) (robotcap.CommandRes
 	for i := range result.Robots {
 		if _, ok := status[result.Robots[i].UID]; !ok {
 			result.Robots[i].OK = true
-			result.Robots[i].State = "closed"
+			result.Robots[i].State = robotcap.ActionStateClosed
 			result.Confirmed++
-		} else if result.Robots[i].State == "accepted" {
-			result.Robots[i].State = "pending"
+		} else if result.Robots[i].State == robotcap.ActionStateAccepted {
+			result.Robots[i].State = robotcap.ActionStatePending
 			result.Robots[i].Message = "runtime connection still exists"
 			result.Failed++
 		}
@@ -177,7 +177,7 @@ func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout ti
 	result.Confirmed = 0
 	result.Failed = 0
 	for i := range result.Robots {
-		if result.Robots[i].State != "accepted" {
+		if result.Robots[i].State != robotcap.ActionStateAccepted {
 			if !result.Robots[i].OK {
 				result.Failed++
 			}
@@ -187,11 +187,11 @@ func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout ti
 			result.Robots[i].OK = true
 			result.Robots[i].State = st.StateName
 			if result.Robots[i].State == "" {
-				result.Robots[i].State = "running"
+				result.Robots[i].State = robotcap.ActionStateRunning
 			}
 			result.Confirmed++
 		} else {
-			result.Robots[i].State = "pending"
+			result.Robots[i].State = robotcap.ActionStatePending
 			result.Robots[i].Message = "not confirmed running"
 			result.Failed++
 		}

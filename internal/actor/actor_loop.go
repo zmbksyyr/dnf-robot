@@ -100,16 +100,16 @@ func (a *Actor) enqueue(cmd Command, timeout time.Duration) (robotcap.ActionResu
 	select {
 	case a.cmds <- req:
 	default:
-		return robotcap.ActionResult{UID: a.uidValue(), OK: false, State: "queue_failed"}, false
+		return robotcap.ActionResult{UID: a.uidValue(), OK: false, State: robotcap.ActionStateQueueFailed}, false
 	}
 	if timeout <= 0 {
-		return robotcap.ActionResult{UID: a.uidValue(), OK: true, State: "accepted"}, true
+		return robotcap.ActionResult{UID: a.uidValue(), OK: true, State: robotcap.ActionStateAccepted}, true
 	}
 	select {
 	case res := <-req.done:
 		return res, true
 	case <-time.After(timeout):
-		return robotcap.ActionResult{UID: a.uidValue(), OK: false, State: "timeout", Message: "manual action timeout"}, false
+		return robotcap.ActionResult{UID: a.uidValue(), OK: false, State: robotcap.ActionStateTimeout, Message: "manual action timeout"}, false
 	}
 }
 
@@ -165,7 +165,7 @@ func (a *Actor) logoutCurrentUID() robotcap.ActionResult {
 	uid := a.uidValue()
 	if uid <= 0 {
 		a.setState(StateIdle)
-		return robotcap.ActionResult{OK: true, State: "idle"}
+		return robotcap.ActionResult{OK: true, State: robotcap.ActionStateIdle}
 	}
 	cid := 0
 	if st, ok := a.runtime.Status(uid); ok {
@@ -181,7 +181,7 @@ func (a *Actor) logoutCurrentUID() robotcap.ActionResult {
 		res.UID = uid
 	}
 	if res.OK {
-		res.State = "attached_offline"
+		res.State = robotcap.ActionStateAttachedOffline
 	}
 	a.setState(StateOffline)
 	return res
@@ -190,13 +190,13 @@ func (a *Actor) logoutCurrentUID() robotcap.ActionResult {
 func (a *Actor) handleCommand(cmd Command) robotcap.ActionResult {
 	uid := a.uidValue()
 	if uid <= 0 {
-		return robotcap.ActionResult{OK: false, State: "idle", Message: "actor has no uid"}
+		return robotcap.ActionResult{OK: false, State: robotcap.ActionStateIdle, Message: "actor has no uid"}
 	}
 	switch cmd {
 	case CommandOnline:
 		a.setOnlineDesired(true)
 		a.setState(StateAssigned)
-		return robotcap.ActionResult{UID: uid, OK: true, State: "accepted"}
+		return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateAccepted}
 	case CommandLogout:
 		return a.logoutCurrentUID()
 	}
@@ -229,16 +229,16 @@ func (a *Actor) handleCommand(cmd Command) robotcap.ActionResult {
 		}
 		return res
 	}
-	return robotcap.ActionResult{UID: uid, OK: false, State: "unknown_command"}
+	return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateUnknownCommand}
 }
 
 func (a *Actor) ensureOnlineForCommand() (robotcap.ActionResult, bool) {
 	uid := a.uidValue()
 	if uid <= 0 {
-		return robotcap.ActionResult{OK: false, State: "idle", Message: "actor has no uid"}, false
+		return robotcap.ActionResult{OK: false, State: robotcap.ActionStateIdle, Message: "actor has no uid"}, false
 	}
 	if a.runtime.IsActive(uid) {
-		return robotcap.ActionResult{UID: uid, OK: true, State: "running"}, true
+		return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateRunning}, true
 	}
 	a.setOnlineDesired(true)
 	a.setState(StateAssigned)
@@ -250,15 +250,15 @@ func (a *Actor) ensureOnlineForCommand() (robotcap.ActionResult, bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if a.releaseRequestedValue() {
-			return robotcap.ActionResult{UID: uid, OK: false, State: "cancelled"}, false
+			return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateCancelled}, false
 		}
 		if a.runtime.IsActive(uid) {
-			return robotcap.ActionResult{UID: uid, OK: true, State: "running"}, true
+			return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateRunning}, true
 		}
 		a.ensureOnline(time.Now())
 		time.Sleep(500 * time.Millisecond)
 	}
-	return robotcap.ActionResult{UID: uid, OK: false, State: "online_timeout", Message: "not confirmed running"}, false
+	return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOnlineTimeout, Message: "not confirmed running"}, false
 }
 
 func (a *Actor) tick(now time.Time) {
@@ -331,13 +331,13 @@ func (a *Actor) tick(now time.Time) {
 			})
 			if res.OK {
 				a.setStoreUntil(time.Now().Add(time.Duration(rc.AutoStoreDurationSec) * time.Second))
-			} else if res.State == "store_busy" {
+			} else if res.State == robotcap.ActionStateStoreBusy {
 				a.markOnlineHealthy()
 				a.setNextStore(time.Now().Add(time.Duration(rc.AutoStoreFailCooldownSec) * time.Second))
-			} else if res.State == "store_failed" {
+			} else if res.State == robotcap.ActionStateStoreFailed {
 				a.markOnlineHealthy()
 				a.setNextStore(time.Now().Add(time.Duration(rc.AutoStoreFailCooldownSec) * time.Second))
-			} else if res.State != "cancelled" {
+			} else if res.State != robotcap.ActionStateCancelled {
 				a.recordFailure(time.Now())
 			}
 			return
@@ -386,12 +386,12 @@ func (a *Actor) ensureOnline(now time.Time) {
 	if a.releaseRequestedValue() {
 		return
 	}
-	if res.OK || res.State == "running" {
+	if res.OK || res.State == robotcap.ActionStateRunning {
 		a.markOnlineHealthy()
 		a.runtime.AddAutoOnline(1, 0)
 		return
 	}
-	if res.State == "accepted" || res.State == "init" || res.State == "login" {
+	if res.State == robotcap.ActionStateAccepted || res.State == robotcap.RuntimeStateInit || res.State == robotcap.RuntimeStateLogin {
 		a.markOnlinePending(now)
 		return
 	}

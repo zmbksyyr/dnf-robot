@@ -58,12 +58,12 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 	for _, r := range robots {
 		if !env.BeginStoreBusy(r.UID) {
 			result.Failed++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: "store_busy", Message: "store already running for uid"})
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateStoreBusy, Message: "store already running for uid"})
 			continue
 		}
 		if err := env.EnsureStoreInventoryAndStall(r, rc); err != nil {
 			result.Failed++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: "store_prepare_failed", Message: err.Error()})
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateStorePrepareFailed, Message: err.Error()})
 			env.EndStoreBusy(r.UID)
 			continue
 		}
@@ -73,7 +73,7 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 				msg := fmt.Sprintf("logout before store failed: err=%v confirmed=%d", err, logoutResult.Confirmed)
 				env.Logf("[Store] uid=%d %s\n", r.UID, msg)
 				result.Failed++
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: "logout_failed", Message: msg})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateLogoutFailed, Message: msg})
 				env.EndStoreBusy(r.UID)
 				continue
 			}
@@ -93,14 +93,14 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 		}
 		onlineOK := make(map[int]robotcap.ActionResult)
 		for _, robot := range online.Robots {
-			if robot.OK && robot.State == "running" {
+			if robot.OK && robot.State == robotcap.ActionStateRunning {
 				onlineOK[robot.UID] = robot
 			}
 		}
 		for _, r := range offline {
 			if _, ok := onlineOK[r.UID]; !ok {
 				result.Failed++
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: "not_online", Message: "online before store failed"})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateNotOnline, Message: "online before store failed"})
 				env.FinishStoreState(r.UID, r.CID, "store_online_failed")
 				env.EndStoreBusy(r.UID)
 				continue
@@ -109,10 +109,10 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 			if env.StartPrivateStore(r.UID, title) {
 				_ = env.MarkStoreStarted(r.UID)
 				result.Accepted++
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: "accepted"})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateAccepted})
 			} else {
 				result.Failed++
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: "store_start_failed", Message: "StartPrivateStore failed after online"})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateStoreStartFailed, Message: "StartPrivateStore failed after online"})
 				env.FinishStoreState(r.UID, r.CID, "store_start_failed")
 				env.EndStoreBusy(r.UID)
 			}
@@ -123,7 +123,7 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 		allDone := true
 		status = env.RuntimeStatusMap()
 		for i := range result.Robots {
-			if result.Robots[i].OK || result.Robots[i].State != "accepted" {
+			if result.Robots[i].OK || result.Robots[i].State != robotcap.ActionStateAccepted {
 				continue
 			}
 			st, ok := status[result.Robots[i].UID]
@@ -139,15 +139,15 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 	}
 	status = env.RuntimeStatusMap()
 	for i := range result.Robots {
-		if result.Robots[i].OK || result.Robots[i].State != "accepted" {
+		if result.Robots[i].OK || result.Robots[i].State != robotcap.ActionStateAccepted {
 			continue
 		}
 		if st, ok := status[result.Robots[i].UID]; ok && robotcap.ActiveRuntimeStatus(st) && st.StoreDisplayAck {
 			result.Robots[i].OK = true
-			result.Robots[i].State = "store"
+			result.Robots[i].State = robotcap.ActionStateStore
 			result.Confirmed++
 		} else {
-			result.Robots[i].State = "not_confirmed"
+			result.Robots[i].State = robotcap.ActionStateNotConfirmed
 			result.Robots[i].Message = "store state not confirmed"
 			result.Failed++
 			env.FinishStoreState(result.Robots[i].UID, result.Robots[i].CID, "store_not_confirmed")

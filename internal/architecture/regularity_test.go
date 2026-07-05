@@ -29,6 +29,59 @@ var sqlImportAllowedDirs = []string{
 	"internal/protocol/dnf",
 }
 
+var actionResultStateDirs = []string{
+	"internal/actor",
+	"internal/scheduler",
+	"internal/capability/robotaction",
+	"internal/capability/store",
+}
+
+func TestActionResultStatesUseNamedConstants(t *testing.T) {
+	root := repoRoot(t)
+	for _, rel := range actionResultStateDirs {
+		dir := filepath.Join(root, filepath.FromSlash(rel))
+		err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+			if err != nil {
+				return err
+			}
+			ast.Inspect(file, func(node ast.Node) bool {
+				switch x := node.(type) {
+				case *ast.CompositeLit:
+					if !isActionResultType(x.Type) {
+						return true
+					}
+					for _, elt := range x.Elts {
+						kv, ok := elt.(*ast.KeyValueExpr)
+						if !ok || !identNamed(kv.Key, "State") || !isStringLiteral(kv.Value) {
+							continue
+						}
+						t.Errorf("%s uses literal ActionResult.State in composite literal", path)
+					}
+				case *ast.AssignStmt:
+					for i, lhs := range x.Lhs {
+						if i >= len(x.Rhs) || !selectorNamed(lhs, "State") || !isStringLiteral(x.Rhs[i]) {
+							continue
+						}
+						t.Errorf("%s assigns literal ActionResult.State", path)
+					}
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+}
+
 func TestMutexDeclarationsStayInsideLockhub(t *testing.T) {
 	root := repoRoot(t)
 	internal := filepath.Join(root, "internal")
@@ -231,6 +284,38 @@ func receiverIsRobotManager(expr ast.Expr) bool {
 	default:
 		return false
 	}
+}
+
+func isActionResultType(expr ast.Expr) bool {
+	switch x := expr.(type) {
+	case *ast.SelectorExpr:
+		return x.Sel.Name == "ActionResult"
+	case *ast.Ident:
+		return x.Name == "ActionResult"
+	default:
+		return false
+	}
+}
+
+func identNamed(expr ast.Expr, name string) bool {
+	ident, ok := expr.(*ast.Ident)
+	return ok && ident.Name == name
+}
+
+func selectorNamed(expr ast.Expr, name string) bool {
+	switch x := expr.(type) {
+	case *ast.SelectorExpr:
+		return x.Sel.Name == name
+	case *ast.IndexExpr:
+		return selectorNamed(x.X, name)
+	default:
+		return false
+	}
+}
+
+func isStringLiteral(expr ast.Expr) bool {
+	lit, ok := expr.(*ast.BasicLit)
+	return ok && lit.Kind == token.STRING
 }
 
 func pathUnderAny(root string, path string, dirs []string) bool {

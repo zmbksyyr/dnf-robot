@@ -104,7 +104,7 @@ func (r *RobotRuntime) AutoMove(uid int) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
 		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
-			return robotcap.ActionResult{UID: uid, OK: false, State: "offline"}
+			return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOffline}
 		}
 		rc := r.Config()
 		maps := r.manager.loadMapCatalog()
@@ -116,7 +116,7 @@ func (r *RobotRuntime) AutoMove(uid int) robotcap.ActionResult {
 			r.manager.moveService().AutoMove(info, rc, maps, nil)
 		}
 		r.manager.addAutoMove(1, 0)
-		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: "moved"}
+		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: robotcap.ActionStateMoved}
 	})
 }
 
@@ -125,7 +125,7 @@ func (r *RobotRuntime) AutoShout(uid int, world bool, msg string) robotcap.Actio
 		st, ok := r.Status(uid)
 		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 			r.manager.addAutoShoutChannel(world, 0, 1)
-			return robotcap.ActionResult{UID: uid, OK: false, State: "offline"}
+			return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOffline}
 		}
 		tpl := r.manager.loadShoutTemplates()
 		if msg == "" && len(tpl.Messages) > 0 {
@@ -133,7 +133,7 @@ func (r *RobotRuntime) AutoShout(uid int, world bool, msg string) robotcap.Actio
 		}
 		r.manager.shoutService().AutoShout(uid, msg, world)
 		r.manager.addAutoShoutChannel(world, 1, 0)
-		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: "sent"}
+		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: robotcap.ActionStateSent}
 	})
 }
 
@@ -141,23 +141,23 @@ func (r *RobotRuntime) AutoStore(uid int, shouldStop func() bool) robotcap.Actio
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
 		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
-			return robotcap.ActionResult{UID: uid, OK: false, State: "offline"}
+			return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOffline}
 		}
 		if shouldStop != nil && shouldStop() {
-			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: "cancelled"}
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateCancelled}
 		}
 		switch r.manager.storeWorkflow().AutoUntilSuccess(st, r.Config(), shouldStop) {
 		case storecap.AutoAttemptSuccess:
-			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: "store"}
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: robotcap.ActionStateStore}
 		case storecap.AutoAttemptBusy:
-			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: "store_busy"}
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateStoreBusy}
 		case storecap.AutoAttemptCancelled:
-			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: "cancelled"}
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateCancelled}
 		}
 		if shouldStop != nil && shouldStop() {
-			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: "cancelled"}
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateCancelled}
 		}
-		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: "store_failed"}
+		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateStoreFailed}
 	})
 }
 
@@ -165,7 +165,7 @@ func (r *RobotRuntime) ExpireStore(uid int) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
 		if !ok {
-			return robotcap.ActionResult{UID: uid, OK: true, State: "offline"}
+			return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateOffline}
 		}
 		rc := r.Config()
 		_, _ = r.manager.sessionService().Logout(robotcap.CommandRequest{UIDs: []int{uid}})
@@ -176,7 +176,7 @@ func (r *RobotRuntime) ExpireStore(uid int) robotcap.ActionResult {
 			info = robots[0]
 		}
 		r.manager.restoreAutoNormalPosition(info, rc, "store_expired")
-		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: "store_expired"}
+		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: robotcap.ActionStateStoreExpired}
 	})
 }
 
@@ -224,12 +224,12 @@ func (m *RobotManager) currentFollowTarget(rc robotconfig.RuntimeConfig, maps []
 
 func firstActionResult(uid int, res robotcap.CommandResult, err error) robotcap.ActionResult {
 	if err != nil {
-		return robotcap.ActionResult{UID: uid, OK: false, State: "failed", Message: err.Error()}
+		return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()}
 	}
 	for _, robot := range res.Robots {
 		if robot.UID == uid {
 			return robot
 		}
 	}
-	return robotcap.ActionResult{UID: uid, OK: false, State: "missing", Message: "no action result"}
+	return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateMissing, Message: "no action result"}
 }

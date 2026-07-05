@@ -1109,7 +1109,7 @@ func (r *supervisorActorRegistry) Command(uid int, cmd actormodel.Command, timeo
 	s := r.supervisor
 	actor := s.ledger.ActorForUID(uid)
 	if actor == nil {
-		return robotcap.ActionResult{UID: uid, OK: false, State: "missing_actor"}, false
+		return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateMissingActor}, false
 	}
 	return actor.Enqueue(cmd, timeout)
 }

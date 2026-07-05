@@ -105,6 +105,39 @@ type ActionResult struct {
 	Message string `json:"message,omitempty"`
 }
 
+const (
+	ActionStateAccepted           = "accepted"
+	ActionStateActorFull          = "actor_full"
+	ActionStateAttached           = "attached"
+	ActionStateAttachedOffline    = "attached_offline"
+	ActionStateCancelled          = "cancelled"
+	ActionStateClosed             = "closed"
+	ActionStateFailed             = "failed"
+	ActionStateIdle               = "idle"
+	ActionStateLogoutFailed       = "logout_failed"
+	ActionStateMissing            = "missing"
+	ActionStateMissingActor       = "missing_actor"
+	ActionStateMoved              = "moved"
+	ActionStateNotConfirmed       = "not_confirmed"
+	ActionStateNotOnline          = "not_online"
+	ActionStateOffline            = "offline"
+	ActionStateOnlineTimeout      = "online_timeout"
+	ActionStatePending            = "pending"
+	ActionStateQueueFailed        = "queue_failed"
+	ActionStateRunning            = "running"
+	ActionStateSchedulerBusy      = "scheduler_busy"
+	ActionStateSent               = "sent"
+	ActionStateStore              = "store"
+	ActionStateStoreBusy          = "store_busy"
+	ActionStateStoreFailed        = "store_failed"
+	ActionStateStorePrepareFailed = "store_prepare_failed"
+	ActionStateStoreStartFailed   = "store_start_failed"
+	ActionStateStoreExpired       = "store_expired"
+	ActionStateTimeout            = "timeout"
+	ActionStateUIDNotAttached     = "uid_not_attached"
+	ActionStateUnknownCommand     = "unknown_command"
+)
+
 type CommandResult struct {
 	Requested int            `json:"requested"`
 	Accepted  int            `json:"accepted"`

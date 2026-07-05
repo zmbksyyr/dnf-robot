@@ -47,13 +47,13 @@ func (s ShoutService) ShoutOne(req robotcap.CommandRequest, world bool) (robotca
 			_ = env.AppendShout(robot.UID, channel, msgType, msg)
 			result.Accepted++
 			result.Confirmed++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: true, State: "sent", Message: msg})
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: true, State: robotcap.ActionStateSent, Message: msg})
 		} else if err := s.Send("manager", robot.UID, robot.Name, tpl, msg, world, rc); err != nil {
 			result.Failed++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "failed", Message: err.Error()})
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 		} else {
 			result.Accepted++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted", Message: msg})
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted, Message: msg})
 		}
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -64,10 +64,10 @@ func (s ShoutService) ShoutOne(req robotcap.CommandRequest, world bool) (robotca
 		}
 		if st, ok := status[result.Robots[i].UID]; ok && robotcap.ActiveRuntimeStatus(st) {
 			result.Robots[i].OK = true
-			result.Robots[i].State = "sent"
+			result.Robots[i].State = robotcap.ActionStateSent
 			result.Confirmed++
 		} else {
-			result.Robots[i].State = "not_confirmed"
+			result.Robots[i].State = robotcap.ActionStateNotConfirmed
 			result.Failed++
 		}
 	}

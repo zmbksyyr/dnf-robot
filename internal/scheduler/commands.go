@@ -25,9 +25,9 @@ func (m *RobotManager) OnlineManaged(req robotcap.CommandRequest) (robotcap.Comm
 		}
 		item, ok := registry.Command(robot.UID, actormodel.CommandOnline, timeout)
 		item.CID = robot.CID
-		if ok && (item.OK || item.State == "accepted" || item.State == "running") {
+		if ok && (item.OK || item.State == robotcap.ActionStateAccepted || item.State == robotcap.ActionStateRunning) {
 			result.Accepted++
-			result.Robots = append(result.Robots, robotActionResult(robot, false, "accepted", ""))
+			result.Robots = append(result.Robots, robotActionResult(robot, false, robotcap.ActionStateAccepted, ""))
 		} else {
 			result.Failed++
 			result.Robots = append(result.Robots, failedActorResult(robot, item, "online actor command failed"))
@@ -63,7 +63,7 @@ func (m *RobotManager) ShoutBothManaged(req robotcap.CommandRequest) (robotcap.C
 		if localOK && worldOK && local.OK && world.OK {
 			result.Accepted++
 			result.Confirmed++
-			result.Robots = append(result.Robots, robotActionResult(robot, true, "sent", ""))
+			result.Robots = append(result.Robots, robotActionResult(robot, true, robotcap.ActionStateSent, ""))
 		} else {
 			result.Failed++
 			msg := "actor command failed"
@@ -78,7 +78,7 @@ func (m *RobotManager) ShoutBothManaged(req robotcap.CommandRequest) (robotcap.C
 					msg = world.State
 				}
 			}
-			result.Robots = append(result.Robots, robotActionResult(robot, false, "failed", msg))
+			result.Robots = append(result.Robots, robotActionResult(robot, false, robotcap.ActionStateFailed, msg))
 		}
 	}
 	return result, nil
@@ -143,7 +143,7 @@ func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, acti
 	}
 	rc := m.loadRobotConfig()
 	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
-		return nil, nil, rc, rejectedCommandResult(robots, "scheduler_busy", reason), nil
+		return nil, nil, rc, rejectedCommandResult(robots, robotcap.ActionStateSchedulerBusy, reason), nil
 	}
 	missing := make([]robotcap.Info, 0)
 	for _, robot := range robots {
@@ -155,10 +155,10 @@ func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, acti
 		return registry, robots, rc, nil, nil
 	}
 	if !attachInManual || m.autoActionsEnabled(rc) {
-		return nil, nil, rc, rejectedCommandResult(robots, "uid_not_attached", fmt.Sprintf("%s requires actor attachment", action)), nil
+		return nil, nil, rc, rejectedCommandResult(robots, robotcap.ActionStateUIDNotAttached, fmt.Sprintf("%s requires actor attachment", action)), nil
 	}
 	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
-		return nil, nil, rc, rejectedCommandResult(robots, "scheduler_busy", reason), nil
+		return nil, nil, rc, rejectedCommandResult(robots, robotcap.ActionStateSchedulerBusy, reason), nil
 	}
 	end := m.beginActorContainerOp("manual_attach")
 	defer end()
@@ -177,7 +177,7 @@ func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, acti
 		for _, robot := range robots {
 			if registry.HasUID(robot.UID) {
 				out.Accepted++
-				out.Robots = append(out.Robots, robotActionResult(robot, true, "attached", ""))
+				out.Robots = append(out.Robots, robotActionResult(robot, true, robotcap.ActionStateAttached, ""))
 			}
 		}
 		return nil, nil, rc, &out, nil
@@ -245,7 +245,7 @@ func failedActorResult(robot robotcap.Info, item robotcap.ActionResult, fallback
 		item.CID = robot.CID
 	}
 	if item.State == "" {
-		item.State = "failed"
+		item.State = robotcap.ActionStateFailed
 	}
 	if item.Message == "" {
 		item.Message = fallbackMessage
@@ -258,7 +258,7 @@ func actorFullResult(robot robotcap.Info, action string) robotcap.ActionResult {
 		UID:     robot.UID,
 		CID:     robot.CID,
 		OK:      false,
-		State:   "actor_full",
+		State:   robotcap.ActionStateActorFull,
 		Message: fmt.Sprintf("%s requires an empty actor slot", action),
 	}
 }

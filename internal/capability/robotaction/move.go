@@ -48,7 +48,7 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 		if st, ok := status[robot.UID]; ok && robotcap.ActiveRuntimeStatus(st) {
 			robot.Village, robot.Area, robot.X, robot.Y = st.Village, st.Area, st.X, st.Y
 			if st.RobotType == 2 || st.RobotType == 3 {
-				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: true, State: "store", Message: "skip moving store robot"})
+				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: true, State: robotcap.ActionStateStore, Message: "skip moving store robot"})
 				continue
 			}
 		}
@@ -60,7 +60,7 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 		}
 		plans = append(plans, movePlan{robot: robot, steps: steps, target: [2]int{targetX, targetY}, speeds: speeds})
 		result.Accepted++
-		result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: "accepted"})
+		result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 	}
 	maxSteps := 0
 	for _, plan := range plans {
@@ -94,8 +94,8 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 			result.Robots[i].OK = true
 			result.Robots[i].State = st.StateName
 			result.Confirmed++
-		} else if result.Robots[i].State == "accepted" {
-			result.Robots[i].State = "pending"
+		} else if result.Robots[i].State == robotcap.ActionStateAccepted {
+			result.Robots[i].State = robotcap.ActionStatePending
 			result.Robots[i].Message = "move not confirmed by runtime state"
 			result.Failed++
 		}
