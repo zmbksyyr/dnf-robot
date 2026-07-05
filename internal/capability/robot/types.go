@@ -242,6 +242,17 @@ type SchedulerStatus struct {
 	UpdatedAt               time.Time `json:"updated_at"`
 }
 
+const (
+	SchedulerModeBootstrap   = "bootstrap"
+	SchedulerModeFill        = "fill"
+	SchedulerModeStable      = "stable"
+	SchedulerModeStore       = "store_expand"
+	SchedulerModePressure    = "pressure"
+	SchedulerModeBreaker     = "breaker"
+	SchedulerModeMaintenance = "maintenance"
+	SchedulerModeManual      = "manual"
+)
+
 type OperationStatus struct {
 	ID         int64     `json:"id"`
 	Type       string    `json:"type"`

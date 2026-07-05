@@ -41,6 +41,24 @@ func TestOperationStateConstants(t *testing.T) {
 	}
 }
 
+func TestSchedulerModeConstants(t *testing.T) {
+	tests := map[string]string{
+		SchedulerModeBootstrap:   "bootstrap",
+		SchedulerModeFill:        "fill",
+		SchedulerModeStable:      "stable",
+		SchedulerModeStore:       "store_expand",
+		SchedulerModePressure:    "pressure",
+		SchedulerModeBreaker:     "breaker",
+		SchedulerModeMaintenance: "maintenance",
+		SchedulerModeManual:      "manual",
+	}
+	for got, want := range tests {
+		if got != want {
+			t.Fatalf("scheduler mode got %q want %q", got, want)
+		}
+	}
+}
+
 func TestCopyRuntimeStatusMap(t *testing.T) {
 	src := map[int]RuntimeStatus{1: {UID: 1, StateName: RuntimeStateRunning}}
 	got := CopyRuntimeStatusMap(src)

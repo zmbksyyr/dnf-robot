@@ -64,6 +64,7 @@ uid:{uid}
 ```text
 OperationStatus.State -> capability/robot OperationState* 常量
 RuntimeStatus.StateName -> capability/robot RuntimeState* 常量
+SchedulerStatus.Mode -> capability/robot SchedulerMode* 常量
 marketapp JobSummary.Status -> capability/marketapp MarketJobStatus* 常量
 marketapp MarketServiceStatus.Status -> capability/marketapp MarketServiceStatus* 常量
 marketapp MarketPolicyStatus.Health -> capability/marketapp marketPolicyHealth* 常量
@@ -73,7 +74,6 @@ marketapp MarketPolicyStatus.Health -> capability/marketapp marketPolicyHealth* 
 
 ```text
 Actor State
-SchedulerStatus.Mode
 marketapp Status/Policy Mode
 ActionResult.State
 ```
@@ -98,6 +98,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 - scheduler/repository 的锁资源名已经集中为常量，后续不允许重新散落字符串。
 - OperationStatus 状态已经从 scheduler 字符串收敛到 capability/robot 常量。
 - RuntimeStatus 状态名已经从 actor/scheduler 字符串判断收敛到 capability/robot 常量。
+- SchedulerStatus 模式已经从 scheduler 字符串值收敛到 capability/robot 常量。
 - marketapp JobSummary 状态已经从 restock/collect 字符串收敛到 MarketJobStatus 常量。
 - marketapp MarketServiceStatus 状态已经从服务检测字符串赋值收敛到 MarketServiceStatus 常量。
 - marketapp MarketPolicyStatus 健康状态已经从字符串赋值收敛到 marketPolicyHealth 常量。

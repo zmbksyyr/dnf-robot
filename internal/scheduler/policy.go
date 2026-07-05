@@ -804,14 +804,14 @@ func (s *RobotSupervisor) recycleUnhealthyActors(now time.Time, rc robotconfig.R
 type schedulerPolicyMode string
 
 const (
-	schedulerPolicyBootstrap   schedulerPolicyMode = "bootstrap"
-	schedulerPolicyFill        schedulerPolicyMode = "fill"
-	schedulerPolicyStable      schedulerPolicyMode = "stable"
-	schedulerPolicyStore       schedulerPolicyMode = "store_expand"
-	schedulerPolicyPressure    schedulerPolicyMode = "pressure"
-	schedulerPolicyBreaker     schedulerPolicyMode = "breaker"
-	schedulerPolicyMaintenance schedulerPolicyMode = "maintenance"
-	schedulerPolicyManual      schedulerPolicyMode = "manual"
+	schedulerPolicyBootstrap   schedulerPolicyMode = robotcap.SchedulerModeBootstrap
+	schedulerPolicyFill        schedulerPolicyMode = robotcap.SchedulerModeFill
+	schedulerPolicyStable      schedulerPolicyMode = robotcap.SchedulerModeStable
+	schedulerPolicyStore       schedulerPolicyMode = robotcap.SchedulerModeStore
+	schedulerPolicyPressure    schedulerPolicyMode = robotcap.SchedulerModePressure
+	schedulerPolicyBreaker     schedulerPolicyMode = robotcap.SchedulerModeBreaker
+	schedulerPolicyMaintenance schedulerPolicyMode = robotcap.SchedulerModeMaintenance
+	schedulerPolicyManual      schedulerPolicyMode = robotcap.SchedulerModeManual
 )
 
 type adaptiveSchedulerSignals struct {
