@@ -955,6 +955,30 @@ func (r SQLRepository) CreateCreatureItem(dbName string, ownerID uint32, itemID 
 	return int32(id), nil
 }
 
+func (r SQLRepository) CountSystemCreatureItems(dbName string, systemOwnerBase uint32) (int, error) {
+	query := "SELECT COUNT(*) FROM " + quoteIdent(dbName) + ".`creature_items` WHERE `charac_no` >= ?"
+	var count int
+	if err := r.db.QueryRow(query, systemOwnerBase).Scan(&count); err != nil {
+		if isMissingTable(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return count, nil
+}
+
+func (r SQLRepository) DeleteSystemCreatureItems(dbName string, systemOwnerBase uint32) (int64, error) {
+	query := "DELETE FROM " + quoteIdent(dbName) + ".`creature_items` WHERE `charac_no` >= ?"
+	result, err := r.db.Exec(query, systemOwnerBase)
+	if err != nil {
+		if isMissingTable(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func isMissingTable(err error) bool {
 	if err == nil {
 		return false

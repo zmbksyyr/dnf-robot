@@ -157,6 +157,43 @@ func (a *App) clearSystemMarketStockLocked(logType string) (ClearSystemStockResu
 			return result, err
 		}
 	}
+	item, err := a.deleteSystemCreatureItems(logType)
+	result.Markets = append(result.Markets, item)
+	result.Deleted += item.Deleted
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (a *App) deleteSystemCreatureItems(logType string) (ClearSystemMarketResult, error) {
+	const market = "creature"
+	result := ClearSystemMarketResult{Market: market, DBName: a.cfg.GameDB}
+	count, err := a.repository.CountSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
+	if err != nil {
+		result.Status = "count_failed"
+		return result, fmt.Errorf("%s count system instances: %w", market, err)
+	}
+	result.Before = count
+	if count <= 0 {
+		result.Status = "empty"
+		a.appendLog(LogEvent{Type: logType, Market: market, Status: result.Status, Message: "system creature instances already empty"})
+		return result, nil
+	}
+	deleted, err := a.repository.DeleteSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
+	if err != nil {
+		result.Status = "delete_failed"
+		return result, fmt.Errorf("%s delete system instances: %w", market, err)
+	}
+	result.Deleted = deleted
+	after, err := a.repository.CountSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
+	if err != nil {
+		result.Status = "count_after_failed"
+		return result, fmt.Errorf("%s count system instances after delete: %w", market, err)
+	}
+	result.After = after
+	result.Status = "db_deleted"
+	a.appendLog(LogEvent{Type: logType, Market: market, Status: result.Status, Message: fmt.Sprintf("rows=%d", deleted)})
 	return result, nil
 }
 

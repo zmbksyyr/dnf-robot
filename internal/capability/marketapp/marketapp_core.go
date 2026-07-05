@@ -65,6 +65,8 @@ type Repository interface {
 	CreateCreatureItem(dbName string, ownerID uint32, itemID uint32) (int32, error)
 	CountSystemStock(dbName string, systemOwnerBase uint32) (int, error)
 	DeleteSystemStock(dbName string, systemOwnerBase uint32) (int64, error)
+	CountSystemCreatureItems(dbName string, systemOwnerBase uint32) (int, error)
+	DeleteSystemCreatureItems(dbName string, systemOwnerBase uint32) (int64, error)
 }
 
 type SQLRepository struct {

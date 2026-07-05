@@ -32,7 +32,7 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 	repo := &clearStockRepository{counts: map[string]int{
 		DefaultConfig().AuctionDB: 3,
 		DefaultConfig().CeraDB:    2,
-	}}
+	}, creatureCount: 4}
 	app := testApp()
 	app.repository = repo
 	app.configDir = t.TempDir()
@@ -45,8 +45,11 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Deleted != 5 {
-		t.Fatalf("deleted = %d, want 5", result.Deleted)
+	if result.Deleted != 9 {
+		t.Fatalf("deleted = %d, want 9", result.Deleted)
+	}
+	if repo.creatureCount != 0 {
+		t.Fatalf("creature count = %d, want 0", repo.creatureCount)
 	}
 	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
 		t.Fatalf("queues not reset: queue=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
@@ -786,6 +789,7 @@ type clearStockRepository struct {
 	creatureIDs       []int32
 	createCreatureErr error
 	creatureCreates   []creatureCreateCall
+	creatureCount     int
 }
 
 type creatureCreateCall struct {
@@ -839,6 +843,16 @@ func (r *clearStockRepository) CountSystemStock(dbName string, _ uint32) (int, e
 func (r *clearStockRepository) DeleteSystemStock(dbName string, _ uint32) (int64, error) {
 	count := r.counts[dbName]
 	r.counts[dbName] = 0
+	return int64(count), nil
+}
+
+func (r *clearStockRepository) CountSystemCreatureItems(string, uint32) (int, error) {
+	return r.creatureCount, nil
+}
+
+func (r *clearStockRepository) DeleteSystemCreatureItems(string, uint32) (int64, error) {
+	count := r.creatureCount
+	r.creatureCount = 0
 	return int64(count), nil
 }
 
