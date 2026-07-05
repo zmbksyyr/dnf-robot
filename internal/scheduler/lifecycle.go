@@ -58,12 +58,12 @@ func (m *RobotManager) RobotsStatus(req robotcap.CommandRequest) (RobotStatusRes
 
 	out := RobotStatusResult{UpdatedAt: time.Now()}
 	for _, item := range items {
-		stateName := "offline"
+		stateName := robotcap.RuntimeStateStop
 		onlineDesired := false
-		item.DBState = "exists"
+		item.DBState = robotcap.DBStateExists
 		if item.MissingCore {
-			item.DBState = "missing_core"
-			stateName = "broken"
+			item.DBState = robotcap.DBStateMissingCore
+			stateName = robotcap.RuntimeStateWrong
 		} else if st, ok := runtime[item.UID]; ok {
 			item.State = st.State
 			stateName = st.StateName
@@ -121,7 +121,7 @@ func robotStateView(item robotcap.StatusItem, stateName string, onlineDesired bo
 	}
 	lastError := ""
 	if item.MissingCore {
-		lastError = "missing_core"
+		lastError = robotcap.DBStateMissingCore
 	} else if item.DisconnectReason != 0 {
 		lastError = fmt.Sprintf("disconnect_%d", item.DisconnectReason)
 	}

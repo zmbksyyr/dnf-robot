@@ -16,6 +16,18 @@ func TestNewCommandResult(t *testing.T) {
 	}
 }
 
+func TestDBStateConstants(t *testing.T) {
+	tests := map[string]string{
+		DBStateExists:      "exists",
+		DBStateMissingCore: "missing_core",
+	}
+	for got, want := range tests {
+		if got != want {
+			t.Fatalf("db state got %q want %q", got, want)
+		}
+	}
+}
+
 func TestOperationSummaries(t *testing.T) {
 	cmd := CommandResult{Requested: 3, Accepted: 2, Confirmed: 1, Failed: 1}
 	if got := CommandOperationSummary(cmd, nil); got != "requested=3 accepted=2 confirmed=1 failed=1" {

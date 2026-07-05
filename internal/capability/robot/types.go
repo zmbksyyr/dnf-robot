@@ -59,6 +59,11 @@ type StatusItem struct {
 	MissingCore      bool              `json:"missing_core,omitempty"`
 }
 
+const (
+	DBStateExists      = "exists"
+	DBStateMissingCore = "missing_core"
+)
+
 func UIDs(robots []Info) []int {
 	out := make([]int, 0, len(robots))
 	for _, r := range robots {

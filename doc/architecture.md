@@ -76,6 +76,7 @@ marketapp MarketServiceStatus.Status -> capability/marketapp MarketServiceStatus
 marketapp MarketPolicyStatus.Health -> capability/marketapp marketPolicyHealth* 常量
 marketapp MarketPolicyStatus.Mode -> capability/marketapp marketPolicyMode* 常量
 ActionResult.State -> capability/robot ActionState* 常量
+StatusItem.DBState -> capability/robot DBState* 常量
 ```
 
 下一步继续审计：
@@ -115,6 +116,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/robot
 - marketapp MarketPolicyStatus 健康状态已经从字符串赋值收敛到 marketPolicyHealth 常量。
 - marketapp MarketPolicyStatus 模式已经从自愈策略字符串赋值收敛到 marketPolicyMode 常量。
 - ActionResult.State 已经从 actor/scheduler/robotaction/store 的动作结果字符串收敛到 capability/robot ActionState 常量。
+- StatusItem.DBState 已经从 scheduler 展示字符串收敛到 capability/robot DBState 常量。
 
 ## 本轮验证
 
