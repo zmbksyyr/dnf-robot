@@ -18,6 +18,22 @@ func testApp() *App {
 	return &App{cfg: cfg, rand: rand.New(rand.NewSource(1))}
 }
 
+func TestMarketJobStatusConstants(t *testing.T) {
+	tests := map[string]string{
+		MarketJobStatusBusy:          "busy",
+		MarketJobStatusRunning:       "running",
+		MarketJobStatusFailed:        "failed",
+		MarketJobStatusPlanned:       "planned",
+		MarketJobStatusPartialFailed: "partial_failed",
+		MarketJobStatusSuccess:       "success",
+	}
+	for got, want := range tests {
+		if got != want {
+			t.Fatalf("market job status got %q want %q", got, want)
+		}
+	}
+}
+
 func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	data, err := json.Marshal(DefaultConfig().Restock)
 	if err != nil {
@@ -499,7 +515,7 @@ func TestRecordMarketPolicyJobKeepsPolicyAndAddsFeedback(t *testing.T) {
 		},
 	}
 	app.recordMarketPolicyJob("auction", JobSummary{
-		Status: "partial_failed",
+		Status: MarketJobStatusPartialFailed,
 		Error:  "1 actions failed",
 		Plan:   &PlanSummary{Actions: 3},
 		Actions: []ActionEntry{
@@ -513,7 +529,7 @@ func TestRecordMarketPolicyJobKeepsPolicyAndAddsFeedback(t *testing.T) {
 	if status.Mode != marketPolicyModeRecover || status.Reason != "recovering" || status.DBKinds != 10 {
 		t.Fatalf("policy judgement was overwritten: %#v", status)
 	}
-	if status.LastJobStatus != "partial_failed" || status.LastJobError != "1 actions failed" || status.LastPlanActions != 3 || status.LastActionResults != 3 || status.LastActionFailed != 2 {
+	if status.LastJobStatus != MarketJobStatusPartialFailed || status.LastJobError != "1 actions failed" || status.LastPlanActions != 3 || status.LastActionResults != 3 || status.LastActionFailed != 2 {
 		t.Fatalf("job feedback not recorded: %#v", status)
 	}
 }

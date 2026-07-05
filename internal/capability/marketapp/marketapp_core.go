@@ -329,7 +329,7 @@ func busyMarketJob(kind string) JobSummary {
 	return JobSummary{
 		ID:        fmt.Sprintf("%s-busy-%d", kind, now.UnixNano()),
 		Kind:      kind,
-		Status:    "busy",
+		Status:    MarketJobStatusBusy,
 		Error:     "market job already running",
 		StartedAt: now,
 		EndedAt:   now,
@@ -350,13 +350,13 @@ func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 	job := JobSummary{
 		ID:        fmt.Sprintf("restock-%d", start.UnixNano()),
 		Kind:      "restock",
-		Status:    "running",
+		Status:    MarketJobStatusRunning,
 		StartedAt: start,
 	}
 	a.appendLog(LogEvent{Type: "job_start", JobID: job.ID, Status: job.Status})
 	plan, err := a.Plan(req)
 	if err != nil {
-		job.Status = "failed"
+		job.Status = MarketJobStatusFailed
 		job.Error = err.Error()
 		job.EndedAt = time.Now()
 		job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
@@ -374,7 +374,7 @@ func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 		actions = actions[:maxActions]
 	}
 	if !req.Execute {
-		job.Status = "planned"
+		job.Status = MarketJobStatusPlanned
 		job.EndedAt = time.Now()
 		job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
 		a.setLastJob(job)
@@ -383,7 +383,7 @@ func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 	}
 	failedActions, _, firstErr := a.executeActions(job.ID, actions, req.MaxConcurrent, req.ContinueOnError, &job)
 	if firstErr != nil && !req.ContinueOnError {
-		job.Status = "partial_failed"
+		job.Status = MarketJobStatusPartialFailed
 		job.Error = firstErr.Error()
 		job.EndedAt = time.Now()
 		job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
@@ -392,10 +392,10 @@ func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 		return job, firstErr
 	}
 	if failedActions > 0 {
-		job.Status = "partial_failed"
+		job.Status = MarketJobStatusPartialFailed
 		job.Error = fmt.Sprintf("%d actions failed", failedActions)
 	} else {
-		job.Status = "success"
+		job.Status = MarketJobStatusSuccess
 	}
 	job.EndedAt = time.Now()
 	job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
@@ -945,6 +945,15 @@ type JobSummary struct {
 	Actions   []ActionEntry `json:"actions,omitempty"`
 	Error     string        `json:"error,omitempty"`
 }
+
+const (
+	MarketJobStatusBusy          = "busy"
+	MarketJobStatusRunning       = "running"
+	MarketJobStatusFailed        = "failed"
+	MarketJobStatusPlanned       = "planned"
+	MarketJobStatusPartialFailed = "partial_failed"
+	MarketJobStatusSuccess       = "success"
+)
 
 type PlanResult struct {
 	GeneratedAt time.Time     `json:"generated_at"`
