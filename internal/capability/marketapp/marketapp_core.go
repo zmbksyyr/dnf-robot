@@ -298,6 +298,10 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 		if action.Market == "cera" {
 			result.Summary.CeraActions++
 		}
+		switch action.Kind {
+		case "title", "creature", "avatar", "artifact red", "artifact blue", "artifact green":
+			result.Summary.Special++
+		}
 	}
 	for _, skipped := range result.Skipped {
 		switch skipped.Reason {

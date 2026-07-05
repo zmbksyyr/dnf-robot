@@ -453,7 +453,7 @@ class StabilityRun(object):
             "SELECT 'cera_count',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main;"
             "SELECT 'auction_system',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001;"
             "SELECT 'cera_system',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main WHERE owner_id>=90000001;"
-            "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=2100000000;"
+            "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=210000000;"
             "SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001;"
             "SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001;"
             "SHOW COLUMNS FROM taiwan_cain_auction_gold.auction_main;"
@@ -466,7 +466,7 @@ class StabilityRun(object):
         query = (
             "SELECT 'auction',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main;"
             "SELECT 'cera',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main;"
-            "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=2100000000;"
+            "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=210000000;"
             "SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001;"
             "SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001;"
             "SELECT 'creature_orphans',COUNT(*),COUNT(DISTINCT c.it_id) FROM taiwan_cain_2nd.creature_items c LEFT JOIN taiwan_cain_auction_gold.auction_main a ON a.add_info=c.ui_id AND a.owner_id=c.charac_no WHERE c.charac_no>=90000001 AND a.auction_id IS NULL;"
@@ -1618,7 +1618,7 @@ echo '===== market service logs ====='
 tail -n 80 /root/config/market_auction_service.log 2>/dev/null || true
 tail -n 80 /root/config/market_point_service.log 2>/dev/null || true
 echo '===== market special db ====='
-mysql -ugame -puu5!^%%jg -e "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=2100000000; SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001; SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001; SELECT 'creature_orphans',COUNT(*),COUNT(DISTINCT c.it_id) FROM taiwan_cain_2nd.creature_items c LEFT JOIN taiwan_cain_auction_gold.auction_main a ON a.add_info=c.ui_id AND a.owner_id=c.charac_no WHERE c.charac_no>=90000001 AND a.auction_id IS NULL;" 2>/dev/null || true
+mysql -ugame -puu5!^%%jg -e "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=210000000; SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001; SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001; SELECT 'creature_orphans',COUNT(*),COUNT(DISTINCT c.it_id) FROM taiwan_cain_2nd.creature_items c LEFT JOIN taiwan_cain_auction_gold.auction_main a ON a.add_info=c.ui_id AND a.owner_id=c.charac_no WHERE c.charac_no>=90000001 AND a.auction_id IS NULL;" 2>/dev/null || true
 echo '===== market files ====='
 ls -l /root/config/market_config.json /root/config/pvf_*catalog.json /root/config/pvf_iteminfo.dat /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat 2>/dev/null || true
 echo '===== web stdout filtered ====='

@@ -29,7 +29,7 @@ const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
 const auctionRejectedRetryEvery = 10
 const auctionRejectedRetryDivisor = 100
 const auctionSpecialBudgetDivisor = 10
-const specialAddInfoBase int32 = 2100000000
+const specialAddInfoBase int32 = 210000000
 const maxInt32 int32 = 2147483647
 
 const auctionSearchGuardSource = auctionSearchGuardBegin + `
