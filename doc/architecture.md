@@ -68,13 +68,13 @@ SchedulerStatus.Mode -> capability/robot SchedulerMode* 常量
 marketapp JobSummary.Status -> capability/marketapp MarketJobStatus* 常量
 marketapp MarketServiceStatus.Status -> capability/marketapp MarketServiceStatus* 常量
 marketapp MarketPolicyStatus.Health -> capability/marketapp marketPolicyHealth* 常量
+marketapp MarketPolicyStatus.Mode -> capability/marketapp marketPolicyMode* 常量
 ```
 
 下一步继续审计：
 
 ```text
 Actor State
-marketapp Status/Policy Mode
 ActionResult.State
 ```
 
@@ -102,6 +102,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 - marketapp JobSummary 状态已经从 restock/collect 字符串收敛到 MarketJobStatus 常量。
 - marketapp MarketServiceStatus 状态已经从服务检测字符串赋值收敛到 MarketServiceStatus 常量。
 - marketapp MarketPolicyStatus 健康状态已经从字符串赋值收敛到 marketPolicyHealth 常量。
+- marketapp MarketPolicyStatus 模式已经从自愈策略字符串赋值收敛到 marketPolicyMode 常量。
 
 ## 本轮验证
 

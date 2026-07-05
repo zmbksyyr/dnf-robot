@@ -69,6 +69,19 @@ func TestMarketPolicyHealthConstants(t *testing.T) {
 	}
 }
 
+func TestMarketPolicyModeConstants(t *testing.T) {
+	tests := map[string]string{
+		marketPolicyModeNormal:   "normal",
+		marketPolicyModeRecover:  "recover",
+		marketPolicyModeDegraded: "degraded",
+	}
+	for got, want := range tests {
+		if got != want {
+			t.Fatalf("market policy mode got %q want %q", got, want)
+		}
+	}
+}
+
 func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	data, err := json.Marshal(DefaultConfig().Restock)
 	if err != nil {
