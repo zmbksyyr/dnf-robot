@@ -13,6 +13,7 @@ var importRules = []struct {
 	dir       string
 	forbidden []string
 }{
+	{dir: "internal/bootstrap", forbidden: []string{"robot/internal/entry", "robot/internal/scheduler", "robot/internal/actor", "robot/internal/protocol"}},
 	{dir: "internal/scheduler", forbidden: []string{"robot/internal/protocol"}},
 	{dir: "internal/foundation", forbidden: []string{"robot/internal/protocol"}},
 	{dir: "internal/foundation", forbidden: []string{"robot/internal/capability"}},
@@ -24,17 +25,57 @@ var importRules = []struct {
 	{dir: "internal/protocol", forbidden: []string{"robot/internal/scheduler", "robot/internal/entry"}},
 }
 
+var knownInternalDirs = map[string]bool{
+	"actor":        true,
+	"architecture": true,
+	"bootstrap":    true,
+	"capability":   true,
+	"entry":        true,
+	"foundation":   true,
+	"protocol":     true,
+	"scheduler":    true,
+	"shared":       true,
+}
+
 var allowedLayerImports = []struct {
 	dir     string
 	allowed []string
 }{
+	{dir: "internal/bootstrap", allowed: []string{"robot/internal/capability", "robot/internal/foundation", "robot/internal/shared"}},
 	{dir: "internal/entry", allowed: []string{"robot/internal/scheduler", "robot/internal/capability", "robot/internal/foundation", "robot/internal/shared"}},
 	{dir: "internal/scheduler", allowed: []string{"robot/internal/scheduler", "robot/internal/actor", "robot/internal/capability", "robot/internal/foundation", "robot/internal/shared"}},
 	{dir: "internal/actor", allowed: []string{"robot/internal/capability", "robot/internal/foundation", "robot/internal/shared"}},
 	{dir: "internal/capability", allowed: []string{"robot/internal/capability", "robot/internal/foundation", "robot/internal/shared"}},
-	{dir: "internal/protocol", allowed: []string{"robot/internal/capability", "robot/internal/foundation", "robot/internal/shared", "robot/internal/protocol"}},
+	{dir: "internal/protocol", allowed: []string{"robot/internal/foundation", "robot/internal/shared", "robot/internal/protocol"}},
 	{dir: "internal/foundation", allowed: []string{"robot/internal/foundation", "robot/internal/shared"}},
 	{dir: "internal/shared", allowed: nil},
+}
+
+var legacyLayerImports = map[string][]string{
+	"internal/protocol/auctionapp/executor.go": {
+		"robot/internal/capability/marketapp",
+	},
+	"internal/protocol/dnfruntime/runtime.go": {
+		"robot/internal/capability/keypair",
+		"robot/internal/capability/robot",
+	},
+}
+
+func TestTopLevelInternalDirectoriesAreKnownLayers(t *testing.T) {
+	root := repoRoot(t)
+	internal := filepath.Join(root, "internal")
+	entries, err := os.ReadDir(internal)
+	if err != nil {
+		t.Fatalf("read internal dir: %v", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if !knownInternalDirs[entry.Name()] {
+			t.Errorf("internal/%s is not assigned to an architecture layer", entry.Name())
+		}
+	}
 }
 
 func TestLayerImportBoundaries(t *testing.T) {
@@ -73,7 +114,7 @@ func TestLayerImportWhitelist(t *testing.T) {
 			if entry.IsDir() || !strings.HasSuffix(path, ".go") {
 				return nil
 			}
-			checkFileImportWhitelist(t, path, rule.allowed)
+			checkFileImportWhitelist(t, root, path, rule.allowed)
 			return nil
 		}); err != nil {
 			t.Fatalf("walk %s: %v", dir, err)
@@ -106,7 +147,7 @@ func checkFileImports(t *testing.T, path string, forbidden []string) {
 	}
 }
 
-func checkFileImportWhitelist(t *testing.T, path string, allowed []string) {
+func checkFileImportWhitelist(t *testing.T, root, path string, allowed []string) {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 	if err != nil {
@@ -120,6 +161,9 @@ func checkFileImportWhitelist(t *testing.T, path string, allowed []string) {
 		if importAllowed(value, allowed) {
 			continue
 		}
+		if legacyImportAllowed(root, path, value) {
+			continue
+		}
 		t.Errorf("%s imports unapproved internal layer %s", path, value)
 	}
 }
@@ -127,6 +171,20 @@ func checkFileImportWhitelist(t *testing.T, path string, allowed []string) {
 func importAllowed(value string, allowed []string) bool {
 	for _, prefix := range allowed {
 		if value == prefix || strings.HasPrefix(value, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func legacyImportAllowed(root, path, value string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	for _, allowed := range legacyLayerImports[rel] {
+		if value == allowed || strings.HasPrefix(value, allowed+"/") {
 			return true
 		}
 	}
