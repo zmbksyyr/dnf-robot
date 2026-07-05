@@ -4,13 +4,13 @@ import "testing"
 
 func TestStateName(t *testing.T) {
 	tests := map[int]string{
-		0:  "stop",
-		1:  "init",
-		2:  "login",
-		3:  "running",
-		4:  "clean",
-		5:  "wrong",
-		99: "unknown",
+		0:  RuntimeStateStop,
+		1:  RuntimeStateInit,
+		2:  RuntimeStateLogin,
+		3:  RuntimeStateRunning,
+		4:  RuntimeStateClean,
+		5:  RuntimeStateWrong,
+		99: RuntimeStateUnknown,
 	}
 	for state, want := range tests {
 		if got := StateName(state); got != want {
@@ -21,13 +21,13 @@ func TestStateName(t *testing.T) {
 
 func TestSummarizeRuntimeStatus(t *testing.T) {
 	summary := SummarizeRuntimeStatusSlice([]RuntimeStatus{
-		{StateName: "running", DisconnectReason: 0},
-		{StateName: "running", DisconnectReason: 0, RobotType: 2, StoreDisplayAck: true},
-		{StateName: "running", DisconnectReason: 1, RobotType: 2, StoreDisplayAck: true},
-		{StateName: "init", DisconnectReason: 0},
-		{StateName: "login", DisconnectReason: 0},
-		{StateName: "login", DisconnectReason: 2},
-		{StateName: "stop", DisconnectReason: 0},
+		{StateName: RuntimeStateRunning, DisconnectReason: 0},
+		{StateName: RuntimeStateRunning, DisconnectReason: 0, RobotType: 2, StoreDisplayAck: true},
+		{StateName: RuntimeStateRunning, DisconnectReason: 1, RobotType: 2, StoreDisplayAck: true},
+		{StateName: RuntimeStateInit, DisconnectReason: 0},
+		{StateName: RuntimeStateLogin, DisconnectReason: 0},
+		{StateName: RuntimeStateLogin, DisconnectReason: 2},
+		{StateName: RuntimeStateStop, DisconnectReason: 0},
 	})
 	if summary.Running != 2 {
 		t.Fatalf("running got %d want 2", summary.Running)
@@ -46,9 +46,9 @@ func TestActiveRuntimeStatusRequiresNoDisconnect(t *testing.T) {
 		st   RuntimeStatus
 		want bool
 	}{
-		{name: "running", st: RuntimeStatus{StateName: "running", DisconnectReason: 0}, want: true},
-		{name: "running disconnected", st: RuntimeStatus{StateName: "running", DisconnectReason: 8}, want: false},
-		{name: "login", st: RuntimeStatus{StateName: "login", DisconnectReason: 0}, want: false},
+		{name: "running", st: RuntimeStatus{StateName: RuntimeStateRunning, DisconnectReason: 0}, want: true},
+		{name: "running disconnected", st: RuntimeStatus{StateName: RuntimeStateRunning, DisconnectReason: 8}, want: false},
+		{name: "login", st: RuntimeStatus{StateName: RuntimeStateLogin, DisconnectReason: 0}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

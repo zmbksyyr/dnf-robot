@@ -281,7 +281,7 @@ func (a *Actor) tick(now time.Time) {
 		return
 	}
 	st, ok := a.runtime.Status(uid)
-	if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
+	if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 		return
 	}
 	if a.stateValue() != StateRunning {
@@ -513,7 +513,7 @@ func (a *Actor) onlineConfirmPending(uid int, now time.Time, rc robotconfig.Runt
 	if !ok {
 		return true
 	}
-	return st.DisconnectReason == 0 && (st.StateName == "init" || st.StateName == "login")
+	return st.DisconnectReason == 0 && (st.StateName == robotcap.RuntimeStateInit || st.StateName == robotcap.RuntimeStateLogin)
 }
 
 func (a *Actor) onlineAttemptTimedOut(uid int, now time.Time, rc robotconfig.RuntimeConfig) bool {
@@ -532,7 +532,7 @@ func (a *Actor) onlineAttemptTimedOut(uid int, now time.Time, rc robotconfig.Run
 	if !ok {
 		return true
 	}
-	return st.StateName != "running" || st.DisconnectReason != 0
+	return st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0
 }
 
 func (a *Actor) lastOnlineTryValue() time.Time {

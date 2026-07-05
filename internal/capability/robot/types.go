@@ -295,27 +295,37 @@ type RuntimeStatus struct {
 	Y                    int
 }
 
+const (
+	RuntimeStateStop    = "stop"
+	RuntimeStateInit    = "init"
+	RuntimeStateLogin   = "login"
+	RuntimeStateRunning = "running"
+	RuntimeStateClean   = "clean"
+	RuntimeStateWrong   = "wrong"
+	RuntimeStateUnknown = "unknown"
+)
+
 func StateName(state int) string {
 	switch state {
 	case 0:
-		return "stop"
+		return RuntimeStateStop
 	case 1:
-		return "init"
+		return RuntimeStateInit
 	case 2:
-		return "login"
+		return RuntimeStateLogin
 	case 3:
-		return "running"
+		return RuntimeStateRunning
 	case 4:
-		return "clean"
+		return RuntimeStateClean
 	case 5:
-		return "wrong"
+		return RuntimeStateWrong
 	default:
-		return "unknown"
+		return RuntimeStateUnknown
 	}
 }
 
 func ActiveRuntimeStatus(st RuntimeStatus) bool {
-	return st.StateName == "running" && st.DisconnectReason == 0
+	return st.StateName == RuntimeStateRunning && st.DisconnectReason == 0
 }
 
 func CopyRuntimeStatusMap(in map[int]RuntimeStatus) map[int]RuntimeStatus {
@@ -353,12 +363,12 @@ func (s *RuntimeStatusSummary) Add(st RuntimeStatus) {
 		return
 	}
 	switch st.StateName {
-	case "running":
+	case RuntimeStateRunning:
 		s.Running++
 		if (st.RobotType == 2 || st.RobotType == 3) && st.StoreDisplayAck {
 			s.Stores++
 		}
-	case "init", "login":
+	case RuntimeStateInit, RuntimeStateLogin:
 		s.Connecting++
 	}
 }

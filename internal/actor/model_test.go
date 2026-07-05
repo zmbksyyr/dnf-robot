@@ -64,9 +64,9 @@ func TestSnapshotDerivedDisplayState(t *testing.T) {
 
 func TestStopPriority(t *testing.T) {
 	status := map[int]robotcap.RuntimeStatus{
-		1: {UID: 1, StateName: "running", DisconnectReason: 0},
-		2: {UID: 2, StateName: "running", DisconnectReason: 0, RobotType: 2, StoreDisplayAck: true},
-		3: {UID: 3, StateName: "login", DisconnectReason: 0},
+		1: {UID: 1, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0},
+		2: {UID: 2, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0, RobotType: 2, StoreDisplayAck: true},
+		3: {UID: 3, StateName: robotcap.RuntimeStateLogin, DisconnectReason: 0},
 	}
 	tests := []struct {
 		uid  int

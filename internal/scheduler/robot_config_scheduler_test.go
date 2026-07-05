@@ -17,9 +17,9 @@ func TestSortActorsForStopByPolicy(t *testing.T) {
 		testRobotActor(4, actormodel.ModeAuto, 0),
 	}
 	status := map[int]robotcap.RuntimeStatus{
-		17000001: {UID: 17000001, StateName: "running", DisconnectReason: 0},
-		17000002: {UID: 17000002, StateName: "running", DisconnectReason: 0, RobotType: 2, StoreDisplayAck: true},
-		17000003: {UID: 17000003, StateName: "login", DisconnectReason: 0},
+		17000001: {UID: 17000001, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0},
+		17000002: {UID: 17000002, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0, RobotType: 2, StoreDisplayAck: true},
+		17000003: {UID: 17000003, StateName: robotcap.RuntimeStateLogin, DisconnectReason: 0},
 	}
 	sortActorsForStopByPolicy(actors, status)
 	got := []int{actors[0].UIDValue(), actors[1].UIDValue(), actors[2].UIDValue(), actors[3].UIDValue()}

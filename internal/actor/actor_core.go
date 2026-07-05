@@ -184,7 +184,7 @@ func StopPriority(uid int, status map[int]robotcap.RuntimeStatus) int {
 		return 0
 	}
 	st, ok := status[uid]
-	if !ok || st.DisconnectReason != 0 || st.StateName == "init" || st.StateName == "login" {
+	if !ok || st.DisconnectReason != 0 || st.StateName == robotcap.RuntimeStateInit || st.StateName == robotcap.RuntimeStateLogin {
 		return 1
 	}
 	if st.RobotType == 2 || st.RobotType == 3 || st.StoreDisplayAck {
@@ -246,7 +246,7 @@ func EvaluateStatus(snapshot Snapshot, now time.Time, cfg StatusConfig, lookup R
 				status.HealthReason = "online_confirm_timeout"
 				return status
 			}
-			if st, ok := lookup(snapshot.UID); !ok || st.StateName != "running" || st.DisconnectReason != 0 {
+			if st, ok := lookup(snapshot.UID); !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 				status.Health = HealthUnhealthy
 				status.HealthReason = "online_confirm_timeout"
 				return status

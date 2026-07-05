@@ -103,7 +103,7 @@ func (r *RobotRuntime) Store(uid int) robotcap.ActionResult {
 func (r *RobotRuntime) AutoMove(uid int) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
-		if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
+		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 			return robotcap.ActionResult{UID: uid, OK: false, State: "offline"}
 		}
 		rc := r.Config()
@@ -123,7 +123,7 @@ func (r *RobotRuntime) AutoMove(uid int) robotcap.ActionResult {
 func (r *RobotRuntime) AutoShout(uid int, world bool, msg string) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
-		if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
+		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 			r.manager.addAutoShoutChannel(world, 0, 1)
 			return robotcap.ActionResult{UID: uid, OK: false, State: "offline"}
 		}
@@ -140,7 +140,7 @@ func (r *RobotRuntime) AutoShout(uid int, world bool, msg string) robotcap.Actio
 func (r *RobotRuntime) AutoStore(uid int, shouldStop func() bool) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
-		if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
+		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 			return robotcap.ActionResult{UID: uid, OK: false, State: "offline"}
 		}
 		if shouldStop != nil && shouldStop() {

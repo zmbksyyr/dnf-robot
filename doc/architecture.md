@@ -63,13 +63,13 @@ uid:{uid}
 
 ```text
 OperationStatus.State -> capability/robot OperationState* 常量
+RuntimeStatus.StateName -> capability/robot RuntimeState* 常量
 marketapp JobSummary.Status -> capability/marketapp MarketJobStatus* 常量
 ```
 
 下一步继续审计：
 
 ```text
-RuntimeStatus.StateName
 Actor State
 SchedulerStatus.Mode
 marketapp Status/Policy/ServiceStatus
@@ -95,6 +95,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 - marketapp 是最大功能岛，后续需要单独做状态和自愈审计。
 - scheduler/repository 的锁资源名已经集中为常量，后续不允许重新散落字符串。
 - OperationStatus 状态已经从 scheduler 字符串收敛到 capability/robot 常量。
+- RuntimeStatus 状态名已经从 actor/scheduler 字符串判断收敛到 capability/robot 常量。
 - marketapp JobSummary 状态已经从 restock/collect 字符串收敛到 MarketJobStatus 常量。
 
 ## 本轮验证

@@ -42,10 +42,10 @@ func TestOperationStateConstants(t *testing.T) {
 }
 
 func TestCopyRuntimeStatusMap(t *testing.T) {
-	src := map[int]RuntimeStatus{1: {UID: 1, StateName: "running"}}
+	src := map[int]RuntimeStatus{1: {UID: 1, StateName: RuntimeStateRunning}}
 	got := CopyRuntimeStatusMap(src)
-	got[1] = RuntimeStatus{UID: 1, StateName: "stop"}
-	if src[1].StateName != "running" {
+	got[1] = RuntimeStatus{UID: 1, StateName: RuntimeStateStop}
+	if src[1].StateName != RuntimeStateRunning {
 		t.Fatalf("source map was mutated")
 	}
 }
