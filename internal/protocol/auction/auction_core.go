@@ -409,8 +409,17 @@ func parseDirectResult(raw []byte, result *MarketDirectAuctionResult) {
 	if !isDirectResultCategory(raw[0]) {
 		return
 	}
-	if raw[1] == 11 && len(raw) >= 31 && result.AuctionID == 0 {
-		result.AuctionID = binary.LittleEndian.Uint64(raw[23:31])
+	if raw[1] == 11 && result.AuctionID == 0 {
+		switch raw[0] {
+		case marketproto.DirectResultCategoryAG:
+			if len(raw) >= 18 {
+				result.AuctionID = binary.LittleEndian.Uint64(raw[10:18])
+			}
+		case marketproto.DirectResultCategoryPG:
+			if len(raw) >= 31 {
+				result.AuctionID = binary.LittleEndian.Uint64(raw[23:31])
+			}
+		}
 	}
 	switch raw[1] {
 	case marketproto.DirectResultRegisterItemAG:

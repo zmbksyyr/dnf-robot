@@ -34,6 +34,30 @@ func TestReadDirectRegisterAuctionID(t *testing.T) {
 	}
 }
 
+func TestReadDirectRegisterAuctionIDForAuctionService(t *testing.T) {
+	raw, err := hex.DecodeString("010b3700000000000000421f000000000000814a5d05000000000000000000814a5d05672d6339cb65000000f40100000000f40100000001041c00000000000000431f000000000000814a5d05814a5d050100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, client := net.Pipe()
+	defer client.Close()
+	go func() {
+		defer server.Close()
+		_, _ = server.Write(raw)
+	}()
+
+	var result MarketDirectAuctionResult
+	if err := readDirectAuctionPackets(client, time.Now().Add(time.Second), &result, marketproto.DirectResultRegisterItemAG); err != nil {
+		t.Fatal(err)
+	}
+	if result.AuctionID != 8002 {
+		t.Fatalf("auction id = %d, want 8002", result.AuctionID)
+	}
+	if result.ResultOK == nil || !*result.ResultOK {
+		t.Fatalf("result ok = %#v", result.ResultOK)
+	}
+}
+
 func TestBuildDirectRegisterPacketPreservesEquipFields(t *testing.T) {
 	packet, err := buildDirectRegisterPacket(MarketDirectRegisterItemRequest{
 		CID:            90000001,
