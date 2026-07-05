@@ -54,6 +54,21 @@ func TestMarketServiceStatusConstants(t *testing.T) {
 	}
 }
 
+func TestMarketPolicyHealthConstants(t *testing.T) {
+	tests := map[string]string{
+		marketPolicyHealthHealthy:    "healthy",
+		marketPolicyHealthRecovering: "recovering",
+		marketPolicyHealthDegraded:   "degraded",
+		marketPolicyHealthBlocked:    "blocked",
+		marketPolicyHealthWarning:    "warning",
+	}
+	for got, want := range tests {
+		if got != want {
+			t.Fatalf("market policy health got %q want %q", got, want)
+		}
+	}
+}
+
 func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	data, err := json.Marshal(DefaultConfig().Restock)
 	if err != nil {
@@ -602,19 +617,19 @@ func TestMarketPolicyDegradesAfterRepeatedActionFailures(t *testing.T) {
 func TestMarketPolicyHealthCompletion(t *testing.T) {
 	status := MarketPolicyStatus{Market: "auction", Mode: marketPolicyModeNormal, DBKinds: 10, Candidates: 20, CandidateSource: "iteminfo.dat"}
 	status.applyHealth()
-	if status.Health != "healthy" || status.Completion != 100 {
+	if status.Health != marketPolicyHealthHealthy || status.Completion != 100 {
 		t.Fatalf("healthy status = %#v", status)
 	}
 
 	status = MarketPolicyStatus{Market: "auction", Mode: marketPolicyModeRecover, DBKinds: 0, Candidates: 20, CandidateSource: "iteminfo.dat"}
 	status.applyHealth()
-	if status.Health != "blocked" || status.Completion != 40 {
+	if status.Health != marketPolicyHealthBlocked || status.Completion != 40 {
 		t.Fatalf("blocked status = %#v", status)
 	}
 
 	status = MarketPolicyStatus{Market: "auction", Mode: marketPolicyModeNormal, DBKinds: 10, Candidates: 20, CandidateSource: "iteminfo.dat", LastActionResults: 20, LastActionFailed: 10}
 	status.applyHealth()
-	if status.Health != "warning" || status.Completion != 70 {
+	if status.Health != marketPolicyHealthWarning || status.Completion != 70 {
 		t.Fatalf("warning status = %#v", status)
 	}
 }

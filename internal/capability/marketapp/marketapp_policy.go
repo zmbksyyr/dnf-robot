@@ -12,6 +12,14 @@ const (
 	marketPolicyModeDegraded = "degraded"
 )
 
+const (
+	marketPolicyHealthHealthy    = "healthy"
+	marketPolicyHealthRecovering = "recovering"
+	marketPolicyHealthDegraded   = "degraded"
+	marketPolicyHealthBlocked    = "blocked"
+	marketPolicyHealthWarning    = "warning"
+)
+
 type marketAutoPolicy struct {
 	MaxActions    int
 	MaxConcurrent int
@@ -304,29 +312,29 @@ func countFailedActionEntries(entries []ActionEntry) int {
 func (s *MarketPolicyStatus) applyHealth() {
 	switch s.Mode {
 	case marketPolicyModeDegraded:
-		s.Health = "degraded"
+		s.Health = marketPolicyHealthDegraded
 		s.Completion = 50
 	case marketPolicyModeRecover:
-		s.Health = "recovering"
+		s.Health = marketPolicyHealthRecovering
 		s.Completion = 80
 	default:
-		s.Health = "healthy"
+		s.Health = marketPolicyHealthHealthy
 		s.Completion = 100
 	}
 	if s.Market == "auction" {
 		if s.CandidateSource != "" && s.Candidates <= 0 {
-			s.Health = "blocked"
+			s.Health = marketPolicyHealthBlocked
 			s.Completion = minPositive(s.Completion, 40)
 		}
 		if s.DBKinds <= 0 && s.Mode != marketPolicyModeNormal {
-			s.Health = "blocked"
+			s.Health = marketPolicyHealthBlocked
 			s.Completion = minPositive(s.Completion, 40)
 		}
 	}
 	if s.LastActionResults >= 20 && s.LastActionFailed*2 >= s.LastActionResults {
 		s.Completion = minPositive(s.Completion, 70)
-		if s.Health == "healthy" {
-			s.Health = "warning"
+		if s.Health == marketPolicyHealthHealthy {
+			s.Health = marketPolicyHealthWarning
 		}
 	}
 	if s.Completion < 0 {
