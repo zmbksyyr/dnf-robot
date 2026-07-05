@@ -60,6 +60,7 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 }
 
 func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
+	defer a.startAutoIfEnabled()
 	sourcePath, err := pvf.ExportPVFItemInfoDAT(a.pvfPath, a.configDir)
 	if err != nil {
 		status := a.itemInfoStatus()
@@ -95,9 +96,6 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""
 	a.stateMu.Unlock()
-	if status.Error == "" {
-		a.startAutoIfEnabled()
-	}
 	return status
 }
 

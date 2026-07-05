@@ -728,7 +728,7 @@ echo RESTORED
         self.market_enable_auto(max_concurrent=8)
         before = self.market_db_counts()
         self.log("market_special_smoke before=%s" % json_text(before, 1200))
-        res = self.safe_call("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 768, "max_concurrent": 8, "continue_on_error": True})
+        res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 768, "max_concurrent": 8, "continue_on_error": True}, "market_special_smoke")
         self.log("market_special_smoke restock result=%s" % json_text(res, 2600))
         self.burst_sample("market_special_after_restock", self.scaled_seconds(30, 90), 10)
         after = self.market_db_counts()
@@ -776,17 +776,17 @@ echo RESTORED
         before = self.market_db_counts()
         self.log("market_cera_drill before=%s" % json_text(before, 1200))
         for idx in range(3):
-            res = self.safe_call("marketRestockOnce", {"market": "cera", "execute": True, "max_actions": 256, "max_concurrent": 8, "continue_on_error": True})
+            res = self.market_call_when_idle("marketRestockOnce", {"market": "cera", "execute": True, "max_actions": 256, "max_concurrent": 8, "continue_on_error": True}, "market_cera_drill:%s" % idx)
             self.log("market_cera_drill restock idx=%s result=%s" % (idx, json_text(res, 2200)))
             self.sample_with_event("market_cera_restock:%s" % idx)
             time.sleep(5)
-        res = self.safe_call("marketCollectOnce", {"market": "cera", "execute": True, "max_actions": 128, "max_concurrent": 8, "continue_on_error": True})
-        self.log("market_cera_drill collect result=%s" % json_text(res, 1800))
         self.burst_sample("market_cera_drill_recover", self.scaled_seconds(20, 60), 10)
         after = self.market_db_counts()
         self.log("market_cera_drill after=%s" % json_text(after, 1200))
         if int(after.get("cera_records") or 0) <= 0:
             self.record_failure("market_cera_empty", "cera restock drill produced no cera records")
+        res = self.market_call_when_idle("marketCollectOnce", {"market": "cera", "execute": True, "max_actions": 128, "max_concurrent": 8, "continue_on_error": True}, "market_cera_collect")
+        self.log("market_cera_drill collect result=%s" % json_text(res, 1800))
         self.log("market_cera_drill done")
 
     def market_startup_iteminfo_race(self):
@@ -821,6 +821,21 @@ echo RESTORED
         res = self.safe_call("marketStart", {})
         self.log("marketStart result=%s" % json_text(res, 1600))
         return res
+
+    def market_call_when_idle(self, command, payload, label, attempts=12, delay_sec=5):
+        last = {}
+        for idx in range(attempts):
+            last = self.safe_call(command, payload)
+            result = (last.get("result") or {}) if isinstance(last, dict) else {}
+            status = safe_text(result.get("status") or "")
+            error = safe_text(last.get("error") if isinstance(last, dict) else "")
+            if status != "busy" and "market job already running" not in error:
+                if idx > 0:
+                    self.log("%s command=%s accepted_after=%s result=%s" % (label, command, idx, json_text(last, 1600)))
+                return last
+            self.log("%s command=%s busy attempt=%s result=%s" % (label, command, idx, json_text(last, 1200)))
+            time.sleep(delay_sec)
+        return last
 
     def market_status_result(self):
         res = self.safe_call("marketStatus", {})
