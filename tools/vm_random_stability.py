@@ -113,6 +113,13 @@ SAMPLE_FIELDS = [
     "market_auction_kinds",
     "market_auction_candidates",
     "market_auction_special_candidates",
+    "market_auction_special_records",
+    "market_auction_high_addinfo",
+    "market_auction_creature_records",
+    "market_creature_instances",
+    "market_creature_orphans",
+    "market_auction_queue_normal",
+    "market_auction_queue_rejected",
     "market_auction_stagnant",
     "market_auction_policy",
     "market_auction_policy_reason",
@@ -445,8 +452,12 @@ class StabilityRun(object):
             "SELECT 'cera_count',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main;"
             "SELECT 'auction_system',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001;"
             "SELECT 'cera_system',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main WHERE owner_id>=90000001;"
+            "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=2100000000;"
+            "SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001;"
+            "SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001;"
             "SHOW COLUMNS FROM taiwan_cain_auction_gold.auction_main;"
             "SHOW COLUMNS FROM taiwan_cain_auction_cera.auction_main;"
+            "SHOW COLUMNS FROM taiwan_cain_2nd.creature_items;"
         )
         return self.shell("mysql -ugame -puu5!^%%jg -e %s" % shell_quote(query), 60, log_output=False)[:12000]
 
@@ -454,12 +465,19 @@ class StabilityRun(object):
         query = (
             "SELECT 'auction',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main;"
             "SELECT 'cera',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main;"
+            "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=2100000000;"
+            "SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001;"
+            "SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001;"
+            "SELECT 'creature_orphans',COUNT(*),COUNT(DISTINCT c.it_id) FROM taiwan_cain_2nd.creature_items c LEFT JOIN taiwan_cain_auction_gold.auction_main a ON a.add_info=c.ui_id AND a.owner_id=c.charac_no WHERE c.charac_no>=90000001 AND a.auction_id IS NULL;"
         )
         out = self.shell("mysql -ugame -puu5!^%%jg -N -e %s" % shell_quote(query), 30, log_output=False)
         counts = {}
         for line in safe_text(out).splitlines():
             parts = line.split()
             if len(parts) >= 3 and parts[0] in ("auction", "cera"):
+                counts[parts[0] + "_records"] = parts[1]
+                counts[parts[0] + "_kinds"] = parts[2]
+            elif len(parts) >= 3 and parts[0] in ("auction_high_addinfo", "auction_creature", "creature_instances", "creature_orphans"):
                 counts[parts[0] + "_records"] = parts[1]
                 counts[parts[0] + "_kinds"] = parts[2]
         return counts
@@ -527,6 +545,7 @@ echo RESTORED
             {"name": "smoke_actions", "at": self.event_at(0.03), "fn": self.smoke_actions},
             {"name": "announcement_check", "at": self.event_at(0.07), "fn": self.announcement_check},
             {"name": "market_fault", "at": self.event_at(0.10), "fn": self.market_fault},
+            {"name": "market_special_smoke", "at": self.event_at(0.13), "fn": self.market_special_smoke},
             {"name": "market_startup_iteminfo_race", "at": self.event_at(0.16), "fn": self.market_startup_iteminfo_race},
             {"name": "pvf_file_fault", "at": self.event_at(0.20), "fn": self.pvf_file_fault},
             {"name": "market_button_flow", "at": self.event_at(0.27), "fn": self.market_button_flow},
@@ -642,6 +661,30 @@ echo RESTORED
         self.wait_market_services("market_fault_final_recover", 180, 10)
         self.burst_sample("market_fault_final", self.scaled_seconds(30, 90), 10)
         self.log("market_fault done")
+
+    def market_special_smoke(self):
+        self.log("market_special_smoke begin")
+        self.market_enable_auto(max_concurrent=8)
+        before = self.market_db_counts()
+        self.log("market_special_smoke before=%s" % json_text(before, 1200))
+        res = self.safe_call("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 768, "max_concurrent": 8, "continue_on_error": True})
+        self.log("market_special_smoke restock result=%s" % json_text(res, 2600))
+        self.burst_sample("market_special_after_restock", self.scaled_seconds(30, 90), 10)
+        after = self.market_db_counts()
+        self.log("market_special_smoke after=%s" % json_text(after, 1200))
+        special = int(after.get("auction_high_addinfo_records") or 0) + int(after.get("auction_creature_records") or 0)
+        if int(after.get("auction_records") or 0) > 0 and special <= 0:
+            self.record_failure("market_special_no_records", "auction has records but no high-addinfo or creature special records after special smoke")
+        res = self.safe_call("marketClearSystemStock", {})
+        self.log("market_special_smoke clear result=%s" % json_text(res, 2200))
+        time.sleep(5)
+        cleared = self.market_db_counts()
+        self.log("market_special_smoke cleared=%s" % json_text(cleared, 1200))
+        if int(cleared.get("creature_instances_records") or 0) > 0:
+            self.record_failure("market_creature_instances_not_cleared", "system creature instances remained after marketClearSystemStock")
+        self.market_enable_auto(max_concurrent=8)
+        self.sample_with_event("market_special_smoke_done")
+        self.log("market_special_smoke done")
 
     def market_startup_iteminfo_race(self):
         self.log("market_startup_iteminfo_race begin")
@@ -887,7 +930,7 @@ echo RESTORED
         self.log("db_stock_external_clear begin")
         dump = self.backup_market_database("before_db_stock_external_clear")
         self.sample_with_event("db_stock_clear_before")
-        self.shell("mysql -ugame -puu5!^%jg -e \"DELETE FROM taiwan_cain_auction_gold.auction_main WHERE owner_id >= 90000001; DELETE FROM taiwan_cain_auction_cera.auction_main WHERE owner_id >= 90000001;\"", 60)
+        self.shell("mysql -ugame -puu5!^%jg -e \"DELETE FROM taiwan_cain_auction_gold.auction_main WHERE owner_id >= 90000001; DELETE FROM taiwan_cain_auction_cera.auction_main WHERE owner_id >= 90000001; DELETE FROM taiwan_cain_2nd.creature_items WHERE charac_no >= 90000001;\"", 60)
         self.sample_with_event("db_stock_clear_after")
         self.market_enable_auto(max_concurrent=8)
         self.burst_sample("db_stock_clear_recover", self.scaled_seconds(60, 180), 10)
@@ -1119,10 +1162,13 @@ OUT=%s
 {
   echo 'DELETE FROM taiwan_cain_auction_gold.auction_main WHERE owner_id >= 90000001;';
   echo 'DELETE FROM taiwan_cain_auction_cera.auction_main WHERE owner_id >= 90000001;';
+  echo 'DELETE FROM taiwan_cain_2nd.creature_items WHERE charac_no >= 90000001;';
   echo 'USE taiwan_cain_auction_gold;';
   mysqldump -ugame -puu5!^%%jg --skip-triggers --no-create-info --replace --where='owner_id >= 90000001' taiwan_cain_auction_gold auction_main 2>/dev/null || true;
   echo 'USE taiwan_cain_auction_cera;';
   mysqldump -ugame -puu5!^%%jg --skip-triggers --no-create-info --replace --where='owner_id >= 90000001' taiwan_cain_auction_cera auction_main 2>/dev/null || true;
+  echo 'USE taiwan_cain_2nd;';
+  mysqldump -ugame -puu5!^%%jg --skip-triggers --no-create-info --replace --where='charac_no >= 90000001' taiwan_cain_2nd creature_items 2>/dev/null || true;
 } > "$OUT"
 cp -f "$OUT" %s
 ls -l "$OUT" %s
@@ -1230,7 +1276,7 @@ echo "KEYS_RESTORED"
         row = self.sample_row()
         self.writerow(row)
         self.log(
-            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s special=%s health=%s/%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s health=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
+            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s special=%s specialdb=%s high=%s creature=%s inst=%s orphan=%s q=%s/%s health=%s/%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s health=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
             % (
                 row.get("target"),
                 row.get("actors"),
@@ -1243,6 +1289,13 @@ echo "KEYS_RESTORED"
                 row.get("market_auction_kinds"),
                 row.get("market_auction_candidates"),
                 row.get("market_auction_special_candidates"),
+                row.get("market_auction_special_records"),
+                row.get("market_auction_high_addinfo"),
+                row.get("market_auction_creature_records"),
+                row.get("market_creature_instances"),
+                row.get("market_creature_orphans"),
+                row.get("market_auction_queue_normal"),
+                row.get("market_auction_queue_rejected"),
                 row.get("market_auction_health"),
                 row.get("market_auction_completion"),
                 row.get("market_auction_policy"),
@@ -1427,6 +1480,15 @@ echo "KEYS_RESTORED"
             if not row.get("api_error"):
                 row["api_error"] = "databaseStatus:%r" % (exc,)
 
+    def sum_ints(self, *values):
+        total = 0
+        for value in values:
+            try:
+                total += int(value or 0)
+            except Exception:
+                pass
+        return total
+
     def fill_market_row(self, row):
         try:
             market = (self.api.call("marketStatus").get("result") or {})
@@ -1445,6 +1507,11 @@ echo "KEYS_RESTORED"
             counts = self.market_db_counts()
             row["market_auction_records"] = counts.get("auction_records", "")
             row["market_auction_kinds"] = counts.get("auction_kinds", "")
+            row["market_auction_high_addinfo"] = counts.get("auction_high_addinfo_records", "")
+            row["market_auction_creature_records"] = counts.get("auction_creature_records", "")
+            row["market_auction_special_records"] = self.sum_ints(row.get("market_auction_high_addinfo"), row.get("market_auction_creature_records"))
+            row["market_creature_instances"] = counts.get("creature_instances_records", "")
+            row["market_creature_orphans"] = counts.get("creature_orphans_records", "")
             row["market_cera_records"] = counts.get("cera_records", "")
             row["market_cera_kinds"] = counts.get("cera_kinds", "")
             policy = market.get("policy") or {}
@@ -1452,6 +1519,8 @@ echo "KEYS_RESTORED"
             cera_policy = policy.get("cera") or {}
             row["market_auction_candidates"] = auction_policy.get("candidates", "")
             row["market_auction_special_candidates"] = auction_policy.get("special_candidates", "")
+            row["market_auction_queue_normal"] = auction_policy.get("queue_normal", "")
+            row["market_auction_queue_rejected"] = auction_policy.get("queue_rejected", "")
             row["market_auction_stagnant"] = auction_policy.get("stagnant_rounds", "")
             row["market_auction_policy"] = auction_policy.get("mode", "")
             row["market_auction_policy_reason"] = (auction_policy.get("reason") or "")[:160]
@@ -1541,10 +1610,12 @@ for p in $(pgrep -f '^/root/robot$|df_game_r|df_auction_r|df_point_r' 2>/dev/nul
 echo '===== robot log filtered ====='
 tail -n %s /root/config/log_robot 2>/dev/null | grep -a -E '%s' | tail -n 200 || true
 echo '===== market log filtered ====='
-tail -n %s /root/config/market_log.jsonl 2>/dev/null | grep -a -E 'market_service|job_end|auto_run|cannot assign requested address|too many open files|connection reset' | tail -n 160 || true
+tail -n %s /root/config/market_log.jsonl 2>/dev/null | grep -a -E 'market_service|job_end|auto_run|special|creature|iteminfo|cannot assign requested address|too many open files|connection reset' | tail -n 200 || true
 echo '===== market service logs ====='
 tail -n 80 /root/config/market_auction_service.log 2>/dev/null || true
 tail -n 80 /root/config/market_point_service.log 2>/dev/null || true
+echo '===== market special db ====='
+mysql -ugame -puu5!^%%jg -e "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=2100000000; SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001; SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001; SELECT 'creature_orphans',COUNT(*),COUNT(DISTINCT c.it_id) FROM taiwan_cain_2nd.creature_items c LEFT JOIN taiwan_cain_auction_gold.auction_main a ON a.add_info=c.ui_id AND a.owner_id=c.charac_no WHERE c.charac_no>=90000001 AND a.auction_id IS NULL;" 2>/dev/null || true
 echo '===== market files ====='
 ls -l /root/config/market_config.json /root/config/pvf_*catalog.json /root/config/pvf_iteminfo.dat /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat 2>/dev/null || true
 echo '===== web stdout filtered ====='
