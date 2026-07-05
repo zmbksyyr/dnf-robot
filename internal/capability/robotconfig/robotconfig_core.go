@@ -11,6 +11,7 @@ type RuntimeConfig struct {
 	Jobs                          []int  `json:"jobs"`
 	GrowTypes                     []int  `json:"grow_types"`
 	RobotUIDStart                 int    `json:"robot_uid_start"`
+	RobotUIDEnd                   int    `json:"robot_uid_end"`
 	NameASCIIFallback             bool   `json:"name_ascii_fallback"`
 	NameASCIIPrefix               string `json:"name_ascii_prefix"`
 	SpawnFixed                    bool   `json:"spawn_fixed"`
@@ -110,6 +111,7 @@ func Default() RuntimeConfig {
 	return RuntimeConfig{
 		LevelMin: 50, LevelMax: 85, Jobs: []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, GrowTypes: []int{0, 1, 2},
 		RobotUIDStart:     17000000,
+		RobotUIDEnd:       17999999,
 		NameASCIIFallback: false, NameASCIIPrefix: "twbot",
 		SpawnFixed: false, SpawnVillage: 3, SpawnFallbackVillage: 1, SpawnArea: 0, SpawnXMin: 240, SpawnXMax: 1800, SpawnYMin: 180, SpawnYMax: 460,
 		MoveSpeedMin: 180, MoveSpeedMax: 260, MoveType: 5, MoveSteps: 4, MoveStepDelayMS: 1200,
@@ -179,6 +181,9 @@ func Normalize(rc *RuntimeConfig) {
 	}
 	if rc.RobotUIDStart < 100000 {
 		rc.RobotUIDStart = 17000000
+	}
+	if rc.RobotUIDEnd < rc.RobotUIDStart {
+		rc.RobotUIDEnd = rc.RobotUIDStart + 999999
 	}
 	if rc.EquipRarityMax < rc.EquipRarityMin {
 		rc.EquipRarityMin, rc.EquipRarityMax = rc.EquipRarityMax, rc.EquipRarityMin

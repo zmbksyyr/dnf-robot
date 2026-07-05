@@ -11,6 +11,7 @@ import (
 func TestCreatorCapsCountAndCreatesRobots(t *testing.T) {
 	env := &testCreateEnv{rc: robotconfig.RuntimeConfig{
 		RobotUIDStart:        17000000,
+		RobotUIDEnd:          17999999,
 		LevelMin:             10,
 		LevelMax:             10,
 		Jobs:                 []int{1},
@@ -61,9 +62,12 @@ type testCreateEnv struct {
 	created int
 }
 
-func (e *testCreateEnv) AllocateRobotIDs(count, uidStart int) (RobotIDAllocation, error) {
+func (e *testCreateEnv) AllocateRobotIDs(count, uidStart, uidEnd int) (RobotIDAllocation, error) {
 	uids := make([]int, count)
 	for i := range uids {
+		if uidStart+i > uidEnd {
+			return RobotIDAllocation{}, errors.New("uid segment exhausted")
+		}
 		uids[i] = uidStart + i
 	}
 	return RobotIDAllocation{UIDs: uids, FirstCID: 900000}, nil

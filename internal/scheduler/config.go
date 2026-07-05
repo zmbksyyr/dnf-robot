@@ -125,6 +125,7 @@ func (m *RobotManager) loadRobotConfigINI(rc *robotconfig.RuntimeConfig) {
 	rc.Jobs = iniIntList(ini, "create", "jobs", rc.Jobs)
 	rc.GrowTypes = iniIntList(ini, "create", "grow_types", rc.GrowTypes)
 	rc.RobotUIDStart = ini.GetInt("create", "robot_uid_start", rc.RobotUIDStart)
+	rc.RobotUIDEnd = ini.GetInt("create", "robot_uid_end", rc.RobotUIDEnd)
 	rc.NameASCIIFallback = iniBool(ini, "create", "name_ascii_fallback", rc.NameASCIIFallback)
 	rc.NameASCIIPrefix = ini.GetString("create", "name_ascii_prefix", rc.NameASCIIPrefix)
 	rc.DefaultMoney = ini.GetInt("create", "default_money", rc.DefaultMoney)

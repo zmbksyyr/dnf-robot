@@ -16,8 +16,8 @@ type lifecycleCreateEnv struct {
 	manager *RobotManager
 }
 
-func (e lifecycleCreateEnv) AllocateRobotIDs(count, uidStart int) (lifecyclecap.RobotIDAllocation, error) {
-	return e.manager.schemaRepo().AllocateRobotIDs(count, uidStart)
+func (e lifecycleCreateEnv) AllocateRobotIDs(count, uidStart, uidEnd int) (lifecyclecap.RobotIDAllocation, error) {
+	return e.manager.schemaRepo().AllocateRobotIDs(count, uidStart, uidEnd)
 }
 
 func (e lifecycleCreateEnv) AvatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error {

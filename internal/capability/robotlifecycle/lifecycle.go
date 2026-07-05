@@ -12,7 +12,7 @@ type RobotIDAllocation struct {
 }
 
 type CreateEnv interface {
-	AllocateRobotIDs(count, uidStart int) (RobotIDAllocation, error)
+	AllocateRobotIDs(count, uidStart, uidEnd int) (RobotIDAllocation, error)
 	AvatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error
 	ApplyConfiguredLocation(info *robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem)
 	Config() robotconfig.RuntimeConfig
@@ -53,7 +53,7 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	if err := env.EnsureSchema(); err != nil {
 		return nil, err
 	}
-	allocation, err := env.AllocateRobotIDs(req.Count, rc.RobotUIDStart)
+	allocation, err := env.AllocateRobotIDs(req.Count, rc.RobotUIDStart, rc.RobotUIDEnd)
 	if err != nil {
 		return nil, err
 	}

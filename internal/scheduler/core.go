@@ -151,9 +151,9 @@ type SchemaRepository interface {
 	TableExists(table string) (bool, error)
 	DeleteByIntIfTableExists(table, col string, id int) error
 	NextInt(query string, fallback int) (int, error)
-	AvailableRobotUIDs(count, start, maxExclusive int) ([]int, error)
+	AvailableRobotUIDs(count, start, end int) ([]int, error)
 	AccountAutoIncrement() (int, error)
-	AllocateRobotIDs(count, uidStart int) (lifecyclecap.RobotIDAllocation, error)
+	AllocateRobotIDs(count, uidStart, uidEnd int) (lifecyclecap.RobotIDAllocation, error)
 	CharacterNameExists(dbName string) (bool, error)
 	EnsureAccount(uid int, innerIP string) error
 	ClearTradePunish(uid int) (int64, error)
@@ -278,7 +278,7 @@ func (missingSchemaRepository) AccountAutoIncrement() (int, error) {
 	return 0, errors.New("scheduler schema repository is not configured")
 }
 
-func (missingSchemaRepository) AllocateRobotIDs(int, int) (lifecyclecap.RobotIDAllocation, error) {
+func (missingSchemaRepository) AllocateRobotIDs(int, int, int) (lifecyclecap.RobotIDAllocation, error) {
 	return lifecyclecap.RobotIDAllocation{}, errors.New("scheduler schema repository is not configured")
 }
 

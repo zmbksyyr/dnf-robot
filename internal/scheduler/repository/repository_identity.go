@@ -8,12 +8,15 @@ import (
 	"strings"
 )
 
-func (r *SQLRepository) AvailableRobotUIDs(count, start, maxExclusive int) ([]int, error) {
+func (r *SQLRepository) AvailableRobotUIDs(count, start, end int) ([]int, error) {
 	if count <= 0 {
 		return nil, nil
 	}
 	if start <= 0 {
 		start = 17000000
+	}
+	if end < start {
+		end = start + 999999
 	}
 	used := make(map[int]bool)
 	uidSources := []struct {
@@ -45,13 +48,13 @@ func (r *SQLRepository) AvailableRobotUIDs(count, start, maxExclusive int) ([]in
 		}
 	}
 	out := make([]int, 0, count)
-	for uid := start; len(out) < count; uid++ {
-		if maxExclusive > 0 && uid >= maxExclusive {
-			return nil, fmt.Errorf("not enough free robot uid below d_taiwan.accounts AUTO_INCREMENT=%d; robot_uid_start=%d requested=%d free=%d", maxExclusive, start, count, len(out))
-		}
+	for uid := start; len(out) < count && uid <= end; uid++ {
 		if !used[uid] {
 			out = append(out, uid)
 		}
+	}
+	if len(out) < count {
+		return nil, fmt.Errorf("not enough free robot uid in robot segment %d-%d; requested=%d free=%d", start, end, count, len(out))
 	}
 	return out, nil
 }
@@ -68,12 +71,8 @@ func (r *SQLRepository) AccountAutoIncrement() (int, error) {
 	return int(v.Int64), nil
 }
 
-func (r *SQLRepository) AllocateRobotIDs(count, uidStart int) (lifecyclecap.RobotIDAllocation, error) {
-	accountAutoInc, err := r.AccountAutoIncrement()
-	if err != nil {
-		return lifecyclecap.RobotIDAllocation{}, err
-	}
-	uids, err := r.AvailableRobotUIDs(count, uidStart, accountAutoInc)
+func (r *SQLRepository) AllocateRobotIDs(count, uidStart, uidEnd int) (lifecyclecap.RobotIDAllocation, error) {
+	uids, err := r.AvailableRobotUIDs(count, uidStart, uidEnd)
 	if err != nil {
 		return lifecyclecap.RobotIDAllocation{}, err
 	}
