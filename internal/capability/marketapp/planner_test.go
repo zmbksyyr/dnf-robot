@@ -795,6 +795,19 @@ func TestSpecialAuctionKindClassifiesReferenceTypes(t *testing.T) {
 	}
 }
 
+func TestMarketCandidateKeepsSpecialTypes(t *testing.T) {
+	cases := []catalogItem{
+		{ItemID: 2001, Kind: "equipment", ItemType: 2, Slot: "title name"},
+		{ItemID: 3001, Kind: "equipment", ItemType: 30, Slot: "creature"},
+		{ItemID: 4001, Kind: "equipment", Slot: "artifact red"},
+	}
+	for _, item := range cases {
+		if !marketCandidate(item) {
+			t.Fatalf("special item filtered from market candidates: %#v", item)
+		}
+	}
+}
+
 func TestCatalogAuctionCandidateCountsSeparatesSpecialTypes(t *testing.T) {
 	catalog := map[uint32]catalogItem{
 		1001: {ItemID: 1001, Kind: "equipment", ItemType: 1, Slot: "weapon", Attach: "trade"},

@@ -1751,7 +1751,7 @@ func (a *App) randomStackSize(item catalogItem) int {
 }
 
 func marketCandidate(item catalogItem) bool {
-	return item.ItemID != 0 && item.Kind != "blocked" && !isRiskyPVFItem(item)
+	return item.ItemID != 0 && item.Kind != "blocked" && (specialAuctionKind(item) != "" || !isRiskyPVFItem(item))
 }
 
 func randRange(rng *rand.Rand, min, max int) int {
