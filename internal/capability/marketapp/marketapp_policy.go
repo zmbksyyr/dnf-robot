@@ -67,6 +67,20 @@ func (a *App) marketAutoPolicy(market string, cfg AutoCfg) marketAutoPolicy {
 			status.EffectiveMaxActions = policy.MaxActions
 			status.EffectiveConcurrency = policy.MaxConcurrent
 		}
+		if candidates.Error == "" && status.StagnantRounds == 2 {
+			a.resetAuctionQueues()
+			a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "stagnant_growth_recovery"})
+			status.Reason = "auction kinds stopped growing below candidate count; auction queues rebuilt"
+			status.Mode = marketPolicyModeRecover
+		}
+		if candidates.Error == "" && status.StagnantRounds >= 3 {
+			status.Mode = marketPolicyModeDegraded
+			status.Reason = "auction kinds still not growing below candidate count; send pressure reduced"
+			policy.MaxActions = minPositive(policy.MaxActions, 2000)
+			policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
+			status.EffectiveMaxActions = policy.MaxActions
+			status.EffectiveConcurrency = policy.MaxConcurrent
+		}
 		if status.ZeroKindRounds == 2 {
 			a.resetAuctionQueues()
 			a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_kind_recovery"})
@@ -93,8 +107,13 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 	prev := a.policy[market]
 	zeroRounds := 0
 	zeroCandidates := 0
+	stagnantRounds := 0
+	kindDelta := 0
 	mode := marketPolicyModeNormal
 	reason := ""
+	if !prev.UpdatedAt.IsZero() {
+		kindDelta = kinds - prev.DBKinds
+	}
 	if kinds <= 0 {
 		zeroRounds = prev.ZeroKindRounds + 1
 		reason = fmt.Sprintf("%s database has zero system item kinds", market)
@@ -111,16 +130,29 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 			mode = marketPolicyModeRecover
 		}
 	}
+	if market == "auction" && candidates.Error == "" && candidates.Count > kinds && kinds > 0 && !prev.UpdatedAt.IsZero() {
+		if kinds <= prev.DBKinds {
+			stagnantRounds = prev.StagnantRounds + 1
+			if reason == "" {
+				reason = "auction item kinds are not growing below candidate count"
+			}
+			if stagnantRounds > 1 {
+				mode = marketPolicyModeRecover
+			}
+		}
+	}
 
 	status := MarketPolicyStatus{
 		Market:               market,
 		Mode:                 mode,
 		Reason:               reason,
 		DBKinds:              kinds,
+		KindDelta:            kindDelta,
 		Candidates:           candidates.Count,
 		CandidateSource:      candidates.Source,
 		ZeroKindRounds:       zeroRounds,
 		ZeroCandidateRounds:  zeroCandidates,
+		StagnantRounds:       stagnantRounds,
 		EffectiveMaxActions:  policy.MaxActions,
 		EffectiveConcurrency: policy.MaxConcurrent,
 		UpdatedAt:            time.Now(),

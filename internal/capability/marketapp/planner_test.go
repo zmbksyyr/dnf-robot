@@ -369,6 +369,62 @@ func TestMarketPolicyTracksZeroAuctionCandidates(t *testing.T) {
 	}
 }
 
+func TestMarketPolicyDetectsStagnantAuctionGrowth(t *testing.T) {
+	dir := t.TempDir()
+	app := testApp()
+	app.configDir = dir
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	stock := map[uint32]int{10075: 1}
+	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
+		app.cfg.AuctionDB: stock,
+	}}
+	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{})
+	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
+		{"id": 10075, "price": 100, "attach": "trade", "slot": "weapon"},
+		{"id": 10076, "price": 100, "attach": "trade", "slot": "weapon"},
+		{"id": 10077, "price": 100, "attach": "trade", "slot": "weapon"},
+	})
+	mustWriteText(t, filepath.Join(dir, "iteminfo.dat"), ""+
+		"10075 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n"+
+		"10076 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n"+
+		"10077 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n")
+	app.auctionQueue = []uint32{10076}
+	app.auctionQueueSource = "pvf_iteminfo"
+
+	_ = app.marketAutoPolicy("auction", app.cfg.Auto)
+	second := app.marketAutoPolicy("auction", app.cfg.Auto)
+	if second.MaxActions != app.cfg.Auto.MaxActions || second.MaxConcurrent != app.cfg.Auto.MaxConcurrent {
+		t.Fatalf("second stagnant round should observe only: %#v", second)
+	}
+	if len(app.auctionQueue) == 0 || app.auctionQueueSource == "" {
+		t.Fatalf("first comparable stagnant round should not reset queue: queue=%v source=%q", app.auctionQueue, app.auctionQueueSource)
+	}
+
+	third := app.marketAutoPolicy("auction", app.cfg.Auto)
+	if third.MaxActions != app.cfg.Auto.MaxActions || third.MaxConcurrent != app.cfg.Auto.MaxConcurrent {
+		t.Fatalf("third stagnant round should rebuild only: %#v", third)
+	}
+	if len(app.auctionQueue) != 0 || app.auctionQueueSource != "" {
+		t.Fatalf("stagnant recovery did not reset queue: queue=%v source=%q", app.auctionQueue, app.auctionQueueSource)
+	}
+
+	fourth := app.marketAutoPolicy("auction", app.cfg.Auto)
+	if fourth.MaxActions != 2000 || fourth.MaxConcurrent != 4 {
+		t.Fatalf("fourth stagnant pressure = %#v, want 2000/4", fourth)
+	}
+	status := app.policy["auction"]
+	if status.StagnantRounds != 3 || status.Candidates != 3 || status.DBKinds != 1 {
+		t.Fatalf("stagnant status = %#v", status)
+	}
+
+	stock[10076] = 1
+	_ = app.marketAutoPolicy("auction", app.cfg.Auto)
+	status = app.policy["auction"]
+	if status.StagnantRounds != 0 || status.KindDelta <= 0 {
+		t.Fatalf("growth did not reset stagnant status: %#v", status)
+	}
+}
+
 func TestMarketPolicyBlockedStateRecordsReason(t *testing.T) {
 	app := testApp()
 	app.configDir = t.TempDir()
