@@ -103,7 +103,7 @@ func (m *RobotManager) lockHub() *lockhub.Hub {
 }
 
 func (m *RobotManager) withCache(reason string, fn func()) {
-	_ = m.lockHub().WithResource("scheduler", "cache", reason, func() error {
+	_ = m.lockHub().WithResource(lockScopeConfig, lockResourceRobotConfig, reason, func() error {
 		fn()
 		return nil
 	})

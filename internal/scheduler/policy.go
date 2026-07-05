@@ -155,7 +155,7 @@ const runtimeStatusCacheTTL = 2000 * time.Millisecond
 func (m *RobotManager) runtimeStatusMap() map[int]robotcap.RuntimeStatus {
 	now := time.Now()
 	var out map[int]robotcap.RuntimeStatus
-	_ = m.lockHub().WithResource("scheduler", "runtime-status", "runtime_status_cache_read", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerRuntimeStatus, "runtime_status_cache_read", func() error {
 		if !m.runtimeStatusCacheAt.IsZero() && now.Sub(m.runtimeStatusCacheAt) <= runtimeStatusCacheTTL && m.runtimeStatusCache != nil {
 			out = robotcap.CopyRuntimeStatusMap(m.runtimeStatusCache)
 		}
@@ -169,7 +169,7 @@ func (m *RobotManager) runtimeStatusMap() map[int]robotcap.RuntimeStatus {
 	for _, st := range m.doll.RuntimeStatus() {
 		status[st.UID] = st
 	}
-	_ = m.lockHub().WithResource("scheduler", "runtime-status", "runtime_status_cache_write", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerRuntimeStatus, "runtime_status_cache_write", func() error {
 		m.runtimeStatusCache = robotcap.CopyRuntimeStatusMap(status)
 		m.runtimeStatusCacheAt = now
 		return nil

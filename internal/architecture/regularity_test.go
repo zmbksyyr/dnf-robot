@@ -186,6 +186,42 @@ func TestSchedulerDoesNotExposeActionFacadeMethods(t *testing.T) {
 	}
 }
 
+func TestSchedulerLockResourcesUseNamedConstants(t *testing.T) {
+	root := repoRoot(t)
+	targets := []string{
+		filepath.Join(root, "internal", "scheduler"),
+		filepath.Join(root, "internal", "scheduler", "repository"),
+	}
+	for _, dir := range targets {
+		err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			text := string(data)
+			for _, token := range []string{
+				`WithResource("scheduler"`,
+				`WithResource("repository"`,
+				`WithResource("config"`,
+			} {
+				if strings.Contains(text, token) {
+					t.Errorf("%s uses literal lock resource scope %s; use named lock resource constants", path, token)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+}
+
 func receiverIsRobotManager(expr ast.Expr) bool {
 	switch x := expr.(type) {
 	case *ast.StarExpr:

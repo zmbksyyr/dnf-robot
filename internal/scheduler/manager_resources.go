@@ -52,7 +52,7 @@ func (m *RobotManager) randShuffle(n int, swap func(i, j int)) {
 }
 
 func (m *RobotManager) withRand(fn func(*rand.Rand)) error {
-	return m.lockHub().WithResource("scheduler", "random", "random_source", func() error {
+	return m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerRandom, "random_source", func() error {
 		fn(m.rand)
 		return nil
 	})
@@ -88,7 +88,7 @@ func (m *RobotManager) markCleanupPending(uids []int) {
 		return
 	}
 	now := time.Now()
-	_ = m.lockHub().WithResource("scheduler", "cleanup-pending", "mark_cleanup_pending", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerCleanup, "mark_cleanup_pending", func() error {
 		if m.cleanupPendingUIDs == nil {
 			m.cleanupPendingUIDs = make(map[int]time.Time)
 		}
@@ -105,7 +105,7 @@ func (m *RobotManager) clearCleanupPending(uids []int) {
 	if len(uids) == 0 {
 		return
 	}
-	_ = m.lockHub().WithResource("scheduler", "cleanup-pending", "clear_cleanup_pending", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerCleanup, "clear_cleanup_pending", func() error {
 		for _, uid := range uids {
 			delete(m.cleanupPendingUIDs, uid)
 		}
@@ -115,7 +115,7 @@ func (m *RobotManager) clearCleanupPending(uids []int) {
 
 func (m *RobotManager) cleanupPendingSet() map[int]bool {
 	out := map[int]bool{}
-	_ = m.lockHub().WithResource("scheduler", "cleanup-pending", "cleanup_pending_set", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerCleanup, "cleanup_pending_set", func() error {
 		out = make(map[int]bool, len(m.cleanupPendingUIDs))
 		for uid := range m.cleanupPendingUIDs {
 			out[uid] = true

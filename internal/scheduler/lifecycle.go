@@ -166,7 +166,7 @@ func (m *RobotManager) CleanupRobots(req robotcap.CleanupRequest) (robotcap.Clea
 	if req.Force {
 		var result robotcap.CleanupResult
 		var err error
-		_ = m.lockHub().WithResource("scheduler", "lifecycle", "cleanup_robots", func() error {
+		_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerOperation, "cleanup_robots", func() error {
 			result, err = m.cleanupRobots(req)
 			return nil
 		})
@@ -208,7 +208,7 @@ func (m *RobotManager) BeginOperationGuarded(typ, scope string, structural bool)
 	now := time.Now()
 	var op robotcap.OperationStatus
 	var err error
-	_ = m.lockHub().WithResource("scheduler", "operations", "begin_operation", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerOperation, "begin_operation", func() error {
 		typ = strings.TrimSpace(typ)
 		scope = strings.TrimSpace(scope)
 		if structural {
@@ -254,7 +254,7 @@ func (m *RobotManager) beginTrackedStructuralOperation(typ, scope string) (robot
 func (m *RobotManager) CompleteOperation(id int64, summary string, err error) robotcap.OperationStatus {
 	now := time.Now()
 	var op robotcap.OperationStatus
-	_ = m.lockHub().WithResource("scheduler", "operations", "complete_operation", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerOperation, "complete_operation", func() error {
 		for i := range m.operations {
 			if m.operations[i].ID != id {
 				continue
@@ -283,7 +283,7 @@ func (m *RobotManager) CompleteOperation(id int64, summary string, err error) ro
 
 func (m *RobotManager) RecentOperation() robotcap.OperationStatus {
 	var op robotcap.OperationStatus
-	_ = m.lockHub().WithResource("scheduler", "operations", "recent_operation", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerOperation, "recent_operation", func() error {
 		if len(m.operations) > 0 {
 			op = m.operations[0]
 		}
@@ -294,7 +294,7 @@ func (m *RobotManager) RecentOperation() robotcap.OperationStatus {
 
 func (m *RobotManager) OperationStatus() []robotcap.OperationStatus {
 	var out []robotcap.OperationStatus
-	_ = m.lockHub().WithResource("scheduler", "operations", "operation_status", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerOperation, "operation_status", func() error {
 		out = make([]robotcap.OperationStatus, len(m.operations))
 		copy(out, m.operations)
 		return nil

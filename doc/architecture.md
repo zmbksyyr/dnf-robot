@@ -2,9 +2,9 @@
 
 ## 当前阶段
 
-- 阶段：一，立规则和依赖审计。
+- 阶段：二，统一状态表和锁机制。
 - 状态：进行中。
-- 本轮目标：把现有层级纳入架构测试，防止新增反向依赖和未知顶层包。
+- 本轮目标：把现有层级纳入架构测试，防止新增反向依赖和未知顶层包；开始收敛锁资源命名。
 
 ## 层级归属
 
@@ -30,6 +30,32 @@ internal/shared        跨层 DTO
 - `foundation` 不依赖业务层。
 - `protocol` 不依赖 `scheduler/entry`，并且默认不允许依赖 `capability`。
 - 现有 protocol 反向依赖 capability 必须进入显式 legacy 白名单，不能继续扩散。
+- scheduler 和 scheduler/repository 不能直接写锁资源 scope 字面量，必须使用命名常量。
+
+## 锁资源命名
+
+当前已收敛：
+
+```text
+config:robot
+scheduler:operation
+scheduler:runtime-status
+scheduler:random-source
+scheduler:cleanup-pending
+scheduler:store-points
+scheduler:store-slots
+repository:schema-cache
+```
+
+下一步继续审计：
+
+```text
+market:auto
+market:iteminfo
+market:stock
+actor:{slot}
+uid:{uid}
+```
 
 ## Legacy 白名单
 
@@ -48,16 +74,18 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 - protocol 仍有两个反向依赖 capability 的历史点。
 - scheduler 根包仍有 `database/sql` 聚合点，后续应继续向 repository 边界收敛。
 - marketapp 是最大功能岛，后续需要单独做状态和自愈审计。
+- scheduler/repository 的锁资源名已经集中为常量，后续不允许重新散落字符串。
 
 ## 本轮验证
 
 ```text
 go test ./internal/architecture
+go test ./...
 ```
 
 ## 下一轮目标
 
-阶段二：统一状态表和锁机制。
+继续阶段二：统一状态表和锁机制。
 
 优先扫描：
 

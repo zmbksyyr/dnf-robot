@@ -8,7 +8,7 @@ import (
 
 func (m *RobotManager) storePoints() *storecap.PointCoordinator {
 	var points *storecap.PointCoordinator
-	_ = m.lockHub().WithResource("scheduler", "store-points", "store_points", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerStorePoints, "store_points", func() error {
 		if m.storePointsCoord == nil {
 			configDir := ""
 			if m.cfg != nil {
@@ -28,7 +28,7 @@ func (m *RobotManager) acquireAutoStoreSlot(rc robotconfig.RuntimeConfig) (chan 
 		limit = 30
 	}
 	var slots chan struct{}
-	_ = m.lockHub().WithResource("scheduler", "store-slots", "acquire_auto_store_slot", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerStoreSlots, "acquire_auto_store_slot", func() error {
 		if m.autoStoreSlots == nil || m.autoStoreCap != limit {
 			m.autoStoreSlots = make(chan struct{}, limit)
 			m.autoStoreCap = limit

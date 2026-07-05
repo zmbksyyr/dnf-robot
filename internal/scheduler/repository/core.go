@@ -32,7 +32,7 @@ func (r *SQLRepository) lockHub() *lockhub.Hub {
 }
 
 func (r *SQLRepository) withCache(reason string, fn func()) {
-	_ = r.lockHub().WithResource("repository", "schema-cache", reason, func() error {
+	_ = r.lockHub().WithResource(lockScopeRepository, lockResourceRepositoryDDL, reason, func() error {
 		fn()
 		return nil
 	})

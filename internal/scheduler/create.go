@@ -21,7 +21,7 @@ func (m *RobotManager) robotName(uid int, used map[string]struct{}, rc robotconf
 func (m *RobotManager) CreateRobots(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	var robots []robotcap.Info
 	var err error
-	_ = m.lockHub().WithResource("scheduler", "lifecycle", "create_robots", func() error {
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerOperation, "create_robots", func() error {
 		robots, err = m.createRobotsLocked(req)
 		return nil
 	})
