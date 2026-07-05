@@ -261,6 +261,9 @@ func (a *App) runAutoOnce() {
 	}
 	if !a.dfGameRRunning() {
 		a.appendLog(LogEvent{Type: "auto", Status: "game_down", Message: "df_game_r is not running; market services skipped"})
+		for _, market := range markets {
+			a.markMarketPolicyBlocked(market, "df_game_r is not running")
+		}
 		return
 	}
 	ready := a.ensureMarketServices(markets)
@@ -271,6 +274,7 @@ func (a *App) runAutoOnce() {
 		}
 		if !ready[marketServiceName(market)] {
 			a.appendLog(LogEvent{Type: "auto", Status: "service_down", Market: market, Message: "market service is not ready; job skipped"})
+			a.markMarketPolicyBlocked(market, "market service is not ready")
 			continue
 		}
 		policy := a.marketAutoPolicy(market, a.cfg.Auto)

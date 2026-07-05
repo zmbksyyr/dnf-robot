@@ -369,6 +369,23 @@ func TestMarketPolicyTracksZeroAuctionCandidates(t *testing.T) {
 	}
 }
 
+func TestMarketPolicyBlockedStateRecordsReason(t *testing.T) {
+	app := testApp()
+	app.configDir = t.TempDir()
+	app.auctionQueue = []uint32{10075}
+	app.auctionRejected = []uint32{30075}
+	app.auctionQueueSource = "pvf_iteminfo"
+
+	app.markMarketPolicyBlocked("auction", "df_game_r is not running")
+	status := app.policy["auction"]
+	if status.Mode != marketPolicyModeDegraded || status.Reason != "df_game_r is not running" {
+		t.Fatalf("blocked status = %#v", status)
+	}
+	if status.QueueNormal != 1 || status.QueueRejected != 1 || status.QueueSource != "pvf_iteminfo" {
+		t.Fatalf("blocked queue snapshot = %#v", status)
+	}
+}
+
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 	app := testApp()
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)

@@ -158,8 +158,34 @@ func (a *App) setMarketPolicyStatus(status MarketPolicyStatus) {
 	a.policy[status.Market] = status
 	a.mu.Unlock()
 	changed := !hadPrev || prev.Mode != status.Mode || prev.Reason != status.Reason || prev.EffectiveMaxActions != status.EffectiveMaxActions || prev.EffectiveConcurrency != status.EffectiveConcurrency
-	if status.Mode != marketPolicyModeNormal || changed && hadPrev {
+	if changed && (status.Mode != marketPolicyModeNormal || hadPrev) {
 		a.appendLog(LogEvent{Type: "market_policy", Market: status.Market, Status: status.Mode, Message: status.Reason})
+	}
+}
+
+func (a *App) markMarketPolicyBlocked(market, reason string) {
+	market = normalizeMarketName(market)
+	a.mu.Lock()
+	status := MarketPolicyStatus{
+		Market:      market,
+		Mode:        marketPolicyModeDegraded,
+		Reason:      reason,
+		UpdatedAt:   time.Now(),
+		QueueSource: "",
+	}
+	if market == "auction" {
+		status.QueueNormal = len(a.auctionQueue)
+		status.QueueRejected = len(a.auctionRejected)
+		status.QueueSource = a.auctionQueueSource
+	}
+	if a.policy == nil {
+		a.policy = map[string]MarketPolicyStatus{}
+	}
+	prev, hadPrev := a.policy[market]
+	a.policy[market] = status
+	a.mu.Unlock()
+	if !hadPrev || prev.Mode != status.Mode || prev.Reason != status.Reason {
+		a.appendLog(LogEvent{Type: "market_policy", Market: market, Status: status.Mode, Message: reason})
 	}
 }
 
