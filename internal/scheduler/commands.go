@@ -187,10 +187,10 @@ func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, acti
 
 func (m *RobotManager) userActorCommandBusy(registry actorRegistry, rc robotconfig.RuntimeConfig) (bool, string) {
 	if op, _, active := m.structuralOperation(); active {
-		return true, "structural_op=" + op
+		return true, schedulerReasonStructuralPrefix + op
 	}
 	if op, _, active := m.actorContainerOperation(); active {
-		return true, "actor_container=" + op
+		return true, schedulerReasonActorPrefix + op
 	}
 	snapshots := registry.actorSnapshots()
 	manual := !m.autoActionsEnabled(rc)

@@ -61,7 +61,7 @@ func (m *RobotManager) SetAutoEnabled(enabled bool) robotcap.AutoStatus {
 		running, connecting, stores := summary.Running, summary.Connecting, summary.Stores
 		m.updateAutoSnapshot(rc, running, connecting, stores)
 		m.updateAutoActorSnapshot(supervisor.actorCounts(time.Now(), rc))
-		m.updateSchedulerStatus(rc, m.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyManual, Reason: "auto_disabled"})
+		m.updateSchedulerStatus(rc, m.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyManual, Reason: schedulerReasonAutoDisabled})
 	}
 	return m.AutoStatus()
 }
@@ -607,7 +607,7 @@ func (s *RobotSupervisor) handleAutoGuards(now time.Time, rc robotconfig.Runtime
 	enabled := s.manager.autoEnabled
 	s.manager.autoMu.Unlock()
 	if !enabled || !rc.AutoActions {
-		s.updateGuardStatus(rc, schedulerPolicyManual, "auto_disabled")
+		s.updateGuardStatus(rc, schedulerPolicyManual, schedulerReasonAutoDisabled)
 		s.updateMetrics(rc)
 		return true
 	}
@@ -619,28 +619,28 @@ func (s *RobotSupervisor) handleAutoGuards(now time.Time, rc robotconfig.Runtime
 			reason = st.KeyReason
 		}
 		if reason == "" {
-			reason = "key_invalid"
+			reason = schedulerReasonKeyInvalid
 		}
-		s.updateGuardStatus(rc, schedulerPolicyMaintenance, "key_invalid="+reason)
+		s.updateGuardStatus(rc, schedulerPolicyMaintenance, schedulerReasonKeyInvalidPrefix+reason)
 		s.updateMetrics(rc)
 		return true
 	}
 	if op, started, active := s.manager.structuralOperation(); active {
-		s.manager.updateSchedulerStatus(rc, s.manager.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "structural_op=" + op})
+		s.manager.updateSchedulerStatus(rc, s.manager.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: schedulerReasonStructuralPrefix + op})
 		s.updateMetrics(rc)
 		robotLogf("[RobotSupervisor] paused structural_op=%s started=%s\n", op, started.Format(time.RFC3339))
 		return true
 	}
 	if !s.manager.autoGamePortStable(now, rc) {
 		s.stopSomeAutoActors(true, rc.SchedulerPortDownReleaseBatch, 0)
-		s.updateGuardStatus(rc, schedulerPolicyPressure, "game_port_unstable")
+		s.updateGuardStatus(rc, schedulerPolicyPressure, schedulerReasonGamePortUnstable)
 		s.updateMetrics(rc)
 		return true
 	}
 	if s.manager.autoBreakerActive(now) {
 		s.recycleUnhealthyActors(now, rc)
 		s.stopSomeAutoActors(true, rc.SchedulerBreakerReleaseBatch, robotconfig.BreakerActorFloor(rc))
-		s.updateGuardStatus(rc, schedulerPolicyBreaker, "breaker_active")
+		s.updateGuardStatus(rc, schedulerPolicyBreaker, schedulerReasonBreakerActive)
 		s.updateMetrics(rc)
 		return true
 	}
@@ -814,6 +814,19 @@ const (
 	schedulerPolicyManual      schedulerPolicyMode = robotcap.SchedulerModeManual
 )
 
+const (
+	schedulerReasonAutoDisabled     = "auto_disabled"
+	schedulerReasonGamePortUnstable = "game_port_unstable"
+	schedulerReasonBreakerActive    = "breaker_active"
+	schedulerReasonTargetZero       = "target_zero"
+	schedulerReasonNoLiveSnapshot   = "no_live_snapshot"
+	schedulerReasonKeyInvalid       = "key_invalid"
+	schedulerReasonKeyInvalidPrefix = "key_invalid="
+	schedulerReasonStructuralPrefix = "structural_op="
+	schedulerReasonActorPrefix      = "actor_container="
+	schedulerReasonPendingBacklog   = "pending_backlog"
+)
+
 type adaptiveSchedulerSignals struct {
 	Live           bool
 	Running        int
@@ -851,7 +864,7 @@ func (m *RobotManager) SchedulerStatus() robotcap.SchedulerStatus {
 	signals := m.adaptiveSchedulerSignals()
 	decision := m.policy().ApplyConfig(&rc, signals)
 	if !m.autoActionsEnabled(rc) {
-		decision = schedulerPolicyDecision{Mode: schedulerPolicyManual, Reason: "auto_disabled"}
+		decision = schedulerPolicyDecision{Mode: schedulerPolicyManual, Reason: schedulerReasonAutoDisabled}
 	}
 	m.updateSchedulerStatus(rc, signals, decision)
 
@@ -910,7 +923,7 @@ func (m *RobotManager) updateSchedulerStatus(rc robotconfig.RuntimeConfig, sig a
 	target := robotconfig.NormalizedTarget(rc)
 	op, opStarted, opActive := m.structuralOperation()
 	if opActive {
-		decision = schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: "structural_op=" + op}
+		decision = schedulerPolicyDecision{Mode: schedulerPolicyMaintenance, Reason: schedulerReasonStructuralPrefix + op}
 	}
 	recent := m.RecentOperation()
 	status := robotcap.SchedulerStatus{
@@ -1004,14 +1017,14 @@ func applyAdaptiveSchedulerConfig(rc *robotconfig.RuntimeConfig, sig adaptiveSch
 	rc.SchedulerPortDownReleaseBatch = robotconfig.Clamp(target/25, 5, 50)
 
 	if !sig.Live {
-		return schedulerPolicyDecision{Mode: schedulerPolicyBootstrap, Reason: fmt.Sprintf("target=%d no_live_snapshot", target)}
+		return schedulerPolicyDecision{Mode: schedulerPolicyBootstrap, Reason: fmt.Sprintf("target=%d %s", target, schedulerReasonNoLiveSnapshot)}
 	}
 	return applyLiveSchedulerFeedback(rc, target, sig)
 }
 
 func applyLiveSchedulerFeedback(rc *robotconfig.RuntimeConfig, target int, sig adaptiveSchedulerSignals) schedulerPolicyDecision {
 	if target <= 0 {
-		return schedulerPolicyDecision{Mode: schedulerPolicyStable, Reason: "target_zero"}
+		return schedulerPolicyDecision{Mode: schedulerPolicyStable, Reason: schedulerReasonTargetZero}
 	}
 	connectingLimit := robotconfig.Clamp(target/20, 2, 30)
 	healthyOnline := sig.Running >= target*95/100 && sig.Connecting <= connectingLimit && sig.GamePortReady && !sig.BreakerActive
@@ -1028,7 +1041,7 @@ func applyLiveSchedulerFeedback(rc *robotconfig.RuntimeConfig, target int, sig a
 			rc.SchedulerOnlineStartRate = robotconfig.Clamp(rc.SchedulerOnlineStartRate/2, 1, 10)
 			rc.SchedulerStoreConcurrent = robotconfig.Clamp(rc.SchedulerStoreConcurrent/2, 2, 25)
 			rc.AutoStoreProbabilityPercent = robotconfig.Clamp(rc.AutoStoreProbabilityPercent/3, 1, 15)
-			return schedulerPolicyDecision{Mode: schedulerPolicyPressure, Reason: fmt.Sprintf("pending_backlog idle=%d actors=%d running=%d target=%d", sig.Idle, sig.Actors, sig.Running, target)}
+			return schedulerPolicyDecision{Mode: schedulerPolicyPressure, Reason: fmt.Sprintf("%s idle=%d actors=%d running=%d target=%d", schedulerReasonPendingBacklog, sig.Idle, sig.Actors, sig.Running, target)}
 		}
 		rc.SchedulerOnlineBatchSize = robotconfig.Clamp(rc.SchedulerOnlineBatchSize/2, 5, 60)
 		rc.SchedulerOnlineStartRate = robotconfig.Clamp(rc.SchedulerOnlineStartRate/2, 4, 30)

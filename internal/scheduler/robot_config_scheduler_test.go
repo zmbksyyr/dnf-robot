@@ -9,6 +9,29 @@ import (
 	robotconfig "robot/internal/capability/robotconfig"
 )
 
+func TestSchedulerPolicyReasonConstants(t *testing.T) {
+	tests := []struct {
+		got  string
+		want string
+	}{
+		{schedulerReasonAutoDisabled, "auto_disabled"},
+		{schedulerReasonGamePortUnstable, "game_port_unstable"},
+		{schedulerReasonBreakerActive, "breaker_active"},
+		{schedulerReasonTargetZero, "target_zero"},
+		{schedulerReasonNoLiveSnapshot, "no_live_snapshot"},
+		{schedulerReasonKeyInvalid, "key_invalid"},
+		{schedulerReasonKeyInvalidPrefix, "key_invalid="},
+		{schedulerReasonStructuralPrefix, "structural_op="},
+		{schedulerReasonActorPrefix, "actor_container="},
+		{schedulerReasonPendingBacklog, "pending_backlog"},
+	}
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Fatalf("scheduler policy reason constant got %q want %q", tt.got, tt.want)
+		}
+	}
+}
+
 func TestSortActorsForStopByPolicy(t *testing.T) {
 	actors := []*actormodel.Actor{
 		testRobotActor(1, actormodel.ModeAuto, 17000001),
