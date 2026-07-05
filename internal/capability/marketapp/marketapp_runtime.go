@@ -938,9 +938,27 @@ func (r SQLRepository) LoadMaxAddInfo(dbName string, min int32) (int32, error) {
 }
 
 func (r SQLRepository) CreateCreatureItem(dbName string, ownerID uint32, itemID uint32) (int32, error) {
-	query := "INSERT INTO " + quoteIdent(dbName) + ".`creature_items` " +
-		"(`charac_no`,`slot`,`it_id`,`reg_date`,`name`,`stomach`,`exp`,`endurance`,`creature_type`,`creature_level`,`item_lock`,`delete_flag`,`skills`,`expire_time`,`item_creature_expire_time`) " +
-		"VALUES (?,0,?,NOW(),'',100,0,0,0,0,0,0,'','9999-12-31 23:59:59','9999-12-31 23:59:59')"
+	table := quoteIdent(dbName) + ".`creature_items`"
+	queries := []string{
+		"INSERT INTO " + table + " " +
+			"(`charac_no`,`slot`,`it_id`,`reg_date`,`name`,`stomach`,`exp`,`endurance`,`creature_type`,`creature_level`,`item_lock`,`delete_flag`,`skills`,`expire_time`,`item_creature_expire_time`) " +
+			"VALUES (?,0,?,NOW(),'',100,0,0,0,0,0,0,'','9999-12-31 23:59:59','9999-12-31 23:59:59')",
+		"INSERT INTO " + table + " " +
+			"(`charac_no`,`slot`,`it_id`,`reg_date`,`name`,`stomach`,`exp`,`endurance`,`creature_type`,`no_charge`,`stat`,`item_lock_key`,`ipg_agency_no`,`expire_date`,`delete_date`) " +
+			"VALUES (?,0,?,NOW(),'',100,0,0,0,0,0,0,'','9999-12-31 23:59:59','9999-12-31 23:59:59')",
+	}
+	var lastErr error
+	for _, query := range queries {
+		id, err := r.insertCreatureItem(query, ownerID, itemID)
+		if err == nil {
+			return id, nil
+		}
+		lastErr = err
+	}
+	return 0, lastErr
+}
+
+func (r SQLRepository) insertCreatureItem(query string, ownerID uint32, itemID uint32) (int32, error) {
 	result, err := r.db.Exec(query, ownerID, itemID)
 	if err != nil {
 		return 0, err
