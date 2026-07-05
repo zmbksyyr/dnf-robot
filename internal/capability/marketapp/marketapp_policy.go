@@ -45,58 +45,53 @@ func (a *App) marketAutoPolicy(market string, cfg AutoCfg) marketAutoPolicy {
 	}
 	status := a.nextMarketPolicyStatus(market, kinds, candidates, policy)
 	if market == "auction" {
-		if candidates.Error != "" {
-			status.Mode = marketPolicyModeDegraded
-			status.Reason = candidates.Error
-			policy.MaxActions = minPositive(policy.MaxActions, 2000)
-			policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
-			status.EffectiveMaxActions = policy.MaxActions
-			status.EffectiveConcurrency = policy.MaxConcurrent
-		}
-		if candidates.Error == "" && status.ZeroCandidateRounds == 2 {
-			a.resetAuctionQueues()
-			a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_candidate_recovery"})
-			status.Reason = "auction candidates stayed zero; auction queues rebuilt"
-			status.Mode = marketPolicyModeRecover
-		}
-		if candidates.Error == "" && status.ZeroCandidateRounds >= 3 {
-			status.Mode = marketPolicyModeDegraded
-			status.Reason = "auction candidates still zero; send pressure reduced"
-			policy.MaxActions = minPositive(policy.MaxActions, 2000)
-			policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
-			status.EffectiveMaxActions = policy.MaxActions
-			status.EffectiveConcurrency = policy.MaxConcurrent
-		}
-		if candidates.Error == "" && status.StagnantRounds == 2 {
-			a.resetAuctionQueues()
-			a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "stagnant_growth_recovery"})
-			status.Reason = "auction kinds stopped growing below candidate count; auction queues rebuilt"
-			status.Mode = marketPolicyModeRecover
-		}
-		if candidates.Error == "" && status.StagnantRounds >= 3 {
-			status.Mode = marketPolicyModeDegraded
-			status.Reason = "auction kinds still not growing below candidate count; send pressure reduced"
-			policy.MaxActions = minPositive(policy.MaxActions, 2000)
-			policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
-			status.EffectiveMaxActions = policy.MaxActions
-			status.EffectiveConcurrency = policy.MaxConcurrent
-		}
-		if status.ZeroKindRounds == 2 {
-			a.resetAuctionQueues()
-			a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_kind_recovery"})
-			status.Reason = "auction kinds stayed zero; auction queues rebuilt"
-			status.Mode = marketPolicyModeRecover
-		}
-		if status.ZeroKindRounds >= 3 {
-			status.Mode = marketPolicyModeDegraded
-			status.Reason = "auction kinds still zero; send pressure reduced"
-			policy.MaxActions = minPositive(policy.MaxActions, 2000)
-			policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
-			status.EffectiveMaxActions = policy.MaxActions
-			status.EffectiveConcurrency = policy.MaxConcurrent
-		}
+		policy = a.applyAuctionPolicyActions(candidates, &status, policy)
 	}
 	a.setMarketPolicyStatus(status)
+	return policy
+}
+
+func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, status *MarketPolicyStatus, policy marketAutoPolicy) marketAutoPolicy {
+	if candidates.Error != "" {
+		return degradeMarketPolicy(status, policy, candidates.Error)
+	}
+	switch {
+	case status.ZeroCandidateRounds == 2:
+		a.resetAuctionQueues()
+		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_candidate_recovery"})
+		status.Reason = "auction candidates stayed zero; auction queues rebuilt"
+		status.Mode = marketPolicyModeRecover
+	case status.ZeroCandidateRounds >= 3:
+		return degradeMarketPolicy(status, policy, "auction candidates still zero; send pressure reduced")
+	}
+	switch {
+	case status.StagnantRounds == 2:
+		a.resetAuctionQueues()
+		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "stagnant_growth_recovery"})
+		status.Reason = "auction kinds stopped growing below candidate count; auction queues rebuilt"
+		status.Mode = marketPolicyModeRecover
+	case status.StagnantRounds >= 3:
+		return degradeMarketPolicy(status, policy, "auction kinds still not growing below candidate count; send pressure reduced")
+	}
+	switch {
+	case status.ZeroKindRounds == 2:
+		a.resetAuctionQueues()
+		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_kind_recovery"})
+		status.Reason = "auction kinds stayed zero; auction queues rebuilt"
+		status.Mode = marketPolicyModeRecover
+	case status.ZeroKindRounds >= 3:
+		return degradeMarketPolicy(status, policy, "auction kinds still zero; send pressure reduced")
+	}
+	return policy
+}
+
+func degradeMarketPolicy(status *MarketPolicyStatus, policy marketAutoPolicy, reason string) marketAutoPolicy {
+	status.Mode = marketPolicyModeDegraded
+	status.Reason = reason
+	policy.MaxActions = minPositive(policy.MaxActions, 2000)
+	policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
+	status.EffectiveMaxActions = policy.MaxActions
+	status.EffectiveConcurrency = policy.MaxConcurrent
 	return policy
 }
 
@@ -105,54 +100,19 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 	defer a.mu.Unlock()
 
 	prev := a.policy[market]
-	zeroRounds := 0
-	zeroCandidates := 0
-	stagnantRounds := 0
-	kindDelta := 0
-	mode := marketPolicyModeNormal
-	reason := ""
-	if !prev.UpdatedAt.IsZero() {
-		kindDelta = kinds - prev.DBKinds
-	}
-	if kinds <= 0 {
-		zeroRounds = prev.ZeroKindRounds + 1
-		reason = fmt.Sprintf("%s database has zero system item kinds", market)
-		if zeroRounds > 1 {
-			mode = marketPolicyModeRecover
-		}
-	}
-	if market == "auction" && candidates.Error == "" && candidates.Count <= 0 {
-		zeroCandidates = prev.ZeroCandidateRounds + 1
-		if reason == "" {
-			reason = "auction has zero candidate item kinds"
-		}
-		if zeroCandidates > 1 {
-			mode = marketPolicyModeRecover
-		}
-	}
-	if market == "auction" && candidates.Error == "" && candidates.Count > kinds && kinds > 0 && !prev.UpdatedAt.IsZero() {
-		if kinds <= prev.DBKinds {
-			stagnantRounds = prev.StagnantRounds + 1
-			if reason == "" {
-				reason = "auction item kinds are not growing below candidate count"
-			}
-			if stagnantRounds > 1 {
-				mode = marketPolicyModeRecover
-			}
-		}
-	}
+	state := nextMarketPolicyState(market, kinds, candidates, prev)
 
 	status := MarketPolicyStatus{
 		Market:               market,
-		Mode:                 mode,
-		Reason:               reason,
+		Mode:                 state.mode,
+		Reason:               state.reason,
 		DBKinds:              kinds,
-		KindDelta:            kindDelta,
+		KindDelta:            state.kindDelta,
 		Candidates:           candidates.Count,
 		CandidateSource:      candidates.Source,
-		ZeroKindRounds:       zeroRounds,
-		ZeroCandidateRounds:  zeroCandidates,
-		StagnantRounds:       stagnantRounds,
+		ZeroKindRounds:       state.zeroKindRounds,
+		ZeroCandidateRounds:  state.zeroCandidateRounds,
+		StagnantRounds:       state.stagnantRounds,
 		EffectiveMaxActions:  policy.MaxActions,
 		EffectiveConcurrency: policy.MaxConcurrent,
 		UpdatedAt:            time.Now(),
@@ -163,6 +123,48 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 		status.QueueSource = a.auctionQueueSource
 	}
 	return status
+}
+
+type marketPolicyState struct {
+	mode                string
+	reason              string
+	kindDelta           int
+	zeroKindRounds      int
+	zeroCandidateRounds int
+	stagnantRounds      int
+}
+
+func nextMarketPolicyState(market string, kinds int, candidates marketCandidateSnapshot, prev MarketPolicyStatus) marketPolicyState {
+	state := marketPolicyState{mode: marketPolicyModeNormal}
+	if !prev.UpdatedAt.IsZero() {
+		state.kindDelta = kinds - prev.DBKinds
+	}
+	if kinds <= 0 {
+		state.zeroKindRounds = prev.ZeroKindRounds + 1
+		state.reason = fmt.Sprintf("%s database has zero system item kinds", market)
+		if state.zeroKindRounds > 1 {
+			state.mode = marketPolicyModeRecover
+		}
+	}
+	if market == "auction" && candidates.Error == "" && candidates.Count <= 0 {
+		state.zeroCandidateRounds = prev.ZeroCandidateRounds + 1
+		if state.reason == "" {
+			state.reason = "auction has zero candidate item kinds"
+		}
+		if state.zeroCandidateRounds > 1 {
+			state.mode = marketPolicyModeRecover
+		}
+	}
+	if market == "auction" && candidates.Error == "" && candidates.Count > kinds && kinds > 0 && !prev.UpdatedAt.IsZero() && kinds <= prev.DBKinds {
+		state.stagnantRounds = prev.StagnantRounds + 1
+		if state.reason == "" {
+			state.reason = "auction item kinds are not growing below candidate count"
+		}
+		if state.stagnantRounds > 1 {
+			state.mode = marketPolicyModeRecover
+		}
+	}
+	return state
 }
 
 func (a *App) observeAuctionCandidates() marketCandidateSnapshot {
