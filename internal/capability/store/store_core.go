@@ -35,7 +35,7 @@ type Position struct {
 }
 
 type PointCoordinator struct {
-	mu            lockhub.Locker
+	pointMu       lockhub.Locker
 	configDir     string
 	sourceName    string
 	sourceMD5     string
@@ -85,8 +85,8 @@ func NewPointCoordinator(configDir string, logf func(string, ...interface{})) *P
 }
 
 func (c *PointCoordinator) Claim(uid int) (Position, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.pointMu.Lock()
+	defer c.pointMu.Unlock()
 	c.clearExpiredClaims(time.Now())
 	if len(c.areaOrder) == 0 {
 		return Position{}, false
@@ -239,8 +239,8 @@ func (c *PointCoordinator) Report(uid int, pos Position, try int, ok bool, reaso
 	if pos.PointID == "" {
 		return
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.pointMu.Lock()
+	defer c.pointMu.Unlock()
 	if ok {
 		claim := pointClaim{UID: uid, ExpiresAt: time.Now().Add(pointClaimTTL)}
 		c.pointClaims[pos.PointID] = claim
@@ -311,8 +311,8 @@ func (c *PointCoordinator) markRestrictiveZoneLocked(uid int, pos Position, now 
 }
 
 func (c *PointCoordinator) Flush() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.pointMu.Lock()
+	defer c.pointMu.Unlock()
 	c.saveCacheLocked()
 }
 

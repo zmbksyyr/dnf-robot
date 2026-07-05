@@ -133,12 +133,12 @@ func TestStorePointCoordinatorKeepsActiveSuccessClaimed(t *testing.T) {
 	if second.PointID == first.PointID {
 		t.Fatalf("active success point was immediately reused: %s", first.PointID)
 	}
-	c.mu.Lock()
+	c.pointMu.Lock()
 	claim := c.pointClaims[first.PointID]
 	claim.ExpiresAt = time.Now().Add(-time.Second)
 	c.pointClaims[first.PointID] = claim
 	c.regionClaims[first.Region] = claim
-	c.mu.Unlock()
+	c.pointMu.Unlock()
 	third, ok := c.Claim(1003)
 	if !ok {
 		t.Fatalf("third claim failed")
@@ -157,12 +157,12 @@ func TestStorePointCoordinatorKeepsHistoricallySuccessfulPointReusable(t *testin
 		t.Fatalf("first claim failed")
 	}
 	c.Report(1001, first, 1, true, "test_success")
-	c.mu.Lock()
+	c.pointMu.Lock()
 	claim := c.pointClaims[first.PointID]
 	claim.ExpiresAt = time.Now().Add(-time.Second)
 	c.pointClaims[first.PointID] = claim
 	c.regionClaims[first.Region] = claim
-	c.mu.Unlock()
+	c.pointMu.Unlock()
 	retry, ok := c.Claim(1002)
 	if !ok {
 		t.Fatalf("success fallback claim failed")
@@ -189,12 +189,12 @@ func TestStorePointCoordinatorCoolsDownRecentlyFailedSuccessPoint(t *testing.T) 
 		t.Fatalf("first claim failed")
 	}
 	c.Report(1001, first, 1, true, "test_success")
-	c.mu.Lock()
+	c.pointMu.Lock()
 	claim := c.pointClaims[first.PointID]
 	claim.ExpiresAt = time.Now().Add(-time.Second)
 	c.pointClaims[first.PointID] = claim
 	c.regionClaims[first.Region] = claim
-	c.mu.Unlock()
+	c.pointMu.Unlock()
 	retry, ok := c.Claim(1002)
 	if !ok {
 		t.Fatalf("success retry claim failed")
