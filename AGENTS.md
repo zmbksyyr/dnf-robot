@@ -2,8 +2,7 @@
 
 Before any VM, deploy, or debug task, read:
 
-- `doc/vm连接信息.md`
-- `tools/随机稳定性压测脚本.md`
+- `doc/vm.md`
 - `tools/vm_random_stability.py`
 
 Must follow:

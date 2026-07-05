@@ -11,7 +11,7 @@ Read this before any VM, deploy, or debug task.
 - VM snapshot restore is allowed only when the user asks for it.
 - Before deploy, record the git commit and back up `/root/robot`.
 - After deploy, verify process, ports, and logs.
-- For debug and long tests, use `tools/vm_random_stability.py`.
+- For debug and long tests, use `/root/vm_random_stability.py`.
 
 ## VM
 
@@ -66,6 +66,10 @@ Read this before any VM, deploy, or debug task.
 
 ## Stability Test
 
-- local script: `tools/vm_random_stability.py`
-- VM script: `/root/vm_random_stability.py`
-- guide: `tools/随机稳定性压测脚本.md`
+Run on the VM:
+
+```sh
+python /root/vm_random_stability.py --hours 1
+```
+
+The script runs the full test set, injects destructive cases, backs up and restores needed data, and writes a report under `/root/robot_stability_*`.
