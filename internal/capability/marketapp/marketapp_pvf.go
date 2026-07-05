@@ -136,6 +136,7 @@ func (a *App) resetAuctionQueues() {
 	a.auctionRejected = nil
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""
+	a.specialAddInfo = 0
 	a.mu.Unlock()
 }
 

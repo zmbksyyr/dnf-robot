@@ -572,19 +572,37 @@ func TestPlanCeraUsesPointBuyNowShape(t *testing.T) {
 	}
 }
 
-func TestPlanAuctionSkipsSpecialTypesForDedicatedHandler(t *testing.T) {
+func TestPlanAuctionHandlesNonCreatureSpecialTypesWithUniqueAddInfo(t *testing.T) {
 	app := testApp()
+	app.repository = &clearStockRepository{maxAddInfo: specialAddInfoBase + 7}
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		2001: {ItemID: 2001, Kind: "equipment", ItemType: 2, Slot: "title name", Attach: "trade", Price: 100},
 	}
 	app.planAuction([]restockRow{{ItemID: 2001, Quantity: 1, Enabled: true}}, catalog, map[uint32]int{}, map[uint32]int{}, result)
 
-	if len(result.Actions) != 0 || len(result.Skipped) != 1 {
+	if len(result.Actions) != 1 || len(result.Skipped) != 0 {
 		t.Fatalf("special plan actions=%#v skipped=%#v", result.Actions, result.Skipped)
 	}
+	action := result.Actions[0]
+	if action.Kind != "title" || action.CountAddInfo != specialAddInfoBase+8 || action.Count != 1 {
+		t.Fatalf("unexpected special action: %#v", action)
+	}
+}
+
+func TestPlanAuctionStillSkipsCreatureSpecialUntilCreatureItemsHandlerExists(t *testing.T) {
+	app := testApp()
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		3001: {ItemID: 3001, Kind: "equipment", ItemType: 30, Slot: "creature", Attach: "trade", Price: 100},
+	}
+	app.planAuction([]restockRow{{ItemID: 3001, Quantity: 1, Enabled: true}}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 0 || len(result.Skipped) != 1 {
+		t.Fatalf("creature plan actions=%#v skipped=%#v", result.Actions, result.Skipped)
+	}
 	if result.Skipped[0].Reason != "special_requires_handler" {
-		t.Fatalf("special skip reason = %q", result.Skipped[0].Reason)
+		t.Fatalf("creature skip reason = %q", result.Skipped[0].Reason)
 	}
 }
 
@@ -735,6 +753,7 @@ func TestRiskyPVFItemAllowsHighLevelEquipmentWhenItemInfoCapsLevel(t *testing.T)
 type clearStockRepository struct {
 	counts       map[string]int
 	stock        map[string]map[uint32]int
+	maxAddInfo   int32
 	collectCalls int
 }
 
@@ -757,6 +776,10 @@ func (r *clearStockRepository) LoadMarketStock(dbName string, _ uint32, _ map[ui
 		out[id] = count
 	}
 	return out, nil
+}
+
+func (r *clearStockRepository) LoadMaxAddInfo(string, int32) (int32, error) {
+	return r.maxAddInfo, nil
 }
 
 func (r *clearStockRepository) CountSystemStock(dbName string, _ uint32) (int, error) {

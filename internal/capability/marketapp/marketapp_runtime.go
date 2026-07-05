@@ -28,6 +28,8 @@ const auctionSearchGuardBegin = "// DP2_AUCTION_SEARCH_HOOK_GUARD_BEGIN"
 const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
 const auctionRejectedRetryEvery = 10
 const auctionRejectedRetryDivisor = 100
+const specialAddInfoBase int32 = 2100000000
+const maxInt32 int32 = 2147483647
 
 const auctionSearchGuardSource = auctionSearchGuardBegin + `
 (function () {
@@ -917,6 +919,24 @@ func (r SQLRepository) LoadMarketStock(dbName string, systemOwnerBase uint32, oc
 	return out, rows.Err()
 }
 
+func (r SQLRepository) LoadMaxAddInfo(dbName string, min int32) (int32, error) {
+	query := "SELECT IFNULL(MAX(add_info),0) FROM " + quoteIdent(dbName) + ".`auction_main` WHERE add_info >= ?"
+	var max sql.NullInt64
+	if err := r.db.QueryRow(query, min).Scan(&max); err != nil {
+		if isMissingTable(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if !max.Valid || max.Int64 <= 0 {
+		return 0, nil
+	}
+	if max.Int64 > int64(maxInt32) {
+		return maxInt32, nil
+	}
+	return int32(max.Int64), nil
+}
+
 func isMissingTable(err error) bool {
 	if err == nil {
 		return false
@@ -952,7 +972,11 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "not_auctionable"})
 			continue
 		}
-		if specialAuctionKind(item) != "" {
+		if special := specialAuctionKind(item); special != "" {
+			if special != "creature" {
+				a.planSpecialAuction(row, item, special, have, occ, result)
+				continue
+			}
 			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "special_requires_handler"})
 			continue
 		}
@@ -1037,6 +1061,40 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 		}
 		have[row.ItemID] = targetRecords
 	}
+}
+
+func (a *App) planSpecialAuction(row restockRow, item catalogItem, special string, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
+	if have[row.ItemID] > 0 {
+		return
+	}
+	records := row.Quantity
+	if records <= 0 {
+		records = randRange(a.rand, a.cfg.Restock.EquipmentQtyMin, a.cfg.Restock.EquipmentQtyMax)
+	}
+	if records <= 0 {
+		records = 1
+	}
+	batchInflate := float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
+	for i := 0; i < records; i++ {
+		unit := a.auctionUnitPrice(row.SystemPrice, true, batchInflate, 0, 0)
+		ownerID := a.pickOwner(occ)
+		result.Actions = append(result.Actions, Action{
+			Market:       "auction",
+			Kind:         special,
+			ItemID:       row.ItemID,
+			Name:         item.Name,
+			Count:        1,
+			UnitPrice:    unit,
+			TotalPrice:   unit,
+			OwnerID:      ownerID,
+			OwnerName:    a.cfg.SystemOwner.OwnerName,
+			CountAddInfo: a.nextSpecialAddInfo(),
+			StartPrice:   unit - 1,
+			InstantPrice: unit,
+			Source:       row.Source,
+		})
+	}
+	have[row.ItemID] = records
 }
 
 func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
@@ -1137,6 +1195,25 @@ func (a *App) pickOwner(occ map[uint32]int) uint32 {
 	}
 	occ[owner]++
 	return owner
+}
+
+func (a *App) nextSpecialAddInfo() int32 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.specialAddInfo < specialAddInfoBase {
+		a.specialAddInfo = specialAddInfoBase
+		if a.repository != nil {
+			if max, err := a.repository.LoadMaxAddInfo(a.cfg.AuctionDB, specialAddInfoBase); err == nil && max >= a.specialAddInfo && max < maxInt32 {
+				a.specialAddInfo = max + 1
+			}
+		}
+	}
+	if a.specialAddInfo <= 0 || a.specialAddInfo >= maxInt32 {
+		a.specialAddInfo = specialAddInfoBase
+	}
+	v := a.specialAddInfo
+	a.specialAddInfo++
+	return v
 }
 
 func isRiskyPVFItem(item catalogItem) bool {
