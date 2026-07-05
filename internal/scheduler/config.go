@@ -91,28 +91,23 @@ func fileModTime(path string) time.Time {
 func (m *RobotManager) loadRobotConfig() robotconfig.RuntimeConfig {
 	configPath := filepath.Join(m.cfg.ConfigDir, "robot_config.ini")
 	configMod := fileModTime(configPath)
-	var cached robotconfig.RuntimeConfig
-	var ok bool
+	var out robotconfig.RuntimeConfig
 	m.withCache("load_robot_config_read", func() {
 		if m.configCached && m.configMod.Equal(configMod) {
-			cached = robotconfig.Clone(m.configCache)
-			ok = true
+			out = robotconfig.Clone(m.configCache)
+			return
 		}
-	})
-	if ok {
-		return cached
-	}
 
-	rc := robotconfig.Default()
-	m.loadRobotConfigINI(&rc)
-	m.applyAdaptiveSchedulerConfig(&rc)
-	robotconfig.Normalize(&rc)
-	m.withCache("load_robot_config_write", func() {
+		rc := robotconfig.Default()
+		m.loadRobotConfigINI(&rc)
+		applyAdaptiveSchedulerConfig(&rc, m.adaptiveSchedulerSignals())
+		robotconfig.Normalize(&rc)
 		m.configCache = robotconfig.Clone(rc)
 		m.configMod = configMod
 		m.configCached = true
+		out = robotconfig.Clone(rc)
 	})
-	return robotconfig.Clone(rc)
+	return out
 }
 
 func (m *RobotManager) loadRobotConfigINI(rc *robotconfig.RuntimeConfig) {
