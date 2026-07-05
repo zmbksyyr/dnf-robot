@@ -90,6 +90,7 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	a.mu.Lock()
 	a.itemInfo = status
 	a.auctionQueue = nil
+	a.auctionSpecialQueue = nil
 	a.auctionRejected = nil
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""
@@ -133,6 +134,7 @@ func (a *App) prepareItemInfoRelease() error {
 func (a *App) resetAuctionQueues() {
 	a.mu.Lock()
 	a.auctionQueue = nil
+	a.auctionSpecialQueue = nil
 	a.auctionRejected = nil
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""

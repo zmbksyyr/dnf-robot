@@ -39,6 +39,7 @@ type App struct {
 	autoDone  chan struct{}
 
 	auctionQueue        []uint32
+	auctionSpecialQueue []uint32
 	auctionRejected     []uint32
 	auctionRejectedTick int
 	auctionQueueSource  string
@@ -906,6 +907,7 @@ type MarketPolicyStatus struct {
 	StagnantRounds       int       `json:"stagnant_rounds,omitempty"`
 	ActionFailureRounds  int       `json:"action_failure_rounds,omitempty"`
 	QueueNormal          int       `json:"queue_normal,omitempty"`
+	QueueSpecial         int       `json:"queue_special,omitempty"`
 	QueueRejected        int       `json:"queue_rejected,omitempty"`
 	QueueSource          string    `json:"queue_source,omitempty"`
 	EffectiveMaxActions  int       `json:"effective_max_actions"`

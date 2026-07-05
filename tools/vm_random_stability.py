@@ -119,6 +119,7 @@ SAMPLE_FIELDS = [
     "market_creature_instances",
     "market_creature_orphans",
     "market_auction_queue_normal",
+    "market_auction_queue_special",
     "market_auction_queue_rejected",
     "market_auction_stagnant",
     "market_auction_policy",
@@ -1276,7 +1277,7 @@ echo "KEYS_RESTORED"
         row = self.sample_row()
         self.writerow(row)
         self.log(
-            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s special=%s specialdb=%s high=%s creature=%s inst=%s orphan=%s q=%s/%s health=%s/%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s health=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
+            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s special=%s specialdb=%s high=%s creature=%s inst=%s orphan=%s q=%s/%s/%s health=%s/%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s health=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
             % (
                 row.get("target"),
                 row.get("actors"),
@@ -1295,6 +1296,7 @@ echo "KEYS_RESTORED"
                 row.get("market_creature_instances"),
                 row.get("market_creature_orphans"),
                 row.get("market_auction_queue_normal"),
+                row.get("market_auction_queue_special"),
                 row.get("market_auction_queue_rejected"),
                 row.get("market_auction_health"),
                 row.get("market_auction_completion"),
@@ -1520,6 +1522,7 @@ echo "KEYS_RESTORED"
             row["market_auction_candidates"] = auction_policy.get("candidates", "")
             row["market_auction_special_candidates"] = auction_policy.get("special_candidates", "")
             row["market_auction_queue_normal"] = auction_policy.get("queue_normal", "")
+            row["market_auction_queue_special"] = auction_policy.get("queue_special", "")
             row["market_auction_queue_rejected"] = auction_policy.get("queue_rejected", "")
             row["market_auction_stagnant"] = auction_policy.get("stagnant_rounds", "")
             row["market_auction_policy"] = auction_policy.get("mode", "")

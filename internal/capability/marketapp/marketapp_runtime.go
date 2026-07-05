@@ -28,6 +28,7 @@ const auctionSearchGuardBegin = "// DP2_AUCTION_SEARCH_HOOK_GUARD_BEGIN"
 const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
 const auctionRejectedRetryEvery = 10
 const auctionRejectedRetryDivisor = 100
+const auctionSpecialBudgetDivisor = 10
 const specialAddInfoBase int32 = 2100000000
 const maxInt32 int32 = 2147483647
 
@@ -1354,18 +1355,20 @@ func cleanupLegacyMarketFiles(configDir string) {
 
 func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) ([]restockRow, error) {
 	a.mu.Lock()
-	needsLoad := len(a.auctionQueue) == 0 || pvfReady && a.auctionQueueSource != "pvf"
+	needsLoad := len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || pvfReady && a.auctionQueueSource != "pvf_iteminfo"
 	a.mu.Unlock()
 	if needsLoad {
-		candidates, source, err := a.auctionQueueCandidates(pvfReady, catalog)
+		normal, special, source, err := a.auctionQueueCandidates(pvfReady, catalog)
 		if err != nil {
 			return nil, err
 		}
 		a.mu.Lock()
-		if len(a.auctionQueue) == 0 || source == "pvf" && a.auctionQueueSource != "pvf" {
-			candidateSet := idSet(candidates)
+		if len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || source == "pvf_iteminfo" && a.auctionQueueSource != "pvf_iteminfo" {
+			candidateSet := idSet(append(append([]uint32{}, normal...), special...))
 			a.auctionRejected = filterQueueBySet(a.auctionRejected, candidateSet)
-			a.auctionQueue = filterQueueExcludeSet(candidates, idSet(a.auctionRejected))
+			rejectedSet := idSet(a.auctionRejected)
+			a.auctionQueue = filterQueueExcludeSet(normal, rejectedSet)
+			a.auctionSpecialQueue = filterQueueExcludeSet(special, rejectedSet)
 			a.auctionQueueSource = source
 		}
 		a.mu.Unlock()
@@ -1373,9 +1376,12 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 
 	a.mu.Lock()
 	selected := make([]restockRow, 0)
-	a.reconcileRejectedStockLocked(have)
+	a.reconcileRejectedStockLocked(have, pvfReady, catalog)
 
-	normalBudget, rejectedBudget := a.splitAuctionBudgetsLocked(maxActions)
+	normalBudget, specialBudget, rejectedBudget := a.splitAuctionBudgetsLocked(maxActions)
+	if maxActions <= 0 || specialBudget != 0 {
+		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionSpecialQueue, pvfReady, catalog, have, specialBudget, false)...)
+	}
 	selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionQueue, pvfReady, catalog, have, normalBudget, false)...)
 	if maxActions <= 0 || rejectedBudget != 0 {
 		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionRejected, pvfReady, catalog, have, rejectedBudget, true)...)
@@ -1384,14 +1390,14 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 	return selected, nil
 }
 
-func (a *App) reconcileRejectedStockLocked(have map[uint32]int) {
+func (a *App) reconcileRejectedStockLocked(have map[uint32]int, pvfReady bool, catalog map[uint32]catalogItem) {
 	if len(a.auctionRejected) == 0 || len(have) == 0 {
 		return
 	}
 	out := a.auctionRejected[:0]
 	for _, id := range a.auctionRejected {
 		if have[id] > 0 {
-			a.appendAuctionNormalLocked(id)
+			a.appendAuctionAvailableLocked(id, pvfReady, catalog)
 			continue
 		}
 		out = append(out, id)
@@ -1399,27 +1405,35 @@ func (a *App) reconcileRejectedStockLocked(have map[uint32]int) {
 	a.auctionRejected = out
 }
 
-func (a *App) splitAuctionBudgetsLocked(maxActions int) (int, int) {
+func (a *App) splitAuctionBudgetsLocked(maxActions int) (int, int, int) {
 	if maxActions <= 0 {
-		return 0, 0
+		return 0, 0, 0
 	}
+	rejected := 0
 	if len(a.auctionRejected) == 0 {
 		a.auctionRejectedTick = 0
-		return maxActions, 0
+	} else {
+		a.auctionRejectedTick++
+		if a.auctionRejectedTick >= auctionRejectedRetryEvery {
+			a.auctionRejectedTick = 0
+			rejected = maxActions / auctionRejectedRetryDivisor
+			if rejected <= 0 {
+				rejected = 1
+			}
+			if rejected > maxActions {
+				rejected = maxActions
+			}
+		}
 	}
-	a.auctionRejectedTick++
-	if a.auctionRejectedTick < auctionRejectedRetryEvery {
-		return maxActions, 0
+	available := maxActions - rejected
+	special := 0
+	if len(a.auctionSpecialQueue) > 0 && available > 1 {
+		special = available / auctionSpecialBudgetDivisor
+		if special <= 0 {
+			special = 1
+		}
 	}
-	a.auctionRejectedTick = 0
-	rejected := maxActions / auctionRejectedRetryDivisor
-	if rejected <= 0 {
-		rejected = 1
-	}
-	if rejected > maxActions {
-		rejected = maxActions
-	}
-	return maxActions - rejected, rejected
+	return available - special, special, rejected
 }
 
 func (a *App) selectAuctionRowsFromQueue(queue *[]uint32, pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int, rejected bool) []restockRow {
@@ -1431,7 +1445,7 @@ func (a *App) selectAuctionRowsFromQueue(queue *[]uint32, pvfReady bool, catalog
 		*queue = (*queue)[1:]
 		if have[id] > 0 {
 			if rejected {
-				a.appendAuctionNormalLocked(id)
+				a.appendAuctionAvailableLocked(id, pvfReady, catalog)
 			} else {
 				*queue = append(*queue, id)
 			}
@@ -1463,16 +1477,27 @@ func (a *App) markAuctionExplicitRejected(itemID uint32) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.auctionQueue = removeQueueID(a.auctionQueue, itemID)
+	a.auctionSpecialQueue = removeQueueID(a.auctionSpecialQueue, itemID)
 	if !queueContains(a.auctionRejected, itemID) {
 		a.auctionRejected = append(a.auctionRejected, itemID)
 	}
 }
 
-func (a *App) appendAuctionNormalLocked(itemID uint32) {
-	if itemID == 0 || queueContains(a.auctionQueue, itemID) {
+func (a *App) appendAuctionAvailableLocked(itemID uint32, pvfReady bool, catalog map[uint32]catalogItem) {
+	if itemID == 0 {
 		return
 	}
-	a.auctionQueue = append(a.auctionQueue, itemID)
+	if pvfReady {
+		if item, ok := catalog[itemID]; ok && specialAuctionKind(item) != "" {
+			if !queueContains(a.auctionSpecialQueue, itemID) {
+				a.auctionSpecialQueue = append(a.auctionSpecialQueue, itemID)
+			}
+			return
+		}
+	}
+	if !queueContains(a.auctionQueue, itemID) {
+		a.auctionQueue = append(a.auctionQueue, itemID)
+	}
 }
 
 func idSet(ids []uint32) map[uint32]bool {
@@ -1528,20 +1553,20 @@ func queueContains(ids []uint32, itemID uint32) bool {
 	return false
 }
 
-func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) ([]uint32, string, error) {
+func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) ([]uint32, []uint32, string, error) {
 	if pvfReady {
 		itemInfoIDs, path, err := a.currentItemInfoIDs()
 		if err != nil {
 			a.appendLog(LogEvent{Type: "iteminfo_gate", Status: "blocked", Message: err.Error()})
-			return nil, "pvf_iteminfo_missing", nil
+			return nil, nil, "pvf_iteminfo_missing", nil
 		}
-		ids := catalogAuctionIDs(catalog, itemInfoIDs)
-		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: "active", Message: fmt.Sprintf("source=%s allowed=%d", path, len(ids))})
-		return ids, "pvf_iteminfo", nil
+		normal, special := catalogAuctionIDsByType(catalog, itemInfoIDs)
+		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: "active", Message: fmt.Sprintf("source=%s allowed=%d special=%d", path, len(normal)+len(special), len(special))})
+		return normal, special, "pvf_iteminfo", nil
 	}
 	rows, err := a.fallbackAuctionRows()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	ids := make([]uint32, 0, len(rows))
 	for _, row := range rows {
@@ -1549,7 +1574,7 @@ func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogIt
 			ids = append(ids, row.ItemID)
 		}
 	}
-	return ids, "fallback", nil
+	return ids, nil, "fallback", nil
 }
 
 func (a *App) auctionRowForID(pvfReady bool, catalog map[uint32]catalogItem, id uint32) (restockRow, bool) {
@@ -1584,15 +1609,32 @@ func (a *App) catalogAuctionRows(catalog map[uint32]catalogItem) []restockRow {
 }
 
 func catalogAuctionIDs(catalog map[uint32]catalogItem, allowed map[uint32]bool) []uint32 {
+	normal, special := catalogAuctionIDsByType(catalog, allowed)
+	return append(normal, special...)
+}
+
+func catalogAuctionIDsByType(catalog map[uint32]catalogItem, allowed map[uint32]bool) ([]uint32, []uint32) {
 	ids := make([]uint32, 0, len(catalog))
+	special := make([]uint32, 0)
 	for id, item := range catalog {
 		if allowed != nil && !allowed[id] {
 			continue
 		}
-		if marketCandidate(item) {
+		if !marketCandidate(item) {
+			continue
+		}
+		if specialAuctionKind(item) != "" {
+			special = append(special, id)
+		} else {
 			ids = append(ids, id)
 		}
 	}
+	sortCatalogAuctionIDs(ids, catalog)
+	sortCatalogAuctionIDs(special, catalog)
+	return ids, special
+}
+
+func sortCatalogAuctionIDs(ids []uint32, catalog map[uint32]catalogItem) {
 	sort.Slice(ids, func(i, j int) bool {
 		left := catalog[ids[i]]
 		right := catalog[ids[j]]
@@ -1604,7 +1646,6 @@ func catalogAuctionIDs(catalog map[uint32]catalogItem, allowed map[uint32]bool) 
 		}
 		return left.ItemID < right.ItemID
 	})
-	return ids
 }
 
 func catalogAuctionCandidateCounts(catalog map[uint32]catalogItem, allowed map[uint32]bool) (normal int, special int) {

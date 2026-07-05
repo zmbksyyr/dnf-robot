@@ -129,6 +129,7 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 	}
 	if market == "auction" {
 		status.QueueNormal = len(a.auctionQueue)
+		status.QueueSpecial = len(a.auctionSpecialQueue)
 		status.QueueRejected = len(a.auctionRejected)
 		status.QueueSource = a.auctionQueueSource
 	}
@@ -239,6 +240,7 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 	}
 	if market == "auction" {
 		status.QueueNormal = len(a.auctionQueue)
+		status.QueueSpecial = len(a.auctionSpecialQueue)
 		status.QueueRejected = len(a.auctionRejected)
 		status.QueueSource = a.auctionQueueSource
 	}

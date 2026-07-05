@@ -37,6 +37,7 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 	app.repository = repo
 	app.configDir = t.TempDir()
 	app.auctionQueue = []uint32{1001}
+	app.auctionSpecialQueue = []uint32{1003}
 	app.auctionRejected = []uint32{1002}
 	app.auctionRejectedTick = 3
 	app.auctionQueueSource = "pvf"
@@ -51,8 +52,8 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 	if repo.creatureCount != 0 {
 		t.Fatalf("creature count = %d, want 0", repo.creatureCount)
 	}
-	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
-		t.Fatalf("queues not reset: queue=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
+	if len(app.auctionQueue) != 0 || len(app.auctionSpecialQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
+		t.Fatalf("queues not reset: queue=%v special=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionSpecialQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
 	}
 	if repo.collectCalls != 0 {
 		t.Fatalf("system stock clear used collect path, calls=%d", repo.collectCalls)
@@ -224,7 +225,7 @@ func TestAuctionRejectedQueueUsesLowWeightCooldownBudget(t *testing.T) {
 	}
 	app.auctionQueue = append([]uint32(nil), normalIDs...)
 	app.auctionRejected = append([]uint32(nil), rejectedIDs...)
-	app.auctionQueueSource = "pvf"
+	app.auctionQueueSource = "pvf_iteminfo"
 
 	for round := 1; round < auctionRejectedRetryEvery; round++ {
 		rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 100)
@@ -260,6 +261,41 @@ func TestAuctionRejectedQueueUsesLowWeightCooldownBudget(t *testing.T) {
 	}
 }
 
+func TestAuctionSpecialQueueGetsDedicatedBudget(t *testing.T) {
+	app := testApp()
+	app.cfg.Restock.EquipmentQtyMin = 1
+	app.cfg.Restock.EquipmentQtyMax = 1
+	catalog := map[uint32]catalogItem{}
+	for i := uint32(1); i <= 50; i++ {
+		id := 10000 + i
+		catalog[id] = catalogItem{ItemID: id, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100}
+	}
+	catalog[20001] = catalogItem{ItemID: 20001, Kind: "equipment", ItemType: 2, Slot: "title name", Attach: "trade", Price: 100}
+	catalog[20002] = catalogItem{ItemID: 20002, Kind: "equipment", Slot: "artifact red", Attach: "trade", Price: 100}
+	for id := range catalog {
+		if specialAuctionKind(catalog[id]) != "" {
+			app.auctionSpecialQueue = append(app.auctionSpecialQueue, id)
+		} else {
+			app.auctionQueue = append(app.auctionQueue, id)
+		}
+	}
+	app.auctionQueueSource = "pvf_iteminfo"
+
+	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	special := 0
+	for _, row := range rows {
+		if specialAuctionKind(row.marketItem()) != "" {
+			special++
+		}
+	}
+	if special == 0 {
+		t.Fatalf("special queue received no budget: rows=%#v normal_queue=%d special_queue=%d", rows, len(app.auctionQueue), len(app.auctionSpecialQueue))
+	}
+}
+
 func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
 	app := testApp()
 	app.cfg.Restock.EquipmentQtyMin = 1
@@ -270,7 +306,7 @@ func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
 	}
 	app.auctionQueue = []uint32{10075}
 	app.auctionRejected = []uint32{30075}
-	app.auctionQueueSource = "pvf"
+	app.auctionQueueSource = "pvf_iteminfo"
 
 	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{30075: 1}, 10)
 	if err != nil {
@@ -290,10 +326,14 @@ func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
 func TestMarkAuctionExplicitRejectedMovesID(t *testing.T) {
 	app := testApp()
 	app.auctionQueue = []uint32{10075, 30075, 10075}
+	app.auctionSpecialQueue = []uint32{20075, 10075}
 	app.markAuctionExplicitRejected(10075)
 
 	if queueContains(app.auctionQueue, 10075) {
 		t.Fatalf("normal queue still contains rejected id: %#v", app.auctionQueue)
+	}
+	if queueContains(app.auctionSpecialQueue, 10075) {
+		t.Fatalf("special queue still contains rejected id: %#v", app.auctionSpecialQueue)
 	}
 	if len(app.auctionRejected) != 1 || app.auctionRejected[0] != 10075 {
 		t.Fatalf("rejected queue = %#v, want [10075]", app.auctionRejected)
@@ -323,8 +363,8 @@ func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
 	if second.MaxActions != app.cfg.Auto.MaxActions || second.MaxConcurrent != app.cfg.Auto.MaxConcurrent {
 		t.Fatalf("second policy should rebuild only: %#v", second)
 	}
-	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
-		t.Fatalf("second zero round did not reset queues: normal=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
+	if len(app.auctionQueue) != 0 || len(app.auctionSpecialQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
+		t.Fatalf("second zero round did not reset queues: normal=%v special=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionSpecialQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
 	}
 
 	third := app.marketAutoPolicy("auction", app.cfg.Auto)
