@@ -1,8 +1,6 @@
 package scheduler
 
 import (
-	"context"
-	"database/sql"
 	"errors"
 	"math/rand"
 	robotcap "robot/internal/capability/robot"
@@ -10,6 +8,7 @@ import (
 	lifecyclecap "robot/internal/capability/robotlifecycle"
 	storecap "robot/internal/capability/store"
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/dbstatus"
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/shared"
@@ -17,7 +16,7 @@ import (
 )
 
 type RobotManager struct {
-	database                        Database
+	database                        dbstatus.Database
 	cfg                             *config.SysConfig
 	doll                            Runtime
 	worldShout                      WorldShout
@@ -62,7 +61,7 @@ type RobotManager struct {
 	autoPolicy                      AutoPolicy
 }
 
-func NewRobotManager(database Database, cfg *config.SysConfig, doll Runtime) *RobotManager {
+func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Runtime) *RobotManager {
 	if doll == nil {
 		doll = noopRuntime{}
 	}
@@ -185,16 +184,6 @@ type SchemaRepository interface {
 	RegisterRobot(info robotcap.Info) error
 	RebuildCharacView(uid int) error
 	CopyTemplateDefaults(cid int) error
-}
-
-type Database interface {
-	Exec(query string, args ...interface{}) (sql.Result, error)
-	Query(query string, args ...interface{}) (*sql.Rows, error)
-	QueryRow(query string, args ...interface{}) *sql.Row
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-	Begin() (*sql.Tx, error)
-	PingContext(ctx context.Context) error
-	Stats() sql.DBStats
 }
 
 type Runtime interface {

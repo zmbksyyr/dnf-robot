@@ -24,6 +24,7 @@ import (
 	"robot/internal/protocol/dnfruntime"
 	"robot/internal/protocol/monitor"
 	"robot/internal/scheduler"
+	schedulerrepo "robot/internal/scheduler/repository"
 )
 
 var db *sql.DB
@@ -99,7 +100,7 @@ func main() {
 	robotSvc.Init()
 	dnfruntime.SetRobotService(robotSvc)
 	dollSvc := dnfruntime.NewDollService()
-	manager := scheduler.NewRobotManager(scheduler.NewSQLRepository(db), cfg, dollSvc)
+	manager := scheduler.NewRobotManager(schedulerrepo.NewSQLRepository(db), cfg, dollSvc)
 	manager.SetWorldShout(monitor.Client{})
 	manager.StartAutoActions()
 	marketApp, err = marketapp.New(db, cfg, auctionapp.NewFactory())

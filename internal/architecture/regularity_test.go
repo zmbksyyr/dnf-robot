@@ -24,7 +24,7 @@ var sqlImportAllowedDirs = []string{
 	"cmd/robot",
 	"internal/foundation/sql",
 	"internal/foundation/dbstatus",
-	"internal/scheduler",
+	"internal/scheduler/repository",
 	"internal/capability/marketapp",
 	"internal/protocol/dnf",
 }
