@@ -30,6 +30,11 @@ import subprocess
 import sys
 import time
 
+try:
+    text_type = unicode
+except NameError:
+    text_type = str
+
 
 KEYWORDS = [
     "connect_queue_full",
@@ -120,10 +125,18 @@ def now_text():
 
 def safe_text(value):
     if value is None:
-        return ""
+        return u""
+    if isinstance(value, text_type):
+        return value
     if isinstance(value, bytes):
         return value.decode("utf-8", "replace")
-    return str(value)
+    try:
+        return text_type(value)
+    except Exception:
+        raw = repr(value)
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", "replace")
+        return raw
 
 
 def json_text(value, limit):
@@ -716,12 +729,36 @@ echo RESTORED
         self.log("config_dir_fault begin")
         backup = "/root/config.vm_random_backup_%s" % int(time.time() * 1000)
         try:
-            self.shell("cp -af /root/config %s; rm -rf /root/config; mkdir -p /root/config; printf '{broken config dir' > /root/config/market_config.json" % shell_quote(backup), 120)
+            script = """
+pids=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+[ -z "$pids" ] || kill -TERM $pids || true
+sleep 5
+left=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+[ -z "$left" ] || kill -KILL $left || true
+cp -af /root/config %s 2>/dev/null || true
+mkdir -p /root/config
+find /root/config -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+printf '{broken config dir' > /root/config/market_config.json
+""" % shell_quote(backup)
+            self.shell(script, 120)
             self.sample_with_event("config_dir_fault_broken")
             self.robot_restart_without_target("config_dir_fault_restart")
             self.burst_sample("config_dir_fault", self.scaled_seconds(20, 60), 10)
         finally:
-            self.shell("rm -rf /root/config; [ -d %s ] && mv %s /root/config || true" % (shell_quote(backup), shell_quote(backup)), 120)
+            script = """
+pids=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+[ -z "$pids" ] || kill -TERM $pids || true
+sleep 5
+left=$(ps -eo pid,args | awk '$2=="/root/robot" || ($2=="/root/robot" && $3=="--web-admin") {print $1}')
+[ -z "$left" ] || kill -KILL $left || true
+mkdir -p /root/config
+find /root/config -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+if [ -d %s ]; then
+  cp -af %s/. /root/config/ 2>/dev/null || true
+  rm -rf %s
+fi
+""" % (shell_quote(backup), shell_quote(backup), shell_quote(backup))
+            self.shell(script, 120)
             self.robot_restart_without_target("config_dir_fault_restore")
             self.market_enable_auto(max_concurrent=8)
 
