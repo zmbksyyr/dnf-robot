@@ -101,7 +101,7 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 			if _, ok := onlineOK[r.UID]; !ok {
 				result.Failed++
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateNotOnline, Message: "online before store failed"})
-				env.FinishStoreState(r.UID, r.CID, "store_online_failed")
+				env.FinishStoreState(r.UID, r.CID, StoreReasonOnlineFailed)
 				env.EndStoreBusy(r.UID)
 				continue
 			}
@@ -113,7 +113,7 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 			} else {
 				result.Failed++
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateStoreStartFailed, Message: "StartPrivateStore failed after online"})
-				env.FinishStoreState(r.UID, r.CID, "store_start_failed")
+				env.FinishStoreState(r.UID, r.CID, StoreReasonStartFailed)
 				env.EndStoreBusy(r.UID)
 			}
 		}
@@ -150,7 +150,7 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 			result.Robots[i].State = robotcap.ActionStateNotConfirmed
 			result.Robots[i].Message = "store state not confirmed"
 			result.Failed++
-			env.FinishStoreState(result.Robots[i].UID, result.Robots[i].CID, "store_not_confirmed")
+			env.FinishStoreState(result.Robots[i].UID, result.Robots[i].CID, StoreReasonNotConfirmed)
 		}
 		env.EndStoreBusy(result.Robots[i].UID)
 	}
@@ -196,7 +196,7 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 		}
 		info.Village, info.Area, info.X, info.Y = pos.Village, pos.Area, pos.X, pos.Y
 		if ok, reason := w.tryPosition(info, rc, try, shouldStop); ok {
-			points.Report(info.UID, pos, try, true, "store_ack")
+			points.Report(info.UID, pos, try, true, StoreReasonAck)
 			env.Logf("[StoreSuccessPoint] uid=%d point=%s region=%s village=%d area=%d x=%d y=%d try=%d source=%s\n", info.UID, pos.PointID, pos.Region, info.Village, info.Area, info.X, info.Y, try, pos.Source)
 			env.AddAutoStore(1, 0, 0)
 			return AutoAttemptSuccess
@@ -204,21 +204,21 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 			points.Report(info.UID, pos, try, false, reason)
 			continue
 		}
-		points.Report(info.UID, pos, try, false, "store_failed")
+		points.Report(info.UID, pos, try, false, StoreReasonFailed)
 	}
 	points.Flush()
 	_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
-	env.FinishStoreState(info.UID, info.CID, "store_failed")
+	env.FinishStoreState(info.UID, info.CID, StoreReasonFailed)
 	env.Logf("[AutoStore] uid=%d failed_after=%d\n", info.UID, tries)
 	env.AddAutoStore(0, 1, 0)
-	env.RestoreAutoNormalPosition(info, rc, "store_failed")
+	env.RestoreAutoNormalPosition(info, rc, StoreReasonFailed)
 	return AutoAttemptFailed
 }
 
 func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, try int, shouldStop func() bool) (bool, string) {
 	env := w.Env
 	if shouldStop != nil && shouldStop() {
-		return false, "cancelled"
+		return false, StoreReasonCancelled
 	}
 	_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
 	logoutDelay := time.Duration(rc.ReconnectDelayMS) * time.Millisecond
@@ -226,55 +226,55 @@ func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 		logoutDelay = 1500 * time.Millisecond
 	}
 	if SleepWithStop(logoutDelay, shouldStop) {
-		return false, "cancelled"
+		return false, StoreReasonCancelled
 	}
 	if shouldStop != nil && shouldStop() {
-		return false, "cancelled"
+		return false, StoreReasonCancelled
 	}
 	if err := env.PrepareStorePosition(info); err != nil {
 		env.Logf("[AutoStore] uid=%d dummy_update_failed try=%d err=%v\n", info.UID, try, err)
-		return false, "prepare_failed"
+		return false, StoreReasonPrepareFailed
 	}
 	if err := env.SyncRobotCharacterVillage(info.CID, info.Village); err != nil {
 		env.Logf("[AutoStore] uid=%d charac_village_sync_failed try=%d cid=%d village=%d err=%v\n", info.UID, try, info.CID, info.Village, err)
-		return false, "prepare_failed"
+		return false, StoreReasonPrepareFailed
 	}
 	if err := env.EnsureStoreInventoryAndStall(info, rc); err != nil {
 		env.Logf("[AutoStore] uid=%d prepare_failed try=%d err=%v\n", info.UID, try, err)
-		return false, "prepare_failed"
+		return false, StoreReasonPrepareFailed
 	}
 	if SleepWithStop(800*time.Millisecond, shouldStop) {
-		return false, "cancelled"
+		return false, StoreReasonCancelled
 	}
 	online, err := env.Online(robotcap.CommandRequest{UIDs: []int{info.UID}}, false, true)
 	if err != nil || online.Confirmed != 1 {
 		env.Logf("[AutoStore] uid=%d store_online_failed try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
-		env.FinishStoreState(info.UID, info.CID, "store_online_failed")
-		return false, "online_failed"
+		env.FinishStoreState(info.UID, info.CID, StoreReasonOnlineFailed)
+		return false, StoreReasonOnlineAttemptFailed
 	}
 	if err := env.SyncRobotCharacterVillage(info.CID, info.Village); err != nil {
 		env.Logf("[AutoStore] uid=%d charac_village_resync_failed try=%d cid=%d village=%d err=%v\n", info.UID, try, info.CID, info.Village, err)
-		return false, "prepare_failed"
+		return false, StoreReasonPrepareFailed
 	}
 	if shouldStop != nil && shouldStop() {
-		return false, "cancelled"
+		return false, StoreReasonCancelled
 	}
 	fromGate := GateAreaForVillage(info.Village)
 	if fromGate != info.Area {
 		areaSet := env.SetAreaFrom(info.UID, info.Village, info.Area, info.X, info.Y, info.Village, fromGate)
 		if !areaSet {
-			env.FinishStoreState(info.UID, info.CID, "set_area_failed")
-			return false, "set_area_failed"
+			env.FinishStoreState(info.UID, info.CID, StoreReasonSetAreaFailed)
+			return false, StoreReasonSetAreaFailed
 		}
 		if SleepWithStop(1800*time.Millisecond, shouldStop) {
-			return false, "cancelled"
+			return false, StoreReasonCancelled
 		}
 	}
 	title := fmt.Sprintf("tw-%d", info.UID%100000)
 	if !env.StartPrivateStore(info.UID, title) {
 		env.Logf("[AutoStore] uid=%d store_start_failed try=%d\n", info.UID, try)
-		env.FinishStoreState(info.UID, info.CID, "store_start_failed")
-		return false, "store_start_failed"
+		env.FinishStoreState(info.UID, info.CID, StoreReasonStartFailed)
+		return false, StoreReasonStartFailed
 	}
 	if ok, reason := w.waitDisplay(info.UID, rc, shouldStop); ok {
 		return true, ""
@@ -284,8 +284,8 @@ func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 		return false, reason
 	}
 	_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
-	env.FinishStoreState(info.UID, info.CID, "store_failed")
-	return false, "store_failed"
+	env.FinishStoreState(info.UID, info.CID, StoreReasonFailed)
+	return false, StoreReasonFailed
 }
 
 func (w Workflow) waitDisplay(uid int, rc robotconfig.RuntimeConfig, shouldStop func() bool) (bool, string) {
@@ -296,11 +296,11 @@ func (w Workflow) waitDisplay(uid int, rc robotconfig.RuntimeConfig, shouldStop 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if shouldStop != nil && shouldStop() {
-			return false, "cancelled"
+			return false, StoreReasonCancelled
 		}
 		st, ok := env.RuntimeStatusMap()[uid]
 		if !ok || st.StateName != "running" || st.DisconnectReason != 0 {
-			return false, "runtime_stopped"
+			return false, StoreReasonRuntimeStopped
 		}
 		if st.StoreDisplayAck {
 			return true, ""
@@ -323,15 +323,15 @@ func (w Workflow) waitDisplay(uid int, rc robotconfig.RuntimeConfig, shouldStop 
 			}
 		}
 		if SleepWithStop(200*time.Millisecond, shouldStop) {
-			return false, "cancelled"
+			return false, StoreReasonCancelled
 		}
 	}
-	return false, "display_wait_failed"
+	return false, StoreReasonDisplayWaitFailed
 }
 
 func StoreErrReason(err byte) string {
 	if err == 0 {
-		return "store_failed"
+		return StoreReasonFailed
 	}
 	return fmt.Sprintf("store_err_0x%02x", err)
 }

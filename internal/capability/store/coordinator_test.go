@@ -24,6 +24,38 @@ func writeStoreMapCatalog(t *testing.T, configDir string, maps []shared.MapCatal
 	return data
 }
 
+func TestStorePointFactConstants(t *testing.T) {
+	tests := []struct {
+		got  string
+		want string
+	}{
+		{PointStatusUnknown, "unknown"},
+		{PointStatusSuccess, "success"},
+		{PointStatusFailed, "failed"},
+		{PointSourceUnknown, "grid_unknown"},
+		{PointSourceSuccess, "grid_success"},
+		{PointSourceFailedRetry, "grid_failed_retry"},
+		{StoreReasonAck, "store_ack"},
+		{StoreReasonFailed, "store_failed"},
+		{StoreReasonOnlineFailed, "store_online_failed"},
+		{StoreReasonOnlineAttemptFailed, "online_failed"},
+		{StoreReasonStartFailed, "store_start_failed"},
+		{StoreReasonNotConfirmed, "store_not_confirmed"},
+		{StoreReasonPrepareFailed, "prepare_failed"},
+		{StoreReasonSetAreaFailed, "set_area_failed"},
+		{StoreReasonCancelled, "cancelled"},
+		{StoreReasonRuntimeStopped, "runtime_stopped"},
+		{StoreReasonDisplayWaitFailed, "display_wait_failed"},
+		{StoreReasonErr052, "store_err_0x52"},
+		{StoreReasonErr052Zone, "store_err_0x52_zone"},
+	}
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Fatalf("store fact constant got %q want %q", tt.got, tt.want)
+		}
+	}
+}
+
 func TestStorePointCoordinatorCachesSourceMD5(t *testing.T) {
 	configDir := t.TempDir()
 	data := writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 120, Use: true}})

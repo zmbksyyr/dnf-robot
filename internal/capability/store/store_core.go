@@ -24,6 +24,34 @@ const (
 	PointFailRetry = 6 * time.Minute
 )
 
+const (
+	PointStatusUnknown = "unknown"
+	PointStatusSuccess = "success"
+	PointStatusFailed  = "failed"
+)
+
+const (
+	PointSourceUnknown     = "grid_unknown"
+	PointSourceSuccess     = "grid_success"
+	PointSourceFailedRetry = "grid_failed_retry"
+)
+
+const (
+	StoreReasonAck                 = "store_ack"
+	StoreReasonFailed              = "store_failed"
+	StoreReasonOnlineFailed        = "store_online_failed"
+	StoreReasonOnlineAttemptFailed = "online_failed"
+	StoreReasonStartFailed         = "store_start_failed"
+	StoreReasonNotConfirmed        = "store_not_confirmed"
+	StoreReasonPrepareFailed       = "prepare_failed"
+	StoreReasonSetAreaFailed       = "set_area_failed"
+	StoreReasonCancelled           = "cancelled"
+	StoreReasonRuntimeStopped      = "runtime_stopped"
+	StoreReasonDisplayWaitFailed   = "display_wait_failed"
+	StoreReasonErr052              = "store_err_0x52"
+	StoreReasonErr052Zone          = "store_err_0x52_zone"
+)
+
 type Position struct {
 	Village int
 	Area    int
@@ -135,7 +163,7 @@ func (c *PointCoordinator) claimFromArea(uid int, areaKey string, successOnly bo
 		if c.regionRecentlySucceeded(areaKey, pt.Region, now) {
 			continue
 		}
-		if pt.LastReason == "store_failed" && c.recentFailedPoint(pt, now) {
+		if pt.LastReason == StoreReasonFailed && c.recentFailedPoint(pt, now) {
 			continue
 		}
 		if successOnly {
@@ -154,9 +182,9 @@ func (c *PointCoordinator) claimFromArea(uid int, areaKey string, successOnly bo
 		claim := pointClaim{UID: uid, ExpiresAt: now.Add(pointClaimTTL)}
 		c.pointClaims[pt.ID] = claim
 		c.regionClaims[pt.Region] = claim
-		source := "grid_unknown"
+		source := PointSourceUnknown
 		if successOnly {
-			source = "grid_success"
+			source = PointSourceSuccess
 		}
 		return Position{Village: pt.Village, Area: pt.Area, X: pt.X, Y: pt.Y, Source: source, PointID: pt.ID, Region: pt.Region}, true
 	}
@@ -185,7 +213,7 @@ func (c *PointCoordinator) claimFailedFromArea(uid int, areaKey string, requireA
 		claim := pointClaim{UID: uid, ExpiresAt: now.Add(pointClaimTTL)}
 		c.pointClaims[pt.ID] = claim
 		c.regionClaims[pt.Region] = claim
-		return Position{Village: pt.Village, Area: pt.Area, X: pt.X, Y: pt.Y, Source: "grid_failed_retry", PointID: pt.ID, Region: pt.Region}, true
+		return Position{Village: pt.Village, Area: pt.Area, X: pt.X, Y: pt.Y, Source: PointSourceFailedRetry, PointID: pt.ID, Region: pt.Region}, true
 	}
 	return Position{}, false
 }
@@ -196,7 +224,7 @@ func (c *PointCoordinator) areaHasUsableSuccess(areaKey string, now time.Time) b
 		if !c.successPoints[pt.ID] {
 			continue
 		}
-		if pt.LastReason == "store_failed" && c.recentFailedPoint(pt, now) {
+		if pt.LastReason == StoreReasonFailed && c.recentFailedPoint(pt, now) {
 			continue
 		}
 		return true
@@ -210,7 +238,7 @@ func (c *PointCoordinator) regionRecentlySucceeded(areaKey, region string, now t
 	}
 	for _, idx := range c.byArea[areaKey] {
 		pt := c.points[idx]
-		if pt.Region != region || pt.LastReason != "store_ack" {
+		if pt.Region != region || pt.LastReason != StoreReasonAck {
 			continue
 		}
 		last, err := time.Parse(time.RFC3339, pt.LastResultAt)
@@ -257,7 +285,7 @@ func (c *PointCoordinator) Report(uid int, pos Position, try int, ok bool, reaso
 	if ok {
 		c.successPoints[pos.PointID] = true
 		if hasPoint {
-			c.points[idx].Status = "success"
+			c.points[idx].Status = PointStatusSuccess
 			c.points[idx].Success++
 			c.points[idx].LastUID = uid
 			c.points[idx].LastReason = reason
@@ -267,10 +295,10 @@ func (c *PointCoordinator) Report(uid int, pos Position, try int, ok bool, reaso
 		if hasPoint {
 			if c.points[idx].Success > 0 {
 				c.successPoints[pos.PointID] = true
-				c.points[idx].Status = "success"
+				c.points[idx].Status = PointStatusSuccess
 			} else {
 				c.failedPoints[pos.PointID] = true
-				c.points[idx].Status = "failed"
+				c.points[idx].Status = PointStatusFailed
 			}
 			c.points[idx].Failed++
 			c.points[idx].LastUID = uid
@@ -279,7 +307,7 @@ func (c *PointCoordinator) Report(uid int, pos Position, try int, ok bool, reaso
 		} else {
 			c.failedPoints[pos.PointID] = true
 		}
-		if reason == "store_err_0x52" {
+		if reason == StoreReasonErr052 {
 			c.markRestrictiveZoneLocked(uid, pos, now)
 		}
 	}
@@ -295,7 +323,7 @@ func (c *PointCoordinator) markRestrictiveZoneLocked(uid int, pos Position, now 
 	maxDY := RestrictHalfY * 2
 	for _, idx := range c.byArea[areaKey] {
 		pt := &c.points[idx]
-		if pt.Success > 0 || pt.Status == "success" {
+		if pt.Success > 0 || pt.Status == PointStatusSuccess {
 			continue
 		}
 		if mathx.AbsInt(pt.X-pos.X) > maxDX || mathx.AbsInt(pt.Y-pos.Y) > maxDY {
@@ -303,9 +331,9 @@ func (c *PointCoordinator) markRestrictiveZoneLocked(uid int, pos Position, now 
 		}
 		c.failedPoints[pt.ID] = true
 		c.triedPoints[pt.ID] = true
-		pt.Status = "failed"
+		pt.Status = PointStatusFailed
 		pt.LastUID = uid
-		pt.LastReason = "store_err_0x52_zone"
+		pt.LastReason = StoreReasonErr052Zone
 		pt.LastResultAt = now
 	}
 }
@@ -432,14 +460,14 @@ func (c *PointCoordinator) rebuildIndexes() {
 		c.byID[pt.ID] = i
 		key := AreaKey(pt.Village, pt.Area)
 		c.byArea[key] = append(c.byArea[key], i)
-		if pt.Success > 0 || pt.Failed > 0 || (pt.Status != "" && pt.Status != "unknown") {
+		if pt.Success > 0 || pt.Failed > 0 || (pt.Status != "" && pt.Status != PointStatusUnknown) {
 			c.triedPoints[pt.ID] = true
 		}
-		if pt.Success > 0 || pt.Status == "success" {
+		if pt.Success > 0 || pt.Status == PointStatusSuccess {
 			c.successPoints[pt.ID] = true
 			continue
 		}
-		if pt.Status == "failed" {
+		if pt.Status == PointStatusFailed {
 			c.failedPoints[pt.ID] = true
 		}
 	}
@@ -510,7 +538,7 @@ func BuildGridPoints(maps []shared.MapCatalogItem) []GridPoint {
 				region := RegionKey(mp.Village, mp.Area, x, y)
 				points = append(points, GridPoint{
 					ID:      fmt.Sprintf("%d-%d-%d-%d", mp.Village, mp.Area, x, y),
-					Village: mp.Village, Area: mp.Area, X: x, Y: y, Region: region, Status: "unknown",
+					Village: mp.Village, Area: mp.Area, X: x, Y: y, Region: region, Status: PointStatusUnknown,
 				})
 			}
 		}
