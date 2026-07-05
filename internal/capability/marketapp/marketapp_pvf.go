@@ -72,6 +72,14 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	}
 	a.cfg.ItemInfoSourcePath = sourcePath
 	status := a.itemInfoStatus()
+	if err := a.requireMarketServicesDownForItemInfo(); err != nil {
+		status.Error = err.Error()
+		a.appendLog(LogEvent{Type: "iteminfo_check", Status: "failed", Message: status.Error})
+		a.mu.Lock()
+		a.itemInfo = status
+		a.mu.Unlock()
+		return status
+	}
 	if err := a.prepareItemInfoRelease(); err != nil {
 		status.Error = err.Error()
 		a.appendLog(LogEvent{Type: "iteminfo_prepare", Status: "failed", Message: status.Error})
@@ -81,12 +89,6 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 		return status
 	}
 	status = a.syncItemInfoDAT()
-	if status.Error == "" {
-		if err := a.restartMarketServicesAfterItemInfo(); err != nil {
-			status.Error = err.Error()
-			a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "failed", Message: status.Error})
-		}
-	}
 	a.mu.Lock()
 	a.itemInfo = status
 	a.auctionQueue = nil

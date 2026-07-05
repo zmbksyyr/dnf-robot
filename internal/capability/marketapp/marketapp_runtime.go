@@ -475,62 +475,35 @@ func (a *App) refreshMarketServiceStatus(name, addr, dir, bin string) {
 	a.setMarketServiceStatus(status)
 }
 
-func (a *App) restartMarketServicesAfterItemInfo() error {
-	if runtime.GOOS != "linux" {
-		a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "skipped", Message: "market service restart is linux only"})
-		return nil
-	}
-	services := []struct {
-		name string
-		addr string
-		dir  string
-		bin  string
-		args []string
-	}{
-		{name: "auction", addr: "127.0.0.1:30803", dir: "/home/neople/auction", bin: "./df_auction_r", args: []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"}},
-		{name: "point", addr: "127.0.0.1:30603", dir: "/home/neople/point", bin: "./df_point_r", args: []string{"./cfg/point_cain.cfg", "start", "df_point_r"}},
-	}
-	for _, service := range services {
-		if err := a.stopMarketService(service.name, service.addr, service.bin); err != nil {
-			return err
-		}
-		if !a.ensureMarketService(service.name, service.addr, service.dir, service.bin, service.args) {
-			return fmt.Errorf("%s restart failed: service is not ready", service.name)
-		}
-	}
-	a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "success", Message: "auction and point services restarted"})
-	return nil
+type marketServiceSpec struct {
+	name string
+	addr string
+	dir  string
+	bin  string
 }
 
-func (a *App) stopMarketService(name, addr, bin string) error {
-	process := filepath.Base(strings.TrimSpace(bin))
-	if process == "" || process == "." || process == "/" {
-		return fmt.Errorf("%s stop failed: invalid process name %q", name, bin)
+func itemInfoMarketServices() []marketServiceSpec {
+	return []marketServiceSpec{
+		{name: "auction", addr: "127.0.0.1:30803", dir: "/home/neople/auction", bin: "./df_auction_r"},
+		{name: "point", addr: "127.0.0.1:30603", dir: "/home/neople/point", bin: "./df_point_r"},
 	}
-	pid := marketServicePID(bin)
-	if pid <= 0 {
-		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "stop_skipped", Message: "process is not running"})
+}
+
+func (a *App) requireMarketServicesDownForItemInfo() error {
+	if runtime.GOOS != "linux" {
+		a.appendLog(LogEvent{Type: "iteminfo_check", Status: "skipped", Message: "market service check is linux only"})
 		return nil
 	}
-	_ = exec.Command("pkill", "-TERM", "-x", process).Run()
-	deadline := time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
-		if marketServicePID(bin) <= 0 && !tcpReady(addr, 200*time.Millisecond) {
-			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "stopped", Message: process})
-			return nil
+	for _, service := range itemInfoMarketServices() {
+		pid := marketServicePID(service.bin)
+		listening := tcpReady(service.addr, 300*time.Millisecond)
+		if pid > 0 || listening {
+			a.refreshMarketServiceStatus(service.name, service.addr, service.dir, service.bin)
+			return fmt.Errorf("%s is running or listening; stop auction/point with the normal service workflow before releasing iteminfo.dat", service.name)
 		}
-		time.Sleep(300 * time.Millisecond)
 	}
-	_ = exec.Command("pkill", "-KILL", "-x", process).Run()
-	deadline = time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
-		if marketServicePID(bin) <= 0 && !tcpReady(addr, 200*time.Millisecond) {
-			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "killed", Message: process})
-			return nil
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	return fmt.Errorf("%s stop timeout: %s still running or port still listening", name, process)
+	a.appendLog(LogEvent{Type: "iteminfo_check", Status: "success", Message: "auction and point services are down"})
+	return nil
 }
 
 func (a *App) marketServiceLogPath(name string) string {
