@@ -115,6 +115,7 @@ SAMPLE_FIELDS = [
     "market_auction_stagnant",
     "market_auction_policy",
     "market_auction_policy_reason",
+    "market_auction_failure_rounds",
     "market_auction_last_job",
     "market_auction_last_plan",
     "market_auction_last_results",
@@ -1224,7 +1225,7 @@ echo "KEYS_RESTORED"
         row = self.sample_row()
         self.writerow(row)
         self.log(
-            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s policy=%s stg=%s act=%s/%s/%s cera=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
+            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cand=%s policy=%s stg=%s failr=%s act=%s/%s/%s cera=%s/%s policy=%s act=%s/%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
             % (
                 row.get("target"),
                 row.get("actors"),
@@ -1238,6 +1239,7 @@ echo "KEYS_RESTORED"
                 row.get("market_auction_candidates"),
                 row.get("market_auction_policy"),
                 row.get("market_auction_stagnant"),
+                row.get("market_auction_failure_rounds"),
                 row.get("market_auction_last_plan"),
                 row.get("market_auction_last_results"),
                 row.get("market_auction_last_failed"),
@@ -1442,6 +1444,7 @@ echo "KEYS_RESTORED"
             row["market_auction_stagnant"] = auction_policy.get("stagnant_rounds", "")
             row["market_auction_policy"] = auction_policy.get("mode", "")
             row["market_auction_policy_reason"] = (auction_policy.get("reason") or "")[:160]
+            row["market_auction_failure_rounds"] = auction_policy.get("action_failure_rounds", "")
             row["market_auction_last_job"] = auction_policy.get("last_job_status", "")
             row["market_auction_last_plan"] = auction_policy.get("last_plan_actions", "")
             row["market_auction_last_results"] = auction_policy.get("last_action_results", "")
