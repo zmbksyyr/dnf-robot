@@ -2,9 +2,9 @@
 
 ## 当前阶段
 
-- 阶段：二，统一状态表和锁机制。
+- 阶段：三，边界与功能岛收口。
 - 状态：进行中。
-- 本轮目标：把现有层级纳入架构测试，防止新增反向依赖和未知顶层包；开始收敛锁资源命名。
+- 本轮目标：继续减少 legacy 反向依赖，压实 composition 装配层，审计 marketapp 功能岛和自愈边界。
 
 ## 层级归属
 
@@ -56,11 +56,7 @@ uid:action
 store:point
 ```
 
-下一步继续审计：
-
-```text
-lockhub raw field names
-```
+下一步继续审计：protocol 剩余 DTO 反向依赖、marketapp 自愈状态、压测覆盖面。
 
 ## 状态来源
 
@@ -79,11 +75,7 @@ ActionResult.State -> capability/robot ActionState* 常量
 StatusItem.DBState -> capability/robot DBState* 常量
 ```
 
-下一步继续审计：
-
-```text
-lockhub resource names
-```
+下一步继续审计：marketapp 日志状态、运行事实和自愈决策输入。
 
 ## Legacy 白名单
 
@@ -127,16 +119,14 @@ go test ./...
 
 ## 下一轮目标
 
-继续阶段二：统一状态表和锁机制。
+继续阶段三：边界与功能岛收口。
 
 优先扫描：
 
 ```text
-actor runtime status
-scheduler status
-market status
-operation status
-service status
 DB facts
-lockhub resource names
+protocol legacy imports
+market self-healing policy
+market log/event status
+stress coverage gaps
 ```
