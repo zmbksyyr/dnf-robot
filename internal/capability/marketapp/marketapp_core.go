@@ -38,9 +38,10 @@ type App struct {
 	stopAuto  chan struct{}
 	autoDone  chan struct{}
 
-	auctionQueue       []uint32
-	auctionRejected    []uint32
-	auctionQueueSource string
+	auctionQueue        []uint32
+	auctionRejected     []uint32
+	auctionRejectedTick int
+	auctionQueueSource  string
 }
 
 type Planner interface {
@@ -411,10 +412,6 @@ func byteValue(v *byte) interface{} {
 		return nil
 	}
 	return *v
-}
-
-func boolPtr(v bool) *bool {
-	return &v
 }
 
 func compactJob(job *JobSummary) *JobSummary {
@@ -1059,17 +1056,34 @@ type corePoolItem struct {
 }
 
 type LogEvent struct {
-	Time      time.Time    `json:"time"`
-	Type      string       `json:"type"`
-	JobID     string       `json:"job_id,omitempty"`
-	Status    string       `json:"status,omitempty"`
-	Market    string       `json:"market,omitempty"`
-	ItemID    uint32       `json:"item_id,omitempty"`
-	AuctionID uint64       `json:"auction_id,omitempty"`
-	OK        *bool        `json:"ok,omitempty"`
-	Reason    interface{}  `json:"reason,omitempty"`
-	Message   string       `json:"message,omitempty"`
-	Summary   *PlanSummary `json:"summary,omitempty"`
+	Time          time.Time         `json:"time"`
+	Type          string            `json:"type"`
+	JobID         string            `json:"job_id,omitempty"`
+	Status        string            `json:"status,omitempty"`
+	Market        string            `json:"market,omitempty"`
+	ItemID        uint32            `json:"item_id,omitempty"`
+	AuctionID     uint64            `json:"auction_id,omitempty"`
+	OK            *bool             `json:"ok,omitempty"`
+	Reason        interface{}       `json:"reason,omitempty"`
+	Message       string            `json:"message,omitempty"`
+	Summary       *PlanSummary      `json:"summary,omitempty"`
+	ActionSummary *ActionLogSummary `json:"action_summary,omitempty"`
+}
+
+type ActionLogSummary struct {
+	Total      int             `json:"total"`
+	OK         int             `json:"ok"`
+	Failed     int             `json:"failed"`
+	ErrorCount int             `json:"error_count,omitempty"`
+	ByMarket   map[string]int  `json:"by_market,omitempty"`
+	ByReason   map[string]int  `json:"by_reason,omitempty"`
+	TopFailed  []ActionLogItem `json:"top_failed,omitempty"`
+}
+
+type ActionLogItem struct {
+	ItemID uint32 `json:"item_id"`
+	Count  int    `json:"count"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // ---- errors.go ----

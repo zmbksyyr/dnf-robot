@@ -37,6 +37,7 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 	app.configDir = t.TempDir()
 	app.auctionQueue = []uint32{1001}
 	app.auctionRejected = []uint32{1002}
+	app.auctionRejectedTick = 3
 	app.auctionQueueSource = "pvf"
 
 	result, err := app.ClearSystemMarketStock()
@@ -46,8 +47,8 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 	if result.Deleted != 5 {
 		t.Fatalf("deleted = %d, want 5", result.Deleted)
 	}
-	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionQueueSource != "" {
-		t.Fatalf("queues not reset: queue=%v rejected=%v source=%q", app.auctionQueue, app.auctionRejected, app.auctionQueueSource)
+	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
+		t.Fatalf("queues not reset: queue=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
 	}
 	if repo.collectCalls != 0 {
 		t.Fatalf("system stock clear used collect path, calls=%d", repo.collectCalls)
@@ -202,13 +203,13 @@ func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
 	}
 }
 
-func TestAuctionRejectedQueueUsesTenPercentBudget(t *testing.T) {
+func TestAuctionRejectedQueueUsesLowWeightCooldownBudget(t *testing.T) {
 	app := testApp()
 	app.cfg.Restock.EquipmentQtyMin = 1
 	app.cfg.Restock.EquipmentQtyMax = 1
 	catalog := map[uint32]catalogItem{}
 	normalIDs := []uint32{}
-	for i := uint32(1); i <= 20; i++ {
+	for i := uint32(1); i <= 120; i++ {
 		id := 10000 + i
 		normalIDs = append(normalIDs, id)
 		catalog[id] = catalogItem{ItemID: id, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100}
@@ -221,12 +222,25 @@ func TestAuctionRejectedQueueUsesTenPercentBudget(t *testing.T) {
 	app.auctionRejected = append([]uint32(nil), rejectedIDs...)
 	app.auctionQueueSource = "pvf"
 
-	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 10)
+	for round := 1; round < auctionRejectedRetryEvery; round++ {
+		rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rejectedSet := idSet(rejectedIDs)
+		for _, row := range rows {
+			if rejectedSet[row.ItemID] {
+				t.Fatalf("round %d selected rejected row before cooldown: %#v", round, rows)
+			}
+		}
+	}
+
+	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 10 {
-		t.Fatalf("rows = %d, want 10", len(rows))
+	if len(rows) != 100 {
+		t.Fatalf("rows = %d, want 100", len(rows))
 	}
 	normal, rejected := 0, 0
 	rejectedSet := idSet(rejectedIDs)
@@ -237,8 +251,8 @@ func TestAuctionRejectedQueueUsesTenPercentBudget(t *testing.T) {
 			normal++
 		}
 	}
-	if normal != 9 || rejected != 1 {
-		t.Fatalf("budget split normal=%d rejected=%d, want 9/1 rows=%#v", normal, rejected, rows)
+	if normal != 99 || rejected != 1 {
+		t.Fatalf("budget split normal=%d rejected=%d, want 99/1 rows=%#v", normal, rejected, rows)
 	}
 }
 

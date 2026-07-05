@@ -26,6 +26,8 @@ const defaultDFGameRJSPath = "/dp2/df_game_r.js"
 
 const auctionSearchGuardBegin = "// DP2_AUCTION_SEARCH_HOOK_GUARD_BEGIN"
 const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
+const auctionRejectedRetryEvery = 10
+const auctionRejectedRetryDivisor = 100
 
 const auctionSearchGuardSource = auctionSearchGuardBegin + `
 (function () {
@@ -1186,8 +1188,9 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 
 	a.mu.Lock()
 	selected := make([]restockRow, 0)
+	a.reconcileRejectedStockLocked(have)
 
-	normalBudget, rejectedBudget := splitAuctionBudgets(maxActions)
+	normalBudget, rejectedBudget := a.splitAuctionBudgetsLocked(maxActions)
 	selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionQueue, pvfReady, catalog, have, normalBudget, false)...)
 	if maxActions <= 0 || rejectedBudget != 0 {
 		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionRejected, pvfReady, catalog, have, rejectedBudget, true)...)
@@ -1196,13 +1199,40 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 	return selected, nil
 }
 
-func splitAuctionBudgets(maxActions int) (int, int) {
+func (a *App) reconcileRejectedStockLocked(have map[uint32]int) {
+	if len(a.auctionRejected) == 0 || len(have) == 0 {
+		return
+	}
+	out := a.auctionRejected[:0]
+	for _, id := range a.auctionRejected {
+		if have[id] > 0 {
+			a.appendAuctionNormalLocked(id)
+			continue
+		}
+		out = append(out, id)
+	}
+	a.auctionRejected = out
+}
+
+func (a *App) splitAuctionBudgetsLocked(maxActions int) (int, int) {
 	if maxActions <= 0 {
 		return 0, 0
 	}
-	rejected := maxActions / 10
-	if rejected <= 0 {
+	if len(a.auctionRejected) == 0 {
+		a.auctionRejectedTick = 0
 		return maxActions, 0
+	}
+	a.auctionRejectedTick++
+	if a.auctionRejectedTick < auctionRejectedRetryEvery {
+		return maxActions, 0
+	}
+	a.auctionRejectedTick = 0
+	rejected := maxActions / auctionRejectedRetryDivisor
+	if rejected <= 0 {
+		rejected = 1
+	}
+	if rejected > maxActions {
+		rejected = maxActions
 	}
 	return maxActions - rejected, rejected
 }
@@ -1555,6 +1585,110 @@ type actionTask struct {
 	action Action
 }
 
+type actionLogAccumulator struct {
+	total       int
+	ok          int
+	failed      int
+	errorCount  int
+	byMarket    map[string]int
+	byReason    map[string]int
+	failedItems map[uint32]actionLogFailedItem
+}
+
+type actionLogFailedItem struct {
+	count  int
+	reason string
+}
+
+func newActionLogAccumulator() actionLogAccumulator {
+	return actionLogAccumulator{
+		byMarket:    map[string]int{},
+		byReason:    map[string]int{},
+		failedItems: map[uint32]actionLogFailedItem{},
+	}
+}
+
+func (s *actionLogAccumulator) add(entry ActionEntry, err error) {
+	s.total++
+	s.byMarket[entry.Action.Market]++
+	if err == nil && entry.OK {
+		s.ok++
+		return
+	}
+	s.failed++
+	reason := actionLogReason(entry, err)
+	s.byReason[reason]++
+	if err != nil {
+		s.errorCount++
+	}
+	if entry.Action.ItemID != 0 {
+		item := s.failedItems[entry.Action.ItemID]
+		item.count++
+		if item.reason == "" {
+			item.reason = reason
+		}
+		s.failedItems[entry.Action.ItemID] = item
+	}
+}
+
+func (s actionLogAccumulator) summary() ActionLogSummary {
+	return ActionLogSummary{
+		Total:      s.total,
+		OK:         s.ok,
+		Failed:     s.failed,
+		ErrorCount: s.errorCount,
+		ByMarket:   compactCountMap(s.byMarket),
+		ByReason:   compactCountMap(s.byReason),
+		TopFailed:  topActionLogFailedItems(s.failedItems, 20),
+	}
+}
+
+func actionLogReason(entry ActionEntry, err error) string {
+	if err != nil {
+		return "executor_error"
+	}
+	if entry.Reason != nil {
+		return fmt.Sprintf("%d", *entry.Reason)
+	}
+	if entry.Action.Operation != "collect" && entry.AuctionID == 0 {
+		return "missing_auction_id"
+	}
+	return "rejected"
+}
+
+func compactCountMap(in map[string]int) map[string]int {
+	out := make(map[string]int, len(in))
+	for k, v := range in {
+		if k != "" && v > 0 {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func topActionLogFailedItems(in map[uint32]actionLogFailedItem, limit int) []ActionLogItem {
+	if len(in) == 0 || limit <= 0 {
+		return nil
+	}
+	items := make([]ActionLogItem, 0, len(in))
+	for id, stat := range in {
+		items = append(items, ActionLogItem{ItemID: id, Count: stat.count, Reason: stat.reason})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count == items[j].Count {
+			return items[i].ItemID < items[j].ItemID
+		}
+		return items[i].Count > items[j].Count
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items
+}
+
 func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, continueOnError bool, job *JobSummary) (int, []ActionEntry, error) {
 	if len(actions) == 0 {
 		return 0, nil, nil
@@ -1582,12 +1716,14 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 	var mu lockhub.Locker
 	failed := 0
 	entries := make([]ActionEntry, 0, len(actions))
+	actionLog := newActionLogAccumulator()
 	var firstErr error
 
 	record := func(entry ActionEntry, err error) {
 		mu.Lock()
 		defer mu.Unlock()
 		entries = append(entries, entry)
+		actionLog.add(entry, err)
 		if err != nil {
 			failed++
 			if firstErr == nil {
@@ -1623,7 +1759,6 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 				res, err := executor.Execute(task.action)
 				if err != nil {
 					entry.Error = err.Error()
-					a.appendLog(LogEvent{Type: "action", JobID: jobID, Market: task.action.Market, ItemID: task.action.ItemID, OK: boolPtr(false), Message: err.Error()})
 					record(entry, err)
 				} else {
 					entry.OK = res.ResultOK != nil && *res.ResultOK
@@ -1636,7 +1771,6 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 					if task.action.Market == "auction" && task.action.Operation != "collect" && !entry.OK && entry.Reason != nil {
 						a.markAuctionExplicitRejected(task.action.ItemID)
 					}
-					a.appendLog(LogEvent{Type: "action", JobID: jobID, Market: task.action.Market, ItemID: task.action.ItemID, AuctionID: res.AuctionID, OK: &entry.OK, Reason: byteValue(entry.Reason)})
 					record(entry, nil)
 				}
 				if delay > 0 {
@@ -1665,5 +1799,7 @@ sendLoop:
 	}
 	close(tasks)
 	wg.Wait()
+	summary := actionLog.summary()
+	a.appendLog(LogEvent{Type: "action_summary", JobID: jobID, ActionSummary: &summary})
 	return failed, entries, firstErr
 }
