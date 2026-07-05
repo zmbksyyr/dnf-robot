@@ -10,6 +10,7 @@
 
 ```text
 internal/bootstrap     启动、装配、运行时预检
+internal/composition   跨层组合、协议实现注入能力接口
 internal/entry         Web/TCP 入口适配
 internal/scheduler     调度、计划、actor 分配、能力调用
 internal/actor         actor 生命周期和任务执行边界
@@ -23,6 +24,7 @@ internal/shared        跨层 DTO
 
 - 顶层 `internal/*` 目录必须属于已知层。
 - `bootstrap` 不依赖 `entry/scheduler/actor/protocol`。
+- `composition` 只做跨层组合，允许依赖 `capability/protocol/foundation/shared`，不承载业务策略。
 - `scheduler` 不依赖 `protocol`。
 - `capability` 不依赖 `protocol/scheduler/entry`。
 - `entry` 不依赖 `protocol`。
@@ -87,7 +89,6 @@ lockhub resource names
 这些不是目标形态，只是当前运行路径暂时保留：
 
 ```text
-internal/protocol/auctionapp/executor.go -> capability/marketapp
 internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 ```
 
@@ -96,7 +97,8 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 ## 当前发现
 
 - `internal/bootstrap` 已纳入架构矩阵。
-- protocol 仍有两个反向依赖 capability 的历史点。
+- protocol 仍有一个反向依赖 capability 的历史点。
+- auctionapp 执行器已经从 protocol 移到 composition，作为协议和市场能力之间的装配桥。
 - scheduler 根包已经不再 import `database/sql`；SQL repository 由启动层装配，具体实现留在 scheduler/repository。
 - marketapp 是最大功能岛，后续需要单独做状态和自愈审计。
 - scheduler/repository 的锁资源名已经集中为常量，后续不允许重新散落字符串。
