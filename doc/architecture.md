@@ -64,7 +64,7 @@ store:point
 
 ```text
 OperationStatus.State -> capability/robot OperationState* 常量
-RuntimeStatus.StateName -> capability/robot RuntimeState* 常量
+RuntimeStatus.StateName -> shared RuntimeState* 常量，capability/robot 只保留别名
 SchedulerStatus.Mode -> capability/robot SchedulerMode* 常量
 Actor Snapshot.State -> actor State* 常量
 marketapp JobSummary.Status -> capability/marketapp MarketJobStatus* 常量
@@ -80,20 +80,15 @@ StatusItem.DBState -> capability/robot DBState* 常量
 
 ## Legacy 白名单
 
-这些不是目标形态，只是当前运行路径暂时保留：
-
-```text
-internal/protocol/dnfruntime/runtime.go  -> capability/robot
-```
-
-下一轮不能扩大白名单，只能减少白名单。
+当前没有 protocol -> capability 反向依赖白名单。后续不能新增白名单。
 
 ## 当前发现
 
 - `internal/bootstrap` 已纳入架构矩阵。
-- protocol 仍有一个反向依赖 capability 的历史点。
+- protocol 反向依赖 capability 的历史点已经清空。
 - auctionapp 执行器已经从 protocol 移到 composition，作为协议和市场能力之间的装配桥。
 - dnfruntime 已经去掉 keypair 反向依赖，登录 key 由启动层注入。
+- dnfruntime 运行态 DTO 已经下沉到 shared，protocol 不再依赖 capability/robot。
 - scheduler 根包已经不再 import `database/sql`；SQL repository 由启动层装配，具体实现留在 scheduler/repository。
 - marketapp 是最大功能岛，后续需要单独做状态和自愈审计。
 - scheduler/repository 的锁资源名已经集中为常量，后续不允许重新散落字符串。
@@ -101,7 +96,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/robot
 - actor 的 Actor/Ledger 内部锁已经按职责命名为 stateMu/indexMu；uid 动作串行锁保持 uidLocks。
 - store 点位协调器内部锁已经按职责命名为 pointMu。
 - OperationStatus 状态已经从 scheduler 字符串收敛到 capability/robot 常量。
-- RuntimeStatus 状态名已经从 actor/scheduler 字符串判断收敛到 capability/robot 常量。
+- RuntimeStatus 状态名已经下沉到 shared RuntimeState 常量，capability/robot 保留别名供业务层使用。
 - SchedulerStatus 模式已经从 scheduler 字符串值收敛到 capability/robot 常量。
 - Actor Snapshot.State 已经在 actor 层内收敛为 State 类型和 State* 常量。
 - marketapp JobSummary 状态已经从 restock/collect 字符串收敛到 MarketJobStatus 常量。

@@ -2,10 +2,10 @@ package dnfruntime
 
 import (
 	"encoding/json"
-	robotcap "robot/internal/capability/robot"
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/protocol/dnf"
+	"robot/internal/shared"
 	"sync"
 	"time"
 )
@@ -80,17 +80,17 @@ func (rs *RobotSvc) CallRobotMsgResult(msgFlag byte, fd int, msgType int, jsonDa
 	return result.Msg, nil
 }
 
-func (rs *RobotSvc) RuntimeStatus() []robotcap.RuntimeStatus {
+func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 	if rs.table == nil {
 		return nil
 	}
 	robotMap := rs.table.GetTask().GetRobotVoMap()
-	out := make([]robotcap.RuntimeStatus, 0, len(robotMap))
+	out := make([]shared.RuntimeStatus, 0, len(robotMap))
 	now := uint32(time.Now().Unix())
 	for _, vo := range robotMap {
 		snap := vo.Snapshot()
 		state := int(snap.State)
-		out = append(out, robotcap.RuntimeStatus{
+		out = append(out, shared.RuntimeStatus{
 			UID:                  int(snap.UID),
 			CID:                  int(snap.CID),
 			State:                state,
@@ -245,7 +245,7 @@ func waitStoreDisplay(vo *dnf.RobotVo, timeout time.Duration) {
 }
 
 func robotStateName(state int) string {
-	return robotcap.StateName(state)
+	return shared.StateName(state)
 }
 
 func (rs *RobotSvc) run() {
@@ -510,7 +510,7 @@ func (d *DollService) MsgOnLine(clientID string, keyData string) (string, error)
 	return result.Msg, nil
 }
 
-func (d *DollService) RuntimeStatus() []robotcap.RuntimeStatus {
+func (d *DollService) RuntimeStatus() []shared.RuntimeStatus {
 	if svc, ok := robotSvc.(*RobotSvc); ok {
 		return svc.RuntimeStatus()
 	}

@@ -53,11 +53,7 @@ var allowedLayerImports = []struct {
 	{dir: "internal/shared", allowed: nil},
 }
 
-var legacyLayerImports = map[string][]string{
-	"internal/protocol/dnfruntime/runtime.go": {
-		"robot/internal/capability/robot",
-	},
-}
+var legacyLayerImports = map[string][]string{}
 
 func TestTopLevelInternalDirectoriesAreKnownLayers(t *testing.T) {
 	root := repoRoot(t)
