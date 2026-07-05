@@ -62,6 +62,7 @@ type Repository interface {
 	LoadSystemCollectRows(dbName, market string, systemOwnerBase uint32) ([]collectRow, error)
 	LoadMarketStock(dbName string, systemOwnerBase uint32, occupied map[uint32]int) (map[uint32]int, error)
 	LoadMaxAddInfo(dbName string, min int32) (int32, error)
+	CreateCreatureItem(dbName string, ownerID uint32, itemID uint32) (int32, error)
 	CountSystemStock(dbName string, systemOwnerBase uint32) (int, error)
 	DeleteSystemStock(dbName string, systemOwnerBase uint32) (int64, error)
 }
@@ -502,6 +503,7 @@ func DefaultConfig() Config {
 	return Config{
 		ListenAddr:         "0.0.0.0:8121",
 		FridaDB:            "frida",
+		GameDB:             "taiwan_cain_2nd",
 		AuctionDB:          "taiwan_cain_auction_gold",
 		CeraDB:             "taiwan_cain_auction_cera",
 		AuctionHost:        "127.0.0.1",
@@ -599,6 +601,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.FridaDB == "" {
 		c.FridaDB = d.FridaDB
+	}
+	if c.GameDB == "" {
+		c.GameDB = d.GameDB
 	}
 	if c.AuctionDB == "" {
 		c.AuctionDB = d.AuctionDB
@@ -741,6 +746,7 @@ func writeJSONFile(path string, v interface{}) error {
 type Config struct {
 	ListenAddr         string       `json:"listen_addr"`
 	FridaDB            string       `json:"frida_db"`
+	GameDB             string       `json:"game_db"`
 	AuctionDB          string       `json:"auction_db"`
 	CeraDB             string       `json:"cera_db"`
 	AuctionHost        string       `json:"auction_host"`

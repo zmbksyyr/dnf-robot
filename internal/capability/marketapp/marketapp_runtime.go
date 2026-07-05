@@ -937,6 +937,24 @@ func (r SQLRepository) LoadMaxAddInfo(dbName string, min int32) (int32, error) {
 	return int32(max.Int64), nil
 }
 
+func (r SQLRepository) CreateCreatureItem(dbName string, ownerID uint32, itemID uint32) (int32, error) {
+	query := "INSERT INTO " + quoteIdent(dbName) + ".`creature_items` " +
+		"(`charac_no`,`slot`,`it_id`,`reg_date`,`name`,`stomach`,`exp`,`endurance`,`creature_type`,`creature_level`,`item_lock`,`delete_flag`,`skills`,`expire_time`,`item_creature_expire_time`) " +
+		"VALUES (?,0,?,NOW(),'',100,0,0,0,0,0,0,'','9999-12-31 23:59:59','9999-12-31 23:59:59')"
+	result, err := r.db.Exec(query, ownerID, itemID)
+	if err != nil {
+		return 0, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if id <= 0 || id > int64(maxInt32) {
+		return 0, fmt.Errorf("creature ui_id out of range: %d", id)
+	}
+	return int32(id), nil
+}
+
 func isMissingTable(err error) bool {
 	if err == nil {
 		return false
@@ -973,11 +991,7 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			continue
 		}
 		if special := specialAuctionKind(item); special != "" {
-			if special != "creature" {
-				a.planSpecialAuction(row, item, special, have, occ, result)
-				continue
-			}
-			result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "special_requires_handler"})
+			a.planSpecialAuction(row, item, special, have, occ, result)
 			continue
 		}
 		if isRiskyPVFItem(item) {
@@ -1075,10 +1089,11 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 		records = 1
 	}
 	batchInflate := float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
+	planned := 0
 	for i := 0; i < records; i++ {
 		unit := a.auctionUnitPrice(row.SystemPrice, true, batchInflate, 0, 0)
 		ownerID := a.pickOwner(occ)
-		result.Actions = append(result.Actions, Action{
+		action := Action{
 			Market:       "auction",
 			Kind:         special,
 			ItemID:       row.ItemID,
@@ -1088,13 +1103,26 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 			TotalPrice:   unit,
 			OwnerID:      ownerID,
 			OwnerName:    a.cfg.SystemOwner.OwnerName,
-			CountAddInfo: a.nextSpecialAddInfo(),
 			StartPrice:   unit - 1,
 			InstantPrice: unit,
 			Source:       row.Source,
-		})
+		}
+		if special == "creature" {
+			uiID, err := a.repository.CreateCreatureItem(a.cfg.GameDB, ownerID, row.ItemID)
+			if err != nil {
+				result.Skipped = append(result.Skipped, SkippedItem{Market: "auction", ItemID: row.ItemID, Name: item.Name, Reason: "creature_instance_failed"})
+				continue
+			}
+			action.CountAddInfo = uiID
+		} else {
+			action.CountAddInfo = a.nextSpecialAddInfo()
+		}
+		result.Actions = append(result.Actions, action)
+		planned++
 	}
-	have[row.ItemID] = records
+	if planned > 0 {
+		have[row.ItemID] = planned
+	}
 }
 
 func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {

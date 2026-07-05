@@ -2,6 +2,7 @@ package marketapp
 
 import (
 	"encoding/json"
+	"errors"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -590,8 +591,35 @@ func TestPlanAuctionHandlesNonCreatureSpecialTypesWithUniqueAddInfo(t *testing.T
 	}
 }
 
-func TestPlanAuctionStillSkipsCreatureSpecialUntilCreatureItemsHandlerExists(t *testing.T) {
+func TestPlanAuctionCreatesCreatureItemInstanceForCreatureSpecial(t *testing.T) {
 	app := testApp()
+	repo := &clearStockRepository{creatureIDs: []int32{4567}}
+	app.repository = repo
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		3001: {ItemID: 3001, Kind: "equipment", ItemType: 30, Slot: "creature", Attach: "trade", Price: 100},
+	}
+	app.planAuction([]restockRow{{ItemID: 3001, Quantity: 1, Enabled: true}}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 1 || len(result.Skipped) != 0 {
+		t.Fatalf("creature plan actions=%#v skipped=%#v", result.Actions, result.Skipped)
+	}
+	action := result.Actions[0]
+	if action.Kind != "creature" || action.CountAddInfo != 4567 || action.OwnerID == 0 {
+		t.Fatalf("unexpected creature action: %#v", action)
+	}
+	if len(repo.creatureCreates) != 1 {
+		t.Fatalf("creature creates = %#v", repo.creatureCreates)
+	}
+	create := repo.creatureCreates[0]
+	if create.dbName != app.cfg.GameDB || create.ownerID != action.OwnerID || create.itemID != action.ItemID {
+		t.Fatalf("unexpected creature create: %#v action=%#v", create, action)
+	}
+}
+
+func TestPlanAuctionSkipsCreatureWhenInstanceCreationFails(t *testing.T) {
+	app := testApp()
+	app.repository = &clearStockRepository{createCreatureErr: errors.New("insert failed")}
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		3001: {ItemID: 3001, Kind: "equipment", ItemType: 30, Slot: "creature", Attach: "trade", Price: 100},
@@ -601,7 +629,7 @@ func TestPlanAuctionStillSkipsCreatureSpecialUntilCreatureItemsHandlerExists(t *
 	if len(result.Actions) != 0 || len(result.Skipped) != 1 {
 		t.Fatalf("creature plan actions=%#v skipped=%#v", result.Actions, result.Skipped)
 	}
-	if result.Skipped[0].Reason != "special_requires_handler" {
+	if result.Skipped[0].Reason != "creature_instance_failed" {
 		t.Fatalf("creature skip reason = %q", result.Skipped[0].Reason)
 	}
 }
@@ -751,10 +779,19 @@ func TestRiskyPVFItemAllowsHighLevelEquipmentWhenItemInfoCapsLevel(t *testing.T)
 }
 
 type clearStockRepository struct {
-	counts       map[string]int
-	stock        map[string]map[uint32]int
-	maxAddInfo   int32
-	collectCalls int
+	counts            map[string]int
+	stock             map[string]map[uint32]int
+	maxAddInfo        int32
+	collectCalls      int
+	creatureIDs       []int32
+	createCreatureErr error
+	creatureCreates   []creatureCreateCall
+}
+
+type creatureCreateCall struct {
+	dbName  string
+	ownerID uint32
+	itemID  uint32
 }
 
 func (r *clearStockRepository) EnsureMarketTables([]string, time.Time) ([]string, error) {
@@ -780,6 +817,19 @@ func (r *clearStockRepository) LoadMarketStock(dbName string, _ uint32, _ map[ui
 
 func (r *clearStockRepository) LoadMaxAddInfo(string, int32) (int32, error) {
 	return r.maxAddInfo, nil
+}
+
+func (r *clearStockRepository) CreateCreatureItem(dbName string, ownerID uint32, itemID uint32) (int32, error) {
+	if r.createCreatureErr != nil {
+		return 0, r.createCreatureErr
+	}
+	r.creatureCreates = append(r.creatureCreates, creatureCreateCall{dbName: dbName, ownerID: ownerID, itemID: itemID})
+	if len(r.creatureIDs) == 0 {
+		return int32(7000 + len(r.creatureCreates)), nil
+	}
+	id := r.creatureIDs[0]
+	r.creatureIDs = r.creatureIDs[1:]
+	return id, nil
 }
 
 func (r *clearStockRepository) CountSystemStock(dbName string, _ uint32) (int, error) {
