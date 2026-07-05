@@ -164,9 +164,9 @@ func (a *App) RestartAutoAsync() {
 }
 
 func (a *App) startAutoIfEnabled() {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	enabled := a.cfg.Auto.Enabled
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	if enabled {
 		a.StartAuto()
 	}
@@ -211,11 +211,11 @@ func (a *App) autoLoop() {
 		a.markAutoStopped()
 		close(a.autoDone)
 	}()
-	a.mu.Lock()
+	a.stateMu.Lock()
 	enabled := a.cfg.Auto.Enabled
 	initialMS := a.cfg.Auto.InitialDelayMS
 	intervalMS := a.cfg.Auto.IntervalMS
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	if !enabled {
 		a.appendLog(LogEvent{Type: "auto", Status: "disabled"})
 		return
@@ -247,16 +247,16 @@ func (a *App) autoLoop() {
 
 func (a *App) runAutoOnce() {
 	if tables, err := a.repository.EnsureMarketTables(a.marketDBNames(), time.Now()); err != nil {
-		a.mu.Lock()
+		a.stateMu.Lock()
 		a.dbInit = tables
 		a.dbInitErr = err.Error()
-		a.mu.Unlock()
+		a.stateMu.Unlock()
 		a.appendLog(LogEvent{Type: "db_init", Status: "failed", Message: err.Error()})
 	} else {
-		a.mu.Lock()
+		a.stateMu.Lock()
 		a.dbInit = tables
 		a.dbInitErr = ""
-		a.mu.Unlock()
+		a.stateMu.Unlock()
 	}
 	markets := a.cfg.Auto.Markets
 	if len(markets) == 0 {
@@ -560,8 +560,8 @@ func (a *App) marketServiceLogPath(name string) string {
 }
 
 func (a *App) setMarketServiceStatus(status MarketServiceStatus) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	if a.services == nil {
 		a.services = map[string]MarketServiceStatus{}
 	}
@@ -1295,8 +1295,8 @@ func (a *App) pickOwner(occ map[uint32]int) uint32 {
 }
 
 func (a *App) nextSpecialAddInfo() int32 {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	if a.specialAddInfo < specialAddInfoBase {
 		a.specialAddInfo = specialAddInfoBase
 		if a.repository != nil {
@@ -1380,15 +1380,15 @@ func cleanupLegacyMarketFiles(configDir string) {
 }
 
 func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) ([]restockRow, error) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	needsLoad := len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || pvfReady && a.auctionQueueSource != "pvf_iteminfo"
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	if needsLoad {
 		normal, special, source, err := a.auctionQueueCandidates(pvfReady, catalog)
 		if err != nil {
 			return nil, err
 		}
-		a.mu.Lock()
+		a.stateMu.Lock()
 		if len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || source == "pvf_iteminfo" && a.auctionQueueSource != "pvf_iteminfo" {
 			candidateSet := idSet(append(append([]uint32{}, normal...), special...))
 			a.auctionRejected = filterQueueBySet(a.auctionRejected, candidateSet)
@@ -1397,10 +1397,10 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 			a.auctionSpecialQueue = filterQueueExcludeSet(special, rejectedSet)
 			a.auctionQueueSource = source
 		}
-		a.mu.Unlock()
+		a.stateMu.Unlock()
 	}
 
-	a.mu.Lock()
+	a.stateMu.Lock()
 	selected := make([]restockRow, 0)
 	a.reconcileRejectedStockLocked(have, pvfReady, catalog)
 
@@ -1412,7 +1412,7 @@ func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem
 	if maxActions <= 0 || rejectedBudget != 0 {
 		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionRejected, pvfReady, catalog, have, rejectedBudget, true)...)
 	}
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	return selected, nil
 }
 
@@ -1500,8 +1500,8 @@ func (a *App) markAuctionExplicitRejected(itemID uint32) {
 	if itemID == 0 {
 		return
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	a.auctionQueue = removeQueueID(a.auctionQueue, itemID)
 	a.auctionSpecialQueue = removeQueueID(a.auctionSpecialQueue, itemID)
 	if !queueContains(a.auctionRejected, itemID) {

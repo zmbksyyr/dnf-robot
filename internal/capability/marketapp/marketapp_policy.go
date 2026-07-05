@@ -112,8 +112,8 @@ func degradeMarketPolicy(status *MarketPolicyStatus, policy marketAutoPolicy, re
 }
 
 func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates marketCandidateSnapshot, policy marketAutoPolicy) MarketPolicyStatus {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 
 	prev := a.policy[market]
 	state := nextMarketPolicyState(market, kinds, candidates, prev)
@@ -223,13 +223,13 @@ func (a *App) observeAuctionCandidates() marketCandidateSnapshot {
 
 func (a *App) setMarketPolicyStatus(status MarketPolicyStatus) {
 	status.applyHealth()
-	a.mu.Lock()
+	a.stateMu.Lock()
 	if a.policy == nil {
 		a.policy = map[string]MarketPolicyStatus{}
 	}
 	prev, hadPrev := a.policy[status.Market]
 	a.policy[status.Market] = status
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	changed := !hadPrev || prev.Mode != status.Mode || prev.Reason != status.Reason || prev.EffectiveMaxActions != status.EffectiveMaxActions || prev.EffectiveConcurrency != status.EffectiveConcurrency
 	if changed && (status.Mode != marketPolicyModeNormal || hadPrev) {
 		a.appendLog(LogEvent{Type: "market_policy", Market: status.Market, Status: status.Mode, Message: status.Reason})
@@ -238,7 +238,7 @@ func (a *App) setMarketPolicyStatus(status MarketPolicyStatus) {
 
 func (a *App) markMarketPolicyBlocked(market, reason string) {
 	market = normalizeMarketName(market)
-	a.mu.Lock()
+	a.stateMu.Lock()
 	status := MarketPolicyStatus{
 		Market:      market,
 		Mode:        marketPolicyModeDegraded,
@@ -258,7 +258,7 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 	status.applyHealth()
 	prev, hadPrev := a.policy[market]
 	a.policy[market] = status
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	if !hadPrev || prev.Mode != status.Mode || prev.Reason != status.Reason {
 		a.appendLog(LogEvent{Type: "market_policy", Market: market, Status: status.Mode, Message: reason})
 	}
@@ -266,7 +266,7 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 
 func (a *App) recordMarketPolicyJob(market string, job JobSummary) {
 	market = normalizeMarketName(market)
-	a.mu.Lock()
+	a.stateMu.Lock()
 	if a.policy == nil {
 		a.policy = map[string]MarketPolicyStatus{}
 	}
@@ -282,7 +282,7 @@ func (a *App) recordMarketPolicyJob(market string, job JobSummary) {
 	status.UpdatedAt = time.Now()
 	status.applyHealth()
 	a.policy[market] = status
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *App) currentMarketKinds(market string) (int, error) {

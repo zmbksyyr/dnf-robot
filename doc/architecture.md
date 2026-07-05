@@ -45,14 +45,14 @@ scheduler:cleanup-pending
 scheduler:store-points
 scheduler:store-slots
 repository:schema-cache
+marketapp:state
+marketapp:job
+marketapp:auto
 ```
 
 下一步继续审计：
 
 ```text
-market:auto
-market:iteminfo
-market:stock
 actor:{slot}
 uid:{uid}
 ```
@@ -97,6 +97,7 @@ internal/protocol/dnfruntime/runtime.go  -> capability/keypair, capability/robot
 - scheduler 根包仍有 `database/sql` 聚合点，后续应继续向 repository 边界收敛。
 - marketapp 是最大功能岛，后续需要单独做状态和自愈审计。
 - scheduler/repository 的锁资源名已经集中为常量，后续不允许重新散落字符串。
+- marketapp 的 App 内部锁已经按职责命名为 stateMu/jobMu/autoMu，不再保留泛化 mu 字段。
 - OperationStatus 状态已经从 scheduler 字符串收敛到 capability/robot 常量。
 - RuntimeStatus 状态名已经从 actor/scheduler 字符串判断收敛到 capability/robot 常量。
 - SchedulerStatus 模式已经从 scheduler 字符串值收敛到 capability/robot 常量。

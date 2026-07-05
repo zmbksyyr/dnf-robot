@@ -24,7 +24,7 @@ type App struct {
 	dfGameR    string
 	executors  ActionExecutorFactory
 
-	mu        lockhub.Locker
+	stateMu   lockhub.Locker
 	jobMu     lockhub.Locker
 	autoMu    lockhub.Locker
 	autoRun   bool
@@ -149,15 +149,15 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 }
 
 func (a *App) Config() Config {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return a.cfg
 }
 
 func (a *App) Status() Status {
 	a.refreshMarketServiceStatuses()
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	return Status{
 		ConfigPath:  a.configPath,
 		LogPath:     marketLogPath(a.configDir),
@@ -177,10 +177,10 @@ func (a *App) Status() Status {
 }
 
 func (a *App) SetAutoEnabled(enabled bool) (Status, error) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.cfg.Auto.Enabled = enabled
 	err := writeJSONFile(a.configPath, a.cfg)
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	if err != nil {
 		return a.Status(), err
 	}
@@ -193,7 +193,7 @@ func (a *App) SetAutoEnabled(enabled bool) (Status, error) {
 }
 
 func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	if req.AutoEnabled != nil {
 		a.cfg.Auto.Enabled = *req.AutoEnabled
 	}
@@ -225,7 +225,7 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	a.cfg.applyDefaults()
 	cfg := a.cfg
 	err := writeJSONFile(a.configPath, cfg)
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	if err != nil {
 		return a.Status(), err
 	}
@@ -405,8 +405,8 @@ func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 }
 
 func (a *App) setLastJob(job JobSummary) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	a.lastJob = &job
 }
 

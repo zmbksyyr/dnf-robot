@@ -82,6 +82,38 @@ func TestActionResultStatesUseNamedConstants(t *testing.T) {
 	}
 }
 
+func TestMarketAppLocksUsePurposeNames(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "internal", "capability", "marketapp", "marketapp_core.go")
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != "App" {
+				continue
+			}
+			st, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+			for _, field := range st.Fields.List {
+				for _, name := range field.Names {
+					if name.Name == "mu" {
+						t.Errorf("%s App lock field uses generic name mu; use a purpose name such as stateMu/jobMu/autoMu", path)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestMutexDeclarationsStayInsideLockhub(t *testing.T) {
 	root := repoRoot(t)
 	internal := filepath.Join(root, "internal")

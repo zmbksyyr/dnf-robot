@@ -65,9 +65,9 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 		status := a.itemInfoStatus()
 		status.Error = fmt.Sprintf("export source %s: %v", a.pvfPath, err)
 		a.appendLog(LogEvent{Type: "iteminfo_export", Status: "failed", Message: status.Error})
-		a.mu.Lock()
+		a.stateMu.Lock()
 		a.itemInfo = status
-		a.mu.Unlock()
+		a.stateMu.Unlock()
 		return status
 	}
 	a.cfg.ItemInfoSourcePath = sourcePath
@@ -75,9 +75,9 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	if err := a.prepareItemInfoRelease(); err != nil {
 		status.Error = err.Error()
 		a.appendLog(LogEvent{Type: "iteminfo_prepare", Status: "failed", Message: status.Error})
-		a.mu.Lock()
+		a.stateMu.Lock()
 		a.itemInfo = status
-		a.mu.Unlock()
+		a.stateMu.Unlock()
 		return status
 	}
 	status = a.syncItemInfoDAT()
@@ -87,14 +87,14 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 			a.appendLog(LogEvent{Type: "iteminfo_restart", Status: "failed", Message: status.Error})
 		}
 	}
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.itemInfo = status
 	a.auctionQueue = nil
 	a.auctionSpecialQueue = nil
 	a.auctionRejected = nil
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 	if status.Error == "" {
 		a.startAutoIfEnabled()
 	}
@@ -132,14 +132,14 @@ func (a *App) prepareItemInfoRelease() error {
 }
 
 func (a *App) resetAuctionQueues() {
-	a.mu.Lock()
+	a.stateMu.Lock()
 	a.auctionQueue = nil
 	a.auctionSpecialQueue = nil
 	a.auctionRejected = nil
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""
 	a.specialAddInfo = 0
-	a.mu.Unlock()
+	a.stateMu.Unlock()
 }
 
 func (a *App) clearSystemMarketStockLocked(logType string) (ClearSystemStockResult, error) {
