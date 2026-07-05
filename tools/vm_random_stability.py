@@ -541,30 +541,39 @@ echo RESTORED
     def scenario_events(self):
         high = self.args.target_max
         mid = max(self.args.target_min, min(high, max(100, high // 2)))
+        low = max(20, min(self.args.target_min, 80))
         return [
             {"name": "target20", "at": 0, "fn": lambda: self.set_target(20)},
-            {"name": "smoke_actions", "at": self.event_at(0.03), "fn": self.smoke_actions},
-            {"name": "announcement_check", "at": self.event_at(0.07), "fn": self.announcement_check},
-            {"name": "market_fault", "at": self.event_at(0.10), "fn": self.market_fault},
-            {"name": "market_special_smoke", "at": self.event_at(0.13), "fn": self.market_special_smoke},
-            {"name": "market_startup_iteminfo_race", "at": self.event_at(0.16), "fn": self.market_startup_iteminfo_race},
-            {"name": "pvf_file_fault", "at": self.event_at(0.20), "fn": self.pvf_file_fault},
-            {"name": "market_button_flow", "at": self.event_at(0.27), "fn": self.market_button_flow},
-            {"name": "target_mid", "at": self.event_at(0.34), "fn": lambda: self.set_target(mid)},
-            {"name": "manual_collision", "at": self.event_at(0.40), "fn": self.manual_collision},
-            {"name": "db_stock_external_clear", "at": self.event_at(0.46), "fn": self.db_stock_external_clear},
-            {"name": "db_schema_drift", "at": self.event_at(0.52), "fn": self.db_schema_drift},
-            {"name": "target_high", "at": self.event_at(0.58), "fn": lambda: self.set_target(high)},
-            {"name": "cleanup_burst", "at": self.event_at(0.64), "fn": self.cleanup_burst},
-            {"name": "config_dir_fault", "at": self.event_at(0.70), "fn": self.config_dir_fault},
-            {"name": "web_api_fault", "at": self.event_at(0.76), "fn": self.web_api_fault},
-            {"name": "port_conflict_fault", "at": self.event_at(0.81), "fn": self.port_conflict_fault},
-            {"name": "mysql_restart_fault", "at": self.event_at(0.86), "fn": self.mysql_restart_fault},
-            {"name": "monitor_fault", "at": self.event_at(0.90), "fn": self.monitor_fault},
-            {"name": "game_port_fault", "at": self.event_at(0.93), "fn": self.game_port_fault},
-            {"name": "robot_restart", "at": self.event_at(0.96), "fn": self.robot_restart},
+            {"name": "robot_scale_wave", "at": self.event_at(0.025), "fn": lambda: self.robot_scale_wave(low, mid, high)},
+            {"name": "smoke_actions", "at": self.event_at(0.055), "fn": self.smoke_actions},
+            {"name": "robot_action_storm", "at": self.event_at(0.085), "fn": self.robot_action_storm},
+            {"name": "announcement_check", "at": self.event_at(0.115), "fn": self.announcement_check},
+            {"name": "market_fault", "at": self.event_at(0.145), "fn": self.market_fault},
+            {"name": "market_operation_storm", "at": self.event_at(0.185), "fn": self.market_operation_storm},
+            {"name": "robot_manual_mode_drill", "at": self.event_at(0.225), "fn": self.robot_manual_mode_drill},
+            {"name": "market_special_smoke", "at": self.event_at(0.265), "fn": self.market_special_smoke},
+            {"name": "market_cera_drill", "at": self.event_at(0.305), "fn": self.market_cera_drill},
+            {"name": "market_startup_iteminfo_race", "at": self.event_at(0.345), "fn": self.market_startup_iteminfo_race},
+            {"name": "pvf_file_fault", "at": self.event_at(0.385), "fn": self.pvf_file_fault},
+            {"name": "market_button_flow", "at": self.event_at(0.425), "fn": self.market_button_flow},
+            {"name": "target_mid", "at": self.event_at(0.465), "fn": lambda: self.set_target(mid)},
+            {"name": "manual_collision", "at": self.event_at(0.505), "fn": self.manual_collision},
+            {"name": "robot_store_lifecycle_storm", "at": self.event_at(0.545), "fn": self.robot_store_lifecycle_storm},
+            {"name": "db_stock_external_clear", "at": self.event_at(0.585), "fn": self.db_stock_external_clear},
+            {"name": "db_schema_drift", "at": self.event_at(0.625), "fn": self.db_schema_drift},
+            {"name": "target_high", "at": self.event_at(0.665), "fn": lambda: self.set_target(high)},
+            {"name": "cleanup_burst", "at": self.event_at(0.705), "fn": self.cleanup_burst},
+            {"name": "robot_cleanup_edge_cases", "at": self.event_at(0.745), "fn": self.robot_cleanup_edge_cases},
+            {"name": "config_dir_fault", "at": self.event_at(0.785), "fn": self.config_dir_fault},
+            {"name": "web_api_fault", "at": self.event_at(0.825), "fn": self.web_api_fault},
+            {"name": "port_conflict_fault", "at": self.event_at(0.855), "fn": self.port_conflict_fault},
+            {"name": "mysql_restart_fault", "at": self.event_at(0.885), "fn": self.mysql_restart_fault},
+            {"name": "monitor_fault", "at": self.event_at(0.915), "fn": self.monitor_fault},
+            {"name": "game_port_fault", "at": self.event_at(0.94), "fn": self.game_port_fault},
+            {"name": "robot_restart_under_load", "at": self.event_at(0.955), "fn": lambda: self.robot_restart_under_load(high)},
+            {"name": "robot_restart", "at": self.event_at(0.965), "fn": self.robot_restart},
             {"name": "custom_key_test", "at": self.event_at(0.975), "fn": self.custom_key_test},
-            {"name": "final_target_mid", "at": self.event_at(0.98), "fn": lambda: self.set_target(mid)},
+            {"name": "final_target_mid", "at": self.event_at(0.985), "fn": lambda: self.set_target(mid)},
         ]
 
     def event_at(self, ratio):
@@ -592,6 +601,8 @@ echo RESTORED
 
     def random_user_interleave(self):
         actions = [
+            self.user_robot_action_mix,
+            self.user_robot_online_logout,
             self.user_market_start,
             self.user_market_stop_start,
             self.user_market_iteminfo,
@@ -606,6 +617,55 @@ echo RESTORED
             action()
         finally:
             self.check_market_invariants(name)
+
+    def status_rows(self, count=None):
+        status = self.safe_call("robotsStatus", {"count": count or self.args.status_count})
+        rows = (((status or {}).get("result") or {}).get("robots") or [])
+        if not isinstance(rows, list):
+            return []
+        return rows
+
+    def select_uids(self, count, prefer_running=True):
+        rows = self.status_rows(max(self.args.status_count, count * 4))
+        if prefer_running:
+            preferred = []
+            fallback = []
+            for row in rows:
+                uid = int(row.get("uid") or 0)
+                if uid <= 0:
+                    continue
+                fallback.append(uid)
+                if row.get("runtime_state") in ("running", "store") and not row.get("missing_core"):
+                    preferred.append(uid)
+            uids = preferred or fallback
+        else:
+            uids = [int(r.get("uid") or 0) for r in rows if int(r.get("uid") or 0) > 0]
+        random.shuffle(uids)
+        return uids[:count]
+
+    def robot_call(self, command, payload, label):
+        res = self.safe_call(command, payload)
+        self.log("%s command=%s payload=%s result=%s" % (label, command, payload, json_text(res, 1800)))
+        self.sample_with_event("%s:%s" % (label, command))
+        return res
+
+    def user_robot_action_mix(self):
+        uids = self.select_uids(12)
+        if not uids:
+            self.log("user_robot_action_mix skipped no uids")
+            return
+        random.shuffle(uids)
+        self.robot_call("robotsMove", {"uids": uids[:8]}, "user_robot_action_mix")
+        self.robot_call("robotsShoutLocal", {"uids": uids[2:10]}, "user_robot_action_mix")
+        self.robot_call("robotsShoutWorld", {"uids": uids[:3]}, "user_robot_action_mix")
+        self.robot_call("robotsStoreAsync", {"uids": uids[4:8]}, "user_robot_action_mix")
+
+    def user_robot_online_logout(self):
+        uids = self.select_uids(10, prefer_running=False)
+        if uids:
+            self.robot_call("robotsLogoutAsync", {"uids": uids[:5]}, "user_robot_online_logout")
+            time.sleep(5)
+        self.robot_call("robotsOnlineAsync", {"count": random.randint(3, 12)}, "user_robot_online_logout")
 
     def user_market_start(self):
         self.market_enable_auto(max_concurrent=8)
@@ -686,6 +746,48 @@ echo RESTORED
         self.market_enable_auto(max_concurrent=8)
         self.sample_with_event("market_special_smoke_done")
         self.log("market_special_smoke done")
+
+    def market_operation_storm(self):
+        self.log("market_operation_storm begin")
+        self.market_enable_auto(max_concurrent=8)
+        ops = [
+            ("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 1536, "max_concurrent": 8, "continue_on_error": True}),
+            ("marketRestockOnce", {"market": "cera", "execute": True, "max_actions": 256, "max_concurrent": 8, "continue_on_error": True}),
+            ("marketCollectOnce", {"market": "auction", "execute": True, "max_actions": 512, "max_concurrent": 8, "continue_on_error": True}),
+            ("marketRestockOnce", {"market": "", "execute": True, "max_actions": 2048, "max_concurrent": 8, "continue_on_error": True}),
+            ("marketCollectOnce", {"market": "", "execute": True, "max_actions": 512, "max_concurrent": 8, "continue_on_error": True}),
+        ]
+        for idx, item in enumerate(ops):
+            command, payload = item
+            res = self.safe_call(command, payload)
+            self.log("market_operation_storm step=%s command=%s result=%s" % (idx, command, json_text(res, 2600)))
+            self.sample_with_event("market_operation_storm:%s:%s" % (idx, command))
+            time.sleep(random.randint(2, 6))
+        self.safe_call("marketStop", {})
+        self.sample_with_event("market_operation_storm:stop")
+        time.sleep(random.randint(3, 8))
+        self.market_enable_auto(max_concurrent=8)
+        self.burst_sample("market_operation_storm_recover", self.scaled_seconds(30, 90), 10)
+        self.log("market_operation_storm done")
+
+    def market_cera_drill(self):
+        self.log("market_cera_drill begin")
+        self.market_enable_auto(max_concurrent=8)
+        before = self.market_db_counts()
+        self.log("market_cera_drill before=%s" % json_text(before, 1200))
+        for idx in range(3):
+            res = self.safe_call("marketRestockOnce", {"market": "cera", "execute": True, "max_actions": 256, "max_concurrent": 8, "continue_on_error": True})
+            self.log("market_cera_drill restock idx=%s result=%s" % (idx, json_text(res, 2200)))
+            self.sample_with_event("market_cera_restock:%s" % idx)
+            time.sleep(5)
+        res = self.safe_call("marketCollectOnce", {"market": "cera", "execute": True, "max_actions": 128, "max_concurrent": 8, "continue_on_error": True})
+        self.log("market_cera_drill collect result=%s" % json_text(res, 1800))
+        self.burst_sample("market_cera_drill_recover", self.scaled_seconds(20, 60), 10)
+        after = self.market_db_counts()
+        self.log("market_cera_drill after=%s" % json_text(after, 1200))
+        if int(after.get("cera_records") or 0) <= 0:
+            self.record_failure("market_cera_empty", "cera restock drill produced no cera records")
+        self.log("market_cera_drill done")
 
     def market_startup_iteminfo_race(self):
         self.log("market_startup_iteminfo_race begin")
@@ -1017,6 +1119,127 @@ fi
         self.wait_robot_api("mysql_restart_api", 120, 5)
         self.market_enable_auto(max_concurrent=8)
         self.burst_sample("mysql_restart_recover", self.scaled_seconds(30, 90), 10)
+
+    def robot_scale_wave(self, low, mid, high):
+        self.log("robot_scale_wave begin low=%s mid=%s high=%s" % (low, mid, high))
+        wave = [low, mid, high, low, max(mid, high - 50), self.args.target_min]
+        for idx, target in enumerate(wave):
+            self.set_target(target)
+            self.burst_sample("robot_scale_wave:%s:%s" % (idx, target), self.scaled_seconds(15, 45), 5)
+        self.log("robot_scale_wave done")
+
+    def robot_action_storm(self):
+        self.log("robot_action_storm begin")
+        for round_idx in range(4):
+            uids = self.select_uids(24)
+            if not uids:
+                self.robot_call("robotsOnlineAsync", {"count": 20}, "robot_action_storm")
+                time.sleep(10)
+                uids = self.select_uids(24)
+            if not uids:
+                self.log("robot_action_storm skipped round=%s no uids" % round_idx)
+                continue
+            random.shuffle(uids)
+            calls = [
+                ("robotsMove", {"uids": uids[:16]}),
+                ("robotsShout", {"uids": uids[0:8]}),
+                ("robotsShoutLocal", {"uids": uids[8:16]}),
+                ("robotsShoutWorld", {"uids": uids[0:4]}),
+                ("robotsStoreAsync", {"uids": uids[4:12]}),
+                ("robotsLogoutAsync", {"uids": uids[16:20]}),
+                ("robotsOnlineAsync", {"count": random.randint(6, 18)}),
+            ]
+            for command, payload in calls:
+                self.robot_call(command, payload, "robot_action_storm:%s" % round_idx)
+                time.sleep(random.randint(1, 4))
+        self.burst_sample("robot_action_storm_recover", self.scaled_seconds(45, 120), 10)
+        self.log("robot_action_storm done")
+
+    def robot_manual_mode_drill(self):
+        self.log("robot_manual_mode_drill begin")
+        stop = self.safe_call("autoStop", {})
+        self.log("robot_manual_mode_drill autoStop=%s" % json_text(stop, 1200))
+        self.sample_with_event("robot_manual_mode:auto_stop")
+        try:
+            self.robot_call("robotsOnlineAsync", {"count": 12}, "robot_manual_mode")
+            time.sleep(10)
+            uids = self.select_uids(16, prefer_running=False)
+            if uids:
+                self.robot_call("robotsMove", {"uids": uids[:10]}, "robot_manual_mode")
+                self.robot_call("robotsShoutLocal", {"uids": uids[0:8]}, "robot_manual_mode")
+                self.robot_call("robotsShoutWorld", {"uids": uids[0:3]}, "robot_manual_mode")
+                self.robot_call("robotsStoreAsync", {"uids": uids[4:10]}, "robot_manual_mode")
+                self.robot_call("robotsLogoutAsync", {"uids": uids[10:14]}, "robot_manual_mode")
+                time.sleep(10)
+                self.robot_call("robotsOnlineAsync", {"uids": uids[10:14]}, "robot_manual_mode")
+            else:
+                self.log("robot_manual_mode_drill no uids after online")
+            self.burst_sample("robot_manual_mode_hold", self.scaled_seconds(20, 60), 10)
+        finally:
+            start = self.safe_call("autoStart", {})
+            self.log("robot_manual_mode_drill autoStart=%s" % json_text(start, 1200))
+            self.burst_sample("robot_manual_mode_recover", self.scaled_seconds(30, 90), 10)
+        self.log("robot_manual_mode_drill done")
+
+    def robot_store_lifecycle_storm(self):
+        self.log("robot_store_lifecycle_storm begin")
+        uids = self.select_uids(36)
+        if not uids:
+            self.log("robot_store_lifecycle_storm skipped no uids")
+            return
+        self.robot_call("robotsStoreAsync", {"uids": uids[:18]}, "robot_store_lifecycle")
+        self.burst_sample("robot_store_lifecycle_store", self.scaled_seconds(20, 60), 10)
+        self.robot_call("robotsLogoutAsync", {"uids": uids[6:14]}, "robot_store_lifecycle")
+        time.sleep(10)
+        if not self.args.no_cleanup:
+            clean_uids = uids[10:14]
+            res = self.safe_call("cleanupRobots", {"uids": clean_uids, "force": True})
+            deleted = int((((res or {}).get("result") or {}).get("deleted")) or 0)
+            self.deleted_total += deleted
+            self.log("robot_store_lifecycle cleanup uids=%s deleted=%s result=%s" % (clean_uids, deleted, json_text(res, 1600)))
+            self.sample_with_event("robot_store_lifecycle:cleanup")
+        self.robot_call("robotsOnlineAsync", {"count": 12}, "robot_store_lifecycle")
+        self.burst_sample("robot_store_lifecycle_recover", self.scaled_seconds(45, 120), 10)
+        self.log("robot_store_lifecycle_storm done")
+
+    def robot_cleanup_edge_cases(self):
+        self.log("robot_cleanup_edge_cases begin")
+        if self.args.no_cleanup:
+            self.log("robot_cleanup_edge_cases skipped no_cleanup=true")
+            return
+        uids = self.select_uids(6, prefer_running=False)
+        cases = [
+            {"uids": [999999991, 999999992], "force": True},
+            {"uids": ([uids[0], uids[0]] if uids else [999999993, 999999993]), "force": True},
+            {"uids": (uids[:2] if len(uids) >= 2 else [999999994]), "force": False},
+            {"uids": [], "force": True},
+        ]
+        for idx, payload in enumerate(cases):
+            res = self.safe_call("cleanupRobots", payload)
+            deleted = int((((res or {}).get("result") or {}).get("deleted")) or 0)
+            self.deleted_total += deleted
+            self.log("robot_cleanup_edge_cases idx=%s payload=%s deleted=%s result=%s" % (idx, payload, deleted, json_text(res, 1800)))
+            self.sample_with_event("robot_cleanup_edge:%s" % idx)
+            time.sleep(4)
+        self.safe_call("autoStart", {})
+        self.burst_sample("robot_cleanup_edge_recover", self.scaled_seconds(30, 90), 10)
+        self.log("robot_cleanup_edge_cases done")
+
+    def robot_restart_under_load(self, high):
+        self.log("robot_restart_under_load begin high=%s" % high)
+        self.set_target(high)
+        uids = self.select_uids(24)
+        if uids:
+            self.robot_call("robotsMove", {"uids": uids[:16]}, "robot_restart_under_load")
+            self.robot_call("robotsStoreAsync", {"uids": uids[4:16]}, "robot_restart_under_load")
+            self.robot_call("robotsShoutWorld", {"uids": uids[:4]}, "robot_restart_under_load")
+        self.market_enable_auto(max_concurrent=8)
+        self.robot_restart_without_target("robot_restart_under_load_restart")
+        self.wait_robot_api("robot_restart_under_load_api", 120, 5)
+        self.safe_call("autoStart", {})
+        self.market_enable_auto(max_concurrent=8)
+        self.burst_sample("robot_restart_under_load_recover", self.scaled_seconds(60, 150), 10)
+        self.log("robot_restart_under_load done")
 
     def manual_collision(self):
         status = self.safe_call("robotsStatus", {"count": 100})
