@@ -296,6 +296,43 @@ func TestMarkAuctionExplicitRejectedMovesID(t *testing.T) {
 	}
 }
 
+func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
+	app := testApp()
+	app.configDir = t.TempDir()
+	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
+		app.cfg.AuctionDB: {},
+	}}
+	app.auctionQueue = []uint32{10075}
+	app.auctionRejected = []uint32{30075}
+	app.auctionRejectedTick = 7
+	app.auctionQueueSource = "pvf_iteminfo"
+
+	first := app.marketAutoPolicy("auction", app.cfg.Auto)
+	if first.MaxActions != app.cfg.Auto.MaxActions || first.MaxConcurrent != app.cfg.Auto.MaxConcurrent {
+		t.Fatalf("first policy changed pressure: %#v", first)
+	}
+	if len(app.auctionQueue) == 0 || len(app.auctionRejected) == 0 {
+		t.Fatalf("first zero round should only observe queues: normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)
+	}
+
+	second := app.marketAutoPolicy("auction", app.cfg.Auto)
+	if second.MaxActions != app.cfg.Auto.MaxActions || second.MaxConcurrent != app.cfg.Auto.MaxConcurrent {
+		t.Fatalf("second policy should rebuild only: %#v", second)
+	}
+	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
+		t.Fatalf("second zero round did not reset queues: normal=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
+	}
+
+	third := app.marketAutoPolicy("auction", app.cfg.Auto)
+	if third.MaxActions != 2000 || third.MaxConcurrent != 4 {
+		t.Fatalf("third zero round pressure = %#v, want 2000/4", third)
+	}
+	status := app.policy["auction"]
+	if status.Mode != marketPolicyModeDegraded || status.ZeroKindRounds != 3 {
+		t.Fatalf("policy status = %#v, want degraded round 3", status)
+	}
+}
+
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 	app := testApp()
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)
@@ -442,6 +479,7 @@ func TestRiskyPVFItemAllowsHighLevelEquipmentWhenItemInfoCapsLevel(t *testing.T)
 
 type clearStockRepository struct {
 	counts       map[string]int
+	stock        map[string]map[uint32]int
 	collectCalls int
 }
 
@@ -458,8 +496,12 @@ func (r *clearStockRepository) LoadSystemCollectRows(string, string, uint32) ([]
 	return nil, nil
 }
 
-func (r *clearStockRepository) LoadMarketStock(string, uint32, map[uint32]int) (map[uint32]int, error) {
-	return nil, nil
+func (r *clearStockRepository) LoadMarketStock(dbName string, _ uint32, _ map[uint32]int) (map[uint32]int, error) {
+	out := map[uint32]int{}
+	for id, count := range r.stock[dbName] {
+		out[id] = count
+	}
+	return out, nil
 }
 
 func (r *clearStockRepository) CountSystemStock(dbName string, _ uint32) (int, error) {

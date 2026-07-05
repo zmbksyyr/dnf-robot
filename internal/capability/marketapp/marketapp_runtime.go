@@ -160,6 +160,15 @@ func (a *App) RestartAutoAsync() {
 	}()
 }
 
+func (a *App) startAutoIfEnabled() {
+	a.mu.Lock()
+	enabled := a.cfg.Auto.Enabled
+	a.mu.Unlock()
+	if enabled {
+		a.StartAuto()
+	}
+}
+
 func (a *App) stopAutoWithWait(wait bool) {
 	a.autoMu.Lock()
 	if !a.autoRun {
@@ -264,13 +273,14 @@ func (a *App) runAutoOnce() {
 			a.appendLog(LogEvent{Type: "auto", Status: "service_down", Market: market, Message: "market service is not ready; job skipped"})
 			continue
 		}
+		policy := a.marketAutoPolicy(market, a.cfg.Auto)
 		if a.cfg.Collector.Enabled {
 			a.appendLog(LogEvent{Type: "auto_collect", Market: market, Status: "start"})
 			job, err := a.CollectOnce(CollectRequest{
 				Market:          market,
 				Execute:         true,
-				MaxActions:      a.cfg.Auto.MaxActions,
-				MaxConcurrent:   a.cfg.Auto.MaxConcurrent,
+				MaxActions:      policy.MaxActions,
+				MaxConcurrent:   policy.MaxConcurrent,
 				ContinueOnError: a.cfg.Auto.ContinueOnError,
 			})
 			status := job.Status
@@ -284,8 +294,8 @@ func (a *App) runAutoOnce() {
 		job, err := a.RestockOnce(RestockRequest{
 			Market:          market,
 			Execute:         true,
-			MaxActions:      a.cfg.Auto.MaxActions,
-			MaxConcurrent:   a.cfg.Auto.MaxConcurrent,
+			MaxActions:      policy.MaxActions,
+			MaxConcurrent:   policy.MaxConcurrent,
 			ContinueOnError: a.cfg.Auto.ContinueOnError,
 		})
 		status := job.Status

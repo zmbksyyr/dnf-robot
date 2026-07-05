@@ -94,6 +94,9 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""
 	a.mu.Unlock()
+	if status.Error == "" {
+		a.startAutoIfEnabled()
+	}
 	return status
 }
 

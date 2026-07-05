@@ -42,6 +42,7 @@ type App struct {
 	auctionRejected     []uint32
 	auctionRejectedTick int
 	auctionQueueSource  string
+	policy              map[string]MarketPolicyStatus
 }
 
 type Planner interface {
@@ -123,6 +124,7 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		dfGameR:    sys.DFGameR,
 		executors:  executors,
 		services:   map[string]MarketServiceStatus{},
+		policy:     map[string]MarketPolicyStatus{},
 		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		stopAuto:   make(chan struct{}),
 		autoDone:   make(chan struct{}),
@@ -165,6 +167,7 @@ func (a *App) Status() Status {
 		DBInitError: a.dbInitErr,
 		ItemInfo:    a.itemInfo,
 		Services:    cloneServiceStatusMap(a.services),
+		Policy:      clonePolicyStatusMap(a.policy),
 		LastJob:     compactJob(a.lastJob),
 	}
 }
@@ -428,6 +431,17 @@ func cloneServiceStatusMap(in map[string]MarketServiceStatus) map[string]MarketS
 		return nil
 	}
 	out := make(map[string]MarketServiceStatus, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func clonePolicyStatusMap(in map[string]MarketPolicyStatus) map[string]MarketPolicyStatus {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]MarketPolicyStatus, len(in))
 	for key, value := range in {
 		out[key] = value
 	}
@@ -859,8 +873,23 @@ type Status struct {
 	DBInitError string                         `json:"db_init_error,omitempty"`
 	ItemInfo    ItemInfoSyncStatus             `json:"iteminfo"`
 	Services    map[string]MarketServiceStatus `json:"services,omitempty"`
+	Policy      map[string]MarketPolicyStatus  `json:"policy,omitempty"`
 	LastJob     *JobSummary                    `json:"last_job,omitempty"`
 	LogTail     []LogEvent                     `json:"log_tail,omitempty"`
+}
+
+type MarketPolicyStatus struct {
+	Market               string    `json:"market"`
+	Mode                 string    `json:"mode"`
+	Reason               string    `json:"reason,omitempty"`
+	DBKinds              int       `json:"db_kinds"`
+	ZeroKindRounds       int       `json:"zero_kind_rounds,omitempty"`
+	QueueNormal          int       `json:"queue_normal,omitempty"`
+	QueueRejected        int       `json:"queue_rejected,omitempty"`
+	QueueSource          string    `json:"queue_source,omitempty"`
+	EffectiveMaxActions  int       `json:"effective_max_actions"`
+	EffectiveConcurrency int       `json:"effective_concurrency"`
+	UpdatedAt            time.Time `json:"updated_at,omitempty"`
 }
 
 type ItemInfoSyncStatus struct {

@@ -109,6 +109,10 @@ SAMPLE_FIELDS = [
     "market_point_status",
     "market_point_open",
     "market_services_ready",
+    "market_auction_records",
+    "market_auction_kinds",
+    "market_cera_records",
+    "market_cera_kinds",
     "load1",
     "load5",
     "load15",
@@ -213,6 +217,8 @@ class StabilityRun(object):
         if not os.path.isdir(self.snapshot_dir):
             os.makedirs(self.snapshot_dir)
         self.results = []
+        self.market_zero_since = 0
+        self.last_invariant_failure = {}
 
     def log(self, message):
         line = u"[%s] %s" % (now_text(), safe_text(message))
@@ -226,8 +232,10 @@ class StabilityRun(object):
         self.ensure_auto()
         next_target = time.time() + random.randint(self.args.target_min_interval, self.args.target_max_interval)
         next_cleanup = time.time() + random.randint(self.args.cleanup_min_interval, self.args.cleanup_max_interval)
+        next_user_interleave = time.time() + random.randint(self.args.user_interleave_min_interval, self.args.user_interleave_max_interval)
         next_log_snapshot = time.time()
         next_sample = 0
+        next_invariant = 0
         end_at = time.time() + self.total_sec
         scenario = self.scenario_events()
         fired = {}
@@ -252,6 +260,12 @@ class StabilityRun(object):
                 if now >= next_cleanup:
                     self.random_cleanup()
                     next_cleanup = now + random.randint(self.args.cleanup_min_interval, self.args.cleanup_max_interval)
+                if now >= next_user_interleave:
+                    self.random_user_interleave()
+                    next_user_interleave = now + random.randint(self.args.user_interleave_min_interval, self.args.user_interleave_max_interval)
+                if now >= next_invariant:
+                    self.check_market_invariants("main_loop")
+                    next_invariant = now + self.args.sample_interval
                 time.sleep(1)
         except KeyboardInterrupt:
             self.log("interrupted by user")
@@ -291,6 +305,20 @@ class StabilityRun(object):
         self.results.append(result)
         self.log("scenario event done name=%s recovered=%s error=%s" % (name, recovered, err))
 
+    def record_failure(self, name, error):
+        now = datetime.datetime.now().isoformat()
+        item = {
+            "name": name,
+            "started_at": now,
+            "duration_sec": 0,
+            "recovered": False,
+            "error": error,
+            "before": "",
+            "after": "",
+        }
+        self.results.append(item)
+        self.log("invariant failure name=%s error=%s" % (name, error))
+
     def check_recovered(self, event):
         api = self.safe_call("systemStatus", {})
         market = self.market_status_result()
@@ -305,6 +333,34 @@ class StabilityRun(object):
         if not market_ok:
             self.log("recover_check event=%s failed reason=market_services services=%s" % (event, json_text((market.get("services") or {}), 1400)))
         return bool(ok and game_ok and market_ok)
+
+    def check_market_invariants(self, event):
+        status = self.market_status_result()
+        ports = self.port_snapshot()
+        counts = self.market_db_counts()
+        enabled = self.market_auto_enabled(status)
+        running = bool(status.get("auto_running"))
+        services_ready = self.market_services_ready(status)
+        game_ready = bool(ports.get("10011"))
+        now = time.time()
+        if enabled and game_ready and services_ready and not running:
+            key = "market_auto_stopped:%s" % event
+            if now - self.last_invariant_failure.get(key, 0) > 60:
+                self.last_invariant_failure[key] = now
+                self.record_failure(key, "market auto enabled but not running while game and services are ready")
+                self.safe_call("marketStart", {})
+        auction_kinds = int(counts.get("auction_kinds") or 0)
+        if enabled and running and game_ready and services_ready and auction_kinds <= 0:
+            if not self.market_zero_since:
+                self.market_zero_since = now
+            elif now - self.market_zero_since > self.args.market_zero_grace:
+                key = "market_zero_kinds:%s" % event
+                if now - self.last_invariant_failure.get(key, 0) > 120:
+                    self.last_invariant_failure[key] = now
+                    self.record_failure(key, "market auto running but auction kinds stayed zero for %ss" % int(now - self.market_zero_since))
+                    self.safe_call("marketStart", {})
+        else:
+            self.market_zero_since = 0
 
     def write_snapshot(self, label):
         snap = self.snapshot(label)
@@ -374,6 +430,20 @@ class StabilityRun(object):
         )
         return self.shell("mysql -ugame -puu5!^%%jg -e %s" % shell_quote(query), 60, log_output=False)[:12000]
 
+    def market_db_counts(self):
+        query = (
+            "SELECT 'auction',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main;"
+            "SELECT 'cera',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_cera.auction_main;"
+        )
+        out = self.shell("mysql -ugame -puu5!^%%jg -N -e %s" % shell_quote(query), 30, log_output=False)
+        counts = {}
+        for line in safe_text(out).splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[0] in ("auction", "cera"):
+                counts[parts[0] + "_records"] = parts[1]
+                counts[parts[0] + "_kinds"] = parts[2]
+        return counts
+
     def prepare_baseline(self):
         if not os.path.isdir(self.baseline_dir):
             os.makedirs(self.baseline_dir)
@@ -437,6 +507,7 @@ echo RESTORED
             {"name": "smoke_actions", "at": self.event_at(0.03), "fn": self.smoke_actions},
             {"name": "announcement_check", "at": self.event_at(0.07), "fn": self.announcement_check},
             {"name": "market_fault", "at": self.event_at(0.10), "fn": self.market_fault},
+            {"name": "market_startup_iteminfo_race", "at": self.event_at(0.16), "fn": self.market_startup_iteminfo_race},
             {"name": "pvf_file_fault", "at": self.event_at(0.20), "fn": self.pvf_file_fault},
             {"name": "market_button_flow", "at": self.event_at(0.27), "fn": self.market_button_flow},
             {"name": "target_mid", "at": self.event_at(0.34), "fn": lambda: self.set_target(mid)},
@@ -479,6 +550,57 @@ echo RESTORED
     def random_target(self):
         self.set_target(random.randint(self.args.target_min, self.args.target_max))
 
+    def random_user_interleave(self):
+        actions = [
+            self.user_market_start,
+            self.user_market_stop_start,
+            self.user_market_iteminfo,
+            self.user_market_clear_stock,
+            self.user_market_restock_once,
+            self.user_market_collect_once,
+        ]
+        action = random.choice(actions)
+        name = getattr(action, "__name__", "user_action")
+        self.log("random_user_interleave action=%s" % name)
+        try:
+            action()
+        finally:
+            self.check_market_invariants(name)
+
+    def user_market_start(self):
+        self.market_enable_auto(max_concurrent=8)
+        self.sample_with_event("user_market_start")
+
+    def user_market_stop_start(self):
+        res = self.safe_call("marketStop", {})
+        self.log("user_market_stop_start stop result=%s" % json_text(res, 1200))
+        time.sleep(random.randint(2, 8))
+        res = self.safe_call("marketStart", {})
+        self.log("user_market_stop_start start result=%s" % json_text(res, 1200))
+        self.sample_with_event("user_market_stop_start")
+
+    def user_market_iteminfo(self):
+        res = self.safe_call("marketSyncItemInfo", {})
+        self.log("user_market_iteminfo result=%s" % json_text(res, 2200))
+        self.wait_market_services("user_market_iteminfo_services", 180, 10)
+        self.wait_market_auto_running("user_market_iteminfo_auto", 120, 10)
+
+    def user_market_clear_stock(self):
+        res = self.safe_call("marketClearSystemStock", {})
+        self.log("user_market_clear_stock result=%s" % json_text(res, 1800))
+        self.market_enable_auto(max_concurrent=8)
+        self.sample_with_event("user_market_clear_stock")
+
+    def user_market_restock_once(self):
+        res = self.safe_call("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 256, "max_concurrent": 4, "continue_on_error": True})
+        self.log("user_market_restock_once result=%s" % json_text(res, 2200))
+        self.sample_with_event("user_market_restock_once")
+
+    def user_market_collect_once(self):
+        res = self.safe_call("marketCollectOnce", {"market": "auction", "execute": True, "max_actions": 128, "max_concurrent": 4, "continue_on_error": True})
+        self.log("user_market_collect_once result=%s" % json_text(res, 1800))
+        self.sample_with_event("user_market_collect_once")
+
     def announcement_check(self):
         self.log("announcement_check begin")
         res = self.safe_call("systemAnnouncement", {})
@@ -500,6 +622,25 @@ echo RESTORED
         self.wait_market_services("market_fault_final_recover", 180, 10)
         self.burst_sample("market_fault_final", self.scaled_seconds(30, 90), 10)
         self.log("market_fault done")
+
+    def market_startup_iteminfo_race(self):
+        self.log("market_startup_iteminfo_race begin")
+        self.sample_with_event("market_startup_race_before")
+        self.shell("cd /root && (./stop >/tmp/vm_random_stop_market_race.log 2>&1 || true); sleep 12; ss -lntp | grep -E ':(10011|30303)' || true", 180)
+        self.robot_restart_without_target("market_startup_race_robot_restart_game_down")
+        res = self.safe_call("marketStatus", {})
+        self.log("market_startup_iteminfo_race status_game_down=%s" % json_text(res, 1600))
+        res = self.safe_call("marketSyncItemInfo", {})
+        self.log("market_startup_iteminfo_race sync_iteminfo_game_down result=%s" % json_text(res, 2400))
+        self.sample_with_event("market_startup_race_after_iteminfo")
+        self.shell("cd /root && (./run >/tmp/vm_random_run_market_race.log 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true", 240)
+        self.wait_robot_api("market_startup_race_api", 90, 5)
+        self.wait_market_services("market_startup_race_services", 240, 10)
+        if not self.wait_market_auto_running("market_startup_race_auto", 180, 10):
+            self.record_failure("market_startup_iteminfo_race_invariant", "market auto did not resume after iteminfo while game was down")
+            self.market_enable_auto(max_concurrent=8)
+        self.burst_sample("market_startup_race_recover", self.scaled_seconds(30, 90), 10)
+        self.log("market_startup_iteminfo_race done")
 
     def market_enable_auto(self, max_concurrent=8):
         res = self.safe_call("marketConfigUpdate", {
@@ -526,6 +667,27 @@ echo RESTORED
         auction = services.get("auction") or {}
         point = services.get("point") or {}
         return bool(auction.get("status") == "ready" and auction.get("listening") and point.get("status") == "ready" and point.get("listening"))
+
+    def market_auto_enabled(self, status=None):
+        if status is None:
+            status = self.market_status_result()
+        auto = status.get("auto") or {}
+        return bool(auto.get("enabled"))
+
+    def wait_market_auto_running(self, event, timeout_sec=180, interval_sec=10):
+        self.log("wait_market_auto_running start event=%s timeout=%s" % (event, timeout_sec))
+        deadline = time.time() + timeout_sec
+        last = {}
+        while time.time() < deadline:
+            status = self.market_status_result()
+            last = status
+            self.sample_with_event(event)
+            if self.market_auto_enabled(status) and status.get("auto_running"):
+                self.log("wait_market_auto_running ready event=%s" % event)
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_market_auto_running timeout event=%s status=%s" % (event, json_text(last, 1800)))
+        return False
 
     def wait_market_services(self, event, timeout_sec=180, interval_sec=10):
         self.log("wait_market_services start event=%s timeout=%s" % (event, timeout_sec))
@@ -1048,7 +1210,7 @@ echo "KEYS_RESTORED"
         row = self.sample_row()
         self.writerow(row)
         self.log(
-            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s load=%s/%s/%s top=%s hits=%s api_error=%s"
+            "sample target=%s actors=%s leased=%s running=%s connecting=%s mode=%s market_auto=%s auction=%s/%s cera=%s/%s load=%s/%s/%s top=%s hits=%s api_error=%s"
             % (
                 row.get("target"),
                 row.get("actors"),
@@ -1056,6 +1218,11 @@ echo "KEYS_RESTORED"
                 row.get("running"),
                 row.get("connecting"),
                 row.get("scheduler_mode"),
+                row.get("market_auto"),
+                row.get("market_auction_records"),
+                row.get("market_auction_kinds"),
+                row.get("market_cera_records"),
+                row.get("market_cera_kinds"),
                 row.get("load1"),
                 row.get("load5"),
                 row.get("load15"),
@@ -1139,12 +1306,15 @@ echo "KEYS_RESTORED"
         row["event"] = safe_text(event)
         self.writerow(row)
         self.log(
-            "sample event=%s target=%s running=%s mode=%s load=%s/%s/%s robot_cpu=%s df_game_cpu=%s goroutines=%s"
+            "sample event=%s target=%s running=%s mode=%s market_auto=%s auction=%s/%s load=%s/%s/%s robot_cpu=%s df_game_cpu=%s goroutines=%s"
             % (
                 event,
                 row.get("target"),
                 row.get("running"),
                 row.get("scheduler_mode"),
+                row.get("market_auto"),
+                row.get("market_auction_records"),
+                row.get("market_auction_kinds"),
                 row.get("load1"),
                 row.get("load5"),
                 row.get("load15"),
@@ -1236,6 +1406,11 @@ echo "KEYS_RESTORED"
             row["market_point_status"] = point.get("status")
             row["market_point_open"] = int(bool(point.get("listening")))
             row["market_services_ready"] = int(bool(auction.get("status") == "ready" and auction.get("listening") and point.get("status") == "ready" and point.get("listening")))
+            counts = self.market_db_counts()
+            row["market_auction_records"] = counts.get("auction_records", "")
+            row["market_auction_kinds"] = counts.get("auction_kinds", "")
+            row["market_cera_records"] = counts.get("cera_records", "")
+            row["market_cera_kinds"] = counts.get("cera_kinds", "")
         except Exception as exc:
             if not row.get("api_error"):
                 row["api_error"] = "marketStatus:%r" % (exc,)
@@ -1432,6 +1607,9 @@ def parse_args():
     parser.add_argument("--target-max-interval", type=int, default=40 * 60)
     parser.add_argument("--cleanup-min-interval", type=int, default=30 * 60)
     parser.add_argument("--cleanup-max-interval", type=int, default=45 * 60)
+    parser.add_argument("--user-interleave-min-interval", type=int, default=90)
+    parser.add_argument("--user-interleave-max-interval", type=int, default=180)
+    parser.add_argument("--market-zero-grace", type=int, default=180)
     parser.add_argument("--cleanup-min-count", type=int, default=1)
     parser.add_argument("--cleanup-max-count", type=int, default=3)
     parser.add_argument("--cleanup-max-total", type=int, default=30)
@@ -1449,6 +1627,8 @@ def main():
     args = parse_args()
     if args.target_min > args.target_max:
         args.target_min, args.target_max = args.target_max, args.target_min
+    if args.user_interleave_min_interval > args.user_interleave_max_interval:
+        args.user_interleave_min_interval, args.user_interleave_max_interval = args.user_interleave_max_interval, args.user_interleave_min_interval
     StabilityRun(args).run()
     return 0
 
