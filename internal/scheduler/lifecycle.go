@@ -163,15 +163,6 @@ func (m *RobotManager) actorStatusMap() map[int]actormodel.Snapshot {
 }
 
 func (m *RobotManager) CleanupRobots(req robotcap.CleanupRequest) (robotcap.CleanupResult, error) {
-	if req.Force {
-		var result robotcap.CleanupResult
-		var err error
-		_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerOperation, "cleanup_robots", func() error {
-			result, err = m.cleanupRobots(req)
-			return nil
-		})
-		return result, err
-	}
 	return m.cleanupRobots(req)
 }
 

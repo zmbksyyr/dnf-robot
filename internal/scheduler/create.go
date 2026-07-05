@@ -19,16 +19,6 @@ func (m *RobotManager) robotName(uid int, used map[string]struct{}, rc robotconf
 }
 
 func (m *RobotManager) CreateRobots(req robotcap.CreateRequest) ([]robotcap.Info, error) {
-	var robots []robotcap.Info
-	var err error
-	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerOperation, "create_robots", func() error {
-		robots, err = m.createRobotsLocked(req)
-		return nil
-	})
-	return robots, err
-}
-
-func (m *RobotManager) createRobotsLocked(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	_, finishOperation, err := m.beginTrackedStructuralOperation("create", fmt.Sprintf("count=%d", req.Count))
 	if err != nil {
 		return nil, err
