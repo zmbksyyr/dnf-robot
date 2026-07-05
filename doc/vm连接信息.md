@@ -1,130 +1,128 @@
-# VM 连接信息
+# VM Connection Rules
 
-本文给 AI/维护者使用。普通使用者只看 `doc/使用说明.md`。
+This file is for AI agents and maintainers.
 
-## 连接信息
+## Must Follow
 
-- VM IP：`192.168.200.131`
-- SSH：`root / 123456`
-- Web：`http://192.168.200.131:8112`
-- Web 密码：`twadmin`
-- robot TCP API：`8111`
-- 游戏端口：`10011`
-- robot 程序：`/root/robot`
-- 配置目录：`/root/config`
-- 主配置：`/root/config/config.ini`
-- 行为配置：`/root/config/robot_config.ini`
-- 主业务日志：`/root/config/log_robot`
-- 启动输出与 Web 诊断日志：`/root/robot_stdout.log`
-- 启动全服：`/root/run`
-- 停止全服：`/root/stop`
-- 游戏目录：`/home/neople/game`
-- df_game_r：`/home/neople/game/df_game_r`
+- This file is UTF-8 text. Do not call it garbled.
+- Read docs with UTF-8.
+- Before any VM, deploy, or debug task, read this file and `doc/调试.md`.
+- Use Python `paramiko` for SSH, upload, and remote commands.
+- Do not use PowerShell `ssh` or `scp` for VM work.
+- Use `vmrun` only for VM snapshot/start operations.
+- VM network can be slow. Wait and retry before saying deploy failed.
+- Do not restore a VM snapshot unless the user asks for it.
+- Before deploy, record the git commit.
+- Before deploy, back up `/root/robot`.
+- After deploy, check process, ports, and logs.
+
+## Quick Card
+
+- VM IP: `192.168.200.131`
+- SSH: `root / 123456`
+- Web: `http://192.168.200.131:8112`
+- Web password: `twadmin`
+- robot TCP API: `8111`
+- game port: `10011`
+- auction port: `30803`
+- point port: `30603`
+- robot binary: `/root/robot`
+- config dir: `/root/config`
+- main config: `/root/config/config.ini`
+- robot config: `/root/config/robot_config.ini`
+- main log: `/root/config/log_robot`
+- web/start log: `/root/robot_stdout.log`
+- market log: `/root/config/market_log.jsonl`
+- start game services: `/root/run`
+- stop game services: `/root/stop`
+- game dir: `/home/neople/game`
+- df_game_r: `/home/neople/game/df_game_r`
+
+## Database
+
+- host: `127.0.0.1`
+- port: `3306`
+- user: `game`
+- password: `uu5!^%jg`
+- main db: `d_taiwan`
+- auction db: `taiwan_cain_auction_gold`
+- cera db: `taiwan_cain_auction_cera`
+
+Example:
+
+```sh
+MYSQL_PWD='uu5!^%jg' mysql -ugame -N -B -e "SELECT 1;"
+```
 
 ## VMware
 
-- VMX：`D:\cache\game\DNF_85_CUICAN_20260407_璀璨85完结版\DNFServer\DNFServer 7.3 x64.vmx`
-- vmrun：`C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe`
-- 最后快照名：`快照 2`
+- VMX: `D:\cache\game\DNF_85_CUICAN_20260407_璀璨85完结版\DNFServer\DNFServer 7.3 x64.vmx`
+- vmrun: `C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe`
+- last snapshot: `快照 2`
 
-恢复最后快照后启动：
+Snapshot commands:
 
 ```text
 vmrun -T ws revertToSnapshot "<VMX>" "快照 2"
 vmrun -T ws start "<VMX>" nogui
 ```
 
-AI 执行约束：
+## Local Build
 
-- 连接 VM、上传文件、执行远端命令时，优先使用 Python SSH 工具 `paramiko` 或者调用 `vmrun`。
-- 禁止用 PowerShell 直接执行 SSH、SCP、vmrun 等 VM 操作，避免编码、转义和交互行为不一致。
-- VM 网络偶发波动时可以等待后重试，不要立刻判断部署失败。
-- VM 响应慢通常是 VMware CPU 占用导致的卡顿，先等待或降低并发操作，不要误判为网络断开。
-- 需要恢复/启动虚拟机时，只通过 `vmrun` 执行，不要手动改 VM 文件。
-
-## 本地构建
-
-在仓库根目录执行：
-
-```text
-cd robot-go
-go test ./...
-go vet ./...
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../bin/robot ./cmd/robot
-```
-
-Windows PowerShell 示例：
+Run from repo root:
 
 ```powershell
 $env:GOOS='linux'
 $env:GOARCH='amd64'
 $env:CGO_ENABLED='0'
-go build -trimpath -ldflags='-s -w' -o ..\bin\robot .\cmd\robot
-```
-
-## 部署
-
-1. 记录当前 git commit。
-2. 上传 `bin/robot` 到 `/root/robot.new`。
-3. `chmod +x /root/robot.new`。
-4. 备份旧 `/root/robot`。
-5. 停止旧 `/root/robot` 进程。
-6. 替换 `/root/robot`。
-7. `nohup /root/robot >/root/robot_stdout.log 2>&1 &`。
-8. 执行 `/root/run` 启动游戏服务。
-9. 等 `10011` 连续稳定后再启动自动调度。
-
-## 日志定位
-
-- 机器人业务、调度、actor、摆摊、登录：查 `/root/config/log_robot`。
-- Web 子进程启动、退出、panic、慢请求、auth rejected：查 `/root/robot_stdout.log`。
-
-常用命令：
-
-```text
-grep -a -E 'WebAdmin|web admin exited|web admin listening|panic|request pid|auth rejected' /root/robot_stdout.log
-grep -a -E 'panic|fatal|msg_queue_full|broken_lease|broken_cleanup|SchedulerPolicy|RobotMetrics' /root/config/log_robot
-```
-
-Web session 安全要求：
-
-- token 只保存在 web 子进程内存。
-- 支持多个浏览器/页面各自持有随机 token。
-- 不允许把 token/session 固化到本地文件。
-- 如果 web 子进程被打崩，刷新回登录页是安全预期；必须从 `/root/robot_stdout.log` 追查退出原因。
-
-## 打包
-
-git提交，交付 zip 放到桌面，命名格式：
-
-```text
-dofrobot-main_YYYYMMDD-HHMMSS_最后更新的功能xxx.zip
-```
-
-包内包含：
-
-- 源码
-- `.git` 目录，用于下次继续修复、查看历史、提交和回滚
-- `doc`
-- `bin/robot`
-- 默认资源
-
-包内不包含：
-
-- 临时诊断文件
-- 旧基线产物
-- 旧压测摘要
-- 桌面旧 zip
-
-## 代码检查
-
-提交前执行：
-
-```text
-cd robot-go
-gofmt -w ./cmd/robot ./internal ./pkg
 go test ./...
-go vet ./...
+go build -trimpath -ldflags='-s -w' -o dist\robot-linux-amd64 .\cmd\robot
 ```
 
-默认行为配置使用 `[spawn]` 管理出生点和活动范围，不再使用旧的调试命名。
+## Deploy Steps
+
+1. Record local commit: `git rev-parse --short HEAD`.
+2. Build Linux amd64 robot.
+3. Upload binary to `/root/robot.new` with `paramiko`.
+4. Run `chmod +x /root/robot.new`.
+5. Back up old `/root/robot`.
+6. Stop old `/root/robot` process.
+7. Replace `/root/robot`.
+8. Start robot:
+
+```sh
+nohup /root/robot >/root/robot_stdout.log 2>&1 &
+```
+
+9. Check `8111` and `8112`.
+10. If game services are needed, run `/root/run`.
+11. Check `10011`, `30803`, and `30603`.
+12. Check logs for `panic` and `fatal`.
+
+## Quick Checks
+
+```sh
+ps -eo pid,lstart,cmd | grep -E '(/root/robot|df_game_r|df_auction_r|df_point_r)' | grep -v grep
+ss -lntp | grep -E ':(8111|8112|10011|30803|30603)'
+tail -n 80 /root/robot_stdout.log
+tail -n 80 /root/config/log_robot
+tail -n 80 /root/config/market_log.jsonl
+```
+
+## Deploy Must Pass
+
+- `/root/robot` process exists.
+- Port `8111` is listening.
+- Port `8112` is listening.
+- `/root/robot_stdout.log` has no fresh `panic` or `fatal`.
+- `/root/config/log_robot` is being updated.
+- If game is started, port `10011` is listening.
+- If market is started, ports `30803` and `30603` are listening.
+
+## Packaging
+
+- Commit first.
+- Put the zip on Desktop.
+- Name format: `dofrobot-main_YYYYMMDD-HHMMSS_feature.zip`.
+- Include source, `.git`, `doc`, default resources, and built binary.
+- Do not include temp logs, old zip files, or old diagnostic output.
