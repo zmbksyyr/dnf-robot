@@ -495,6 +495,28 @@ func TestNextMarketPolicyStateIsPureCounterLogic(t *testing.T) {
 	if state.zeroCandidateRounds != 2 || state.mode != marketPolicyModeRecover {
 		t.Fatalf("zero candidate state = %#v", state)
 	}
+
+	prev = MarketPolicyStatus{DBKinds: 10, LastActionResults: 20, LastActionFailed: 10, UpdatedAt: time.Now()}
+	state = nextMarketPolicyState("auction", 11, marketCandidateSnapshot{Count: 20}, prev)
+	if state.actionFailureRounds != 1 || state.mode != marketPolicyModeRecover {
+		t.Fatalf("high failure state = %#v", state)
+	}
+
+	prev = MarketPolicyStatus{DBKinds: 10, LastActionResults: 19, LastActionFailed: 19, UpdatedAt: time.Now()}
+	state = nextMarketPolicyState("auction", 11, marketCandidateSnapshot{Count: 20}, prev)
+	if state.actionFailureRounds != 0 {
+		t.Fatalf("low sample failure state = %#v", state)
+	}
+}
+
+func TestMarketPolicyDegradesAfterRepeatedActionFailures(t *testing.T) {
+	app := testApp()
+	status := MarketPolicyStatus{Market: "auction", ActionFailureRounds: 2}
+	policy := app.applyAuctionPolicyActions(marketCandidateSnapshot{Count: 100}, &status, marketAutoPolicy{MaxActions: 10000, MaxConcurrent: 8})
+
+	if status.Mode != marketPolicyModeDegraded || policy.MaxActions != 2000 || policy.MaxConcurrent != 4 {
+		t.Fatalf("repeated failure policy status=%#v policy=%#v", status, policy)
+	}
 }
 
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {

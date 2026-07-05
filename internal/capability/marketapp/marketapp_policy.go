@@ -74,6 +74,13 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 		return degradeMarketPolicy(status, policy, "auction kinds still not growing below candidate count; send pressure reduced")
 	}
 	switch {
+	case status.ActionFailureRounds == 1:
+		status.Reason = "auction action failures are high; observing one recovery round"
+		status.Mode = marketPolicyModeRecover
+	case status.ActionFailureRounds >= 2:
+		return degradeMarketPolicy(status, policy, "auction action failures stayed high; send pressure reduced")
+	}
+	switch {
 	case status.ZeroKindRounds == 2:
 		a.resetAuctionQueues()
 		a.appendLog(LogEvent{Type: "market_policy", Market: "auction", Status: "queue_reset", Message: "zero_kind_recovery"})
@@ -113,6 +120,7 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 		ZeroKindRounds:       state.zeroKindRounds,
 		ZeroCandidateRounds:  state.zeroCandidateRounds,
 		StagnantRounds:       state.stagnantRounds,
+		ActionFailureRounds:  state.actionFailureRounds,
 		EffectiveMaxActions:  policy.MaxActions,
 		EffectiveConcurrency: policy.MaxConcurrent,
 		UpdatedAt:            time.Now(),
@@ -132,6 +140,7 @@ type marketPolicyState struct {
 	zeroKindRounds      int
 	zeroCandidateRounds int
 	stagnantRounds      int
+	actionFailureRounds int
 }
 
 func nextMarketPolicyState(market string, kinds int, candidates marketCandidateSnapshot, prev MarketPolicyStatus) marketPolicyState {
@@ -164,7 +173,23 @@ func nextMarketPolicyState(market string, kinds int, candidates marketCandidateS
 			state.mode = marketPolicyModeRecover
 		}
 	}
+	if highMarketActionFailure(prev) {
+		state.actionFailureRounds = prev.ActionFailureRounds + 1
+		if state.reason == "" {
+			state.reason = "auction action failures are high"
+		}
+		if state.actionFailureRounds > 0 {
+			state.mode = marketPolicyModeRecover
+		}
+	}
 	return state
+}
+
+func highMarketActionFailure(status MarketPolicyStatus) bool {
+	if status.LastActionResults < 20 {
+		return false
+	}
+	return status.LastActionFailed*2 >= status.LastActionResults
 }
 
 func (a *App) observeAuctionCandidates() marketCandidateSnapshot {
