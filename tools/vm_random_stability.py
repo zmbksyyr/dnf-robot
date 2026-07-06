@@ -546,9 +546,17 @@ echo RESTORED
             self.log("final_recover_environment missing restore script=%s" % restore_path)
         self.shell("cd /root && (./run >/tmp/vm_random_final_run.log 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
         self.robot_restart_without_target("final_recover_robot")
-        self.wait_robot_api("final_recover_api", 90, 5)
+        if not self.wait_robot_api("final_recover_api", 90, 5):
+            self.record_failure("final_recover_api_timeout", "robot API was not ready after final recovery")
         self.market_enable_auto(max_concurrent=8)
-        self.wait_market_services("final_recover_market", 240, 10)
+        if not self.wait_market_services("final_recover_market", 240, 10):
+            self.log("final_recover_market first attempt failed; clear system stock and retry")
+            self.safe_call("marketClearSystemStock", {})
+            self.stop_market_services()
+            self.shell("cd /root && (./run >/tmp/vm_random_final_market_retry.log 2>&1 || true); sleep 20; ss -lntp | grep -E ':(30603|30803)' || true; pgrep -af 'df_auction_r|df_point_r' || true", 240)
+            self.market_enable_auto(max_concurrent=8)
+            if not self.wait_market_services("final_recover_market_retry", 180, 10):
+                self.record_failure("final_recover_market_timeout", "market services were not ready after final recovery retry")
         self.sample_with_event("final_recover_done")
         self.log("final_recover_environment done")
 
