@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -754,6 +755,23 @@ func TestPlanCeraSkipsRejectedItem(t *testing.T) {
 	}
 	if result.Skipped[0].Reason != "cera_unlanded" {
 		t.Fatalf("skip reason = %q", result.Skipped[0].Reason)
+	}
+}
+
+func TestPlanCeraRoundRobinsItems(t *testing.T) {
+	app := testApp()
+	result := &PlanResult{}
+	app.planCera([]ceraRow{
+		{ItemID: 1, Label: "a", RestockPrice: 10, RestockQty: 3, Enabled: true},
+		{ItemID: 2, Label: "b", RestockPrice: 20, RestockQty: 3, Enabled: true},
+	}, nil, map[uint32]int{}, map[uint32]int{}, result)
+	if len(result.Actions) != 6 {
+		t.Fatalf("actions = %d, want 6", len(result.Actions))
+	}
+	got := []uint32{result.Actions[0].ItemID, result.Actions[1].ItemID, result.Actions[2].ItemID, result.Actions[3].ItemID}
+	want := []uint32{1, 2, 1, 2}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("first actions = %v, want %v", got, want)
 	}
 }
 

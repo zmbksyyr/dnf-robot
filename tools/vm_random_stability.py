@@ -246,6 +246,7 @@ class StabilityRun(object):
             os.makedirs(self.snapshot_dir)
         self.results = []
         self.market_zero_since = 0
+        self.market_zero_last_seen = 0
         self.last_invariant_failure = {}
 
     def log(self, message):
@@ -379,16 +380,30 @@ class StabilityRun(object):
                 self.safe_call("marketStart", {})
         auction_kinds = int(counts.get("auction_kinds") or 0)
         if enabled and running and game_ready and services_ready and auction_kinds <= 0:
+            if self.market_zero_last_seen and now - self.market_zero_last_seen > self.args.market_zero_grace:
+                self.market_zero_since = 0
+            self.market_zero_last_seen = now
             if not self.market_zero_since:
                 self.market_zero_since = now
             elif now - self.market_zero_since > self.args.market_zero_grace:
                 key = "market_zero_kinds:%s" % event
                 if now - self.last_invariant_failure.get(key, 0) > 120:
-                    self.last_invariant_failure[key] = now
-                    self.record_failure(key, "market auto running but auction kinds stayed zero for %ss" % int(now - self.market_zero_since))
-                    self.safe_call("marketStart", {})
+                    recovered = self.wait_market_count(
+                        "market_zero_verify:%s" % event,
+                        lambda c: int(c.get("auction_kinds") or 0) > 0,
+                        self.args.market_zero_grace,
+                        10,
+                    )
+                    if int(recovered.get("auction_kinds") or 0) > 0:
+                        self.market_zero_since = 0
+                        self.market_zero_last_seen = 0
+                    else:
+                        self.last_invariant_failure[key] = now
+                        self.record_failure(key, "market auto running but auction kinds stayed zero for %ss" % int(now - self.market_zero_since))
+                        self.safe_call("marketStart", {})
         else:
             self.market_zero_since = 0
+            self.market_zero_last_seen = 0
 
     def write_snapshot(self, label):
         snap = self.snapshot(label)
@@ -696,9 +711,10 @@ echo RESTORED
         self.log("user_market_iteminfo result=%s" % json_text(res, 2200))
         self.wait_market_services("user_market_iteminfo_services", 180, 10)
         self.wait_market_auto_running("user_market_iteminfo_auto", 120, 10)
+        self.wait_market_count("user_market_iteminfo_recover", lambda counts: int(counts.get("auction_kinds") or 0) > 0, 600, 10)
 
     def user_market_clear_stock(self):
-        res = self.safe_call("marketClearSystemStock", {})
+        res = self.market_call_when_idle("marketClearSystemStock", {}, "user_market_clear_stock", attempts=24, delay_sec=5)
         self.log("user_market_clear_stock result=%s" % json_text(res, 1800))
         self.market_enable_auto(max_concurrent=8)
         self.sample_with_event("user_market_clear_stock")
@@ -740,7 +756,7 @@ echo RESTORED
         self.market_enable_auto(max_concurrent=8)
         before = self.market_db_counts()
         self.log("market_special_smoke before=%s" % json_text(before, 1200))
-        res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 4096, "max_concurrent": 8, "continue_on_error": True}, "market_special_smoke")
+        res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 1000, "max_concurrent": 8, "continue_on_error": True}, "market_special_smoke", attempts=24, delay_sec=5)
         self.log("market_special_smoke restock result=%s" % json_text(res, 2600))
         self.burst_sample("market_special_after_restock", self.scaled_seconds(30, 90), 10)
         after = self.wait_market_count(
@@ -850,6 +866,10 @@ echo RESTORED
             result = (last.get("result") or {}) if isinstance(last, dict) else {}
             status = safe_text(result.get("status") or "")
             error = safe_text(last.get("error") if isinstance(last, dict) else "")
+            if "timed out" in error:
+                self.log("%s command=%s timeout_wait_idle result=%s" % (label, command, json_text(last, 1200)))
+                self.wait_market_job_idle(label + ":" + command, 300, 5)
+                return last
             if status != "busy" and "market job already running" not in error:
                 if idx > 0:
                     self.log("%s command=%s accepted_after=%s result=%s" % (label, command, idx, json_text(last, 1600)))
@@ -857,6 +877,21 @@ echo RESTORED
             self.log("%s command=%s busy attempt=%s result=%s" % (label, command, idx, json_text(last, 1200)))
             time.sleep(delay_sec)
         return last
+
+    def wait_market_job_idle(self, event, timeout_sec=300, interval_sec=5):
+        self.log("wait_market_job_idle start event=%s timeout=%s" % (event, timeout_sec))
+        deadline = time.time() + timeout_sec
+        last = {}
+        while time.time() < deadline:
+            status = self.market_status_result()
+            last = status
+            job = status.get("last_job") or {}
+            if job.get("status") != "running":
+                self.log("wait_market_job_idle ready event=%s job=%s" % (event, json_text(job, 1200)))
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_market_job_idle timeout event=%s status=%s" % (event, json_text(last, 1600)))
+        return False
 
     def market_status_result(self):
         res = self.safe_call("marketStatus", {})

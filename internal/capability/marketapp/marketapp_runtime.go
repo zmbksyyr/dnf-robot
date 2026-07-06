@@ -1243,6 +1243,11 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 }
 
 func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
+	type pendingCera struct {
+		row  ceraRow
+		need int
+	}
+	pending := make([]pendingCera, 0, len(rows))
 	for _, row := range rows {
 		if row.ItemID == 0 || row.RestockQty <= 0 || !row.Enabled {
 			continue
@@ -1259,7 +1264,17 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 		}
 		current := have[row.ItemID]
 		need := row.RestockQty - current
-		for i := 0; i < need; i++ {
+		if need > 0 {
+			pending = append(pending, pendingCera{row: row, need: need})
+		}
+	}
+	for {
+		added := false
+		for i := range pending {
+			if pending[i].need <= 0 {
+				continue
+			}
+			row := pending[i].row
 			ownerID := a.pickOwner(occ)
 			price := a.price(row.RestockPrice)
 			result.Actions = append(result.Actions, Action{
@@ -1277,6 +1292,11 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 				InstantPrice: price,
 				Source:       marketActionSourceCeraConfig,
 			})
+			pending[i].need--
+			added = true
+		}
+		if !added {
+			return
 		}
 	}
 }
