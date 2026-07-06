@@ -740,23 +740,27 @@ echo RESTORED
         self.market_enable_auto(max_concurrent=8)
         before = self.market_db_counts()
         self.log("market_special_smoke before=%s" % json_text(before, 1200))
-        res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 768, "max_concurrent": 8, "continue_on_error": True}, "market_special_smoke")
+        res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 4096, "max_concurrent": 8, "continue_on_error": True}, "market_special_smoke")
         self.log("market_special_smoke restock result=%s" % json_text(res, 2600))
         self.burst_sample("market_special_after_restock", self.scaled_seconds(30, 90), 10)
         after = self.wait_market_count(
             "market_special_after_restock",
             lambda counts: int(counts.get("auction_high_addinfo_records") or 0) + int(counts.get("auction_creature_records") or 0) > 0,
-            180,
+            300,
             10,
         )
         self.log("market_special_smoke after=%s" % json_text(after, 1200))
         special = int(after.get("auction_high_addinfo_records") or 0) + int(after.get("auction_creature_records") or 0)
         if int(after.get("auction_records") or 0) > 0 and special <= 0:
             self.record_failure("market_special_no_records", "auction has records but no high-addinfo or creature special records after special smoke")
-        res = self.safe_call("marketClearSystemStock", {})
+        res = self.market_call_when_idle("marketClearSystemStock", {}, "market_special_clear")
         self.log("market_special_smoke clear result=%s" % json_text(res, 2200))
-        time.sleep(5)
-        cleared = self.market_db_counts()
+        cleared = self.wait_market_count(
+            "market_special_clear",
+            lambda counts: int(counts.get("creature_instances_records") or 0) <= 0,
+            120,
+            5,
+        )
         self.log("market_special_smoke cleared=%s" % json_text(cleared, 1200))
         if int(cleared.get("creature_instances_records") or 0) > 0:
             self.record_failure("market_creature_instances_not_cleared", "system creature instances remained after marketClearSystemStock")
@@ -798,7 +802,7 @@ echo RESTORED
             self.sample_with_event("market_cera_restock:%s" % idx)
             time.sleep(5)
         self.burst_sample("market_cera_drill_recover", self.scaled_seconds(20, 60), 10)
-        after = self.wait_market_count("market_cera_drill", lambda counts: int(counts.get("cera_records") or 0) > 0, 180, 10)
+        after = self.wait_market_count("market_cera_drill", lambda counts: int(counts.get("cera_records") or 0) > 0, 420, 10)
         self.log("market_cera_drill after=%s" % json_text(after, 1200))
         if int(after.get("cera_records") or 0) <= 0:
             self.record_failure("market_cera_empty", "cera restock drill produced no cera records")

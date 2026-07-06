@@ -103,9 +103,7 @@ func (a *App) ClearSystemMarketStock() (ClearSystemStockResult, error) {
 	if a.AutoRunning() {
 		a.StopAutoAsync()
 	}
-	if !a.jobMu.TryLock() {
-		return ClearSystemStockResult{}, fmt.Errorf("market job already running")
-	}
+	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
 	result, err := a.clearSystemMarketStockLocked("market_clear")
 	if err == nil {
@@ -118,9 +116,7 @@ func (a *App) prepareItemInfoRelease() error {
 	if a.AutoRunning() {
 		a.StopAutoAsync()
 	}
-	if !a.jobMu.TryLock() {
-		return fmt.Errorf("market job already running")
-	}
+	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
 	if _, err := a.clearSystemMarketStockLocked("iteminfo_prepare"); err != nil {
 		return err
