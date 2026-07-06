@@ -26,7 +26,7 @@ type pvfManifest struct {
 	Runtime interface{} `json:"runtime,omitempty"`
 }
 
-const pvfExportVersion = 19
+const pvfExportVersion = 1
 
 const pvfItemInfoExportName = "pvf_iteminfo.dat"
 
@@ -313,6 +313,12 @@ func generatedEquipmentItemInfoCategory(item shared.EquipmentCatalogItem) int {
 		return 12004
 	case "creature":
 		return 14001
+	case "artifact red":
+		return 14002
+	case "artifact blue":
+		return 14003
+	case "artifact green":
+		return 14004
 	case "support":
 		return 32001
 	case "magic stone":
@@ -574,9 +580,69 @@ func (a *pvfArchive) loadStringTable() {
 
 func extractPVFData(a *pvfArchive) ([]shared.EquipmentCatalogItem, []shared.EquipmentCatalogItem, []shared.MapCatalogItem) {
 	equipment := extractItemList(a, "equipment/equipment.lst", "equipment/", false)
+	equipment = appendItemInfoCreatureArtifacts(equipment, a.text("etc/iteminfo.dat"))
 	stackable := extractItemList(a, "stackable/stackable.lst", "stackable/", true)
 	maps := extractMapList(a, "town/town.lst", "town/")
 	return equipment, stackable, maps
+}
+
+func appendItemInfoCreatureArtifacts(equipment []shared.EquipmentCatalogItem, rawItemInfo string) []shared.EquipmentCatalogItem {
+	rows := parsePVFItemInfoRows(formatPVFItemInfoDAT(rawItemInfo))
+	if len(rows) == 0 {
+		return equipment
+	}
+	seen := make(map[int]bool, len(equipment))
+	for _, item := range equipment {
+		if item.ID > 0 {
+			seen[item.ID] = true
+		}
+	}
+	ids := make([]int, 0)
+	for id := range rows {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		fields := rows[id]
+		if len(fields) < 17 {
+			continue
+		}
+		slot, itemType, ok := creatureArtifactCategory(fields[16])
+		if !ok {
+			continue
+		}
+		equipment = append(equipment, shared.EquipmentCatalogItem{
+			ID:       id,
+			Name:     cleanPVFString(fields[14]),
+			Name2:    cleanPVFString(fields[15]),
+			Path:     "etc/iteminfo.dat",
+			Level:    atoi(fields[13]),
+			ItemType: itemType,
+			Slot:     slot,
+			Rarity:   atoi(fields[1]),
+			Attach:   "trade",
+			Trade:    true,
+			Auction:  true,
+		})
+		seen[id] = true
+	}
+	return equipment
+}
+
+func creatureArtifactCategory(category string) (string, int, bool) {
+	switch strings.TrimSpace(category) {
+	case "14002":
+		return "artifact red", 31, true
+	case "14003":
+		return "artifact blue", 32, true
+	case "14004":
+		return "artifact green", 33, true
+	default:
+		return "", 0, false
+	}
 }
 
 func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []shared.EquipmentCatalogItem {
@@ -768,7 +834,8 @@ func itemTypePathSegment(part string) bool {
 	switch strings.ToLower(part) {
 	case "weapon", "titlename", "title", "coat", "shoulder", "pants", "shoes", "waist", "belt",
 		"amulet", "necklace", "wrist", "bracelet", "ring", "support", "magicstone", "magic stone", "magic_stone",
-		"cap", "hat", "hair", "face", "neck", "skin", "aura":
+		"cap", "hat", "hair", "face", "neck", "skin", "aura",
+		"artifact", "redartifact", "blueartifact", "greenartifact", "red_artifact", "blue_artifact", "green_artifact":
 		return true
 	default:
 		return false
@@ -813,6 +880,12 @@ func itemTypeWords(itemType int) []string {
 		return []string{"skin"}
 	case 29:
 		return []string{"aura"}
+	case 31:
+		return []string{"artifact red", "redartifact", "red_artifact"}
+	case 32:
+		return []string{"artifact blue", "blueartifact", "blue_artifact"}
+	case 33:
+		return []string{"artifact green", "greenartifact", "green_artifact"}
 	default:
 		return nil
 	}
@@ -1177,7 +1250,7 @@ func jobID(job string) int {
 }
 
 func equipmentType(v string) int {
-	switch strings.ToLower(cleanPVFString(v)) {
+	switch normalizeEquipmentTypeName(v) {
 	case "weapon":
 		return 1
 	case "titlename", "title", "title name":
@@ -1224,8 +1297,29 @@ func equipmentType(v string) int {
 		return 29
 	case "creature":
 		return 30
+	case "artifactred":
+		return 31
+	case "artifactblue":
+		return 32
+	case "artifactgreen":
+		return 33
 	default:
 		return -1
+	}
+}
+
+func normalizeEquipmentTypeName(v string) string {
+	v = strings.ToLower(cleanPVFString(v))
+	v = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(v)
+	switch v {
+	case "redartifact", "creatureartifactred", "creatureredartifact", "petartifactred", "petredartifact":
+		return "artifactred"
+	case "blueartifact", "creatureartifactblue", "creatureblueartifact", "petartifactblue", "petblueartifact":
+		return "artifactblue"
+	case "greenartifact", "creatureartifactgreen", "creaturegreenartifact", "petartifactgreen", "petgreenartifact":
+		return "artifactgreen"
+	default:
+		return v
 	}
 }
 
