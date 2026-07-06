@@ -1369,6 +1369,7 @@ func (a *App) reconcileCeraRejects(entries []ActionEntry) {
 	}
 	total := 0
 	rejected118 := 0
+	rejectedItems := map[uint32]bool{}
 	for _, entry := range entries {
 		if entry.Action.Market != marketNameCera || entry.Action.Operation != "" {
 			continue
@@ -1376,7 +1377,13 @@ func (a *App) reconcileCeraRejects(entries []ActionEntry) {
 		total++
 		if !entry.OK && entry.Reason != nil && *entry.Reason == 118 {
 			rejected118++
+			if entry.Action.ItemID != 0 {
+				rejectedItems[entry.Action.ItemID] = true
+			}
 		}
+	}
+	for itemID := range rejectedItems {
+		a.markCeraRejected(itemID, "cera_rejected_118")
 	}
 	if total == 0 || rejected118 != total {
 		return
