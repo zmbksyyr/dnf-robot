@@ -380,7 +380,7 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 			status.Status = MarketServiceStatusDown
 			status.Message = staleReason
 			a.setMarketServiceStatus(status)
-			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: "stale_iteminfo_restart", Message: staleReason})
+			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: marketLogStatusStaleItemInfo, Message: staleReason})
 			if err := a.stopMarketServiceForItemInfo(service.name, service.addr, service.bin); err != nil {
 				status.Status = MarketServiceStatusStartFailed
 				status.Message = err.Error()
@@ -1405,7 +1405,7 @@ func (a *App) restartMarketService(name, reason string) {
 	if !ok {
 		return
 	}
-	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "restart", Message: reason})
+	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusRestart, Message: reason})
 	if err := a.stopMarketServiceForItemInfo(service.name, service.addr, service.bin); err != nil {
 		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusFailed, Message: err.Error()})
 		return

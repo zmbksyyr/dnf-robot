@@ -53,6 +53,7 @@ func TestMarketLogStatusConstants(t *testing.T) {
 		marketLogStatusInstalled:        "installed",
 		marketLogStatusKilled:           "killed",
 		marketLogStatusQueueReset:       "queue_reset",
+		marketLogStatusRestart:          "restart",
 		marketLogStatusServiceDown:      "service_down",
 		marketLogStatusSkipped:          "skipped",
 		marketLogStatusStart:            "start",
@@ -60,6 +61,7 @@ func TestMarketLogStatusConstants(t *testing.T) {
 		marketLogStatusStopped:          "stopped",
 		marketLogStatusSuccess:          "success",
 		marketLogStatusSynced:           "synced",
+		marketLogStatusStaleItemInfo:    "stale_iteminfo_restart",
 		marketLogStatusWaitFailed:       "wait_failed",
 	}
 	for got, want := range tests {

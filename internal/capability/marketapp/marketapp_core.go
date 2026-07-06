@@ -1014,6 +1014,7 @@ const (
 	marketLogStatusInstalled        = "installed"
 	marketLogStatusKilled           = "killed"
 	marketLogStatusQueueReset       = "queue_reset"
+	marketLogStatusRestart          = "restart"
 	marketLogStatusServiceDown      = "service_down"
 	marketLogStatusSkipped          = "skipped"
 	marketLogStatusStart            = "start"
@@ -1021,6 +1022,7 @@ const (
 	marketLogStatusStopped          = "stopped"
 	marketLogStatusSuccess          = "success"
 	marketLogStatusSynced           = "synced"
+	marketLogStatusStaleItemInfo    = "stale_iteminfo_restart"
 	marketLogStatusWaitFailed       = "wait_failed"
 )
 

@@ -88,6 +88,41 @@ func TestMarketAppLocksUsePurposeNames(t *testing.T) {
 	assertStructHasNoGenericLockField(t, path, "App")
 }
 
+func TestMarketAppLogEventStatusUsesNamedConstants(t *testing.T) {
+	root := repoRoot(t)
+	dir := filepath.Join(root, "internal", "capability", "marketapp")
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			lit, ok := node.(*ast.CompositeLit)
+			if !ok || !isLogEventType(lit.Type) {
+				return true
+			}
+			for _, elt := range lit.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok || !identNamed(kv.Key, "Status") || !isStringLiteral(kv.Value) {
+					continue
+				}
+				t.Errorf("%s uses literal LogEvent.Status; use marketLogStatus* constants", path)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+}
+
 func TestActorLocksUsePurposeNames(t *testing.T) {
 	root := repoRoot(t)
 	assertStructHasNoGenericLockField(t, filepath.Join(root, "internal", "actor", "actor_core.go"), "Actor")
@@ -340,6 +375,17 @@ func isActionResultType(expr ast.Expr) bool {
 		return x.Sel.Name == "ActionResult"
 	case *ast.Ident:
 		return x.Name == "ActionResult"
+	default:
+		return false
+	}
+}
+
+func isLogEventType(expr ast.Expr) bool {
+	switch x := expr.(type) {
+	case *ast.SelectorExpr:
+		return x.Sel.Name == "LogEvent"
+	case *ast.Ident:
+		return x.Name == "LogEvent"
 	default:
 		return false
 	}
