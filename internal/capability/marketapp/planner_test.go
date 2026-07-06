@@ -741,6 +741,22 @@ func TestPlanCeraUsesPointBuyNowShape(t *testing.T) {
 	}
 }
 
+func TestPlanCeraSkipsRejectedItem(t *testing.T) {
+	app := testApp()
+	app.ceraRejected = map[uint32]string{2675345: "cera_unlanded"}
+	result := &PlanResult{}
+	app.planCera([]ceraRow{{
+		ItemID: 2675345, Label: "1000w", RestockPrice: 1200, RestockQty: 1, Enabled: true,
+	}}, nil, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 0 || len(result.Skipped) != 1 {
+		t.Fatalf("actions=%#v skipped=%#v", result.Actions, result.Skipped)
+	}
+	if result.Skipped[0].Reason != "cera_unlanded" {
+		t.Fatalf("skip reason = %q", result.Skipped[0].Reason)
+	}
+}
+
 func TestPlanAuctionHandlesNonCreatureSpecialTypesWithUniqueAddInfo(t *testing.T) {
 	app := testApp()
 	app.repository = &clearStockRepository{maxAddInfo: specialAddInfoBase + 7}

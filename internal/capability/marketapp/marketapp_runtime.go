@@ -879,7 +879,8 @@ func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
 		a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Summary: job.Plan})
 		return job, nil
 	}
-	failedActions, _, firstErr := a.executeActions(job.ID, actions, req.MaxConcurrent, req.ContinueOnError, &job)
+	failedActions, entries, firstErr := a.executeActions(job.ID, actions, req.MaxConcurrent, req.ContinueOnError, &job)
+	a.reconcileCeraLanding(entries)
 	if firstErr != nil && !req.ContinueOnError {
 		job.Status = MarketJobStatusPartialFailed
 		job.Error = firstErr.Error()
@@ -1246,6 +1247,10 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 		if row.ItemID == 0 || row.RestockQty <= 0 || !row.Enabled {
 			continue
 		}
+		if reason := a.ceraRejectedReason(row.ItemID); reason != "" {
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameCera, ItemID: row.ItemID, Name: row.Label, Reason: reason})
+			continue
+		}
 		if catalog != nil {
 			if _, ok := catalog[row.ItemID]; !ok {
 				result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameCera, ItemID: row.ItemID, Name: row.Label, Reason: "missing_from_pvf"})
@@ -1273,6 +1278,83 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 				Source:       marketActionSourceCeraConfig,
 			})
 		}
+	}
+}
+
+func (a *App) ceraRejectedReason(itemID uint32) string {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if a.ceraRejected == nil {
+		return ""
+	}
+	return a.ceraRejected[itemID]
+}
+
+func (a *App) markCeraRejected(itemID uint32, reason string) {
+	if itemID == 0 {
+		return
+	}
+	if reason == "" {
+		reason = "cera_unlanded"
+	}
+	a.stateMu.Lock()
+	if a.ceraRejected == nil {
+		a.ceraRejected = map[uint32]string{}
+	}
+	if _, exists := a.ceraRejected[itemID]; !exists {
+		a.ceraRejected[itemID] = reason
+	}
+	a.stateMu.Unlock()
+	a.appendLog(LogEvent{Type: "cera_rejected", Market: marketNameCera, Status: marketLogStatusActive, Message: fmt.Sprintf("item_id=%d reason=%s", itemID, reason)})
+}
+
+func (a *App) reconcileCeraLanding(entries []ActionEntry) {
+	if a.repository == nil {
+		return
+	}
+	okIDs := map[uint32]bool{}
+	for _, entry := range entries {
+		if entry.Action.Market == marketNameCera && entry.Action.Operation == "" && entry.OK && entry.Action.ItemID != 0 {
+			okIDs[entry.Action.ItemID] = true
+		}
+	}
+	if len(okIDs) == 0 {
+		return
+	}
+	time.Sleep(3 * time.Second)
+	have, err := a.repository.LoadMarketStock(a.cfg.CeraDB, a.cfg.SystemOwner.IDBase, map[uint32]int{})
+	if err != nil {
+		a.appendLog(LogEvent{Type: "cera_landing", Market: marketNameCera, Status: marketLogStatusFailed, Message: err.Error()})
+		return
+	}
+	missing := 0
+	for itemID := range okIDs {
+		if have[itemID] <= 0 {
+			missing++
+			a.markCeraRejected(itemID, "cera_unlanded")
+		}
+	}
+	if missing == 0 {
+		return
+	}
+	a.appendLog(LogEvent{Type: "cera_landing", Market: marketNameCera, Status: marketLogStatusFailed, Message: fmt.Sprintf("ok_items=%d missing=%d db_kinds=%d", len(okIDs), missing, len(have))})
+	if len(have) == 0 {
+		a.restartMarketService(marketServiceNamePoint, "cera ok packets did not land in database")
+	}
+}
+
+func (a *App) restartMarketService(name, reason string) {
+	service, ok := marketServiceSpecByName(name)
+	if !ok {
+		return
+	}
+	a.appendLog(LogEvent{Type: "market_service", Market: name, Status: "restart", Message: reason})
+	if err := a.stopMarketServiceForItemInfo(service.name, service.addr, service.bin); err != nil {
+		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusFailed, Message: err.Error()})
+		return
+	}
+	if !a.ensureMarketService(service) {
+		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusFailed, Message: "restart service is not ready"})
 	}
 }
 

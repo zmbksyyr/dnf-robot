@@ -43,6 +43,7 @@ type App struct {
 	auctionRejected     []uint32
 	auctionRejectedTick int
 	auctionQueueSource  string
+	ceraRejected        map[uint32]string
 	specialAddInfo      int32
 	policy              map[string]MarketPolicyStatus
 }
