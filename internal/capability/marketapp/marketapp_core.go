@@ -340,7 +340,6 @@ func busyMarketJob(kind string) JobSummary {
 func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 	if !a.jobMu.TryLock() {
 		job := busyMarketJob("restock")
-		a.setLastJob(job)
 		return job, fmt.Errorf(job.Error)
 	}
 	defer a.jobMu.Unlock()
@@ -354,6 +353,7 @@ func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 		Status:    MarketJobStatusRunning,
 		StartedAt: start,
 	}
+	a.setLastJob(job)
 	a.appendLog(LogEvent{Type: "job_start", JobID: job.ID, Status: job.Status})
 	plan, err := a.Plan(req)
 	if err != nil {

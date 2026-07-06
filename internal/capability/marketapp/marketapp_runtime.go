@@ -840,7 +840,6 @@ func (a *App) appendCollectActions(rows []collectRow, result *PlanResult) {
 func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
 	if !a.jobMu.TryLock() {
 		job := busyMarketJob("collect")
-		a.setLastJob(job)
 		return job, fmt.Errorf(job.Error)
 	}
 	defer a.jobMu.Unlock()
@@ -851,6 +850,7 @@ func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
 		Status:    MarketJobStatusRunning,
 		StartedAt: start,
 	}
+	a.setLastJob(job)
 	a.appendLog(LogEvent{Type: "job_start", JobID: job.ID, Status: job.Status})
 	plan, err := a.CollectPlan(req)
 	if err != nil {
