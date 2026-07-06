@@ -483,6 +483,18 @@ class StabilityRun(object):
                 counts[parts[0] + "_kinds"] = parts[2]
         return counts
 
+    def wait_market_count(self, label, predicate, timeout, interval):
+        deadline = time.time() + timeout
+        last = {}
+        while time.time() < deadline:
+            last = self.market_db_counts()
+            if predicate(last):
+                self.log("wait_market_count ready label=%s counts=%s" % (label, json_text(last, 1000)))
+                return last
+            self.log("wait_market_count wait label=%s counts=%s" % (label, json_text(last, 1000)))
+            time.sleep(interval)
+        return last
+
     def prepare_baseline(self):
         if not os.path.isdir(self.baseline_dir):
             os.makedirs(self.baseline_dir)
@@ -731,7 +743,12 @@ echo RESTORED
         res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 768, "max_concurrent": 8, "continue_on_error": True}, "market_special_smoke")
         self.log("market_special_smoke restock result=%s" % json_text(res, 2600))
         self.burst_sample("market_special_after_restock", self.scaled_seconds(30, 90), 10)
-        after = self.market_db_counts()
+        after = self.wait_market_count(
+            "market_special_after_restock",
+            lambda counts: int(counts.get("auction_high_addinfo_records") or 0) + int(counts.get("auction_creature_records") or 0) > 0,
+            180,
+            10,
+        )
         self.log("market_special_smoke after=%s" % json_text(after, 1200))
         special = int(after.get("auction_high_addinfo_records") or 0) + int(after.get("auction_creature_records") or 0)
         if int(after.get("auction_records") or 0) > 0 and special <= 0:
@@ -781,7 +798,7 @@ echo RESTORED
             self.sample_with_event("market_cera_restock:%s" % idx)
             time.sleep(5)
         self.burst_sample("market_cera_drill_recover", self.scaled_seconds(20, 60), 10)
-        after = self.market_db_counts()
+        after = self.wait_market_count("market_cera_drill", lambda counts: int(counts.get("cera_records") or 0) > 0, 180, 10)
         self.log("market_cera_drill after=%s" % json_text(after, 1200))
         if int(after.get("cera_records") or 0) <= 0:
             self.record_failure("market_cera_empty", "cera restock drill produced no cera records")

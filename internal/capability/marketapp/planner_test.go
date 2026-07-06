@@ -959,6 +959,56 @@ func TestRiskyPVFItemAllowsHighLevelEquipmentWhenItemInfoCapsLevel(t *testing.T)
 	}
 }
 
+func TestExecuteActionsAllowsCeraSuccessWithoutAuctionID(t *testing.T) {
+	ok := true
+	app := testApp()
+	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
+	job := &JobSummary{}
+
+	failed, entries, err := app.executeActions("test", []Action{{
+		Market: marketNameCera,
+		ItemID: 2675345,
+	}}, 1, true, job)
+	if err != nil || failed != 0 || len(entries) != 1 || !entries[0].OK {
+		t.Fatalf("cera action failed=%d err=%v entries=%#v", failed, err, entries)
+	}
+}
+
+func TestExecuteActionsRequiresAuctionIDForAuctionRegister(t *testing.T) {
+	ok := true
+	app := testApp()
+	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
+	job := &JobSummary{}
+
+	failed, entries, err := app.executeActions("test", []Action{{
+		Market: marketNameAuction,
+		ItemID: 1001,
+	}}, 1, true, job)
+	if err == nil || failed != 1 || len(entries) != 1 || entries[0].OK {
+		t.Fatalf("auction action without id failed=%d err=%v entries=%#v", failed, err, entries)
+	}
+}
+
+type fixedActionExecutorFactory struct {
+	result ActionExecutionResult
+	err    error
+}
+
+func (f fixedActionExecutorFactory) NewActionExecutor(Config) ActionExecutor {
+	return fixedActionExecutor{result: f.result, err: f.err}
+}
+
+type fixedActionExecutor struct {
+	result ActionExecutionResult
+	err    error
+}
+
+func (e fixedActionExecutor) Execute(Action) (ActionExecutionResult, error) {
+	return e.result, e.err
+}
+
+func (e fixedActionExecutor) Close() {}
+
 type clearStockRepository struct {
 	counts            map[string]int
 	stock             map[string]map[uint32]int

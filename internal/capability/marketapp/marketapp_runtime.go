@@ -2081,7 +2081,7 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 				} else {
 					entry.OK = res.ResultOK != nil && *res.ResultOK
 					entry.AuctionID = res.AuctionID
-					if task.action.Operation != "collect" && entry.AuctionID == 0 {
+					if task.action.Market == marketNameAuction && task.action.Operation != "collect" && entry.AuctionID == 0 {
 						entry.OK = false
 					}
 					entry.Reason = res.ResultReason
