@@ -1223,6 +1223,9 @@ var ErrExecutorUnavailable = errors.New("market action executor unavailable")
 const marketLogFile = "market_log.jsonl"
 
 func marketLogPath(configDir string) string {
+	if strings.TrimSpace(configDir) == "" {
+		return ""
+	}
 	return filepath.Join(configDir, marketLogFile)
 }
 
@@ -1231,6 +1234,9 @@ func (a *App) appendLog(event LogEvent) {
 		event.Time = time.Now()
 	}
 	path := marketLogPath(a.configDir)
+	if path == "" {
+		return
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return
 	}

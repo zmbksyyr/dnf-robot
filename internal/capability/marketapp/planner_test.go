@@ -147,6 +147,21 @@ func TestMarketFactConstants(t *testing.T) {
 	}
 }
 
+func TestAppendLogWithoutConfigDirDoesNotWriteCurrentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	app := &App{}
+
+	app.appendLog(LogEvent{Type: "test", Status: marketLogStatusSuccess})
+
+	if marketLogPath("") != "" {
+		t.Fatalf("empty config dir should not resolve to a relative log path")
+	}
+	if _, err := os.Stat(filepath.Join(dir, marketLogFile)); !os.IsNotExist(err) {
+		t.Fatalf("appendLog wrote runtime log in current directory, stat err=%v", err)
+	}
+}
+
 func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	data, err := json.Marshal(DefaultConfig().Restock)
 	if err != nil {
