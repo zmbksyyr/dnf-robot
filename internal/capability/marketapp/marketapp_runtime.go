@@ -1363,6 +1363,36 @@ func (a *App) reconcileCeraLanding(entries []ActionEntry) {
 	}
 }
 
+func (a *App) reconcileCeraRejects(entries []ActionEntry) {
+	if a.repository == nil {
+		return
+	}
+	total := 0
+	rejected118 := 0
+	for _, entry := range entries {
+		if entry.Action.Market != marketNameCera || entry.Action.Operation != "" {
+			continue
+		}
+		total++
+		if !entry.OK && entry.Reason != nil && *entry.Reason == 118 {
+			rejected118++
+		}
+	}
+	if total == 0 || rejected118 != total {
+		return
+	}
+	have, err := a.repository.LoadMarketStock(a.cfg.CeraDB, a.cfg.SystemOwner.IDBase, map[uint32]int{})
+	if err != nil {
+		a.appendLog(LogEvent{Type: "cera_reject", Market: marketNameCera, Status: marketLogStatusFailed, Message: err.Error()})
+		return
+	}
+	if len(have) != 0 {
+		return
+	}
+	a.appendLog(LogEvent{Type: "cera_reject", Market: marketNameCera, Status: marketLogStatusFailed, Message: "all cera actions rejected reason=118 while cera db is empty"})
+	a.restartMarketService(marketServiceNamePoint, "cera reason 118 with empty database")
+}
+
 func (a *App) restartMarketService(name, reason string) {
 	service, ok := marketServiceSpecByName(name)
 	if !ok {

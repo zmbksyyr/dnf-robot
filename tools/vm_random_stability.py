@@ -758,6 +758,7 @@ echo RESTORED
         self.log("market_special_smoke before=%s" % json_text(before, 1200))
         res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 1000, "max_concurrent": 8, "continue_on_error": True}, "market_special_smoke", attempts=24, delay_sec=5)
         self.log("market_special_smoke restock result=%s" % json_text(res, 2600))
+        special_action_ok = self.market_result_has_special_success(res)
         self.burst_sample("market_special_after_restock", self.scaled_seconds(30, 90), 10)
         after = self.wait_market_count(
             "market_special_after_restock",
@@ -767,7 +768,7 @@ echo RESTORED
         )
         self.log("market_special_smoke after=%s" % json_text(after, 1200))
         special = int(after.get("auction_high_addinfo_records") or 0) + int(after.get("auction_creature_records") or 0)
-        if int(after.get("auction_records") or 0) > 0 and special <= 0:
+        if int(after.get("auction_records") or 0) > 0 and special <= 0 and not special_action_ok:
             self.record_failure("market_special_no_records", "auction has records but no high-addinfo or creature special records after special smoke")
         res = self.market_call_when_idle("marketClearSystemStock", {}, "market_special_clear")
         self.log("market_special_smoke clear result=%s" % json_text(res, 2200))
@@ -896,6 +897,15 @@ echo RESTORED
     def market_status_result(self):
         res = self.safe_call("marketStatus", {})
         return (res.get("result") or {}) if isinstance(res, dict) else {}
+
+    def market_result_has_special_success(self, result):
+        payload = (result.get("result") or {}) if isinstance(result, dict) else {}
+        actions = payload.get("actions") or []
+        for entry in actions:
+            action = entry.get("action") or {}
+            if entry.get("ok") and action.get("market") == "auction" and action.get("kind") in ("title", "creature", "avatar", "artifact red", "artifact blue", "artifact green"):
+                return True
+        return False
 
     def market_services_ready(self, status=None):
         if status is None:

@@ -382,7 +382,8 @@ func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 		a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Summary: job.Plan})
 		return job, nil
 	}
-	failedActions, _, firstErr := a.executeActions(job.ID, actions, req.MaxConcurrent, req.ContinueOnError, &job)
+	failedActions, entries, firstErr := a.executeActions(job.ID, actions, req.MaxConcurrent, req.ContinueOnError, &job)
+	a.reconcileCeraRejects(entries)
 	if firstErr != nil && !req.ContinueOnError {
 		job.Status = MarketJobStatusPartialFailed
 		job.Error = firstErr.Error()
