@@ -398,13 +398,65 @@ func (a *App) RestockOnce(req RestockRequest) (JobSummary, error) {
 		job.Status = MarketJobStatusPartialFailed
 		job.Error = fmt.Sprintf("%d actions failed", failedActions)
 	} else {
-		job.Status = MarketJobStatusSuccess
+		a.applyRestockDBConfirmation(&job, actions)
 	}
 	job.EndedAt = time.Now()
 	job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
 	a.setLastJob(job)
 	a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Summary: job.Plan})
 	return job, nil
+}
+
+func (a *App) applyRestockDBConfirmation(job *JobSummary, actions []Action) {
+	if !needsAuctionDBConfirmation(actions) {
+		job.Status = MarketJobStatusSuccess
+		job.Error = ""
+		return
+	}
+	confirmed, err := a.auctionDBConfirmed(actions)
+	if err != nil {
+		job.Status = MarketJobStatusPartialFailed
+		job.Error = fmt.Sprintf("auction db confirmation failed: %v", err)
+		return
+	}
+	if !confirmed {
+		job.Status = MarketJobStatusPendingDB
+		job.Error = "auction register acked; waiting for DB fact confirmation"
+		return
+	}
+	job.Status = MarketJobStatusSuccess
+	job.Error = ""
+}
+
+func needsAuctionDBConfirmation(actions []Action) bool {
+	for _, action := range actions {
+		if action.Market == marketNameAuction && action.Operation != "collect" {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) auctionDBConfirmed(actions []Action) (bool, error) {
+	watch := map[uint32]bool{}
+	for _, action := range actions {
+		if action.Market == marketNameAuction && action.Operation != "collect" && action.ItemID > 0 {
+			watch[action.ItemID] = true
+		}
+	}
+	if len(watch) == 0 {
+		return true, nil
+	}
+	have, err := a.repository.LoadMarketStock(a.cfg.AuctionDB, a.cfg.SystemOwner.IDBase, map[uint32]int{})
+	if err != nil {
+		return false, err
+	}
+	for itemID := range watch {
+		if have[itemID] > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (a *App) setLastJob(job JobSummary) {
@@ -966,6 +1018,7 @@ const (
 	MarketJobStatusBusy          = "busy"
 	MarketJobStatusRunning       = "running"
 	MarketJobStatusFailed        = "failed"
+	MarketJobStatusPendingDB     = "pending_db_confirm"
 	MarketJobStatusPlanned       = "planned"
 	MarketJobStatusPartialFailed = "partial_failed"
 	MarketJobStatusSuccess       = "success"

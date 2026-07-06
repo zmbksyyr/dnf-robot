@@ -25,6 +25,7 @@ func TestMarketJobStatusConstants(t *testing.T) {
 		MarketJobStatusBusy:          "busy",
 		MarketJobStatusRunning:       "running",
 		MarketJobStatusFailed:        "failed",
+		MarketJobStatusPendingDB:     "pending_db_confirm",
 		MarketJobStatusPlanned:       "planned",
 		MarketJobStatusPartialFailed: "partial_failed",
 		MarketJobStatusSuccess:       "success",
@@ -144,6 +145,48 @@ func TestMarketFactConstants(t *testing.T) {
 		if tt.got != tt.want {
 			t.Fatalf("market fact constant got %q want %q", tt.got, tt.want)
 		}
+	}
+}
+
+func TestRestockJobWaitsForAuctionDBFactAfterAck(t *testing.T) {
+	app := testApp(t)
+	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
+		app.cfg.AuctionDB: {},
+	}}
+	job := JobSummary{Status: MarketJobStatusRunning}
+
+	app.applyRestockDBConfirmation(&job, []Action{{
+		Market:    marketNameAuction,
+		Operation: "register",
+		ItemID:    1001,
+	}})
+
+	if job.Status != MarketJobStatusPendingDB {
+		t.Fatalf("status = %q, want %q", job.Status, MarketJobStatusPendingDB)
+	}
+	if !strings.Contains(job.Error, "DB fact") {
+		t.Fatalf("error = %q, want DB fact confirmation message", job.Error)
+	}
+}
+
+func TestRestockJobSucceedsWhenAuctionDBFactExists(t *testing.T) {
+	app := testApp(t)
+	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
+		app.cfg.AuctionDB: {1001: 1},
+	}}
+	job := JobSummary{Status: MarketJobStatusRunning}
+
+	app.applyRestockDBConfirmation(&job, []Action{{
+		Market:    marketNameAuction,
+		Operation: "register",
+		ItemID:    1001,
+	}})
+
+	if job.Status != MarketJobStatusSuccess {
+		t.Fatalf("status = %q, want %q error=%q", job.Status, MarketJobStatusSuccess, job.Error)
+	}
+	if job.Error != "" {
+		t.Fatalf("error = %q, want empty", job.Error)
 	}
 }
 
