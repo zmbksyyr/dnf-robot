@@ -12,11 +12,12 @@ import (
 	"time"
 )
 
-func testApp() *App {
+func testApp(t *testing.T) *App {
+	t.Helper()
 	cfg := DefaultConfig()
 	cfg.Restock.RandLow = 1
 	cfg.Restock.RandHigh = 1
-	return &App{cfg: cfg, rand: rand.New(rand.NewSource(1))}
+	return &App{cfg: cfg, configDir: t.TempDir(), rand: rand.New(rand.NewSource(1))}
 }
 
 func TestMarketJobStatusConstants(t *testing.T) {
@@ -161,7 +162,7 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 		DefaultConfig().AuctionDB: 3,
 		DefaultConfig().CeraDB:    2,
 	}, creatureCount: 4}
-	app := testApp()
+	app := testApp(t)
 	app.repository = repo
 	app.configDir = t.TempDir()
 	app.auctionQueue = []uint32{1001}
@@ -189,7 +190,7 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 }
 
 func TestPlanAuctionStackableSplitsQuantity(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		3037: {ItemID: 3037, Name: "cube", Kind: "stackable", StackLimit: 1000},
@@ -214,7 +215,7 @@ func TestPlanAuctionStackableSplitsQuantity(t *testing.T) {
 }
 
 func TestPlanAuctionStackableClampsToPVFStackLimit(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		36: {ItemID: 36, Name: "speaker", Kind: "stackable", StackLimit: 1},
@@ -234,7 +235,7 @@ func TestPlanAuctionStackableClampsToPVFStackLimit(t *testing.T) {
 }
 
 func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		31056: {ItemID: 31056, Name: "weapon", Kind: "equipment", Attach: "trade", Slot: "weapon"},
@@ -260,7 +261,7 @@ func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 }
 
 func TestPlanAuctionKeepsMissingItemBatchTogether(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		10075:     {ItemID: 10075, Name: "low", Kind: "equipment", Attach: "trade", Slot: "coat"},
@@ -287,7 +288,7 @@ func TestPlanAuctionKeepsMissingItemBatchTogether(t *testing.T) {
 }
 
 func TestAuctionQueueSkipsStockedItemsAndRotates(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	dir := t.TempDir()
 	app.configDir = dir
 	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
@@ -317,7 +318,7 @@ func TestAuctionQueueSkipsStockedItemsAndRotates(t *testing.T) {
 }
 
 func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	dir := t.TempDir()
 	app.configDir = dir
 	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
@@ -337,7 +338,7 @@ func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
 }
 
 func TestAuctionRejectedQueueUsesLowWeightCooldownBudget(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.cfg.Restock.EquipmentQtyMin = 1
 	app.cfg.Restock.EquipmentQtyMax = 1
 	catalog := map[uint32]catalogItem{}
@@ -390,7 +391,7 @@ func TestAuctionRejectedQueueUsesLowWeightCooldownBudget(t *testing.T) {
 }
 
 func TestAuctionSpecialQueueGetsDedicatedBudget(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.cfg.Restock.EquipmentQtyMin = 1
 	app.cfg.Restock.EquipmentQtyMax = 1
 	catalog := map[uint32]catalogItem{}
@@ -425,7 +426,7 @@ func TestAuctionSpecialQueueGetsDedicatedBudget(t *testing.T) {
 }
 
 func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.cfg.Restock.EquipmentQtyMin = 1
 	app.cfg.Restock.EquipmentQtyMax = 1
 	catalog := map[uint32]catalogItem{
@@ -452,7 +453,7 @@ func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
 }
 
 func TestMarkAuctionExplicitRejectedMovesID(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.auctionQueue = []uint32{10075, 30075, 10075}
 	app.auctionSpecialQueue = []uint32{20075, 10075}
 	app.markAuctionExplicitRejected(10075)
@@ -469,7 +470,7 @@ func TestMarkAuctionExplicitRejectedMovesID(t *testing.T) {
 }
 
 func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.configDir = t.TempDir()
 	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
 		app.cfg.AuctionDB: {},
@@ -507,7 +508,7 @@ func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
 
 func TestMarketPolicyTracksZeroAuctionCandidates(t *testing.T) {
 	dir := t.TempDir()
-	app := testApp()
+	app := testApp(t)
 	app.configDir = dir
 	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
 	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
@@ -543,7 +544,7 @@ func TestMarketPolicyTracksZeroAuctionCandidates(t *testing.T) {
 
 func TestMarketPolicyDetectsStagnantAuctionGrowth(t *testing.T) {
 	dir := t.TempDir()
-	app := testApp()
+	app := testApp(t)
 	app.configDir = dir
 	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
 	stock := map[uint32]int{10075: 1}
@@ -598,7 +599,7 @@ func TestMarketPolicyDetectsStagnantAuctionGrowth(t *testing.T) {
 }
 
 func TestMarketPolicyBlockedStateRecordsReason(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.configDir = t.TempDir()
 	app.auctionQueue = []uint32{10075}
 	app.auctionRejected = []uint32{30075}
@@ -615,7 +616,7 @@ func TestMarketPolicyBlockedStateRecordsReason(t *testing.T) {
 }
 
 func TestRecordMarketPolicyJobKeepsPolicyAndAddsFeedback(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.configDir = t.TempDir()
 	app.policy = map[string]MarketPolicyStatus{
 		"auction": {
@@ -682,7 +683,7 @@ func TestNextMarketPolicyStateIsPureCounterLogic(t *testing.T) {
 }
 
 func TestMarketPolicyDegradesAfterRepeatedActionFailures(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	status := MarketPolicyStatus{Market: "auction", ActionFailureRounds: 2}
 	policy := app.applyAuctionPolicyActions(marketCandidateSnapshot{Count: 100}, &status, marketAutoPolicy{MaxActions: 10000, MaxConcurrent: 8})
 
@@ -712,7 +713,7 @@ func TestMarketPolicyHealthCompletion(t *testing.T) {
 }
 
 func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	low := app.auctionUnitPrice(1000, true, 5, 7, 1)
 	highUpgrade := app.auctionUnitPrice(1000, true, 5, 13, 1)
 	highRefine := app.auctionUnitPrice(1000, true, 5, 7, 7)
@@ -726,7 +727,7 @@ func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
 }
 
 func TestPlanCeraUsesPointBuyNowShape(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		2675345: {ItemID: 2675345, Kind: "stackable"},
@@ -745,7 +746,7 @@ func TestPlanCeraUsesPointBuyNowShape(t *testing.T) {
 }
 
 func TestPlanCeraSkipsRejectedItem(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.ceraRejected = map[uint32]string{2675345: "cera_unlanded"}
 	result := &PlanResult{}
 	app.planCera([]ceraRow{{
@@ -761,7 +762,7 @@ func TestPlanCeraSkipsRejectedItem(t *testing.T) {
 }
 
 func TestPlanCeraRoundRobinsItems(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	result := &PlanResult{}
 	app.planCera([]ceraRow{
 		{ItemID: 1, Label: "a", RestockPrice: 10, RestockQty: 3, Enabled: true},
@@ -778,7 +779,7 @@ func TestPlanCeraRoundRobinsItems(t *testing.T) {
 }
 
 func TestPlanAuctionHandlesNonCreatureSpecialTypesWithUniqueAddInfo(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.repository = &clearStockRepository{maxAddInfo: specialAddInfoBase + 7}
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
@@ -796,7 +797,7 @@ func TestPlanAuctionHandlesNonCreatureSpecialTypesWithUniqueAddInfo(t *testing.T
 }
 
 func TestPlanAuctionCreatesCreatureItemInstanceForCreatureSpecial(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	repo := &clearStockRepository{creatureIDs: []int32{4567}}
 	app.repository = repo
 	result := &PlanResult{}
@@ -822,7 +823,7 @@ func TestPlanAuctionCreatesCreatureItemInstanceForCreatureSpecial(t *testing.T) 
 }
 
 func TestPlanAuctionSkipsCreatureWhenInstanceCreationFails(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.repository = &clearStockRepository{createCreatureErr: errors.New("insert failed")}
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
@@ -839,7 +840,7 @@ func TestPlanAuctionSkipsCreatureWhenInstanceCreationFails(t *testing.T) {
 }
 
 func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.cfg.Restock.StackSizes = []int{500}
 	catalog := map[uint32]catalogItem{
 		4000:      {ItemID: 4000, Kind: "stackable", Price: 7, StackLimit: 1000},
@@ -864,7 +865,7 @@ func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 
 func TestLoadCatalogUsesPVFJSONOnly(t *testing.T) {
 	dir := t.TempDir()
-	app := testApp()
+	app := testApp(t)
 	app.configDir = dir
 	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{
 		{"id": 4000, "price": 7, "stack_limit": 1000},
@@ -904,7 +905,7 @@ func mustWriteText(t *testing.T, path, value string) {
 }
 
 func TestFallbackAuctionRowsKeepEmbeddedBasePrices(t *testing.T) {
-	app := testApp()
+	app := testApp(t)
 	app.cfg.Restock.StackSizes = []int{500}
 	rows, err := app.fallbackAuctionRows()
 	if err != nil {
@@ -997,7 +998,7 @@ func TestRiskyPVFItemAllowsHighLevelEquipmentWhenItemInfoCapsLevel(t *testing.T)
 
 func TestExecuteActionsAllowsCeraSuccessWithoutAuctionID(t *testing.T) {
 	ok := true
-	app := testApp()
+	app := testApp(t)
 	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
 	job := &JobSummary{}
 
@@ -1012,7 +1013,7 @@ func TestExecuteActionsAllowsCeraSuccessWithoutAuctionID(t *testing.T) {
 
 func TestExecuteActionsRequiresAuctionIDForAuctionRegister(t *testing.T) {
 	ok := true
-	app := testApp()
+	app := testApp(t)
 	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
 	job := &JobSummary{}
 

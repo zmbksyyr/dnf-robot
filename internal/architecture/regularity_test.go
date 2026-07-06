@@ -20,6 +20,13 @@ var forbiddenFileNameTokens = []string{
 	"helper",
 }
 
+var forbiddenRuntimeArtifactSuffixes = []string{
+	".bak",
+	".jsonl",
+	".log",
+	".tmp",
+}
+
 var sqlImportAllowedDirs = []string{
 	"cmd/robot",
 	"internal/foundation/sql",
@@ -274,6 +281,32 @@ func TestReadmeFilesDoNotFragmentDocumentation(t *testing.T) {
 		}
 		if strings.EqualFold(filepath.Base(path), "README.md") {
 			t.Errorf("%s fragments documentation; use doc/规整文档.md", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+}
+
+func TestRuntimeArtifactsDoNotStayInRepository(t *testing.T) {
+	root := repoRoot(t)
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			name := entry.Name()
+			if name == ".git" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		base := strings.ToLower(filepath.Base(path))
+		for _, suffix := range forbiddenRuntimeArtifactSuffixes {
+			if strings.HasSuffix(base, suffix) {
+				t.Errorf("%s is a runtime or temporary artifact; keep generated files outside the repository", path)
+			}
 		}
 		return nil
 	})
