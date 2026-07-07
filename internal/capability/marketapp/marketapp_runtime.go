@@ -1176,6 +1176,7 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 				Market:       marketNameAuction,
 				Kind:         item.Kind,
 				ItemID:       row.ItemID,
+				ItemType:     item.ItemType,
 				Name:         item.Name,
 				Count:        count,
 				UnitPrice:    unit,
@@ -1214,6 +1215,7 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 			Market:       marketNameAuction,
 			Kind:         special,
 			ItemID:       row.ItemID,
+			ItemType:     item.ItemType,
 			Name:         item.Name,
 			Count:        1,
 			UnitPrice:    unit,
@@ -1846,7 +1848,7 @@ func catalogAuctionIDsByType(catalog map[uint32]catalogItem, allowed map[uint32]
 		}
 	}
 	sortCatalogAuctionIDs(ids, catalog)
-	sortCatalogAuctionIDs(special, catalog)
+	sortCatalogSpecialAuctionIDs(special, catalog)
 	return ids, special
 }
 
@@ -1862,6 +1864,37 @@ func sortCatalogAuctionIDs(ids []uint32, catalog map[uint32]catalogItem) {
 		}
 		return left.ItemID < right.ItemID
 	})
+}
+
+func sortCatalogSpecialAuctionIDs(ids []uint32, catalog map[uint32]catalogItem) {
+	sort.Slice(ids, func(i, j int) bool {
+		left := catalog[ids[i]]
+		right := catalog[ids[j]]
+		leftRank := specialAuctionRank(left)
+		rightRank := specialAuctionRank(right)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if left.Level != right.Level {
+			return left.Level > right.Level
+		}
+		return left.ItemID < right.ItemID
+	})
+}
+
+func specialAuctionRank(item catalogItem) int {
+	switch specialAuctionKind(item) {
+	case "artifact red", "artifact blue", "artifact green":
+		return 0
+	case "creature":
+		return 1
+	case "title":
+		return 2
+	case "avatar":
+		return 3
+	default:
+		return 9
+	}
 }
 
 func catalogAuctionCandidateCounts(catalog map[uint32]catalogItem, allowed map[uint32]bool) (normal int, special int) {

@@ -1130,6 +1130,7 @@ type Action struct {
 	Kind         string `json:"kind"`
 	Operation    string `json:"operation,omitempty"`
 	ItemID       uint32 `json:"item_id"`
+	ItemType     int    `json:"item_type,omitempty"`
 	Name         string `json:"name,omitempty"`
 	Count        int32  `json:"count"`
 	UnitPrice    int32  `json:"unit_price"`

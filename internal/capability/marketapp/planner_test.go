@@ -484,6 +484,22 @@ func TestAuctionSpecialQueueGetsDedicatedBudget(t *testing.T) {
 	}
 }
 
+func TestAuctionSpecialQueuePrioritizesPetArtifacts(t *testing.T) {
+	catalog := map[uint32]catalogItem{
+		415510139: {ItemID: 415510139, Kind: "equipment", ItemType: 20, Slot: "avatar", Attach: "trade", Price: 100},
+		20001:     {ItemID: 20001, Kind: "equipment", ItemType: 2, Slot: "title name", Attach: "trade", Price: 100},
+		30001:     {ItemID: 30001, Kind: "equipment", ItemType: 30, Slot: "creature", Attach: "trade", Price: 100},
+		63500:     {ItemID: 63500, Kind: "equipment", ItemType: 31, Slot: "artifact red", Attach: "trade", Price: 100},
+		64000:     {ItemID: 64000, Kind: "equipment", ItemType: 32, Slot: "artifact blue", Attach: "trade", Price: 100},
+	}
+	_, special := catalogAuctionIDsByType(catalog, nil)
+
+	want := []uint32{63500, 64000, 30001, 20001, 415510139}
+	if !reflect.DeepEqual(special, want) {
+		t.Fatalf("special order = %v, want %v", special, want)
+	}
+}
+
 func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
 	app := testApp(t)
 	app.cfg.Restock.EquipmentQtyMin = 1
@@ -908,6 +924,23 @@ func TestPlanAuctionHandlesNonCreatureSpecialTypesWithUniqueAddInfo(t *testing.T
 	action := result.Actions[0]
 	if action.Kind != "title" || action.CountAddInfo != specialAddInfoBase+8 || action.Count != 1 {
 		t.Fatalf("unexpected special action: %#v", action)
+	}
+}
+
+func TestPlanAuctionKeepsPetArtifactItemType(t *testing.T) {
+	app := testApp(t)
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		63500: {ItemID: 63500, Kind: "equipment", ItemType: 31, Slot: "artifact red", Attach: "trade", Price: 100},
+	}
+	app.planAuction([]restockRow{{ItemID: 63500, Quantity: 1, Enabled: true}}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 1 || len(result.Skipped) != 0 {
+		t.Fatalf("artifact plan actions=%#v skipped=%#v", result.Actions, result.Skipped)
+	}
+	action := result.Actions[0]
+	if action.Kind != "artifact red" || action.ItemType != 31 {
+		t.Fatalf("unexpected artifact action: %#v", action)
 	}
 }
 
