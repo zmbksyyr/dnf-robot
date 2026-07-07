@@ -366,3 +366,23 @@ func (a *App) resolveConfigPath(path string) string {
 	}
 	return filepath.Join(a.configDir, path)
 }
+
+func (a *App) PVFUpgradeSeparateStatus(req PVFUpgradeSeparateRequest) (pvf.PVFUpgradeSeparateStatus, error) {
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		path = a.pvfPath
+	}
+	return pvf.InspectPVFUpgradeSeparate(path)
+}
+
+func (a *App) PVFPatchUpgradeSeparate(req PVFUpgradeSeparateRequest) (pvf.PVFUpgradeSeparatePatchResult, error) {
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		path = a.pvfPath
+	}
+	target := req.Target
+	if target <= 0 {
+		target = 7
+	}
+	return pvf.PatchPVFUpgradeSeparate(path, target)
+}

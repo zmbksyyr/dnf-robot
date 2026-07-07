@@ -896,6 +896,32 @@ type AuctionSearchGuardResult struct {
 	Message   string `json:"message,omitempty"`
 }
 
+type AuctionMemoryPatchRequest struct{}
+
+type AuctionMemoryPatchResult struct {
+	PID     int                       `json:"pid"`
+	Target  string                    `json:"target"`
+	Patched int                       `json:"patched"`
+	Entries []AuctionMemoryPatchEntry `json:"entries"`
+}
+
+type AuctionMemoryPatchEntry struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	Before  byte   `json:"before"`
+	After   byte   `json:"after"`
+	Expect  byte   `json:"expect"`
+	Value   byte   `json:"value"`
+	Changed bool   `json:"changed"`
+	OK      bool   `json:"ok"`
+	Message string `json:"message,omitempty"`
+}
+
+type PVFUpgradeSeparateRequest struct {
+	Path   string `json:"path,omitempty"`
+	Target int    `json:"target,omitempty"`
+}
+
 type ClearSystemStockResult struct {
 	Markets []ClearSystemMarketResult `json:"markets"`
 	Deleted int64                     `json:"deleted"`
