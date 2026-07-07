@@ -2216,6 +2216,9 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 				res, err := executor.Execute(task.action)
 				if err != nil {
 					entry.Error = err.Error()
+					if task.action.Market == marketNameAuction && task.action.Operation != "collect" {
+						a.markAuctionExplicitRejected(task.action.ItemID)
+					}
 					record(entry, err)
 				} else {
 					entry.OK = res.ResultOK != nil && *res.ResultOK
@@ -2225,7 +2228,7 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 					}
 					entry.Reason = res.ResultReason
 					entry.Result = res.Raw
-					if task.action.Market == marketNameAuction && task.action.Operation != "collect" && !entry.OK && entry.Reason != nil {
+					if task.action.Market == marketNameAuction && task.action.Operation != "collect" && !entry.OK {
 						a.markAuctionExplicitRejected(task.action.ItemID)
 					}
 					record(entry, nil)

@@ -3,6 +3,7 @@ package marketapp
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -1072,6 +1073,8 @@ func TestExecuteActionsAllowsCeraSuccessWithoutAuctionID(t *testing.T) {
 func TestExecuteActionsRequiresAuctionIDForAuctionRegister(t *testing.T) {
 	ok := true
 	app := testApp(t)
+	app.auctionQueue = []uint32{1001, 1002}
+	app.auctionSpecialQueue = []uint32{1003}
 	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
 	job := &JobSummary{}
 
@@ -1081,6 +1084,27 @@ func TestExecuteActionsRequiresAuctionIDForAuctionRegister(t *testing.T) {
 	}}, 1, true, job)
 	if err == nil || failed != 1 || len(entries) != 1 || entries[0].OK {
 		t.Fatalf("auction action without id failed=%d err=%v entries=%#v", failed, err, entries)
+	}
+	if queueContains(app.auctionQueue, 1001) || queueContains(app.auctionSpecialQueue, 1001) || !queueContains(app.auctionRejected, 1001) {
+		t.Fatalf("failed auction register should be rejected; normal=%v special=%v rejected=%v", app.auctionQueue, app.auctionSpecialQueue, app.auctionRejected)
+	}
+}
+
+func TestExecuteActionsRejectsAuctionRegisterOnExecutorError(t *testing.T) {
+	app := testApp(t)
+	app.auctionQueue = []uint32{1001}
+	app.executors = fixedActionExecutorFactory{err: fmt.Errorf("register timeout")}
+	job := &JobSummary{}
+
+	failed, entries, err := app.executeActions("test", []Action{{
+		Market: marketNameAuction,
+		ItemID: 1001,
+	}}, 1, true, job)
+	if err == nil || failed != 1 || len(entries) != 1 || entries[0].OK {
+		t.Fatalf("auction executor error failed=%d err=%v entries=%#v", failed, err, entries)
+	}
+	if queueContains(app.auctionQueue, 1001) || !queueContains(app.auctionRejected, 1001) {
+		t.Fatalf("executor error should reject auction item; normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)
 	}
 }
 
