@@ -86,14 +86,19 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	case status.ActionFailureRounds == 1:
 		status.Reason = "auction action failures are high; observing one recovery round"
 		status.Mode = marketPolicyModeRecover
+	case status.ActionFailureRounds == 2:
+		a.resetAuctionQueues()
+		a.restartMarketService(marketServiceNameAuction, "auction action failures stayed high")
+		return degradeMarketPolicy(status, policy, "auction action failures stayed high; auction service restarted and send pressure reduced")
 	case status.ActionFailureRounds >= 2:
 		return degradeMarketPolicy(status, policy, "auction action failures stayed high; send pressure reduced")
 	}
 	switch {
 	case status.ZeroKindRounds == 2:
 		a.resetAuctionQueues()
+		a.restartMarketService(marketServiceNameAuction, "auction kinds stayed zero")
 		a.appendLog(LogEvent{Type: "market_policy", Market: marketNameAuction, Status: marketLogStatusQueueReset, Message: "zero_kind_recovery"})
-		status.Reason = "auction kinds stayed zero; auction queues rebuilt"
+		status.Reason = "auction kinds stayed zero; auction service restarted and queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.ZeroKindRounds >= 3:
 		return degradeMarketPolicy(status, policy, "auction kinds still zero; send pressure reduced")

@@ -1401,6 +1401,10 @@ func (a *App) reconcileCeraRejects(entries []ActionEntry) {
 }
 
 func (a *App) restartMarketService(name, reason string) {
+	if a.restarter != nil {
+		a.restarter(name, reason)
+		return
+	}
 	service, ok := marketServiceSpecByName(name)
 	if !ok {
 		return

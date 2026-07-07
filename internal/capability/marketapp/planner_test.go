@@ -531,6 +531,13 @@ func TestMarkAuctionExplicitRejectedMovesID(t *testing.T) {
 func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
 	app := testApp(t)
 	app.configDir = t.TempDir()
+	restarts := 0
+	app.restarter = func(name, reason string) {
+		if name != marketServiceNameAuction || !strings.Contains(reason, "zero") {
+			t.Fatalf("unexpected restart name=%q reason=%q", name, reason)
+		}
+		restarts++
+	}
 	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
 		app.cfg.AuctionDB: {},
 	}}
@@ -554,10 +561,16 @@ func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
 	if len(app.auctionQueue) != 0 || len(app.auctionSpecialQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
 		t.Fatalf("second zero round did not reset queues: normal=%v special=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionSpecialQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
 	}
+	if restarts != 1 {
+		t.Fatalf("second zero round restarts=%d, want 1", restarts)
+	}
 
 	third := app.marketAutoPolicy("auction", app.cfg.Auto)
 	if third.MaxActions != 2000 || third.MaxConcurrent != 4 {
 		t.Fatalf("third zero round pressure = %#v, want 2000/4", third)
+	}
+	if restarts != 1 {
+		t.Fatalf("third zero round should not restart again, restarts=%d", restarts)
 	}
 	status := app.policy["auction"]
 	if status.Mode != marketPolicyModeDegraded || status.ZeroKindRounds != 3 {
@@ -743,11 +756,26 @@ func TestNextMarketPolicyStateIsPureCounterLogic(t *testing.T) {
 
 func TestMarketPolicyDegradesAfterRepeatedActionFailures(t *testing.T) {
 	app := testApp(t)
+	restarts := 0
+	app.restarter = func(name, reason string) {
+		if name != marketServiceNameAuction || !strings.Contains(reason, "failures") {
+			t.Fatalf("unexpected restart name=%q reason=%q", name, reason)
+		}
+		restarts++
+	}
+	app.auctionQueue = []uint32{10075}
+	app.auctionRejected = []uint32{30075}
 	status := MarketPolicyStatus{Market: "auction", ActionFailureRounds: 2}
 	policy := app.applyAuctionPolicyActions(marketCandidateSnapshot{Count: 100}, &status, marketAutoPolicy{MaxActions: 10000, MaxConcurrent: 8})
 
 	if status.Mode != marketPolicyModeDegraded || policy.MaxActions != 2000 || policy.MaxConcurrent != 4 {
 		t.Fatalf("repeated failure policy status=%#v policy=%#v", status, policy)
+	}
+	if restarts != 1 {
+		t.Fatalf("restarts=%d, want 1", restarts)
+	}
+	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 {
+		t.Fatalf("queues were not reset after action failure recovery: normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)
 	}
 }
 

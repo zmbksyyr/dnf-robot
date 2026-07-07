@@ -23,6 +23,7 @@ type App struct {
 	pvfPath    string
 	dfGameR    string
 	executors  ActionExecutorFactory
+	restarter  func(name, reason string)
 
 	stateMu   lockhub.Locker
 	jobMu     lockhub.Locker
