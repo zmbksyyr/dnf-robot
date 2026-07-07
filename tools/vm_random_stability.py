@@ -245,6 +245,7 @@ class StabilityRun(object):
         if not os.path.isdir(self.snapshot_dir):
             os.makedirs(self.snapshot_dir)
         self.results = []
+        self.market_auto_stopped_since = 0
         self.market_zero_since = 0
         self.market_zero_last_seen = 0
         self.last_invariant_failure = {}
@@ -373,11 +374,17 @@ class StabilityRun(object):
         game_ready = bool(ports.get("10011"))
         now = time.time()
         if enabled and game_ready and services_ready and not running:
-            key = "market_auto_stopped:%s" % event
-            if now - self.last_invariant_failure.get(key, 0) > 60:
-                self.last_invariant_failure[key] = now
-                self.record_failure(key, "market auto enabled but not running while game and services are ready")
+            if not self.market_auto_stopped_since:
+                self.market_auto_stopped_since = now
                 self.safe_call("marketStart", {})
+                return
+            key = "market_auto_stopped:%s" % event
+            if now - self.market_auto_stopped_since > 60 and now - self.last_invariant_failure.get(key, 0) > 60:
+                self.last_invariant_failure[key] = now
+                self.record_failure(key, "market auto enabled but not running while game and services are ready for %ss" % int(now - self.market_auto_stopped_since))
+                self.safe_call("marketStart", {})
+        else:
+            self.market_auto_stopped_since = 0
         auction_kinds = int(counts.get("auction_kinds") or 0)
         if enabled and running and game_ready and services_ready and auction_kinds <= 0:
             if self.market_zero_last_seen and now - self.market_zero_last_seen > self.args.market_zero_grace:
