@@ -779,6 +779,34 @@ func TestMarketPolicyDegradesAfterRepeatedActionFailures(t *testing.T) {
 	}
 }
 
+func TestMarketPolicyPrioritizesZeroKindRecoveryOverActionFailure(t *testing.T) {
+	app := testApp(t)
+	restarts := 0
+	app.restarter = func(name, reason string) {
+		if name != marketServiceNameAuction || !strings.Contains(reason, "zero") {
+			t.Fatalf("unexpected restart name=%q reason=%q", name, reason)
+		}
+		restarts++
+	}
+	app.auctionQueue = []uint32{10075}
+	app.auctionRejected = []uint32{30075}
+	status := MarketPolicyStatus{Market: "auction", ZeroKindRounds: 2, ActionFailureRounds: 13}
+	policy := app.applyAuctionPolicyActions(marketCandidateSnapshot{Count: 100}, &status, marketAutoPolicy{MaxActions: 10000, MaxConcurrent: 8})
+
+	if restarts != 1 {
+		t.Fatalf("restarts=%d, want 1", restarts)
+	}
+	if status.Mode != marketPolicyModeRecover || !strings.Contains(status.Reason, "zero") {
+		t.Fatalf("zero-kind recovery was not prioritized: status=%#v", status)
+	}
+	if policy.MaxActions != 10000 || policy.MaxConcurrent != 8 {
+		t.Fatalf("zero-kind recovery should not be overwritten by action-failure degradation: %#v", policy)
+	}
+	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 {
+		t.Fatalf("queues were not reset after zero-kind recovery: normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)
+	}
+}
+
 func TestMarketPolicyHealthCompletion(t *testing.T) {
 	status := MarketPolicyStatus{Market: "auction", Mode: marketPolicyModeNormal, DBKinds: 10, Candidates: 20, CandidateSource: "iteminfo.dat"}
 	status.applyHealth()
