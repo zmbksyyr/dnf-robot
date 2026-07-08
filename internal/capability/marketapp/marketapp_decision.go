@@ -93,50 +93,63 @@ func (a *App) logMarketDecision(market string, decision *marketDecisionSnapshot,
 }
 
 func (s marketDecisionSnapshot) String() string {
-	return fmt.Sprintf(
-		"auction=%t cera=%t pvf_ready=%t pvf_items=%d iteminfo_ids=%d iteminfo_allowed=%d iteminfo_path=%s iteminfo_error=%q intersection=%d normal=%d special=%d filtered_blocked=%d filtered_avatar=%d filtered_risky=%d db_owners=%d db_auction_kinds=%d db_cera_kinds=%d cera_config=%d cera_enabled=%d cera_rejected=%d queue_normal=%d queue_special=%d queue_rejected=%d rejected_tracked=%d rejected_retry_in=%d rejected_reasons=%s queue_source=%s budget_normal=%d budget_special=%d budget_rejected=%d selected_normal=%d selected_special=%d selected_rejected=%d selected_auction_rows=%d actions=%d auction_actions=%d cera_actions=%d skipped=%d max_actions=%d effective_max_actions=%d max_concurrent=%d",
-		s.Auction,
-		s.Cera,
-		s.PVFReady,
-		s.PVFItems,
-		s.ItemInfoIDs,
-		s.AuctionCandidates.AllowedItemInfo,
-		s.ItemInfoPath,
-		s.ItemInfoError,
-		s.AuctionCandidates.Intersection,
-		s.AuctionCandidates.Normal,
-		s.AuctionCandidates.Special,
-		s.AuctionCandidates.Blocked,
-		s.AuctionCandidates.Avatar,
-		s.AuctionCandidates.Risky,
-		s.DBOwners,
-		s.DBAuctionKinds,
-		s.DBCeraKinds,
-		s.CeraConfigRows,
-		s.CeraEnabledRows,
-		s.CeraRejectedRows,
-		s.QueueNormal,
-		s.QueueSpecial,
-		s.QueueRejected,
-		s.RejectedTracked,
-		s.RejectedRetryIn,
-		s.RejectedReasons,
-		s.QueueSource,
-		s.AuctionBudget.Normal,
-		s.AuctionBudget.Special,
-		s.AuctionBudget.Rejected,
-		s.AuctionSelected.Normal,
-		s.AuctionSelected.Special,
-		s.AuctionSelected.Rejected,
-		s.SelectedAuctionRows,
-		s.Actions,
-		s.AuctionActions,
-		s.CeraActions,
-		s.Skipped,
-		s.AutoMaxActions,
-		s.EffectiveMaxActions,
-		s.AutoMaxConcurrent,
-	)
+	fields := []marketDecisionField{
+		{"auction", s.Auction},
+		{"cera", s.Cera},
+		{"pvf_ready", s.PVFReady},
+		{"pvf_items", s.PVFItems},
+		{"iteminfo_ids", s.ItemInfoIDs},
+		{"iteminfo_allowed", s.AuctionCandidates.AllowedItemInfo},
+		{"iteminfo_path", s.ItemInfoPath},
+		{"iteminfo_error", fmt.Sprintf("%q", s.ItemInfoError)},
+		{"intersection", s.AuctionCandidates.Intersection},
+		{"normal", s.AuctionCandidates.Normal},
+		{"special", s.AuctionCandidates.Special},
+		{"filtered_blocked", s.AuctionCandidates.Blocked},
+		{"filtered_avatar", s.AuctionCandidates.Avatar},
+		{"filtered_risky", s.AuctionCandidates.Risky},
+		{"db_owners", s.DBOwners},
+		{"db_auction_kinds", s.DBAuctionKinds},
+		{"db_cera_kinds", s.DBCeraKinds},
+		{"cera_config", s.CeraConfigRows},
+		{"cera_enabled", s.CeraEnabledRows},
+		{"cera_rejected", s.CeraRejectedRows},
+		{"queue_normal", s.QueueNormal},
+		{"queue_special", s.QueueSpecial},
+		{"queue_rejected", s.QueueRejected},
+		{"rejected_tracked", s.RejectedTracked},
+		{"rejected_retry_in", s.RejectedRetryIn},
+		{"rejected_reasons", s.RejectedReasons},
+		{"queue_source", s.QueueSource},
+		{"budget_normal", s.AuctionBudget.Normal},
+		{"budget_special", s.AuctionBudget.Special},
+		{"budget_rejected", s.AuctionBudget.Rejected},
+		{"selected_normal", s.AuctionSelected.Normal},
+		{"selected_special", s.AuctionSelected.Special},
+		{"selected_rejected", s.AuctionSelected.Rejected},
+		{"selected_auction_rows", s.SelectedAuctionRows},
+		{"actions", s.Actions},
+		{"auction_actions", s.AuctionActions},
+		{"cera_actions", s.CeraActions},
+		{"skipped", s.Skipped},
+		{"max_actions", s.AutoMaxActions},
+		{"effective_max_actions", s.EffectiveMaxActions},
+		{"max_concurrent", s.AutoMaxConcurrent},
+	}
+	return joinMarketDecisionFields(fields)
+}
+
+type marketDecisionField struct {
+	key   string
+	value interface{}
+}
+
+func joinMarketDecisionFields(fields []marketDecisionField) string {
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		parts = append(parts, fmt.Sprintf("%s=%v", field.key, field.value))
+	}
+	return strings.Join(parts, " ")
 }
 
 func (s *marketDecisionSnapshot) captureQueues(a *App) {

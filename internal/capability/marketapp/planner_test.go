@@ -673,6 +673,19 @@ func TestMarketDecisionLogsAuctionRejectedDetails(t *testing.T) {
 	}
 }
 
+func TestMarketDecisionFieldOrderIsStable(t *testing.T) {
+	text := (marketDecisionSnapshot{}).String()
+	wantPrefix := "auction=false cera=false pvf_ready=false pvf_items=0 iteminfo_ids=0"
+	if !strings.HasPrefix(text, wantPrefix) {
+		t.Fatalf("decision field order changed: %s", text)
+	}
+	for _, want := range []string{"iteminfo_error=\"\"", "budget_normal=0", "selected_normal=0", "effective_max_actions=0", "max_concurrent=0"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("decision log missing %q in %s", want, text)
+		}
+	}
+}
+
 func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
 	app := testApp(t)
 	app.configDir = t.TempDir()
