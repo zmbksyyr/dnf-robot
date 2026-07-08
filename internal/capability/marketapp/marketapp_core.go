@@ -609,7 +609,7 @@ func DefaultConfig() Config {
 			Items:    defaultCeraRows(),
 		},
 		Auto: AutoCfg{
-			Enabled:         true,
+			Enabled:         false,
 			Markets:         []string{marketNameAuction, marketNameCera},
 			InitialDelayMS:  3000,
 			IntervalMS:      60000,
