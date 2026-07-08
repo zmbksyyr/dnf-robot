@@ -1575,7 +1575,7 @@ func (a *App) nextSpecialAddInfo() int32 {
 	return v
 }
 
-// ---- source.go ----
+// ---- auction_queue.go ----
 //
 //go:embed seeds/market_fallback_seed.json
 var seedFiles embed.FS
@@ -1731,6 +1731,7 @@ func (a *App) selectAuctionRowsFromQueue(queue *[]uint32, pvfReady bool, catalog
 	return selected
 }
 
+// ---- auction_rejection.go ----
 func (a *App) markAuctionExplicitRejected(itemID uint32) {
 	a.markAuctionRejected(itemID, "explicit_rejected")
 }
@@ -1819,6 +1820,7 @@ func (a *App) auctionQueueSnapshotLocked() auctionQueueSnapshot {
 	return snapshot
 }
 
+// ---- auction_queue_helpers.go ----
 func idSet(ids []uint32) map[uint32]bool {
 	out := make(map[uint32]bool, len(ids))
 	for _, id := range ids {
@@ -1872,6 +1874,7 @@ func queueContains(ids []uint32, itemID uint32) bool {
 	return false
 }
 
+// ---- auction_source.go ----
 func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) (auctionQueueCandidatesResult, error) {
 	if pvfReady {
 		itemInfoIDs, path, err := a.currentItemInfoIDs()

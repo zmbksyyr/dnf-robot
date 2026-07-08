@@ -1234,8 +1234,8 @@ func TestPlanAuctionSkipsCreatureWhenInstanceCreationFails(t *testing.T) {
 	}
 }
 
-func TestSummarizePlanDoesNotCountRemovedSpecialHandlerReason(t *testing.T) {
-	summary := summarizePlan(nil, []SkippedItem{{Reason: "special_requires_handler"}}, 0)
+func TestSummarizePlanDoesNotBucketUnknownSkipReason(t *testing.T) {
+	summary := summarizePlan(nil, []SkippedItem{{Reason: "unknown_skip_reason"}}, 0)
 	if summary.Special != 0 || summary.Skipped != 1 {
 		t.Fatalf("summary = %#v", summary)
 	}
