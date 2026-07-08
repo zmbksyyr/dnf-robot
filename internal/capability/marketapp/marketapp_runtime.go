@@ -29,6 +29,8 @@ const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
 const auctionRejectedRetryEvery = 10
 const auctionRejectedRetryDivisor = 100
 const auctionSpecialBudgetDivisor = 10
+const ceraRejectedTTL = 30 * time.Minute
+const marketServiceRestartCooldown = 10 * time.Minute
 const specialAddInfoBase int32 = 210000000
 const maxInt32 int32 = 2147483647
 
@@ -1088,7 +1090,7 @@ func quoteIdent(v string) string {
 	return strings.Join(parts, ".")
 }
 
-// ---- planner.go ----
+// ---- auction_plan.go ----
 func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
 	for _, row := range rows {
 		if row.ItemID == 0 || row.Quantity <= 0 || !row.Enabled {
@@ -1247,6 +1249,7 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 	}
 }
 
+// ---- cera_plan.go ----
 func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
 	type pendingCera struct {
 		row  ceraRow
@@ -1306,13 +1309,23 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 	}
 }
 
+// ---- cera_recovery.go ----
 func (a *App) ceraRejectedReason(itemID uint32) string {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
 	if a.ceraRejected == nil {
 		return ""
 	}
-	return a.ceraRejected[itemID]
+	reason := a.ceraRejected[itemID]
+	if reason == "" {
+		return ""
+	}
+	if t, ok := a.ceraRejectedAt[itemID]; ok && time.Since(t) > ceraRejectedTTL {
+		delete(a.ceraRejected, itemID)
+		delete(a.ceraRejectedAt, itemID)
+		return ""
+	}
+	return reason
 }
 
 func (a *App) markCeraRejected(itemID uint32, reason string) {
@@ -1326,11 +1339,44 @@ func (a *App) markCeraRejected(itemID uint32, reason string) {
 	if a.ceraRejected == nil {
 		a.ceraRejected = map[uint32]string{}
 	}
+	if a.ceraRejectedAt == nil {
+		a.ceraRejectedAt = map[uint32]time.Time{}
+	}
 	if _, exists := a.ceraRejected[itemID]; !exists {
 		a.ceraRejected[itemID] = reason
 	}
+	a.ceraRejectedAt[itemID] = time.Now()
 	a.stateMu.Unlock()
 	a.appendLog(LogEvent{Type: "cera_rejected", Market: marketNameCera, Status: marketLogStatusActive, Message: fmt.Sprintf("item_id=%d reason=%s", itemID, reason)})
+}
+
+func (a *App) ceraRejectedCount() int {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if len(a.ceraRejected) == 0 {
+		return 0
+	}
+	now := time.Now()
+	count := 0
+	for itemID, reason := range a.ceraRejected {
+		if reason == "" {
+			continue
+		}
+		if t, ok := a.ceraRejectedAt[itemID]; ok && now.Sub(t) > ceraRejectedTTL {
+			delete(a.ceraRejected, itemID)
+			delete(a.ceraRejectedAt, itemID)
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func (a *App) resetCeraRejected() {
+	a.stateMu.Lock()
+	a.ceraRejected = nil
+	a.ceraRejectedAt = nil
+	a.stateMu.Unlock()
 }
 
 func (a *App) reconcileCeraLanding(entries []ActionEntry) {
@@ -1405,7 +1451,11 @@ func (a *App) reconcileCeraRejects(entries []ActionEntry) {
 	a.restartMarketService(marketServiceNamePoint, "cera reason 118 with empty database")
 }
 
+// ---- recovery_guard.go ----
 func (a *App) restartMarketService(name, reason string) {
+	if !a.allowMarketServiceRestart(name, reason) {
+		return
+	}
 	if a.restarter != nil {
 		a.restarter(name, reason)
 		return
@@ -1424,6 +1474,24 @@ func (a *App) restartMarketService(name, reason string) {
 	}
 }
 
+func (a *App) allowMarketServiceRestart(name, reason string) bool {
+	now := time.Now()
+	a.stateMu.Lock()
+	if a.lastServiceRestart == nil {
+		a.lastServiceRestart = map[string]time.Time{}
+	}
+	last := a.lastServiceRestart[name]
+	if !last.IsZero() && now.Sub(last) < marketServiceRestartCooldown {
+		a.stateMu.Unlock()
+		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusSkipped, Message: fmt.Sprintf("restart cooldown active reason=%s remaining=%s", reason, marketServiceRestartCooldown-now.Sub(last))})
+		return false
+	}
+	a.lastServiceRestart[name] = now
+	a.stateMu.Unlock()
+	return true
+}
+
+// ---- pricing.go ----
 func (a *App) price(base int32) int32 {
 	if base <= 0 {
 		base = 1
@@ -1523,40 +1591,70 @@ func cleanupLegacyMarketFiles(configDir string) {
 }
 
 func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) ([]restockRow, error) {
-	a.stateMu.Lock()
-	needsLoad := len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || pvfReady && a.auctionQueueSource != marketQueueSourcePVFItemInfo
-	a.stateMu.Unlock()
-	if needsLoad {
-		normal, special, source, err := a.auctionQueueCandidates(pvfReady, catalog)
-		if err != nil {
-			return nil, err
+	selection, err := a.nextAuctionQueueSelection(pvfReady, catalog, have, maxActions)
+	if err != nil {
+		return nil, err
+	}
+	return selection.Rows, nil
+}
+
+func (a *App) nextAuctionQueueSelection(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) (auctionQueueSelection, error) {
+	if a.auctionQueueNeedsReload(pvfReady) {
+		if err := a.reloadAuctionQueues(pvfReady, catalog); err != nil {
+			return auctionQueueSelection{}, err
 		}
-		a.stateMu.Lock()
-		if len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || source == marketQueueSourcePVFItemInfo && a.auctionQueueSource != marketQueueSourcePVFItemInfo {
-			candidateSet := idSet(append(append([]uint32{}, normal...), special...))
-			a.auctionRejected = filterQueueBySet(a.auctionRejected, candidateSet)
-			rejectedSet := idSet(a.auctionRejected)
-			a.auctionQueue = filterQueueExcludeSet(normal, rejectedSet)
-			a.auctionSpecialQueue = filterQueueExcludeSet(special, rejectedSet)
-			a.auctionQueueSource = source
-		}
-		a.stateMu.Unlock()
 	}
 
 	a.stateMu.Lock()
-	selected := make([]restockRow, 0)
 	a.reconcileRejectedStockLocked(have, pvfReady, catalog)
-
-	normalBudget, specialBudget, rejectedBudget := a.splitAuctionBudgetsLocked(maxActions)
-	if maxActions <= 0 || specialBudget != 0 {
-		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionSpecialQueue, pvfReady, catalog, have, specialBudget, false)...)
-	}
-	selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionQueue, pvfReady, catalog, have, normalBudget, false)...)
-	if maxActions <= 0 || rejectedBudget != 0 {
-		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionRejected, pvfReady, catalog, have, rejectedBudget, true)...)
-	}
+	budget := a.auctionQueueBudgetLocked(maxActions)
+	rows := a.selectAuctionQueueRowsLocked(pvfReady, catalog, have, maxActions, budget)
 	a.stateMu.Unlock()
-	return selected, nil
+	return auctionQueueSelection{Rows: rows, Budget: budget}, nil
+}
+
+func (a *App) auctionQueueNeedsReload(pvfReady bool) bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return len(a.auctionQueue) == 0 && len(a.auctionSpecialQueue) == 0 || pvfReady && a.auctionQueueSource != marketQueueSourcePVFItemInfo
+}
+
+func (a *App) reloadAuctionQueues(pvfReady bool, catalog map[uint32]catalogItem) error {
+	candidates, err := a.auctionQueueCandidates(pvfReady, catalog)
+	if err != nil {
+		return err
+	}
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if len(a.auctionQueue) != 0 || len(a.auctionSpecialQueue) != 0 {
+		if candidates.Source != marketQueueSourcePVFItemInfo || a.auctionQueueSource == marketQueueSourcePVFItemInfo {
+			return nil
+		}
+	}
+	a.applyAuctionQueueCandidatesLocked(candidates)
+	return nil
+}
+
+func (a *App) applyAuctionQueueCandidatesLocked(candidates auctionQueueCandidatesResult) {
+	candidateSet := idSet(append(append([]uint32{}, candidates.Normal...), candidates.Special...))
+	a.auctionRejected = filterQueueBySet(a.auctionRejected, candidateSet)
+	a.pruneAuctionRejectedMetaLocked()
+	rejectedSet := idSet(a.auctionRejected)
+	a.auctionQueue = filterQueueExcludeSet(candidates.Normal, rejectedSet)
+	a.auctionSpecialQueue = filterQueueExcludeSet(candidates.Special, rejectedSet)
+	a.auctionQueueSource = candidates.Source
+}
+
+func (a *App) selectAuctionQueueRowsLocked(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int, budget auctionQueueBudget) []restockRow {
+	selected := make([]restockRow, 0)
+	if maxActions <= 0 || budget.Special != 0 {
+		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionSpecialQueue, pvfReady, catalog, have, budget.Special, false)...)
+	}
+	selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionQueue, pvfReady, catalog, have, budget.Normal, false)...)
+	if maxActions <= 0 || budget.Rejected != 0 {
+		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionRejected, pvfReady, catalog, have, budget.Rejected, true)...)
+	}
+	return selected
 }
 
 func (a *App) reconcileRejectedStockLocked(have map[uint32]int, pvfReady bool, catalog map[uint32]catalogItem) {
@@ -1567,6 +1665,7 @@ func (a *App) reconcileRejectedStockLocked(have map[uint32]int, pvfReady bool, c
 	for _, id := range a.auctionRejected {
 		if have[id] > 0 {
 			a.appendAuctionAvailableLocked(id, pvfReady, catalog)
+			delete(a.auctionRejectedMeta, id)
 			continue
 		}
 		out = append(out, id)
@@ -1574,9 +1673,9 @@ func (a *App) reconcileRejectedStockLocked(have map[uint32]int, pvfReady bool, c
 	a.auctionRejected = out
 }
 
-func (a *App) splitAuctionBudgetsLocked(maxActions int) (int, int, int) {
+func (a *App) auctionQueueBudgetLocked(maxActions int) auctionQueueBudget {
 	if maxActions <= 0 {
-		return 0, 0, 0
+		return auctionQueueBudget{}
 	}
 	rejected := 0
 	if len(a.auctionRejected) == 0 {
@@ -1602,7 +1701,7 @@ func (a *App) splitAuctionBudgetsLocked(maxActions int) (int, int, int) {
 			special = 1
 		}
 	}
-	return available - special, special, rejected
+	return auctionQueueBudget{Normal: available - special, Special: special, Rejected: rejected}
 }
 
 func (a *App) selectAuctionRowsFromQueue(queue *[]uint32, pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int, rejected bool) []restockRow {
@@ -1640,9 +1739,27 @@ func (a *App) selectAuctionRowsFromQueue(queue *[]uint32, pvfReady bool, catalog
 }
 
 func (a *App) markAuctionExplicitRejected(itemID uint32) {
+	a.markAuctionRejected(itemID, "explicit_rejected")
+}
+
+func (a *App) applyAuctionActionFeedback(entry ActionEntry, err error) {
+	if entry.Action.Market != marketNameAuction || entry.Action.Operation == "collect" || entry.Action.ItemID == 0 {
+		return
+	}
+	if err == nil && entry.OK {
+		return
+	}
+	a.markAuctionRejected(entry.Action.ItemID, auctionRejectionReason(entry, err))
+}
+
+func (a *App) markAuctionRejected(itemID uint32, reason string) {
 	if itemID == 0 {
 		return
 	}
+	if reason == "" {
+		reason = "auction_rejected"
+	}
+	now := time.Now()
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
 	a.auctionQueue = removeQueueID(a.auctionQueue, itemID)
@@ -1650,12 +1767,24 @@ func (a *App) markAuctionExplicitRejected(itemID uint32) {
 	if !queueContains(a.auctionRejected, itemID) {
 		a.auctionRejected = append(a.auctionRejected, itemID)
 	}
+	if a.auctionRejectedMeta == nil {
+		a.auctionRejectedMeta = map[uint32]auctionRejectedState{}
+	}
+	state := a.auctionRejectedMeta[itemID]
+	if state.Count == 0 {
+		state.First = now
+	}
+	state.Last = now
+	state.Count++
+	state.Reason = reason
+	a.auctionRejectedMeta[itemID] = state
 }
 
 func (a *App) appendAuctionAvailableLocked(itemID uint32, pvfReady bool, catalog map[uint32]catalogItem) {
 	if itemID == 0 {
 		return
 	}
+	delete(a.auctionRejectedMeta, itemID)
 	if pvfReady {
 		if item, ok := catalog[itemID]; ok && specialAuctionKind(item) != "" {
 			if !queueContains(a.auctionSpecialQueue, itemID) {
@@ -1666,6 +1795,18 @@ func (a *App) appendAuctionAvailableLocked(itemID uint32, pvfReady bool, catalog
 	}
 	if !queueContains(a.auctionQueue, itemID) {
 		a.auctionQueue = append(a.auctionQueue, itemID)
+	}
+}
+
+func (a *App) pruneAuctionRejectedMetaLocked() {
+	if len(a.auctionRejectedMeta) == 0 {
+		return
+	}
+	keep := idSet(a.auctionRejected)
+	for id := range a.auctionRejectedMeta {
+		if !keep[id] {
+			delete(a.auctionRejectedMeta, id)
+		}
 	}
 }
 
@@ -1722,20 +1863,20 @@ func queueContains(ids []uint32, itemID uint32) bool {
 	return false
 }
 
-func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) ([]uint32, []uint32, string, error) {
+func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) (auctionQueueCandidatesResult, error) {
 	if pvfReady {
 		itemInfoIDs, path, err := a.currentItemInfoIDs()
 		if err != nil {
 			a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusBlocked, Message: err.Error()})
-			return nil, nil, marketQueueSourcePVFItemInfoMissing, nil
+			return auctionQueueCandidatesResult{Source: marketQueueSourcePVFItemInfoMissing}, nil
 		}
 		normal, special := catalogAuctionIDsByType(catalog, itemInfoIDs)
 		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusActive, Message: fmt.Sprintf("source=%s allowed=%d special=%d", path, len(normal)+len(special), len(special))})
-		return normal, special, marketQueueSourcePVFItemInfo, nil
+		return auctionQueueCandidatesResult{Normal: normal, Special: special, Source: marketQueueSourcePVFItemInfo}, nil
 	}
 	rows, err := a.fallbackAuctionRows()
 	if err != nil {
-		return nil, nil, "", err
+		return auctionQueueCandidatesResult{}, err
 	}
 	ids := make([]uint32, 0, len(rows))
 	for _, row := range rows {
@@ -1743,7 +1884,7 @@ func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogIt
 			ids = append(ids, row.ItemID)
 		}
 	}
-	return ids, nil, marketQueueSourceFallback, nil
+	return auctionQueueCandidatesResult{Normal: ids, Source: marketQueueSourceFallback}, nil
 }
 
 func (a *App) auctionRowForID(pvfReady bool, catalog map[uint32]catalogItem, id uint32) (restockRow, bool) {
@@ -2063,6 +2204,10 @@ func actionLogReason(entry ActionEntry, err error) string {
 	return "rejected"
 }
 
+func auctionRejectionReason(entry ActionEntry, err error) string {
+	return actionLogReason(entry, err)
+}
+
 func compactCountMap(in map[string]int) map[string]int {
 	out := make(map[string]int, len(in))
 	for k, v := range in {
@@ -2127,6 +2272,7 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 	var firstErr error
 
 	record := func(entry ActionEntry, err error) {
+		a.applyAuctionActionFeedback(entry, err)
 		mu.Lock()
 		defer mu.Unlock()
 		entries = append(entries, entry)
@@ -2166,9 +2312,6 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 				res, err := executor.Execute(task.action)
 				if err != nil {
 					entry.Error = err.Error()
-					if task.action.Market == marketNameAuction && task.action.Operation != "collect" {
-						a.markAuctionExplicitRejected(task.action.ItemID)
-					}
 					record(entry, err)
 				} else {
 					entry.OK = res.ResultOK != nil && *res.ResultOK
@@ -2178,9 +2321,6 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 					}
 					entry.Reason = res.ResultReason
 					entry.Result = res.Raw
-					if task.action.Market == marketNameAuction && task.action.Operation != "collect" && !entry.OK {
-						a.markAuctionExplicitRejected(task.action.ItemID)
-					}
 					record(entry, nil)
 				}
 				if delay > 0 {

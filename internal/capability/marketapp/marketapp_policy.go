@@ -66,8 +66,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	}
 	switch {
 	case status.ZeroCandidateRounds == 2:
-		a.resetAuctionQueues()
-		a.appendLog(LogEvent{Type: "market_policy", Market: marketNameAuction, Status: marketLogStatusQueueReset, Message: "zero_candidate_recovery"})
+		a.recoverAuctionQueues("zero_candidate_recovery")
 		status.Reason = "auction candidates stayed zero; auction queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.ZeroCandidateRounds >= 3:
@@ -75,8 +74,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	}
 	switch {
 	case status.StagnantRounds == 2:
-		a.resetAuctionQueues()
-		a.appendLog(LogEvent{Type: "market_policy", Market: marketNameAuction, Status: marketLogStatusQueueReset, Message: "stagnant_growth_recovery"})
+		a.recoverAuctionQueues("stagnant_growth_recovery")
 		status.Reason = "auction kinds stopped growing below candidate count; auction queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 	case status.StagnantRounds >= 3:
@@ -84,9 +82,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 	}
 	switch {
 	case status.ZeroKindRounds == 2:
-		a.resetAuctionQueues()
-		a.restartMarketService(marketServiceNameAuction, "auction kinds stayed zero")
-		a.appendLog(LogEvent{Type: "market_policy", Market: marketNameAuction, Status: marketLogStatusQueueReset, Message: "zero_kind_recovery"})
+		a.recoverAuctionService("zero_kind_recovery", "auction kinds stayed zero")
 		status.Reason = "auction kinds stayed zero; auction service restarted and queues rebuilt"
 		status.Mode = marketPolicyModeRecover
 		return policy
@@ -98,13 +94,22 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 		status.Reason = "auction action failures are high; observing one recovery round"
 		status.Mode = marketPolicyModeRecover
 	case status.ActionFailureRounds == 2:
-		a.resetAuctionQueues()
-		a.restartMarketService(marketServiceNameAuction, "auction action failures stayed high")
+		a.recoverAuctionService("action_failure_recovery", "auction action failures stayed high")
 		return degradeMarketPolicy(status, policy, "auction action failures stayed high; auction service restarted and send pressure reduced")
 	case status.ActionFailureRounds >= 2:
 		return degradeMarketPolicy(status, policy, "auction action failures stayed high; send pressure reduced")
 	}
 	return policy
+}
+
+func (a *App) recoverAuctionQueues(message string) {
+	a.resetAuctionQueues()
+	a.appendLog(LogEvent{Type: "market_policy", Market: marketNameAuction, Status: marketLogStatusQueueReset, Message: message})
+}
+
+func (a *App) recoverAuctionService(message, restartReason string) {
+	a.recoverAuctionQueues(message)
+	a.restartMarketService(marketServiceNameAuction, restartReason)
 }
 
 func degradeMarketPolicy(status *MarketPolicyStatus, policy marketAutoPolicy, reason string) marketAutoPolicy {

@@ -227,8 +227,11 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 	app.auctionQueue = []uint32{1001}
 	app.auctionSpecialQueue = []uint32{1003}
 	app.auctionRejected = []uint32{1002}
+	app.auctionRejectedMeta = map[uint32]auctionRejectedState{1002: {Reason: "executor_error", Count: 2, First: time.Now(), Last: time.Now()}}
 	app.auctionRejectedTick = 3
 	app.auctionQueueSource = "pvf"
+	app.ceraRejected = map[uint32]string{2675345: "cera_unlanded"}
+	app.ceraRejectedAt = map[uint32]time.Time{2675345: time.Now()}
 
 	result, err := app.ClearSystemMarketStock()
 	if err != nil {
@@ -242,6 +245,12 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 	}
 	if len(app.auctionQueue) != 0 || len(app.auctionSpecialQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
 		t.Fatalf("queues not reset: queue=%v special=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionSpecialQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
+	}
+	if len(app.auctionRejectedMeta) != 0 {
+		t.Fatalf("rejected meta not reset: %#v", app.auctionRejectedMeta)
+	}
+	if app.ceraRejectedCount() != 0 {
+		t.Fatalf("cera rejected not reset")
 	}
 	if repo.collectCalls != 0 {
 		t.Fatalf("system stock clear used collect path, calls=%d", repo.collectCalls)
@@ -449,6 +458,36 @@ func TestAuctionRejectedQueueUsesLowWeightCooldownBudget(t *testing.T) {
 	}
 }
 
+func TestAuctionQueueSelectionReportsBudgets(t *testing.T) {
+	app := testApp(t)
+	app.cfg.Restock.EquipmentQtyMin = 1
+	app.cfg.Restock.EquipmentQtyMax = 1
+	catalog := map[uint32]catalogItem{}
+	for i := uint32(1); i <= 120; i++ {
+		id := 10000 + i
+		catalog[id] = catalogItem{ItemID: id, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100}
+		app.auctionQueue = append(app.auctionQueue, id)
+	}
+	app.auctionSpecialQueue = []uint32{20001, 20002}
+	catalog[20001] = catalogItem{ItemID: 20001, Kind: "equipment", ItemType: 2, Slot: "title name", Attach: "trade", Price: 100}
+	catalog[20002] = catalogItem{ItemID: 20002, Kind: "equipment", Slot: "artifact red", Attach: "trade", Price: 100}
+	app.auctionRejected = []uint32{30001}
+	app.auctionRejectedTick = auctionRejectedRetryEvery - 1
+	catalog[30001] = catalogItem{ItemID: 30001, Kind: "equipment", Attach: "trade", Slot: "weapon", Price: 100}
+	app.auctionQueueSource = "pvf_iteminfo"
+
+	selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Budget.Normal != 90 || selection.Budget.Special != 9 || selection.Budget.Rejected != 1 {
+		t.Fatalf("budget = %#v, want normal=90 special=9 rejected=1", selection.Budget)
+	}
+	if len(selection.Rows) != 93 {
+		t.Fatalf("rows = %d, want 93 because special queue has only two candidates", len(selection.Rows))
+	}
+}
+
 func TestAuctionSpecialQueueGetsDedicatedBudget(t *testing.T) {
 	app := testApp(t)
 	app.cfg.Restock.EquipmentQtyMin = 1
@@ -541,6 +580,54 @@ func TestMarkAuctionExplicitRejectedMovesID(t *testing.T) {
 	}
 	if len(app.auctionRejected) != 1 || app.auctionRejected[0] != 10075 {
 		t.Fatalf("rejected queue = %#v, want [10075]", app.auctionRejected)
+	}
+	state := app.auctionRejectedMeta[10075]
+	if state.Reason != "explicit_rejected" || state.Count != 1 || state.First.IsZero() || state.Last.IsZero() {
+		t.Fatalf("rejected meta = %#v", state)
+	}
+}
+
+func TestApplyAuctionActionFeedbackOnlyRejectsFailedRegisters(t *testing.T) {
+	app := testApp(t)
+	app.auctionQueue = []uint32{10075, 10076}
+
+	app.applyAuctionActionFeedback(ActionEntry{
+		Action:    Action{Market: marketNameAuction, ItemID: 10075},
+		OK:        true,
+		AuctionID: 123,
+	}, nil)
+	if queueContains(app.auctionRejected, 10075) {
+		t.Fatalf("successful auction action was rejected: %#v", app.auctionRejected)
+	}
+
+	app.applyAuctionActionFeedback(ActionEntry{
+		Action: Action{Market: marketNameAuction, ItemID: 10076},
+		OK:     false,
+	}, nil)
+	if !queueContains(app.auctionRejected, 10076) {
+		t.Fatalf("failed auction action was not rejected: %#v", app.auctionRejected)
+	}
+	if state := app.auctionRejectedMeta[10076]; state.Reason != "missing_auction_id" || state.Count != 1 {
+		t.Fatalf("rejected meta = %#v", state)
+	}
+}
+
+func TestMarketDecisionLogsAuctionRejectedDetails(t *testing.T) {
+	app := testApp(t)
+	app.auctionRejected = []uint32{10075, 20075}
+	app.auctionRejectedTick = 3
+	app.auctionRejectedMeta = map[uint32]auctionRejectedState{
+		10075: {Reason: "missing_auction_id", Count: 2, First: time.Now(), Last: time.Now()},
+		20075: {Reason: "executor_error", Count: 1, First: time.Now(), Last: time.Now()},
+	}
+
+	decision := marketDecisionSnapshot{AuctionBudget: auctionQueueBudget{Normal: 90, Special: 9, Rejected: 1}}
+	decision.captureQueues(app)
+	text := decision.String()
+	for _, want := range []string{"queue_rejected=2", "rejected_tracked=2", "rejected_retry_in=7", "rejected_reasons=missing_auction_id:2,executor_error:1", "budget_normal=90", "budget_special=9", "budget_rejected=1"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("decision log missing %q in %s", want, text)
+		}
 	}
 }
 
@@ -823,6 +910,21 @@ func TestMarketPolicyPrioritizesZeroKindRecoveryOverActionFailure(t *testing.T) 
 	}
 }
 
+func TestMarketServiceRestartCooldown(t *testing.T) {
+	app := testApp(t)
+	restarts := 0
+	app.restarter = func(name, reason string) {
+		restarts++
+	}
+
+	app.restartMarketService(marketServiceNameAuction, "first")
+	app.restartMarketService(marketServiceNameAuction, "second")
+
+	if restarts != 1 {
+		t.Fatalf("restarts=%d, want 1", restarts)
+	}
+}
+
 func TestMarketPolicyHealthCompletion(t *testing.T) {
 	status := MarketPolicyStatus{Market: "auction", Mode: marketPolicyModeNormal, DBKinds: 10, Candidates: 20, CandidateSource: "iteminfo.dat"}
 	status.applyHealth()
@@ -872,6 +974,35 @@ func TestPlanCeraUsesPointBuyNowShape(t *testing.T) {
 	}
 }
 
+func TestPlanCeraOnlyDoesNotRequirePVFCatalog(t *testing.T) {
+	app := testApp(t)
+	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
+		app.cfg.AuctionDB: {},
+		app.cfg.CeraDB:    {},
+	}}
+	app.cfg.Cera.Items = []ceraRow{{
+		ItemID: 2675347, Label: "3000w_gold", RestockPrice: 6000, RestockQty: 1, Enabled: true,
+	}}
+
+	result, err := app.Plan(RestockRequest{Market: marketNameCera, MaxActions: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary.CeraActions != 1 || result.Summary.AuctionActions != 0 {
+		t.Fatalf("summary=%#v actions=%#v", result.Summary, result.Actions)
+	}
+	data, err := os.ReadFile(marketLogPath(app.configDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(data)
+	for _, want := range []string{"market_decision", "cera=true", "pvf_ready=false", "cera_enabled=1", "cera_actions=1"} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("decision log missing %q in %s", want, logText)
+		}
+	}
+}
+
 func TestDefaultCeraRowsEnable3000W(t *testing.T) {
 	rows := defaultCeraRows()
 	for _, row := range rows {
@@ -909,6 +1040,19 @@ func TestPlanCeraSkipsRejectedItem(t *testing.T) {
 	}
 	if result.Skipped[0].Reason != "cera_unlanded" {
 		t.Fatalf("skip reason = %q", result.Skipped[0].Reason)
+	}
+}
+
+func TestCeraRejectedReasonExpires(t *testing.T) {
+	app := testApp(t)
+	app.ceraRejected = map[uint32]string{2675345: "cera_unlanded"}
+	app.ceraRejectedAt = map[uint32]time.Time{2675345: time.Now().Add(-ceraRejectedTTL - time.Second)}
+
+	if reason := app.ceraRejectedReason(2675345); reason != "" {
+		t.Fatalf("expired reason = %q, want empty", reason)
+	}
+	if app.ceraRejectedCount() != 0 {
+		t.Fatalf("expired cera rejected count should be 0")
 	}
 }
 
@@ -1210,6 +1354,9 @@ func TestExecuteActionsRequiresAuctionIDForAuctionRegister(t *testing.T) {
 	if queueContains(app.auctionQueue, 1001) || queueContains(app.auctionSpecialQueue, 1001) || !queueContains(app.auctionRejected, 1001) {
 		t.Fatalf("failed auction register should be rejected; normal=%v special=%v rejected=%v", app.auctionQueue, app.auctionSpecialQueue, app.auctionRejected)
 	}
+	if state := app.auctionRejectedMeta[1001]; state.Reason != "missing_auction_id" || state.Count != 1 {
+		t.Fatalf("rejected meta = %#v", state)
+	}
 }
 
 func TestExecuteActionsRejectsAuctionRegisterOnExecutorError(t *testing.T) {
@@ -1227,6 +1374,9 @@ func TestExecuteActionsRejectsAuctionRegisterOnExecutorError(t *testing.T) {
 	}
 	if queueContains(app.auctionQueue, 1001) || !queueContains(app.auctionRejected, 1001) {
 		t.Fatalf("executor error should reject auction item; normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)
+	}
+	if state := app.auctionRejectedMeta[1001]; state.Reason != "executor_error" || state.Count != 1 {
+		t.Fatalf("rejected meta = %#v", state)
 	}
 }
 

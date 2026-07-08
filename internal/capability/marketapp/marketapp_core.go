@@ -42,11 +42,38 @@ type App struct {
 	auctionQueue        []uint32
 	auctionSpecialQueue []uint32
 	auctionRejected     []uint32
+	auctionRejectedMeta map[uint32]auctionRejectedState
 	auctionRejectedTick int
 	auctionQueueSource  string
 	ceraRejected        map[uint32]string
+	ceraRejectedAt      map[uint32]time.Time
 	specialAddInfo      int32
 	policy              map[string]MarketPolicyStatus
+	lastServiceRestart  map[string]time.Time
+}
+
+type auctionRejectedState struct {
+	Reason string
+	Count  int
+	First  time.Time
+	Last   time.Time
+}
+
+type auctionQueueBudget struct {
+	Normal   int
+	Special  int
+	Rejected int
+}
+
+type auctionQueueSelection struct {
+	Rows   []restockRow
+	Budget auctionQueueBudget
+}
+
+type auctionQueueCandidatesResult struct {
+	Normal  []uint32
+	Special []uint32
+	Source  string
 }
 
 type Planner interface {
@@ -124,18 +151,19 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	}
 	cleanupLegacyMarketFiles(sys.ConfigDir)
 	app := &App{
-		repository: SQLRepository{db: db},
-		cfg:        cfg,
-		configPath: path,
-		configDir:  sys.ConfigDir,
-		pvfPath:    filepath.Join(filepath.Dir(sys.DFGameR), "Script.pvf"),
-		dfGameR:    sys.DFGameR,
-		executors:  executors,
-		services:   map[string]MarketServiceStatus{},
-		policy:     map[string]MarketPolicyStatus{},
-		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
-		stopAuto:   make(chan struct{}),
-		autoDone:   make(chan struct{}),
+		repository:         SQLRepository{db: db},
+		cfg:                cfg,
+		configPath:         path,
+		configDir:          sys.ConfigDir,
+		pvfPath:            filepath.Join(filepath.Dir(sys.DFGameR), "Script.pvf"),
+		dfGameR:            sys.DFGameR,
+		executors:          executors,
+		services:           map[string]MarketServiceStatus{},
+		policy:             map[string]MarketPolicyStatus{},
+		lastServiceRestart: map[string]time.Time{},
+		rand:               rand.New(rand.NewSource(time.Now().UnixNano())),
+		stopAuto:           make(chan struct{}),
+		autoDone:           make(chan struct{}),
 	}
 	app.itemInfo = app.itemInfoStatus()
 	if tables, err := app.repository.EnsureMarketTables(app.marketDBNames(), time.Now()); err != nil {
@@ -243,80 +271,103 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 }
 
 func (a *App) Plan(req RestockRequest) (PlanResult, error) {
-	market := strings.ToLower(strings.TrimSpace(req.Market))
-	needAuction := market == "" || market == marketNameAuction
-	needCera := market == "" || market == marketNameCera || market == marketAliasGold
-	catalogLoaded := false
-	pvfReady := false
-	var catalog map[uint32]catalogItem
-	if needCera || needAuction {
-		var err error
-		catalog, err = a.loadCatalog()
-		catalogLoaded = true
-		pvfReady = err == nil
-		if !pvfReady {
-			a.appendLog(LogEvent{Type: "pvf_catalog", Status: marketLogStatusFallback, Message: err.Error()})
-		}
-	} else {
-		pvfReady = true
-	}
+	market, needAuction, needCera := requestedRestockMarkets(req.Market)
+	catalog, pvfReady := a.loadAuctionCatalog(needAuction)
 	occ, haveAuction, haveCera, err := a.loadSystemStock()
 	if err != nil {
 		return PlanResult{}, err
 	}
+
 	result := PlanResult{GeneratedAt: time.Now()}
 	result.Summary.ExistingRecords = len(occ)
+	decision := a.newMarketDecisionSnapshot(market, req, pvfReady, occ, haveAuction, haveCera)
+
 	if needAuction {
-		maxActions := req.MaxActions
-		if maxActions <= 0 {
-			maxActions = a.cfg.Restock.MaxActions
+		if err := a.planAuctionMarket(req, catalog, pvfReady, haveAuction, occ, &decision, &result); err != nil {
+			return PlanResult{}, err
 		}
-		rows, queueErr := a.nextAuctionQueueRows(pvfReady, catalog, haveAuction, maxActions)
-		if queueErr != nil {
-			return PlanResult{}, queueErr
-		}
-		a.planAuction(rows, catalog, haveAuction, occ, &result)
 	}
 	if needCera {
-		if !catalogLoaded {
-			var err error
-			catalog, err = a.loadCatalog()
-			pvfReady = err == nil
-			if !pvfReady {
-				a.appendLog(LogEvent{Type: "pvf_catalog", Status: marketLogStatusFallback, Message: err.Error()})
-			}
-		}
-		ceraRows := a.cfg.Cera.Items
-		a.planCera(ceraRows, nil, haveCera, occ, &result)
+		a.planCeraMarket(haveCera, occ, &decision, &result)
 	}
+
 	result.Actions = limitActions(result.Actions, req.MaxActions)
-	result.Summary = PlanSummary{Actions: len(result.Actions), Skipped: len(result.Skipped), ExistingRecords: result.Summary.ExistingRecords}
-	for _, action := range result.Actions {
+	result.Summary = summarizePlan(result.Actions, result.Skipped, result.Summary.ExistingRecords)
+	a.logMarketDecision(market, &decision, result.Summary)
+	return result, nil
+}
+
+// Restock planning is kept as function islands: market routing, auction PVF/iteminfo
+// boundary, cera fixed-list planning, and final summary/decision logging.
+func requestedRestockMarkets(market string) (string, bool, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(market))
+	return normalized, normalized == "" || normalized == marketNameAuction, normalized == "" || normalized == marketNameCera || normalized == marketAliasGold
+}
+
+func (a *App) loadAuctionCatalog(needAuction bool) (map[uint32]catalogItem, bool) {
+	if !needAuction {
+		return nil, false
+	}
+	catalog, err := a.loadCatalog()
+	if err != nil {
+		a.appendLog(LogEvent{Type: "pvf_catalog", Status: marketLogStatusFallback, Message: err.Error()})
+		return nil, false
+	}
+	return catalog, true
+}
+
+func (a *App) planAuctionMarket(req RestockRequest, catalog map[uint32]catalogItem, pvfReady bool, haveAuction map[uint32]int, occ map[uint32]int, decision *marketDecisionSnapshot, result *PlanResult) error {
+	decision.Auction = true
+	decision.observeAuctionInputs(a, catalog, pvfReady)
+	maxActions := req.MaxActions
+	if maxActions <= 0 {
+		maxActions = a.cfg.Restock.MaxActions
+	}
+	decision.EffectiveMaxActions = maxActions
+	selection, err := a.nextAuctionQueueSelection(pvfReady, catalog, haveAuction, maxActions)
+	if err != nil {
+		return err
+	}
+	rows := selection.Rows
+	decision.SelectedAuctionRows = len(rows)
+	decision.AuctionBudget = selection.Budget
+	a.planAuction(rows, catalog, haveAuction, occ, result)
+	decision.captureQueues(a)
+	return nil
+}
+
+func (a *App) planCeraMarket(haveCera map[uint32]int, occ map[uint32]int, decision *marketDecisionSnapshot, result *PlanResult) {
+	decision.Cera = true
+	a.planCera(a.cfg.Cera.Items, nil, haveCera, occ, result)
+}
+
+func summarizePlan(actions []Action, skipped []SkippedItem, existingRecords int) PlanSummary {
+	summary := PlanSummary{Actions: len(actions), Skipped: len(skipped), ExistingRecords: existingRecords}
+	for _, action := range actions {
 		if action.Market == marketNameAuction {
-			result.Summary.AuctionActions++
+			summary.AuctionActions++
 		}
 		if action.Market == marketNameCera {
-			result.Summary.CeraActions++
+			summary.CeraActions++
 		}
 		switch action.Kind {
-		case "title", "creature", "avatar", "artifact red", "artifact blue", "artifact green":
-			result.Summary.Special++
+		case "title", "creature", "artifact red", "artifact blue", "artifact green":
+			summary.Special++
 		}
 	}
-	for _, skipped := range result.Skipped {
+	for _, skipped := range skipped {
 		switch skipped.Reason {
 		case "missing_from_pvf":
-			result.Summary.Missing++
+			summary.Missing++
 		case "risky_special_type":
-			result.Summary.Risky++
+			summary.Risky++
 		case "special_requires_handler":
-			result.Summary.Special++
+			summary.Special++
 		case "not_auctionable":
-			result.Summary.NotAuctionable++
+			summary.NotAuctionable++
 		}
 	}
-	a.appendLog(LogEvent{Type: "plan_preview", Market: market, Summary: &result.Summary})
-	return result, nil
+	return summary
 }
 
 func limitActions(actions []Action, maxActions int) []Action {

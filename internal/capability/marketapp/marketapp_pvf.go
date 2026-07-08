@@ -90,11 +90,7 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	}
 	a.stateMu.Lock()
 	a.itemInfo = status
-	a.auctionQueue = nil
-	a.auctionSpecialQueue = nil
-	a.auctionRejected = nil
-	a.auctionRejectedTick = 0
-	a.auctionQueueSource = ""
+	a.resetAuctionQueuesLocked()
 	a.stateMu.Unlock()
 	return status
 }
@@ -108,6 +104,7 @@ func (a *App) ClearSystemMarketStock() (ClearSystemStockResult, error) {
 	result, err := a.clearSystemMarketStockLocked("market_clear")
 	if err == nil {
 		a.resetAuctionQueues()
+		a.resetCeraRejected()
 	}
 	return result, err
 }
@@ -122,18 +119,24 @@ func (a *App) prepareItemInfoRelease() error {
 		return err
 	}
 	a.resetAuctionQueues()
+	a.resetCeraRejected()
 	return nil
 }
 
 func (a *App) resetAuctionQueues() {
 	a.stateMu.Lock()
+	a.resetAuctionQueuesLocked()
+	a.stateMu.Unlock()
+}
+
+func (a *App) resetAuctionQueuesLocked() {
 	a.auctionQueue = nil
 	a.auctionSpecialQueue = nil
 	a.auctionRejected = nil
+	a.auctionRejectedMeta = nil
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""
 	a.specialAddInfo = 0
-	a.stateMu.Unlock()
 }
 
 func (a *App) clearSystemMarketStockLocked(logType string) (ClearSystemStockResult, error) {
