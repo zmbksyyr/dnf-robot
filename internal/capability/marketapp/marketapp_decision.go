@@ -26,6 +26,7 @@ type marketDecisionSnapshot struct {
 	EffectiveMaxActions int
 	SelectedAuctionRows int
 	AuctionBudget       auctionQueueBudget
+	AuctionSelected     auctionQueueCounts
 	QueueNormal         int
 	QueueSpecial        int
 	QueueRejected       int
@@ -93,7 +94,7 @@ func (a *App) logMarketDecision(market string, decision *marketDecisionSnapshot,
 
 func (s marketDecisionSnapshot) String() string {
 	return fmt.Sprintf(
-		"auction=%t cera=%t pvf_ready=%t pvf_items=%d iteminfo_ids=%d iteminfo_allowed=%d iteminfo_path=%s iteminfo_error=%q intersection=%d normal=%d special=%d filtered_blocked=%d filtered_avatar=%d filtered_risky=%d db_owners=%d db_auction_kinds=%d db_cera_kinds=%d cera_config=%d cera_enabled=%d cera_rejected=%d queue_normal=%d queue_special=%d queue_rejected=%d rejected_tracked=%d rejected_retry_in=%d rejected_reasons=%s queue_source=%s budget_normal=%d budget_special=%d budget_rejected=%d selected_auction_rows=%d actions=%d auction_actions=%d cera_actions=%d skipped=%d max_actions=%d effective_max_actions=%d max_concurrent=%d",
+		"auction=%t cera=%t pvf_ready=%t pvf_items=%d iteminfo_ids=%d iteminfo_allowed=%d iteminfo_path=%s iteminfo_error=%q intersection=%d normal=%d special=%d filtered_blocked=%d filtered_avatar=%d filtered_risky=%d db_owners=%d db_auction_kinds=%d db_cera_kinds=%d cera_config=%d cera_enabled=%d cera_rejected=%d queue_normal=%d queue_special=%d queue_rejected=%d rejected_tracked=%d rejected_retry_in=%d rejected_reasons=%s queue_source=%s budget_normal=%d budget_special=%d budget_rejected=%d selected_normal=%d selected_special=%d selected_rejected=%d selected_auction_rows=%d actions=%d auction_actions=%d cera_actions=%d skipped=%d max_actions=%d effective_max_actions=%d max_concurrent=%d",
 		s.Auction,
 		s.Cera,
 		s.PVFReady,
@@ -124,6 +125,9 @@ func (s marketDecisionSnapshot) String() string {
 		s.AuctionBudget.Normal,
 		s.AuctionBudget.Special,
 		s.AuctionBudget.Rejected,
+		s.AuctionSelected.Normal,
+		s.AuctionSelected.Special,
+		s.AuctionSelected.Rejected,
 		s.SelectedAuctionRows,
 		s.Actions,
 		s.AuctionActions,

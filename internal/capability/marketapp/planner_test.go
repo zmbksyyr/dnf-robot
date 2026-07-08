@@ -517,6 +517,9 @@ func TestAuctionQueueSelectionReportsBudgets(t *testing.T) {
 	if selection.Budget.Normal != 90 || selection.Budget.Special != 9 || selection.Budget.Rejected != 1 {
 		t.Fatalf("budget = %#v, want normal=90 special=9 rejected=1", selection.Budget)
 	}
+	if selection.Selected.Normal != 90 || selection.Selected.Special != 2 || selection.Selected.Rejected != 1 {
+		t.Fatalf("selected = %#v, want normal=90 special=2 rejected=1", selection.Selected)
+	}
 	if len(selection.Rows) != 93 {
 		t.Fatalf("rows = %d, want 93 because special queue has only two candidates", len(selection.Rows))
 	}
@@ -657,10 +660,13 @@ func TestMarketDecisionLogsAuctionRejectedDetails(t *testing.T) {
 		20075: {Reason: "executor_error", Count: 1, First: time.Now(), Last: time.Now()},
 	}
 
-	decision := marketDecisionSnapshot{AuctionBudget: auctionQueueBudget{Normal: 90, Special: 9, Rejected: 1}}
+	decision := marketDecisionSnapshot{
+		AuctionBudget:   auctionQueueBudget{Normal: 90, Special: 9, Rejected: 1},
+		AuctionSelected: auctionQueueCounts{Normal: 90, Special: 2, Rejected: 1},
+	}
 	decision.captureQueues(app)
 	text := decision.String()
-	for _, want := range []string{"queue_rejected=2", "rejected_tracked=2", "rejected_retry_in=7", "rejected_reasons=missing_auction_id:2,executor_error:1", "budget_normal=90", "budget_special=9", "budget_rejected=1"} {
+	for _, want := range []string{"queue_rejected=2", "rejected_tracked=2", "rejected_retry_in=7", "rejected_reasons=missing_auction_id:2,executor_error:1", "budget_normal=90", "budget_special=9", "budget_rejected=1", "selected_normal=90", "selected_special=2", "selected_rejected=1"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("decision log missing %q in %s", want, text)
 		}

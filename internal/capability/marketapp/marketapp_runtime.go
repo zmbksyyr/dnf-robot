@@ -1594,9 +1594,9 @@ func (a *App) nextAuctionQueueSelection(pvfReady bool, catalog map[uint32]catalo
 	a.stateMu.Lock()
 	a.reconcileRejectedStockLocked(have, pvfReady, catalog)
 	budget := a.auctionQueueBudgetLocked(maxActions)
-	rows := a.selectAuctionQueueRowsLocked(pvfReady, catalog, have, maxActions, budget)
+	rows, selected := a.selectAuctionQueueRowsLocked(pvfReady, catalog, have, maxActions, budget)
 	a.stateMu.Unlock()
-	return auctionQueueSelection{Rows: rows, Budget: budget}, nil
+	return auctionQueueSelection{Rows: rows, Budget: budget, Selected: selected}, nil
 }
 
 func (a *App) auctionQueueNeedsReload(pvfReady bool) bool {
@@ -1631,16 +1631,23 @@ func (a *App) applyAuctionQueueCandidatesLocked(candidates auctionQueueCandidate
 	a.auctionQueueSource = candidates.Source
 }
 
-func (a *App) selectAuctionQueueRowsLocked(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int, budget auctionQueueBudget) []restockRow {
+func (a *App) selectAuctionQueueRowsLocked(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int, budget auctionQueueBudget) ([]restockRow, auctionQueueCounts) {
 	selected := make([]restockRow, 0)
+	counts := auctionQueueCounts{}
 	if maxActions <= 0 || budget.Special != 0 {
-		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionSpecialQueue, pvfReady, catalog, have, budget.Special, false)...)
+		rows := a.selectAuctionRowsFromQueue(&a.auctionSpecialQueue, pvfReady, catalog, have, budget.Special, false)
+		counts.Special = len(rows)
+		selected = append(selected, rows...)
 	}
-	selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionQueue, pvfReady, catalog, have, budget.Normal, false)...)
+	rows := a.selectAuctionRowsFromQueue(&a.auctionQueue, pvfReady, catalog, have, budget.Normal, false)
+	counts.Normal = len(rows)
+	selected = append(selected, rows...)
 	if maxActions <= 0 || budget.Rejected != 0 {
-		selected = append(selected, a.selectAuctionRowsFromQueue(&a.auctionRejected, pvfReady, catalog, have, budget.Rejected, true)...)
+		rows := a.selectAuctionRowsFromQueue(&a.auctionRejected, pvfReady, catalog, have, budget.Rejected, true)
+		counts.Rejected = len(rows)
+		selected = append(selected, rows...)
 	}
-	return selected
+	return selected, counts
 }
 
 func (a *App) reconcileRejectedStockLocked(have map[uint32]int, pvfReady bool, catalog map[uint32]catalogItem) {

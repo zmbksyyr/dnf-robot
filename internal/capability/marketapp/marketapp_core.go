@@ -65,9 +65,16 @@ type auctionQueueBudget struct {
 	Rejected int
 }
 
+type auctionQueueCounts struct {
+	Normal   int
+	Special  int
+	Rejected int
+}
+
 type auctionQueueSelection struct {
-	Rows   []restockRow
-	Budget auctionQueueBudget
+	Rows     []restockRow
+	Budget   auctionQueueBudget
+	Selected auctionQueueCounts
 }
 
 type auctionQueueCandidatesResult struct {
@@ -330,6 +337,7 @@ func (a *App) planAuctionMarket(req RestockRequest, catalog map[uint32]catalogIt
 	rows := selection.Rows
 	decision.SelectedAuctionRows = len(rows)
 	decision.AuctionBudget = selection.Budget
+	decision.AuctionSelected = selection.Selected
 	a.planAuction(rows, catalog, haveAuction, occ, result)
 	decision.captureQueues(a)
 	return nil
