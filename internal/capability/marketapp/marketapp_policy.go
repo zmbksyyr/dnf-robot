@@ -147,10 +147,7 @@ func (a *App) nextMarketPolicyStatus(market string, kinds int, candidates market
 		UpdatedAt:            time.Now(),
 	}
 	if market == marketNameAuction {
-		status.QueueNormal = len(a.auctionQueue)
-		status.QueueSpecial = len(a.auctionSpecialQueue)
-		status.QueueRejected = len(a.auctionRejected)
-		status.QueueSource = a.auctionQueueSource
+		a.captureAuctionPolicyQueuesLocked(&status)
 	}
 	status.applyHealth()
 	return status
@@ -258,10 +255,7 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 		QueueSource: "",
 	}
 	if market == marketNameAuction {
-		status.QueueNormal = len(a.auctionQueue)
-		status.QueueSpecial = len(a.auctionSpecialQueue)
-		status.QueueRejected = len(a.auctionRejected)
-		status.QueueSource = a.auctionQueueSource
+		a.captureAuctionPolicyQueuesLocked(&status)
 	}
 	if a.policy == nil {
 		a.policy = map[string]MarketPolicyStatus{}
@@ -273,6 +267,18 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 	if !hadPrev || prev.Mode != status.Mode || prev.Reason != status.Reason {
 		a.appendLog(LogEvent{Type: "market_policy", Market: market, Status: status.Mode, Message: reason})
 	}
+}
+
+func (a *App) captureAuctionPolicyQueuesLocked(status *MarketPolicyStatus) {
+	status.QueueNormal = len(a.auctionQueue)
+	status.QueueSpecial = len(a.auctionSpecialQueue)
+	status.QueueRejected = len(a.auctionRejected)
+	status.QueueRejectedTracked = len(a.auctionRejectedMeta)
+	status.QueueRejectedRetryIn = auctionRejectedRetryEvery - a.auctionRejectedTick
+	if status.QueueRejected == 0 {
+		status.QueueRejectedRetryIn = 0
+	}
+	status.QueueSource = a.auctionQueueSource
 }
 
 func (a *App) recordMarketPolicyJob(market string, job JobSummary) {

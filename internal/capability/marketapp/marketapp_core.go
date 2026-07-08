@@ -1031,6 +1031,8 @@ type MarketPolicyStatus struct {
 	QueueNormal          int       `json:"queue_normal,omitempty"`
 	QueueSpecial         int       `json:"queue_special,omitempty"`
 	QueueRejected        int       `json:"queue_rejected,omitempty"`
+	QueueRejectedTracked int       `json:"queue_rejected_tracked,omitempty"`
+	QueueRejectedRetryIn int       `json:"queue_rejected_retry_in,omitempty"`
 	QueueSource          string    `json:"queue_source,omitempty"`
 	EffectiveMaxActions  int       `json:"effective_max_actions"`
 	EffectiveConcurrency int       `json:"effective_concurrency"`

@@ -833,6 +833,8 @@ func TestMarketPolicyBlockedStateRecordsReason(t *testing.T) {
 	app.configDir = t.TempDir()
 	app.auctionQueue = []uint32{10075}
 	app.auctionRejected = []uint32{30075}
+	app.auctionRejectedMeta = map[uint32]auctionRejectedState{30075: {Reason: "executor_error", Count: 1, First: time.Now(), Last: time.Now()}}
+	app.auctionRejectedTick = 4
 	app.auctionQueueSource = "pvf_iteminfo"
 
 	app.markMarketPolicyBlocked("auction", "df_game_r is not running")
@@ -842,6 +844,9 @@ func TestMarketPolicyBlockedStateRecordsReason(t *testing.T) {
 	}
 	if status.QueueNormal != 1 || status.QueueRejected != 1 || status.QueueSource != "pvf_iteminfo" {
 		t.Fatalf("blocked queue snapshot = %#v", status)
+	}
+	if status.QueueRejectedTracked != 1 || status.QueueRejectedRetryIn != 6 {
+		t.Fatalf("blocked rejected snapshot = %#v", status)
 	}
 }
 
