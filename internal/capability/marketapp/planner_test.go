@@ -368,18 +368,20 @@ func TestAuctionQueueSkipsStockedItemsAndRotates(t *testing.T) {
 		30075: {ItemID: 30075, Kind: "equipment", Level: 70, Attach: "trade", Slot: "coat", Price: 100},
 	}
 
-	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{30075: 1}, 2)
+	selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{30075: 1}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rows := selection.Rows
 	if len(rows) != 1 || rows[0].ItemID != 10075 {
 		t.Fatalf("selected rows = %#v, want only missing low item", rows)
 	}
 
-	rows, err = app.nextAuctionQueueRows(true, catalog, map[uint32]int{10075: 1}, 2)
+	selection, err = app.nextAuctionQueueSelection(true, catalog, map[uint32]int{10075: 1}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rows = selection.Rows
 	if len(rows) != 1 || rows[0].ItemID != 30075 {
 		t.Fatalf("queue did not rotate stocked item to the back: %#v", rows)
 	}
@@ -396,12 +398,42 @@ func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
 		100050020: {ItemID: 100050020, Kind: "equipment", Level: 80, Attach: "trade", Slot: "coat", Price: 100},
 	}
 
-	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 10)
+	selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rows := selection.Rows
 	if len(rows) != 1 || rows[0].ItemID != 10075 {
 		t.Fatalf("selected rows = %#v, want only current iteminfo intersection", rows)
+	}
+}
+
+func TestReloadAuctionQueuesOnlyUpgradesToPVFItemInfo(t *testing.T) {
+	app := testApp(t)
+	app.auctionQueue = []uint32{10075}
+	app.auctionQueueSource = marketQueueSourceFallback
+
+	if err := app.reloadAuctionQueues(false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(app.auctionQueue, []uint32{10075}) || app.auctionQueueSource != marketQueueSourceFallback {
+		t.Fatalf("fallback reload should not replace existing queue: queue=%v source=%q", app.auctionQueue, app.auctionQueueSource)
+	}
+
+	dir := t.TempDir()
+	app.configDir = dir
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	mustWriteText(t, app.cfg.ItemInfoTargets[0], "30075 0 1 1 1 1 1 1 1 1 1 1 1 70 `b` `b` 11001\r\n")
+	catalog := map[uint32]catalogItem{
+		10075: {ItemID: 10075, Kind: "equipment", Level: 40, Attach: "trade", Slot: "coat", Price: 100},
+		30075: {ItemID: 30075, Kind: "equipment", Level: 70, Attach: "trade", Slot: "coat", Price: 100},
+	}
+
+	if err := app.reloadAuctionQueues(true, catalog); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(app.auctionQueue, []uint32{30075}) || app.auctionQueueSource != marketQueueSourcePVFItemInfo {
+		t.Fatalf("pvf iteminfo reload did not replace fallback queue: queue=%v source=%q", app.auctionQueue, app.auctionQueueSource)
 	}
 }
 
@@ -425,10 +457,11 @@ func TestAuctionRejectedQueueUsesLowWeightCooldownBudget(t *testing.T) {
 	app.auctionQueueSource = "pvf_iteminfo"
 
 	for round := 1; round < auctionRejectedRetryEvery; round++ {
-		rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 100)
+		selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{}, 100)
 		if err != nil {
 			t.Fatal(err)
 		}
+		rows := selection.Rows
 		rejectedSet := idSet(rejectedIDs)
 		for _, row := range rows {
 			if rejectedSet[row.ItemID] {
@@ -437,10 +470,11 @@ func TestAuctionRejectedQueueUsesLowWeightCooldownBudget(t *testing.T) {
 		}
 	}
 
-	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 100)
+	selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rows := selection.Rows
 	if len(rows) != 100 {
 		t.Fatalf("rows = %d, want 100", len(rows))
 	}
@@ -508,10 +542,11 @@ func TestAuctionSpecialQueueGetsDedicatedBudget(t *testing.T) {
 	}
 	app.auctionQueueSource = "pvf_iteminfo"
 
-	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{}, 20)
+	selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{}, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rows := selection.Rows
 	special := 0
 	for _, row := range rows {
 		if specialAuctionKind(row.marketItem()) != "" {
@@ -551,10 +586,11 @@ func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
 	app.auctionRejected = []uint32{30075}
 	app.auctionQueueSource = "pvf_iteminfo"
 
-	rows, err := app.nextAuctionQueueRows(true, catalog, map[uint32]int{30075: 1}, 10)
+	selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{30075: 1}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rows := selection.Rows
 	if len(rows) != 1 || rows[0].ItemID != 10075 {
 		t.Fatalf("selected rows = %#v, want only normal missing item", rows)
 	}

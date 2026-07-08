@@ -1590,14 +1590,6 @@ func cleanupLegacyMarketFiles(configDir string) {
 	_ = os.Remove(filepath.Join(configDir, "market_probe_pool.json"))
 }
 
-func (a *App) nextAuctionQueueRows(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) ([]restockRow, error) {
-	selection, err := a.nextAuctionQueueSelection(pvfReady, catalog, have, maxActions)
-	if err != nil {
-		return nil, err
-	}
-	return selection.Rows, nil
-}
-
 func (a *App) nextAuctionQueueSelection(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) (auctionQueueSelection, error) {
 	if a.auctionQueueNeedsReload(pvfReady) {
 		if err := a.reloadAuctionQueues(pvfReady, catalog); err != nil {
