@@ -1584,12 +1584,6 @@ type fallbackSeed struct {
 	Core []corePoolItem `json:"core"`
 }
 
-func cleanupLegacyMarketFiles(configDir string) {
-	_ = os.Remove(filepath.Join(configDir, "market_pool.json"))
-	_ = os.Remove(filepath.Join(configDir, "market_restock.json"))
-	_ = os.Remove(filepath.Join(configDir, "market_probe_pool.json"))
-}
-
 func (a *App) nextAuctionQueueSelection(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) (auctionQueueSelection, error) {
 	if a.auctionQueueNeedsReload(pvfReady) {
 		if err := a.reloadAuctionQueues(pvfReady, catalog); err != nil {

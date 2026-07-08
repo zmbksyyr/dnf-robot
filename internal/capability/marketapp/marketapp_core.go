@@ -149,7 +149,6 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	if err != nil {
 		return nil, err
 	}
-	cleanupLegacyMarketFiles(sys.ConfigDir)
 	app := &App{
 		repository:         SQLRepository{db: db},
 		cfg:                cfg,
