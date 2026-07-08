@@ -546,6 +546,13 @@ func TestAuctionQueueSelectionReportsBudgets(t *testing.T) {
 	}
 }
 
+func TestAuctionTargetRecordsUsesFinalStackLimit(t *testing.T) {
+	row := restockRow{ItemID: 36, Kind: "stackable", Quantity: 3, StackSize: 1000, StackLimit: 1}
+	if records := auctionTargetRecords(row); records != 3 {
+		t.Fatalf("records = %d, want 3", records)
+	}
+}
+
 func TestAuctionSpecialQueueGetsDedicatedBudget(t *testing.T) {
 	app := testApp(t)
 	app.cfg.Restock.EquipmentQtyMin = 1

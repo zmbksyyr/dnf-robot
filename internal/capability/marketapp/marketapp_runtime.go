@@ -2043,13 +2043,8 @@ func sortCatalogSpecialAuctionIDs(ids []uint32, catalog map[uint32]catalogItem) 
 }
 
 func auctionTargetRecords(row restockRow) int {
-	stackSize := row.StackSize
-	if stackSize <= 0 {
-		stackSize = 1
-	}
-	if row.Kind == "equipment" {
-		stackSize = 1
-	}
+	item := row.marketItem()
+	stackSize := auctionPlanStackSize(row, item, item.Kind == "equipment")
 	return (row.Quantity + stackSize - 1) / stackSize
 }
 
