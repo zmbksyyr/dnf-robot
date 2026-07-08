@@ -673,6 +673,29 @@ func TestMarketDecisionLogsAuctionRejectedDetails(t *testing.T) {
 	}
 }
 
+func TestQueueSnapshotFeedsDecisionAndPolicy(t *testing.T) {
+	snapshot := auctionQueueSnapshot{
+		Normal:          3,
+		Special:         2,
+		Rejected:        1,
+		RejectedTracked: 1,
+		RejectedRetryIn: 6,
+		RejectedReasons: "executor_error:1",
+		Source:          marketQueueSourcePVFItemInfo,
+	}
+	decision := marketDecisionSnapshot{}
+	decision.applyQueueSnapshot(snapshot)
+	policy := MarketPolicyStatus{}
+	policy.applyQueueSnapshot(snapshot)
+
+	if decision.QueueNormal != policy.QueueNormal || decision.QueueSpecial != policy.QueueSpecial || decision.QueueRejected != policy.QueueRejected || decision.QueueSource != policy.QueueSource {
+		t.Fatalf("queue snapshot mismatch: decision=%#v policy=%#v", decision, policy)
+	}
+	if decision.RejectedTracked != policy.QueueRejectedTracked || decision.RejectedRetryIn != policy.QueueRejectedRetryIn || decision.RejectedReasons != snapshot.RejectedReasons {
+		t.Fatalf("rejected snapshot mismatch: decision=%#v policy=%#v", decision, policy)
+	}
+}
+
 func TestMarketDecisionFieldOrderIsStable(t *testing.T) {
 	text := (marketDecisionSnapshot{}).String()
 	wantPrefix := "auction=false cera=false pvf_ready=false pvf_items=0 iteminfo_ids=0"

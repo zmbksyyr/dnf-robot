@@ -155,16 +155,17 @@ func joinMarketDecisionFields(fields []marketDecisionField) string {
 func (s *marketDecisionSnapshot) captureQueues(a *App) {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
-	s.QueueNormal = len(a.auctionQueue)
-	s.QueueSpecial = len(a.auctionSpecialQueue)
-	s.QueueRejected = len(a.auctionRejected)
-	s.RejectedTracked = len(a.auctionRejectedMeta)
-	s.RejectedRetryIn = auctionRejectedRetryEvery - a.auctionRejectedTick
-	if s.QueueRejected == 0 {
-		s.RejectedRetryIn = 0
-	}
-	s.RejectedReasons = topAuctionRejectedReasons(a.auctionRejectedMeta, 5)
-	s.QueueSource = a.auctionQueueSource
+	s.applyQueueSnapshot(a.auctionQueueSnapshotLocked())
+}
+
+func (s *marketDecisionSnapshot) applyQueueSnapshot(snapshot auctionQueueSnapshot) {
+	s.QueueNormal = snapshot.Normal
+	s.QueueSpecial = snapshot.Special
+	s.QueueRejected = snapshot.Rejected
+	s.RejectedTracked = snapshot.RejectedTracked
+	s.RejectedRetryIn = snapshot.RejectedRetryIn
+	s.RejectedReasons = snapshot.RejectedReasons
+	s.QueueSource = snapshot.Source
 }
 
 func topAuctionRejectedReasons(meta map[uint32]auctionRejectedState, limit int) string {

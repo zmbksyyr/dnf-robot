@@ -83,6 +83,16 @@ type auctionQueueCandidatesResult struct {
 	Source  string
 }
 
+type auctionQueueSnapshot struct {
+	Normal          int
+	Special         int
+	Rejected        int
+	RejectedTracked int
+	RejectedRetryIn int
+	RejectedReasons string
+	Source          string
+}
+
 type Planner interface {
 	Plan(req RestockRequest) (PlanResult, error)
 	CollectPlan(req CollectRequest) (PlanResult, error)

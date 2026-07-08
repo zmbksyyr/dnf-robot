@@ -270,15 +270,16 @@ func (a *App) markMarketPolicyBlocked(market, reason string) {
 }
 
 func (a *App) captureAuctionPolicyQueuesLocked(status *MarketPolicyStatus) {
-	status.QueueNormal = len(a.auctionQueue)
-	status.QueueSpecial = len(a.auctionSpecialQueue)
-	status.QueueRejected = len(a.auctionRejected)
-	status.QueueRejectedTracked = len(a.auctionRejectedMeta)
-	status.QueueRejectedRetryIn = auctionRejectedRetryEvery - a.auctionRejectedTick
-	if status.QueueRejected == 0 {
-		status.QueueRejectedRetryIn = 0
-	}
-	status.QueueSource = a.auctionQueueSource
+	status.applyQueueSnapshot(a.auctionQueueSnapshotLocked())
+}
+
+func (s *MarketPolicyStatus) applyQueueSnapshot(snapshot auctionQueueSnapshot) {
+	s.QueueNormal = snapshot.Normal
+	s.QueueSpecial = snapshot.Special
+	s.QueueRejected = snapshot.Rejected
+	s.QueueRejectedTracked = snapshot.RejectedTracked
+	s.QueueRejectedRetryIn = snapshot.RejectedRetryIn
+	s.QueueSource = snapshot.Source
 }
 
 func (a *App) recordMarketPolicyJob(market string, job JobSummary) {

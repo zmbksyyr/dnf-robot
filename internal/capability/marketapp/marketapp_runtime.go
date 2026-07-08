@@ -1803,6 +1803,22 @@ func (a *App) pruneAuctionRejectedMetaLocked() {
 	}
 }
 
+func (a *App) auctionQueueSnapshotLocked() auctionQueueSnapshot {
+	snapshot := auctionQueueSnapshot{
+		Normal:          len(a.auctionQueue),
+		Special:         len(a.auctionSpecialQueue),
+		Rejected:        len(a.auctionRejected),
+		RejectedTracked: len(a.auctionRejectedMeta),
+		RejectedRetryIn: auctionRejectedRetryEvery - a.auctionRejectedTick,
+		RejectedReasons: topAuctionRejectedReasons(a.auctionRejectedMeta, 5),
+		Source:          a.auctionQueueSource,
+	}
+	if snapshot.Rejected == 0 {
+		snapshot.RejectedRetryIn = 0
+	}
+	return snapshot
+}
+
 func idSet(ids []uint32) map[uint32]bool {
 	out := make(map[uint32]bool, len(ids))
 	for _, id := range ids {
