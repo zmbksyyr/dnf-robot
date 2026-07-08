@@ -1107,6 +1107,10 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "not_auctionable"})
 			continue
 		}
+		if isAvatarEquipment(item) {
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "avatar_not_auctionable"})
+			continue
+		}
 		if special := specialAuctionKind(item); special != "" {
 			a.planSpecialAuction(row, item, special, have, occ, result)
 			continue
@@ -1158,11 +1162,10 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 				if upgrade <= 0 {
 					upgrade = randRange(a.rand, a.cfg.Restock.UpgradeMin, a.cfg.Restock.UpgradeMax)
 				}
-				extraAddInfo = int32(randRange(a.rand, a.cfg.Restock.RefineMin, a.cfg.Restock.RefineMax))
 			} else {
 				addInfo = count
 			}
-			unit := a.auctionUnitPrice(row.SystemPrice, isEquip, batchInflate, upgrade, int(extraAddInfo))
+			unit := a.auctionUnitPrice(row.SystemPrice, isEquip, batchInflate, upgrade)
 			total := unit
 			if !isEquip {
 				total = unit * count
@@ -1209,7 +1212,7 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 	batchInflate := float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
 	planned := 0
 	for i := 0; i < records; i++ {
-		unit := a.auctionUnitPrice(row.SystemPrice, true, batchInflate, 0, 0)
+		unit := a.auctionUnitPrice(row.SystemPrice, true, batchInflate, 0)
 		ownerID := a.pickOwner(occ)
 		action := Action{
 			Market:       marketNameAuction,
@@ -1436,7 +1439,7 @@ func (a *App) price(base int32) int32 {
 	return int32(v)
 }
 
-func (a *App) auctionUnitPrice(base int32, isEquipment bool, batchInflate float64, upgrade, refine int) int32 {
+func (a *App) auctionUnitPrice(base int32, isEquipment bool, batchInflate float64, upgrade int) int32 {
 	if !isEquipment {
 		return a.price(base)
 	}
@@ -1448,7 +1451,6 @@ func (a *App) auctionUnitPrice(base int32, isEquipment bool, batchInflate float6
 	}
 	price := float64(base) * batchInflate
 	price *= 1 + float64(upgrade)*a.cfg.Restock.UpgradePriceRate
-	price *= 1 + float64(refine)*a.cfg.Restock.RefinePriceRate
 	low, high := a.cfg.Restock.RandLow, a.cfg.Restock.RandHigh
 	if low > 0 && high > 0 && low != high {
 		if high < low {
@@ -1503,57 +1505,6 @@ func (a *App) nextSpecialAddInfo() int32 {
 	v := a.specialAddInfo
 	a.specialAddInfo++
 	return v
-}
-
-func isRiskyPVFItem(item catalogItem) bool {
-	if isKnownZeroSuccessEquipment(item) {
-		return true
-	}
-	switch item.ItemType {
-	case 2, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30:
-		return true
-	default:
-		return false
-	}
-}
-
-func specialAuctionKind(item catalogItem) string {
-	if item.Kind != "equipment" {
-		return ""
-	}
-	slot := strings.ToLower(strings.TrimSpace(item.Slot))
-	switch {
-	case item.ItemType == 2 || slot == "titlename" || slot == "title" || slot == "title name":
-		return "title"
-	case item.ItemType == 30 || slot == "creature":
-		return "creature"
-	case item.ItemType >= 20 && item.ItemType <= 29 || strings.Contains(slot, "avatar"):
-		return "avatar"
-	case slot == "artifact red" || slot == "artifact blue" || slot == "artifact green":
-		return slot
-	default:
-		return ""
-	}
-}
-
-func isKnownZeroSuccessEquipment(item catalogItem) bool {
-	if item.Kind != "equipment" {
-		return false
-	}
-	attach := strings.ToLower(strings.TrimSpace(item.Attach))
-	slot := strings.ToLower(strings.TrimSpace(item.Slot))
-	if attach == "" {
-		return true
-	}
-	if attach != "free" {
-		return false
-	}
-	switch slot {
-	case "coatavatar", "hairavatar", "pantsavatar", "hatavatar", "faceavatar", "breastavatar", "shoesavatar", "creature":
-		return true
-	default:
-		return false
-	}
 }
 
 // ---- source.go ----
@@ -1882,40 +1833,6 @@ func sortCatalogSpecialAuctionIDs(ids []uint32, catalog map[uint32]catalogItem) 
 	})
 }
 
-func specialAuctionRank(item catalogItem) int {
-	switch specialAuctionKind(item) {
-	case "artifact red", "artifact blue", "artifact green":
-		return 0
-	case "creature":
-		return 1
-	case "title":
-		return 2
-	case "avatar":
-		return 3
-	default:
-		return 9
-	}
-}
-
-func catalogAuctionCandidateCounts(catalog map[uint32]catalogItem, allowed map[uint32]bool) (normal int, special int) {
-	for id, item := range catalog {
-		if allowed != nil && !allowed[id] {
-			continue
-		}
-		if item.ItemID == 0 || item.Kind == "blocked" {
-			continue
-		}
-		if specialAuctionKind(item) != "" {
-			special++
-			continue
-		}
-		if !isRiskyPVFItem(item) {
-			normal++
-		}
-	}
-	return normal, special
-}
-
 func auctionTargetRecords(row restockRow) int {
 	stackSize := row.StackSize
 	if stackSize <= 0 {
@@ -1999,10 +1916,6 @@ func (a *App) randomStackSize(item catalogItem) int {
 	return stack
 }
 
-func marketCandidate(item catalogItem) bool {
-	return item.ItemID != 0 && item.Kind != "blocked" && (specialAuctionKind(item) != "" || !isRiskyPVFItem(item))
-}
-
 func randRange(rng *rand.Rand, min, max int) int {
 	if min <= 0 {
 		min = 1
@@ -2032,10 +1945,10 @@ func defaultRestockComments() map[string]string {
 		"equipment_inflate_max": "Upper equipment base price multiplier. PVF price/value remains the base.",
 		"upgrade_min":           "Minimum random equipment upgrade value written to the auction packet.",
 		"upgrade_max":           "Maximum random equipment upgrade value written to the auction packet.",
-		"refine_min":            "Minimum random equipment ExtraAddInfo/refine value written to the auction packet.",
-		"refine_max":            "Maximum random equipment ExtraAddInfo/refine value written to the auction packet.",
+		"refine_min":            "Legacy compatibility field. Equipment ExtraAddInfo/refine is no longer randomized.",
+		"refine_max":            "Legacy compatibility field. Equipment ExtraAddInfo/refine is no longer randomized.",
 		"upgrade_price_rate":    "Additional equipment price rate per upgrade level.",
-		"refine_price_rate":     "Additional equipment price rate per ExtraAddInfo/refine level.",
+		"refine_price_rate":     "Legacy compatibility field. Equipment price no longer uses ExtraAddInfo/refine.",
 		"rand_low":              "Final random price multiplier lower bound for both stackable and equipment listings.",
 		"rand_high":             "Final random price multiplier upper bound for both stackable and equipment listings.",
 		"max_actions":           "Maximum register packets per restock round. Default is 10000; use 0 only when a caller intentionally wants the full DB gap.",
@@ -2069,7 +1982,7 @@ func defaultCeraRows() []ceraRow {
 		{ItemID: 2675344, Label: "900w_gold", RestockPrice: 1800, RestockQty: 20, RecyclePrice: 1800, Enabled: true},
 		{ItemID: 2675345, Label: "1000w_gold", RestockPrice: 2000, RestockQty: 20, RecyclePrice: 2000, Enabled: true},
 		{ItemID: 2675346, Label: "2000w_gold", RestockPrice: 4000, RestockQty: 20, RecyclePrice: 4000, Enabled: true},
-		{ItemID: 2675347, Label: "3000w_gold", RestockPrice: 6000, RestockQty: 20, RecyclePrice: 6000, Enabled: false},
+		{ItemID: 2675347, Label: "3000w_gold", RestockPrice: 6000, RestockQty: 20, RecyclePrice: 6000, Enabled: true},
 	}
 }
 

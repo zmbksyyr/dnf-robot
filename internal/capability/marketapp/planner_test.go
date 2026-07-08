@@ -313,8 +313,8 @@ func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 		if action.Upgrade < 7 || action.Upgrade > 13 {
 			t.Fatalf("equipment upgrade = %d, want 7..13", action.Upgrade)
 		}
-		if action.ExtraAddInfo < 1 || action.ExtraAddInfo > 7 {
-			t.Fatalf("equipment extra_add_info = %d, want 1..7", action.ExtraAddInfo)
+		if action.ExtraAddInfo != 0 {
+			t.Fatalf("equipment extra_add_info = %d, want 0", action.ExtraAddInfo)
 		}
 	}
 }
@@ -494,7 +494,7 @@ func TestAuctionSpecialQueuePrioritizesPetArtifacts(t *testing.T) {
 	}
 	_, special := catalogAuctionIDsByType(catalog, nil)
 
-	want := []uint32{63500, 64000, 30001, 20001, 415510139}
+	want := []uint32{63500, 64000, 30001, 20001}
 	if !reflect.DeepEqual(special, want) {
 		t.Fatalf("special order = %v, want %v", special, want)
 	}
@@ -843,17 +843,13 @@ func TestMarketPolicyHealthCompletion(t *testing.T) {
 	}
 }
 
-func TestAuctionUnitPriceUsesUpgradeAndRefine(t *testing.T) {
+func TestAuctionUnitPriceUsesUpgradeOnly(t *testing.T) {
 	app := testApp(t)
-	low := app.auctionUnitPrice(1000, true, 5, 7, 1)
-	highUpgrade := app.auctionUnitPrice(1000, true, 5, 13, 1)
-	highRefine := app.auctionUnitPrice(1000, true, 5, 7, 7)
+	low := app.auctionUnitPrice(1000, true, 5, 7)
+	highUpgrade := app.auctionUnitPrice(1000, true, 5, 13)
 
 	if highUpgrade <= low {
 		t.Fatalf("high upgrade price = %d, want > %d", highUpgrade, low)
-	}
-	if highRefine <= low {
-		t.Fatalf("high refine price = %d, want > %d", highRefine, low)
 	}
 }
 
@@ -873,6 +869,30 @@ func TestPlanCeraUsesPointBuyNowShape(t *testing.T) {
 	action := result.Actions[0]
 	if action.StartPrice != -1 || action.InstantPrice != 1200 || action.CountAddInfo != 1 {
 		t.Fatalf("unexpected cera action: %#v", action)
+	}
+}
+
+func TestDefaultCeraRowsEnable3000W(t *testing.T) {
+	rows := defaultCeraRows()
+	for _, row := range rows {
+		if row.ItemID == 2675347 {
+			if row.Label != "3000w_gold" || !row.Enabled {
+				t.Fatalf("3000w row = %#v, want enabled 3000w_gold", row)
+			}
+			return
+		}
+	}
+	t.Fatal("3000w cera row not found")
+}
+
+func TestConfigDefaultsMigrate3000WEnabled(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Cera.Items = []ceraRow{
+		{ItemID: 2675347, Label: "3000w_gold", RestockPrice: 6000, RestockQty: 20, Enabled: false},
+	}
+	cfg.applyDefaults()
+	if !cfg.Cera.Items[0].Enabled {
+		t.Fatalf("3000w row stayed disabled: %#v", cfg.Cera.Items[0])
 	}
 }
 
@@ -1094,7 +1114,7 @@ func TestSpecialAuctionKindClassifiesReferenceTypes(t *testing.T) {
 	}{
 		{name: "title", item: catalogItem{Kind: "equipment", ItemType: 2, Slot: "title name"}, want: "title"},
 		{name: "creature", item: catalogItem{Kind: "equipment", ItemType: 30, Slot: "creature"}, want: "creature"},
-		{name: "avatar", item: catalogItem{Kind: "equipment", ItemType: 23, Slot: "coatavatar"}, want: "avatar"},
+		{name: "avatar", item: catalogItem{Kind: "equipment", ItemType: 23, Slot: "coatavatar"}, want: ""},
 		{name: "artifact red", item: catalogItem{Kind: "equipment", Slot: "artifact red"}, want: "artifact red"},
 		{name: "normal weapon", item: catalogItem{Kind: "equipment", ItemType: 1, Slot: "weapon"}, want: ""},
 	}
@@ -1118,6 +1138,18 @@ func TestMarketCandidateKeepsSpecialTypes(t *testing.T) {
 	}
 }
 
+func TestMarketCandidateFiltersAvatar(t *testing.T) {
+	cases := []catalogItem{
+		{ItemID: 5001, Kind: "equipment", ItemType: 20, Slot: "hatavatar"},
+		{ItemID: 5002, Kind: "equipment", ItemType: 1, Slot: "coatavatar"},
+	}
+	for _, item := range cases {
+		if marketCandidate(item) {
+			t.Fatalf("avatar item kept in market candidates: %#v", item)
+		}
+	}
+}
+
 func TestCatalogAuctionCandidateCountsSeparatesSpecialTypes(t *testing.T) {
 	catalog := map[uint32]catalogItem{
 		1001: {ItemID: 1001, Kind: "equipment", ItemType: 1, Slot: "weapon", Attach: "trade"},
@@ -1125,8 +1157,9 @@ func TestCatalogAuctionCandidateCountsSeparatesSpecialTypes(t *testing.T) {
 		3001: {ItemID: 3001, Kind: "equipment", ItemType: 30, Slot: "creature", Attach: "trade"},
 		4001: {ItemID: 4001, Kind: "equipment", Slot: "artifact red", Attach: "trade"},
 		5001: {ItemID: 5001, Kind: "blocked", ItemType: 1, Slot: "weapon"},
+		6001: {ItemID: 6001, Kind: "equipment", ItemType: 23, Slot: "coatavatar", Attach: "trade"},
 	}
-	normal, special := catalogAuctionCandidateCounts(catalog, map[uint32]bool{1001: true, 2001: true, 3001: true, 4001: true, 5001: true})
+	normal, special := catalogAuctionCandidateCounts(catalog, map[uint32]bool{1001: true, 2001: true, 3001: true, 4001: true, 5001: true, 6001: true})
 	if normal != 1 || special != 3 {
 		t.Fatalf("candidate counts normal=%d special=%d, want 1/3", normal, special)
 	}

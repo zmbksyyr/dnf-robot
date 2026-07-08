@@ -765,6 +765,11 @@ func (c *Config) applyDefaults() {
 	if len(c.Cera.Items) == 0 {
 		c.Cera.Items = d.Cera.Items
 	}
+	for i := range c.Cera.Items {
+		if c.Cera.Items[i].ItemID == 2675347 && c.Cera.Items[i].Label == "3000w_gold" {
+			c.Cera.Items[i].Enabled = true
+		}
+	}
 	mergeStringMap(&c.Cera.Comments, d.Cera.Comments)
 	if len(c.Auto.Markets) == 0 {
 		c.Auto.Markets = d.Auto.Markets
