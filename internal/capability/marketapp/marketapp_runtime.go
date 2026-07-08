@@ -2204,7 +2204,7 @@ func actionLogReason(entry ActionEntry, err error) string {
 	if entry.Reason != nil {
 		return fmt.Sprintf("%d", *entry.Reason)
 	}
-	if entry.Action.Operation != "collect" && entry.AuctionID == 0 {
+	if actionRequiresAuctionID(entry.Action) && entry.AuctionID == 0 {
 		return "missing_auction_id"
 	}
 	return "rejected"
@@ -2212,6 +2212,10 @@ func actionLogReason(entry ActionEntry, err error) string {
 
 func auctionRejectionReason(entry ActionEntry, err error) string {
 	return actionLogReason(entry, err)
+}
+
+func actionRequiresAuctionID(action Action) bool {
+	return action.Market == marketNameAuction && action.Operation != "collect"
 }
 
 func compactCountMap(in map[string]int) map[string]int {
@@ -2291,7 +2295,7 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 		} else if !entry.OK {
 			failed++
 			if firstErr == nil {
-				firstErr = fmt.Errorf("action rejected reason=%v", byteValue(entry.Reason))
+				firstErr = fmt.Errorf("action rejected reason=%s", actionLogReason(entry, nil))
 			}
 		}
 		if len(job.Actions) < resultLimit {
@@ -2322,7 +2326,7 @@ func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, 
 				} else {
 					entry.OK = res.ResultOK != nil && *res.ResultOK
 					entry.AuctionID = res.AuctionID
-					if task.action.Market == marketNameAuction && task.action.Operation != "collect" && entry.AuctionID == 0 {
+					if actionRequiresAuctionID(task.action) && entry.AuctionID == 0 {
 						entry.OK = false
 					}
 					entry.Reason = res.ResultReason

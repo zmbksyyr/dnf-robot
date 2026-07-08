@@ -1419,6 +1419,30 @@ func TestExecuteActionsAllowsCeraSuccessWithoutAuctionID(t *testing.T) {
 	}
 }
 
+func TestExecuteActionsUsesGenericReasonForCeraRejectWithoutAuctionID(t *testing.T) {
+	ok := false
+	app := testApp(t)
+	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
+	job := &JobSummary{}
+
+	failed, entries, err := app.executeActions("test", []Action{{
+		Market: marketNameCera,
+		ItemID: 2675345,
+	}}, 1, true, job)
+	if err == nil || failed != 1 || len(entries) != 1 || entries[0].OK {
+		t.Fatalf("cera reject failed=%d err=%v entries=%#v", failed, err, entries)
+	}
+	if !strings.Contains(err.Error(), "reason=rejected") {
+		t.Fatalf("cera reject reason should be generic rejected, got %v", err)
+	}
+	if reason := actionLogReason(entries[0], nil); reason != "rejected" {
+		t.Fatalf("cera action reason = %q, want rejected", reason)
+	}
+	if len(app.auctionRejected) != 0 {
+		t.Fatalf("cera reject should not touch auction rejected queue: %#v", app.auctionRejected)
+	}
+}
+
 func TestExecuteActionsRequiresAuctionIDForAuctionRegister(t *testing.T) {
 	ok := true
 	app := testApp(t)

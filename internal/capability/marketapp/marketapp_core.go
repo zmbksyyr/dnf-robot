@@ -534,13 +534,6 @@ func (a *App) setLastJob(job JobSummary) {
 	a.lastJob = &job
 }
 
-func byteValue(v *byte) interface{} {
-	if v == nil {
-		return nil
-	}
-	return *v
-}
-
 func compactJob(job *JobSummary) *JobSummary {
 	if job == nil {
 		return nil
