@@ -1234,6 +1234,13 @@ func TestPlanAuctionSkipsCreatureWhenInstanceCreationFails(t *testing.T) {
 	}
 }
 
+func TestSummarizePlanDoesNotCountRemovedSpecialHandlerReason(t *testing.T) {
+	summary := summarizePlan(nil, []SkippedItem{{Reason: "special_requires_handler"}}, 0)
+	if summary.Special != 0 || summary.Skipped != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
 func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 	app := testApp(t)
 	app.cfg.Restock.StackSizes = []int{500}
