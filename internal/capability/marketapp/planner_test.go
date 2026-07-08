@@ -328,6 +328,27 @@ func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 	}
 }
 
+func TestAuctionPlanHelpersKeepFilteringAndBatchRules(t *testing.T) {
+	if reason := auctionPlanSkipReason(restockRow{}, catalogItem{Kind: "blocked"}); reason != "not_auctionable" {
+		t.Fatalf("blocked skip reason = %q", reason)
+	}
+	if reason := auctionPlanSkipReason(restockRow{}, catalogItem{Kind: "equipment", ItemType: 20, Slot: "coatavatar"}); reason != "avatar_not_auctionable" {
+		t.Fatalf("avatar skip reason = %q", reason)
+	}
+	if reason := auctionPlanSkipReason(restockRow{SealFlag: 1}, catalogItem{Kind: "stackable"}); reason != "requires_add_info" {
+		t.Fatalf("seal skip reason = %q", reason)
+	}
+	if stack := auctionPlanStackSize(restockRow{StackSize: 1000}, catalogItem{Kind: "stackable", StackLimit: 200}, false); stack != 200 {
+		t.Fatalf("stack size = %d, want 200", stack)
+	}
+	if stack := auctionPlanStackSize(restockRow{StackSize: 1000}, catalogItem{Kind: "equipment", StackLimit: 200}, true); stack != 1 {
+		t.Fatalf("equipment stack size = %d, want 1", stack)
+	}
+	if source := auctionActionSource(restockRow{}); source != marketActionSourceUnknown {
+		t.Fatalf("empty source = %q", source)
+	}
+}
+
 func TestPlanAuctionKeepsMissingItemBatchTogether(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}

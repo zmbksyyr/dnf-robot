@@ -1091,113 +1091,149 @@ func quoteIdent(v string) string {
 }
 
 // ---- auction_plan.go ----
+type normalAuctionPlan struct {
+	Row          restockRow
+	Item         catalogItem
+	IsEquipment  bool
+	StackSize    int
+	TargetRecord int
+	BatchInflate float64
+}
+
 func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
 	for _, row := range rows {
 		if row.ItemID == 0 || row.Quantity <= 0 || !row.Enabled {
 			continue
 		}
-		if row.Kind == "" {
-			if catalogItem, ok := catalog[row.ItemID]; ok {
-				row.applyMarketItem(catalogItem)
-			}
-		}
-		item := row.marketItem()
-		if item.Name == "" {
-			item.Name = row.Name
-		}
-		if item.Kind == "blocked" {
-			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "not_auctionable"})
-			continue
-		}
-		if isAvatarEquipment(item) {
-			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "avatar_not_auctionable"})
-			continue
-		}
+		row, item := auctionPlanRow(row, catalog)
 		if special := specialAuctionKind(item); special != "" {
 			a.planSpecialAuction(row, item, special, have, occ, result)
 			continue
 		}
-		if isRiskyPVFItem(item) {
-			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "risky_special_type"})
+		if reason := auctionPlanSkipReason(row, item); reason != "" {
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: reason})
 			continue
 		}
-		isEquip := item.Kind == "equipment"
-		if row.SealFlag != 0 && !isEquip {
-			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: row.Name, Reason: "requires_add_info"})
+		if have[row.ItemID] > 0 {
 			continue
 		}
-		stackSize := row.StackSize
-		if stackSize <= 0 {
-			stackSize = 1
-		}
-		if isEquip {
-			stackSize = 1
-		}
-		if !isEquip && item.StackLimit > 0 && stackSize > item.StackLimit {
-			stackSize = item.StackLimit
-		}
-		targetRecords := (row.Quantity + stackSize - 1) / stackSize
-		current := have[row.ItemID]
-		if current > 0 {
-			continue
-		}
-		batchInflate := 1.0
-		if isEquip {
-			batchInflate = float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
-		}
-		for i := 0; i < targetRecords; i++ {
-			pos := i
-			count := int32(1)
-			if !isEquip {
-				if pos < targetRecords-1 {
-					count = int32(stackSize)
-				} else {
-					count = int32(row.Quantity - (targetRecords-1)*stackSize)
-				}
-			}
-			addInfo := int32(0)
-			upgrade := 0
-			extraAddInfo := int32(0)
-			if isEquip {
-				addInfo = 0
-				upgrade = row.Upgrade
-				if upgrade <= 0 {
-					upgrade = randRange(a.rand, a.cfg.Restock.UpgradeMin, a.cfg.Restock.UpgradeMax)
-				}
-			} else {
-				addInfo = count
-			}
-			unit := a.auctionUnitPrice(row.SystemPrice, isEquip, batchInflate, upgrade)
-			total := unit
-			if !isEquip {
-				total = unit * count
-			}
-			ownerID := a.pickOwner(occ)
-			source := row.Source
-			if source == "" {
-				source = marketActionSourceUnknown
-			}
-			result.Actions = append(result.Actions, Action{
-				Market:       marketNameAuction,
-				Kind:         item.Kind,
-				ItemID:       row.ItemID,
-				ItemType:     item.ItemType,
-				Name:         item.Name,
-				Count:        count,
-				UnitPrice:    unit,
-				TotalPrice:   total,
-				OwnerID:      ownerID,
-				OwnerName:    a.cfg.SystemOwner.OwnerName,
-				CountAddInfo: addInfo,
-				StartPrice:   total - 1,
-				InstantPrice: total,
-				Upgrade:      upgrade,
-				ExtraAddInfo: extraAddInfo,
-				Source:       source,
-			})
-		}
-		have[row.ItemID] = targetRecords
+		plan := a.normalAuctionPlan(row, item)
+		a.appendNormalAuctionActions(plan, occ, result)
+		have[row.ItemID] = plan.TargetRecord
 	}
+}
+
+func auctionPlanRow(row restockRow, catalog map[uint32]catalogItem) (restockRow, catalogItem) {
+	if row.Kind == "" {
+		if catalogItem, ok := catalog[row.ItemID]; ok {
+			row.applyMarketItem(catalogItem)
+		}
+	}
+	item := row.marketItem()
+	if item.Name == "" {
+		item.Name = row.Name
+	}
+	return row, item
+}
+
+func auctionPlanSkipReason(row restockRow, item catalogItem) string {
+	switch {
+	case item.Kind == "blocked":
+		return "not_auctionable"
+	case isAvatarEquipment(item):
+		return "avatar_not_auctionable"
+	case isRiskyPVFItem(item):
+		return "risky_special_type"
+	case row.SealFlag != 0 && item.Kind != "equipment":
+		return "requires_add_info"
+	default:
+		return ""
+	}
+}
+
+func (a *App) normalAuctionPlan(row restockRow, item catalogItem) normalAuctionPlan {
+	isEquip := item.Kind == "equipment"
+	stackSize := auctionPlanStackSize(row, item, isEquip)
+	plan := normalAuctionPlan{
+		Row:          row,
+		Item:         item,
+		IsEquipment:  isEquip,
+		StackSize:    stackSize,
+		TargetRecord: (row.Quantity + stackSize - 1) / stackSize,
+		BatchInflate: 1,
+	}
+	if isEquip {
+		plan.BatchInflate = float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
+	}
+	return plan
+}
+
+func auctionPlanStackSize(row restockRow, item catalogItem, isEquip bool) int {
+	stackSize := row.StackSize
+	if stackSize <= 0 {
+		stackSize = 1
+	}
+	if isEquip {
+		return 1
+	}
+	if item.StackLimit > 0 && stackSize > item.StackLimit {
+		return item.StackLimit
+	}
+	return stackSize
+}
+
+func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]int, result *PlanResult) {
+	for i := 0; i < plan.TargetRecord; i++ {
+		count := auctionPlanActionCount(plan, i)
+		addInfo := count
+		upgrade := 0
+		if plan.IsEquipment {
+			addInfo = 0
+			upgrade = plan.Row.Upgrade
+			if upgrade <= 0 {
+				upgrade = randRange(a.rand, a.cfg.Restock.UpgradeMin, a.cfg.Restock.UpgradeMax)
+			}
+		}
+		unit := a.auctionUnitPrice(plan.Row.SystemPrice, plan.IsEquipment, plan.BatchInflate, upgrade)
+		total := unit
+		if !plan.IsEquipment {
+			total = unit * count
+		}
+		result.Actions = append(result.Actions, Action{
+			Market:       marketNameAuction,
+			Kind:         plan.Item.Kind,
+			ItemID:       plan.Row.ItemID,
+			ItemType:     plan.Item.ItemType,
+			Name:         plan.Item.Name,
+			Count:        count,
+			UnitPrice:    unit,
+			TotalPrice:   total,
+			OwnerID:      a.pickOwner(occ),
+			OwnerName:    a.cfg.SystemOwner.OwnerName,
+			CountAddInfo: addInfo,
+			StartPrice:   total - 1,
+			InstantPrice: total,
+			Upgrade:      upgrade,
+			Source:       auctionActionSource(plan.Row),
+		})
+	}
+}
+
+func auctionPlanActionCount(plan normalAuctionPlan, pos int) int32 {
+	if plan.IsEquipment {
+		return 1
+	}
+	if pos < plan.TargetRecord-1 {
+		return int32(plan.StackSize)
+	}
+	return int32(plan.Row.Quantity - (plan.TargetRecord-1)*plan.StackSize)
+}
+
+func auctionActionSource(row restockRow) string {
+	if row.Source != "" {
+		return row.Source
+	}
+	return marketActionSourceUnknown
 }
 
 func (a *App) planSpecialAuction(row restockRow, item catalogItem, special string, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
