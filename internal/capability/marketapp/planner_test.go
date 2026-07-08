@@ -1487,6 +1487,18 @@ func TestExecuteActionsRejectsAuctionRegisterOnExecutorError(t *testing.T) {
 	}
 }
 
+func TestSummarizePlanCountsAuctionabilitySkips(t *testing.T) {
+	summary := summarizePlan(nil, []SkippedItem{
+		{Reason: "not_auctionable"},
+		{Reason: "avatar_not_auctionable"},
+		{Reason: "requires_add_info"},
+		{Reason: "risky_special_type"},
+	}, 0)
+	if summary.NotAuctionable != 3 || summary.Risky != 1 || summary.Skipped != 4 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
 type fixedActionExecutorFactory struct {
 	result ActionExecutionResult
 	err    error

@@ -380,7 +380,7 @@ func summarizePlan(actions []Action, skipped []SkippedItem, existingRecords int)
 			summary.Risky++
 		case "special_requires_handler":
 			summary.Special++
-		case "not_auctionable":
+		case "not_auctionable", "avatar_not_auctionable", "requires_add_info":
 			summary.NotAuctionable++
 		}
 	}
