@@ -272,6 +272,13 @@ func (a *App) runAutoOnce() {
 		return
 	}
 	ready := a.ensureMarketServices(markets)
+	if ready[marketServiceNameAuction] {
+		if result, err := a.patchAuctionMemory(); err != nil {
+			a.appendLog(LogEvent{Type: "auction_memory_patch", Status: marketLogStatusFailed, Message: err.Error()})
+		} else {
+			a.logAuctionMemoryPatchResult(result, false)
+		}
+	}
 	for _, market := range markets {
 		market = strings.ToLower(strings.TrimSpace(market))
 		if market == "" {
