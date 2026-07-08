@@ -1175,7 +1175,7 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			ownerID := a.pickOwner(occ)
 			source := row.Source
 			if source == "" {
-				source = marketActionSourceLegacySeed
+				source = marketActionSourceUnknown
 			}
 			result.Actions = append(result.Actions, Action{
 				Market:       marketNameAuction,
@@ -2078,10 +2078,7 @@ func defaultRestockComments() map[string]string {
 		"equipment_inflate_max": "Upper equipment base price multiplier. PVF price/value remains the base.",
 		"upgrade_min":           "Minimum random equipment upgrade value written to the auction packet.",
 		"upgrade_max":           "Maximum random equipment upgrade value written to the auction packet.",
-		"refine_min":            "Legacy compatibility field. Equipment ExtraAddInfo/refine is no longer randomized.",
-		"refine_max":            "Legacy compatibility field. Equipment ExtraAddInfo/refine is no longer randomized.",
 		"upgrade_price_rate":    "Additional equipment price rate per upgrade level.",
-		"refine_price_rate":     "Legacy compatibility field. Equipment price no longer uses ExtraAddInfo/refine.",
 		"rand_low":              "Final random price multiplier lower bound for both stackable and equipment listings.",
 		"rand_high":             "Final random price multiplier upper bound for both stackable and equipment listings.",
 		"max_actions":           "Maximum register packets per restock round. Default is 10000; use 0 only when a caller intentionally wants the full DB gap.",

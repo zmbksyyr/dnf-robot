@@ -644,10 +644,7 @@ func DefaultConfig() Config {
 			EquipInflateMax:  8,
 			UpgradeMin:       7,
 			UpgradeMax:       13,
-			RefineMin:        1,
-			RefineMax:        7,
 			UpgradePriceRate: 0.08,
-			RefinePriceRate:  0.04,
 			RandLow:          0.9,
 			RandHigh:         1.1,
 			MaxActions:       10000,
@@ -783,17 +780,8 @@ func (c *Config) applyDefaults() {
 	if c.Restock.UpgradeMax < c.Restock.UpgradeMin {
 		c.Restock.UpgradeMax = c.Restock.UpgradeMin
 	}
-	if c.Restock.RefineMin <= 0 {
-		c.Restock.RefineMin = d.Restock.RefineMin
-	}
-	if c.Restock.RefineMax < c.Restock.RefineMin {
-		c.Restock.RefineMax = c.Restock.RefineMin
-	}
 	if c.Restock.UpgradePriceRate <= 0 {
 		c.Restock.UpgradePriceRate = d.Restock.UpgradePriceRate
-	}
-	if c.Restock.RefinePriceRate <= 0 {
-		c.Restock.RefinePriceRate = d.Restock.RefinePriceRate
 	}
 	if c.Restock.RandLow <= 0 || c.Restock.RandLow == 1 && c.Restock.RandHigh == 1 {
 		c.Restock.RandLow = d.Restock.RandLow
@@ -888,10 +876,7 @@ type RestockCfg struct {
 	EquipInflateMax  int               `json:"equipment_inflate_max"`
 	UpgradeMin       int               `json:"upgrade_min"`
 	UpgradeMax       int               `json:"upgrade_max"`
-	RefineMin        int               `json:"refine_min"`
-	RefineMax        int               `json:"refine_max"`
 	UpgradePriceRate float64           `json:"upgrade_price_rate"`
-	RefinePriceRate  float64           `json:"refine_price_rate"`
 	RandLow          float64           `json:"rand_low"`
 	RandHigh         float64           `json:"rand_high"`
 	MaxActions       int               `json:"max_actions"`
@@ -1128,7 +1113,7 @@ const (
 	marketQueueSourceFallback           = "fallback"
 	marketRowSourcePVF                  = "pvf"
 	marketRowSourceFallbackSeed         = "fallback_seed"
-	marketActionSourceLegacySeed        = "legacy_seed"
+	marketActionSourceUnknown           = "unknown"
 	marketActionSourceCeraConfig        = "cera_config"
 	marketCandidateSourceUnavailable    = "unavailable"
 )

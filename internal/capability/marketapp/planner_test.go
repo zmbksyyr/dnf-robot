@@ -138,7 +138,7 @@ func TestMarketFactConstants(t *testing.T) {
 		{marketQueueSourceFallback, "fallback"},
 		{marketRowSourcePVF, "pvf"},
 		{marketRowSourceFallbackSeed, "fallback_seed"},
-		{marketActionSourceLegacySeed, "legacy_seed"},
+		{marketActionSourceUnknown, "unknown"},
 		{marketActionSourceCeraConfig, "cera_config"},
 		{marketCandidateSourceUnavailable, "unavailable"},
 	}
