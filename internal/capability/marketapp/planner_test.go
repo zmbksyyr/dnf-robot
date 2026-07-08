@@ -598,6 +598,14 @@ func TestAuctionSpecialQueuePrioritizesPetArtifacts(t *testing.T) {
 	}
 }
 
+func TestAuctionRowIDsDropsEmptyRows(t *testing.T) {
+	ids := auctionRowIDs([]restockRow{{ItemID: 0}, {ItemID: 10075}, {ItemID: 0}, {ItemID: 30075}})
+	want := []uint32{10075, 30075}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+}
+
 func TestAuctionRejectedQueueReturnsStockedItemsToNormal(t *testing.T) {
 	app := testApp(t)
 	app.cfg.Restock.EquipmentQtyMin = 1

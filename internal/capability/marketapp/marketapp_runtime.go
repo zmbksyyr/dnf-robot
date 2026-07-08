@@ -559,14 +559,21 @@ func (a *App) restartMarketServicesAfterItemInfo() error {
 		return nil
 	}
 	for _, service := range marketServiceSpecs() {
-		if err := a.stopMarketServiceForItemInfo(service.name, service.addr, service.bin); err != nil {
+		if err := a.restartMarketServiceAfterItemInfo(service); err != nil {
 			return err
-		}
-		if !a.ensureMarketService(service) {
-			return fmt.Errorf("%s restart failed: service is not ready", service.name)
 		}
 	}
 	a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusSuccess, Message: "auction and point services restarted"})
+	return nil
+}
+
+func (a *App) restartMarketServiceAfterItemInfo(service marketServiceSpec) error {
+	if err := a.stopMarketServiceForItemInfo(service.name, service.addr, service.bin); err != nil {
+		return err
+	}
+	if !a.ensureMarketService(service) {
+		return fmt.Errorf("%s restart failed: service is not ready", service.name)
+	}
 	return nil
 }
 
@@ -1913,26 +1920,39 @@ func queueContains(ids []uint32, itemID uint32) bool {
 // ---- auction_source.go ----
 func (a *App) auctionQueueCandidates(pvfReady bool, catalog map[uint32]catalogItem) (auctionQueueCandidatesResult, error) {
 	if pvfReady {
-		itemInfoIDs, path, err := a.currentItemInfoIDs()
-		if err != nil {
-			a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusBlocked, Message: err.Error()})
-			return auctionQueueCandidatesResult{Source: marketQueueSourcePVFItemInfoMissing}, nil
-		}
-		normal, special := catalogAuctionIDsByType(catalog, itemInfoIDs)
-		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusActive, Message: fmt.Sprintf("source=%s allowed=%d special=%d", path, len(normal)+len(special), len(special))})
-		return auctionQueueCandidatesResult{Normal: normal, Special: special, Source: marketQueueSourcePVFItemInfo}, nil
+		return a.pvfItemInfoAuctionQueueCandidates(catalog)
 	}
+	return a.fallbackAuctionQueueCandidates()
+}
+
+func (a *App) pvfItemInfoAuctionQueueCandidates(catalog map[uint32]catalogItem) (auctionQueueCandidatesResult, error) {
+	itemInfoIDs, path, err := a.currentItemInfoIDs()
+	if err != nil {
+		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusBlocked, Message: err.Error()})
+		return auctionQueueCandidatesResult{Source: marketQueueSourcePVFItemInfoMissing}, nil
+	}
+	normal, special := catalogAuctionIDsByType(catalog, itemInfoIDs)
+	a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusActive, Message: fmt.Sprintf("source=%s allowed=%d special=%d", path, len(normal)+len(special), len(special))})
+	return auctionQueueCandidatesResult{Normal: normal, Special: special, Source: marketQueueSourcePVFItemInfo}, nil
+}
+
+func (a *App) fallbackAuctionQueueCandidates() (auctionQueueCandidatesResult, error) {
 	rows, err := a.fallbackAuctionRows()
 	if err != nil {
 		return auctionQueueCandidatesResult{}, err
 	}
+	ids := auctionRowIDs(rows)
+	return auctionQueueCandidatesResult{Normal: ids, Source: marketQueueSourceFallback}, nil
+}
+
+func auctionRowIDs(rows []restockRow) []uint32 {
 	ids := make([]uint32, 0, len(rows))
 	for _, row := range rows {
 		if row.ItemID != 0 {
 			ids = append(ids, row.ItemID)
 		}
 	}
-	return auctionQueueCandidatesResult{Normal: ids, Source: marketQueueSourceFallback}, nil
+	return ids
 }
 
 func (a *App) auctionRowForID(pvfReady bool, catalog map[uint32]catalogItem, id uint32) (restockRow, bool) {
