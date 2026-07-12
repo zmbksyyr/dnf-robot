@@ -112,6 +112,10 @@ type RuntimeStatus struct {
 	StoreCreateRejected  bool
 	LastStoreError       byte
 	StoreCreated         bool
+	DisjointCreateSent   bool
+	DisjointDirectAck    bool
+	DisjointActive       bool
+	LastDisjointError    byte
 	Village              int
 	Area                 int
 	X                    int
@@ -188,7 +192,7 @@ func (s *RuntimeStatusSummary) Add(st RuntimeStatus) {
 	switch st.StateName {
 	case RuntimeStateRunning:
 		s.Running++
-		if (st.RobotType == 2 || st.RobotType == 3) && st.StoreDisplayAck {
+		if (st.RobotType == 2 && st.StoreDisplayAck) || (st.RobotType == 3 && st.DisjointActive) {
 			s.Stores++
 		}
 	case RuntimeStateInit, RuntimeStateLogin:

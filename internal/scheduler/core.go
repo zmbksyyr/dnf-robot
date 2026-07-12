@@ -162,6 +162,7 @@ type SchemaRepository interface {
 	FollowAccountVillage(account string) (int, bool, error)
 	MarkStoreStarted(uid int) error
 	PrepareStorePosition(info robotcap.Info) error
+	PrepareDisjointPosition(info robotcap.Info, cost int) error
 	RestoreDummyNormal(info robotcap.Info) error
 	SyncCharacterVillage(cid int, village int) (int, error)
 	LoadInventory(cid int) ([]byte, error)
@@ -170,6 +171,7 @@ type SchemaRepository interface {
 	ReplaceStoreStall(uid int, title string, items []storecap.StallItem) (storecap.StallResult, error)
 	RobotCID(uid int) (int, error)
 	EnsureStorePermission(uid, cid int) (storecap.PermissionStatus, error)
+	EnsureDisjointProfession(info robotcap.Info) error
 	RepairRobotExpBounds(uid, cid int) (storecap.ExpRepairResult, error)
 	RevokeStorePermission(uid, cid int) error
 	UpdateRobotPosition(info robotcap.Info, x, y int) error
@@ -215,6 +217,8 @@ type StatusRuntime interface {
 type StoreRuntime interface {
 	StartPrivateStore(uid int, title string) bool
 	ResetPrivateStore(uid int) bool
+	StartDisjointStore(uid int, cost uint32) bool
+	ResetDisjointStore(uid int) bool
 	SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool
 	CompletePrivateStoreDisplay(uid int) bool
 }
@@ -307,6 +311,10 @@ func (missingSchemaRepository) PrepareStorePosition(robotcap.Info) error {
 	return errors.New("scheduler schema repository is not configured")
 }
 
+func (missingSchemaRepository) PrepareDisjointPosition(robotcap.Info, int) error {
+	return errors.New("scheduler schema repository is not configured")
+}
+
 func (missingSchemaRepository) RestoreDummyNormal(robotcap.Info) error {
 	return errors.New("scheduler schema repository is not configured")
 }
@@ -337,6 +345,10 @@ func (missingSchemaRepository) RobotCID(int) (int, error) {
 
 func (missingSchemaRepository) EnsureStorePermission(int, int) (storecap.PermissionStatus, error) {
 	return storecap.PermissionStatus{}, errors.New("scheduler schema repository is not configured")
+}
+
+func (missingSchemaRepository) EnsureDisjointProfession(robotcap.Info) error {
+	return errors.New("scheduler schema repository is not configured")
 }
 
 func (missingSchemaRepository) RepairRobotExpBounds(int, int) (storecap.ExpRepairResult, error) {
@@ -422,6 +434,14 @@ func (noopRuntime) StartPrivateStore(uid int, title string) bool {
 }
 
 func (noopRuntime) ResetPrivateStore(uid int) bool {
+	return false
+}
+
+func (noopRuntime) StartDisjointStore(uid int, cost uint32) bool {
+	return false
+}
+
+func (noopRuntime) ResetDisjointStore(uid int) bool {
 	return false
 }
 

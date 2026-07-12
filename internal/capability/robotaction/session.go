@@ -23,6 +23,14 @@ type SessionEnv interface {
 }
 
 func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
+	return s.online(req, store, false, 0, confirm, rc)
+}
+
+func (s SessionService) OnlineDisjoint(req robotcap.CommandRequest, cost int, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
+	return s.online(req, false, true, cost, confirm, rc)
+}
+
+func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint bool, disjointCost int, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
 	env := s.Env
 	robots, err := env.SelectRobots(req)
 	if err != nil {
@@ -35,7 +43,7 @@ func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm 
 			rc.OnlineDispatchIntervalMS = minInterval
 		}
 	}
-	if !store {
+	if !store && !disjoint {
 		if len(robots) > rc.MaxOnlinePerCommand {
 			return result, fmt.Errorf("requested %d robots exceeds max_online_per_command=%d", len(robots), rc.MaxOnlinePerCommand)
 		}
@@ -60,7 +68,7 @@ func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm 
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue
 			}
-			userinfos = append(userinfos, s.onlinePayload(robot, rc, store))
+			userinfos = append(userinfos, s.onlinePayload(robot, rc, store, disjoint, disjointCost))
 			result.Accepted++
 			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 		}
@@ -79,7 +87,7 @@ func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm 
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue
 			}
-			if err := env.SendOnline([]map[string]interface{}{s.onlinePayload(robot, rc, store)}); err == nil {
+			if err := env.SendOnline([]map[string]interface{}{s.onlinePayload(robot, rc, store, disjoint, disjointCost)}); err == nil {
 				result.Accepted++
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 			} else {
@@ -131,7 +139,10 @@ func (s SessionService) ConfirmAccepted(result *robotcap.CommandResult, timeout 
 	s.confirmOnline(result, timeout)
 }
 
-func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.RuntimeConfig, store bool) map[string]interface{} {
+func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.RuntimeConfig, store bool, disjoint bool, disjointCost int) map[string]interface{} {
+	if disjointCost <= 0 {
+		disjointCost = 500
+	}
 	return map[string]interface{}{
 		"birtharea":  robot.Area,
 		"birthvill":  robot.Village,
@@ -139,8 +150,8 @@ func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.Runtim
 		"birthy":     robot.Y,
 		"cid":        0,
 		"delay":      rc.LoginDelayMS,
-		"discost":    0,
-		"disopen":    0,
+		"discost":    mathx.BoolToInt(disjoint) * disjointCost,
+		"disopen":    mathx.BoolToInt(disjoint),
 		"id":         0,
 		"ip":         s.Env.RobotConnectIP(),
 		"maxreconn":  rc.MaxReconnect,

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"database/sql"
 	"fmt"
 	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
@@ -15,6 +16,15 @@ func (r *SQLRepository) MarkStoreStarted(uid int) error {
 
 func (r *SQLRepository) PrepareStorePosition(info robotcap.Info) error {
 	_, err := r.Exec("UPDATE d_starsky.Dummylist SET curvill=?,curarea=?,curx=?,cury=?,function_type=2 WHERE UID=?", info.Village, info.Area, info.X, info.Y, info.UID)
+	return err
+}
+
+func (r *SQLRepository) PrepareDisjointPosition(info robotcap.Info, cost int) error {
+	if cost <= 0 {
+		cost = 500
+	}
+	_, err := r.Exec("UPDATE d_starsky.Dummylist SET curvill=?,curarea=?,curx=?,cury=?,function_type=3,discost=? WHERE UID=?",
+		info.Village, info.Area, info.X, info.Y, cost, info.UID)
 	return err
 }
 
@@ -132,6 +142,70 @@ func (r *SQLRepository) EnsureStorePermission(uid, cid int) (storecap.Permission
 		}
 	}
 	return status, nil
+}
+
+func (r *SQLRepository) EnsureDisjointProfession(info robotcap.Info) error {
+	if info.UID <= 0 || info.CID <= 0 {
+		return fmt.Errorf("invalid disjoint profession identity uid=%d cid=%d", info.UID, info.CID)
+	}
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var uid, cid, expertJob int
+	if err := tx.QueryRow("SELECT uid,cid FROM d_starsky.robot_registry WHERE uid=? AND cid=? FOR UPDATE", info.UID, info.CID).Scan(&uid, &cid); err != nil {
+		return fmt.Errorf("lock disjoint registry uid=%d cid=%d: %w", info.UID, info.CID, err)
+	}
+	if err := tx.QueryRow("SELECT expert_job FROM taiwan_cain.charac_info WHERE charac_no=? AND m_id=? AND delete_flag=0 FOR UPDATE", info.CID, info.UID).Scan(&expertJob); err != nil {
+		return fmt.Errorf("lock disjoint charac_info uid=%d cid=%d: %w", info.UID, info.CID, err)
+	}
+	if expertJob != 0 && expertJob != 3 {
+		return fmt.Errorf("unsupported existing expert job %d for uid=%d cid=%d", expertJob, info.UID, info.CID)
+	}
+	var expertExp int
+	if err := tx.QueryRow("SELECT expert_job_exp FROM taiwan_cain.charac_stat WHERE charac_no=? FOR UPDATE", info.CID).Scan(&expertExp); err != nil {
+		return fmt.Errorf("lock disjoint charac_stat uid=%d cid=%d: %w", info.UID, info.CID, err)
+	}
+	if _, err := tx.Exec("UPDATE taiwan_cain.charac_info SET expert_job=3 WHERE charac_no=? AND m_id=?", info.CID, info.UID); err != nil {
+		return fmt.Errorf("update disjoint charac_info uid=%d cid=%d: %w", info.UID, info.CID, err)
+	}
+	if expertExp < 800 {
+		if _, err := tx.Exec("UPDATE taiwan_cain.charac_stat SET expert_job_exp=800 WHERE charac_no=?", info.CID); err != nil {
+			return fmt.Errorf("update disjoint charac_stat uid=%d cid=%d: %w", info.UID, info.CID, err)
+		}
+	}
+	var existing int
+	err = tx.QueryRow("SELECT 1 FROM taiwan_cain.charac_expert_job WHERE charac_no=? FOR UPDATE", info.CID).Scan(&existing)
+	switch err {
+	case nil:
+		if _, err := tx.Exec(`UPDATE taiwan_cain.charac_expert_job
+			SET expert_job_info=IF(expert_job_info>0,expert_job_info,999998),
+			    expert_job_info_ex=IF(expert_job_info_ex>0,expert_job_info_ex,7),
+			    recipe=IF(LENGTH(recipe)>=30,recipe,?)
+			WHERE charac_no=?`, make([]byte, 30), info.CID); err != nil {
+			return fmt.Errorf("update disjoint expert row uid=%d cid=%d: %w", info.UID, info.CID, err)
+		}
+	case sql.ErrNoRows:
+		if _, err := tx.Exec(`INSERT INTO taiwan_cain.charac_expert_job
+			(charac_no,expert_job_giveup_cnt,expert_job_info,expert_job_info_ex,recipe)
+			VALUES (?,0,999998,7,?)`, info.CID, make([]byte, 30)); err != nil {
+			return fmt.Errorf("insert disjoint expert row uid=%d cid=%d: %w", info.UID, info.CID, err)
+		}
+	default:
+		return fmt.Errorf("lock disjoint expert row uid=%d cid=%d: %w", info.UID, info.CID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (r *SQLRepository) RepairRobotExpBounds(uid, cid int) (storecap.ExpRepairResult, error) {

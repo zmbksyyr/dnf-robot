@@ -107,6 +107,10 @@ func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 			StoreCreateRejected:  snap.StoreCreateRejected,
 			LastStoreError:       snap.LastStoreError,
 			StoreCreated:         snap.StoreCreated,
+			DisjointCreateSent:   snap.DisjointCreateSent,
+			DisjointDirectAck:    snap.DisjointDirectAck,
+			DisjointActive:       snap.DisjointActive,
+			LastDisjointError:    snap.LastDisjointError,
 			Village:              int(snap.Village),
 			Area:                 int(snap.Area),
 			X:                    int(snap.X),
@@ -169,6 +173,20 @@ func (rs *RobotSvc) StartPrivateStore(uid int, title string) bool {
 	return true
 }
 
+func (rs *RobotSvc) StartDisjointStore(uid int, cost uint32) bool {
+	if rs.table == nil || uid <= 0 {
+		return false
+	}
+	vo := rs.table.GetTask().Find(uid)
+	if vo == nil {
+		return false
+	}
+	if snap := vo.Snapshot(); robotStateName(int(snap.State)) != "running" {
+		return false
+	}
+	return vo.OpenDisjointStore(cost)
+}
+
 func (rs *RobotSvc) ResetPrivateStore(uid int) bool {
 	if rs.table == nil || uid <= 0 {
 		return false
@@ -178,6 +196,18 @@ func (rs *RobotSvc) ResetPrivateStore(uid int) bool {
 		return false
 	}
 	vo.ResetPrivateStoreState()
+	return true
+}
+
+func (rs *RobotSvc) ResetDisjointStore(uid int) bool {
+	if rs.table == nil || uid <= 0 {
+		return false
+	}
+	vo := rs.table.GetTask().Find(uid)
+	if vo == nil {
+		return false
+	}
+	vo.ResetDisjointStoreState()
 	return true
 }
 
@@ -527,6 +557,20 @@ func (d *DollService) StartPrivateStore(uid int, title string) bool {
 func (d *DollService) ResetPrivateStore(uid int) bool {
 	if svc, ok := robotSvc.(*RobotSvc); ok {
 		return svc.ResetPrivateStore(uid)
+	}
+	return false
+}
+
+func (d *DollService) StartDisjointStore(uid int, cost uint32) bool {
+	if svc, ok := robotSvc.(*RobotSvc); ok {
+		return svc.StartDisjointStore(uid, cost)
+	}
+	return false
+}
+
+func (d *DollService) ResetDisjointStore(uid int) bool {
+	if svc, ok := robotSvc.(*RobotSvc); ok {
+		return svc.ResetDisjointStore(uid)
 	}
 	return false
 }

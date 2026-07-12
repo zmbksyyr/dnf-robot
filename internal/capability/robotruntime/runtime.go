@@ -22,6 +22,8 @@ type Shout interface {
 type Store interface {
 	StartPrivateStore(uid int, title string) bool
 	ResetPrivateStore(uid int) bool
+	StartDisjointStore(uid int, cost uint32) bool
+	ResetDisjointStore(uid int) bool
 	SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool
 	CompletePrivateStoreDisplay(uid int) bool
 }
@@ -52,6 +54,14 @@ func StartPrivateStore(runtime Store, uid int, title string) bool {
 
 func ResetPrivateStore(runtime Store, uid int) bool {
 	return runtime.ResetPrivateStore(uid)
+}
+
+func StartDisjointStore(runtime Store, uid int, cost uint32) bool {
+	return runtime.StartDisjointStore(uid, cost)
+}
+
+func ResetDisjointStore(runtime Store, uid int) bool {
+	return runtime.ResetDisjointStore(uid)
 }
 
 func SetAreaFrom(runtime Store, uid int, village, area int, x, y int, fromVillage, fromArea int) bool {

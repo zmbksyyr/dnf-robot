@@ -160,6 +160,11 @@ type RobotVo struct {
 	AfterRunAsyncTaskVec      []AsyncTask
 	LoginInfo                 UserLoginInfo
 
+	DisjointCreateSent bool
+	DisjointDirectAck  bool
+	DisjointActive     bool
+	LastDisjointError  byte
+
 	GMName [5][100]byte
 
 	mu     lockhub.Locker
@@ -206,6 +211,10 @@ type RobotSnapshot struct {
 	StoreCreateRejected  bool
 	LastStoreError       byte
 	StoreCreated         bool
+	DisjointCreateSent   bool
+	DisjointDirectAck    bool
+	DisjointActive       bool
+	LastDisjointError    byte
 	Village              uint8
 	Area                 uint8
 	X                    uint16
@@ -283,6 +292,10 @@ func (r *RobotVo) Snapshot() RobotSnapshot {
 		StoreCreateRejected:  r.StoreCreateRejected,
 		LastStoreError:       r.LastStoreError,
 		StoreCreated:         r.StoreCreated,
+		DisjointCreateSent:   r.DisjointCreateSent,
+		DisjointDirectAck:    r.DisjointDirectAck,
+		DisjointActive:       r.DisjointActive,
+		LastDisjointError:    r.LastDisjointError,
 		Village:              r.CurVillage,
 		Area:                 r.CurArea,
 		X:                    r.CurX,
@@ -293,7 +306,7 @@ func (r *RobotVo) Snapshot() RobotSnapshot {
 func (r *RobotVo) ResetPrivateStoreState() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.RobotTyp == 2 || r.RobotTyp == 3 {
+	if r.RobotTyp == 2 {
 		r.RobotTyp = 0
 	}
 	r.StoreDisplaySent = false
@@ -304,6 +317,18 @@ func (r *RobotVo) ResetPrivateStoreState() {
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
 	r.PendingStoreTitle = ""
+}
+
+func (r *RobotVo) ResetDisjointStoreState() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.RobotTyp == 3 {
+		r.RobotTyp = 0
+	}
+	r.DisjointCreateSent = false
+	r.DisjointDirectAck = false
+	r.DisjointActive = false
+	r.LastDisjointError = 0
 }
 
 func (r *RobotVo) PreparePrivateStoreState(title string) {
@@ -350,6 +375,10 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.LastStoreError = 0
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
+	r.DisjointCreateSent = false
+	r.DisjointDirectAck = false
+	r.DisjointActive = false
+	r.LastDisjointError = 0
 	r.recvSize = 0
 	r.Conn = nil
 	r.LoginIP = info.IP
@@ -637,6 +666,24 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			r.DisconReason = DisconnectReason(binary.LittleEndian.Uint32(decData[0:4]))
 			if r.DisconReason != NoDisconnect {
 				go r.RefishConnect()
+			}
+		}
+		return
+	}
+
+	if r.State == StateRun && packetFlag == 1 && packetType == 238 && r.RobotTyp == 3 {
+		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		if err == nil {
+			if len(decData) > 0 && decData[0] == 1 {
+				r.DisjointDirectAck = true
+				r.DisjointActive = true
+				r.LastDisjointError = 0
+				fmt.Printf("[DISJOINT_DIRECT_ACK] uid=%d payload=%x\n", r.UID, decData)
+			} else if len(decData) >= 2 && decData[0] == 0 {
+				r.DisjointDirectAck = false
+				r.DisjointActive = false
+				r.LastDisjointError = decData[1]
+				fmt.Printf("[DISJOINT_238_ERROR] uid=%d error=%d payload=%x\n", r.UID, r.LastDisjointError, decData)
 			}
 		}
 		return
@@ -1163,12 +1210,12 @@ func (r *RobotVo) SetPosition(x, y uint16, typ uint8, speed uint16) {
 	}
 }
 
-func (r *RobotVo) OpenDisjointStore(cost uint32) {
+func (r *RobotVo) OpenDisjointStore(cost uint32) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.State != StateRun {
-		return
+		return false
 	}
 
 	var openDisjoint [16]byte
@@ -1180,10 +1227,16 @@ func (r *RobotVo) OpenDisjointStore(cost uint32) {
 
 	pkt, err := buildSendPacket(238, uint16(r.PacketID), openDisjoint[:], r.Cipher)
 	r.PacketID++
-	if err == nil {
-		r.SendMsg(pkt)
+	if err != nil || !r.SendMsg(pkt) {
+		return false
 	}
 	r.RobotTyp = 3
+	r.DisjointCreateSent = true
+	r.DisjointDirectAck = false
+	r.DisjointActive = false
+	r.LastDisjointError = 0
+	fmt.Printf("[DISJOINT_238_SENT] uid=%d cost=%d x=%d y=%d\n", r.UID, cost, r.CurX, r.CurY)
+	return true
 }
 
 func (r *RobotVo) CreatePrivateStore() {

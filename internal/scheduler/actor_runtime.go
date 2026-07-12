@@ -5,12 +5,14 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotaction "robot/internal/capability/robotaction"
 	robotconfig "robot/internal/capability/robotconfig"
+	"robot/internal/capability/robotruntime"
 	"robot/internal/capability/robotspawn"
 	robottemplate "robot/internal/capability/robottemplate"
 	storecap "robot/internal/capability/store"
 	"robot/internal/foundation/lockhub"
 	"robot/internal/shared"
 	"strings"
+	"time"
 )
 
 type RobotRuntime struct {
@@ -146,6 +148,9 @@ func (r *RobotRuntime) AutoStore(uid int, shouldStop func() bool) robotcap.Actio
 		if shouldStop != nil && shouldStop() {
 			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateCancelled}
 		}
+		if r.manager.randIntn(100) < 50 {
+			return r.autoDisjointStore(uid, st, shouldStop)
+		}
 		switch r.manager.storeWorkflow().AutoUntilSuccess(st, r.Config(), shouldStop) {
 		case storecap.AutoAttemptSuccess:
 			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: robotcap.ActionStateStore}
@@ -159,6 +164,142 @@ func (r *RobotRuntime) AutoStore(uid int, shouldStop func() bool) robotcap.Actio
 		}
 		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateStoreFailed}
 	})
+}
+
+const disjointStoreCostGold = 500
+
+func (r *RobotRuntime) autoDisjointStore(uid int, st robotcap.RuntimeStatus, shouldStop func() bool) robotcap.ActionResult {
+	rc := r.Config()
+	info := robotcap.Info{UID: uid, CID: st.CID, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y, Port: r.manager.cfg.RobotGamePort}
+	if robots, err := r.manager.repo().SelectRobots(robotcap.CommandRequest{UIDs: []int{uid}}); err == nil && len(robots) > 0 {
+		info = robots[0]
+	}
+	if !r.manager.beginStoreBusy(uid) {
+		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateStoreBusy}
+	}
+	slot, ok := r.manager.acquireAutoStoreSlot(rc)
+	if !ok {
+		r.manager.endStoreBusy(uid)
+		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateStoreBusy}
+	}
+	defer func() {
+		r.manager.releaseAutoStoreSlot(slot)
+		r.manager.endStoreBusy(uid)
+	}()
+
+	points := r.manager.storePoints()
+	tries := rc.AutoStoreMaxPositionTries
+	if tries <= 0 {
+		tries = 10
+	}
+	for try := 1; try <= tries; try++ {
+		if shouldStop != nil && shouldStop() {
+			return robotcap.ActionResult{UID: uid, CID: info.CID, OK: false, State: robotcap.ActionStateCancelled}
+		}
+		pos, ok := points.Claim(uid)
+		if !ok {
+			break
+		}
+		info.Village, info.Area, info.X, info.Y = pos.Village, pos.Area, pos.X, pos.Y
+		ok, reason := r.tryDisjointPosition(info, rc, shouldStop)
+		if ok {
+			points.Report(uid, pos, try, true, "disjoint_ack")
+			r.manager.addAutoStore(1, 0, 0)
+			robotLogf("[DISJOINT_SUCCESS_POINT] uid=%d point=%s village=%d area=%d x=%d y=%d try=%d\n", uid, pos.PointID, pos.Village, pos.Area, pos.X, pos.Y, try)
+			return robotcap.ActionResult{UID: uid, CID: info.CID, OK: true, State: robotcap.ActionStateStore}
+		}
+		if reason == "" {
+			reason = "disjoint_failed"
+		}
+		points.Report(uid, pos, try, false, reason)
+	}
+	points.Flush()
+	_, _ = r.manager.sessionService().Logout(robotcap.CommandRequest{UIDs: []int{uid}})
+	r.manager.finishStoreState(uid, info.CID, "disjoint_failed")
+	r.manager.addAutoStore(0, 1, 0)
+	r.manager.restoreAutoNormalPosition(info, rc, "disjoint_failed")
+	return robotcap.ActionResult{UID: uid, CID: info.CID, OK: false, State: robotcap.ActionStateStoreFailed}
+}
+
+func (r *RobotRuntime) tryDisjointPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, shouldStop func() bool) (bool, string) {
+	_, _ = r.manager.sessionService().Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
+	logoutDelay := time.Duration(rc.ReconnectDelayMS) * time.Millisecond
+	if logoutDelay < 15*time.Second {
+		logoutDelay = 15 * time.Second
+	}
+	if sleepWithStop(logoutDelay, shouldStop) {
+		return false, "cancelled"
+	}
+	if err := r.manager.schemaRepo().EnsureDisjointProfession(info); err != nil {
+		robotLogf("[DISJOINT_PROFESSION_ERROR] uid=%d cid=%d err=%v\n", info.UID, info.CID, err)
+		return false, "profession_failed"
+	}
+	if sleepWithStop(2*time.Second, shouldStop) {
+		return false, "cancelled"
+	}
+	if err := r.manager.schemaRepo().EnsureDisjointProfession(info); err != nil {
+		robotLogf("[DISJOINT_PROFESSION_VERIFY_ERROR] uid=%d cid=%d err=%v\n", info.UID, info.CID, err)
+		return false, "profession_verify_failed"
+	}
+	if err := r.manager.schemaRepo().PrepareDisjointPosition(info, disjointStoreCostGold); err != nil {
+		robotLogf("[DISJOINT_POSITION_ERROR] uid=%d err=%v\n", info.UID, err)
+		return false, "prepare_failed"
+	}
+	if _, err := r.manager.schemaRepo().SyncCharacterVillage(info.CID, info.Village); err != nil {
+		robotLogf("[DISJOINT_VILLAGE_ERROR] uid=%d cid=%d village=%d err=%v\n", info.UID, info.CID, info.Village, err)
+		return false, "prepare_failed"
+	}
+	online, err := r.manager.sessionService().OnlineDisjoint(robotcap.CommandRequest{UIDs: []int{info.UID}}, disjointStoreCostGold, true, rc)
+	if err != nil || online.Confirmed != 1 {
+		robotLogf("[DISJOINT_ONLINE_ERROR] uid=%d confirmed=%d failed=%d err=%v\n", info.UID, online.Confirmed, online.Failed, err)
+		return false, "online_failed"
+	}
+	fromGate := storecap.GateAreaForVillage(info.Village)
+	if fromGate != info.Area {
+		if !robotruntime.SetAreaFrom(r.manager.doll, info.UID, info.Village, info.Area, info.X, info.Y, info.Village, fromGate) {
+			return false, "set_area_failed"
+		}
+		if sleepWithStop(1800*time.Millisecond, shouldStop) {
+			return false, "cancelled"
+		}
+	}
+	if !robotruntime.StartDisjointStore(r.manager.doll, info.UID, disjointStoreCostGold) {
+		return false, "start_failed"
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if shouldStop != nil && shouldStop() {
+			return false, "cancelled"
+		}
+		if st, ok := r.manager.runtimeStatusMap()[info.UID]; ok {
+			if st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
+				return false, "runtime_stopped"
+			}
+			if st.RobotType == 3 && st.DisjointActive {
+				return true, ""
+			}
+			if st.LastDisjointError != 0 {
+				return false, "disjoint_err"
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false, "ack_timeout"
+}
+
+func sleepWithStop(d time.Duration, shouldStop func() bool) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if shouldStop != nil && shouldStop() {
+			return true
+		}
+		step := time.Until(deadline)
+		if step > 100*time.Millisecond {
+			step = 100 * time.Millisecond
+		}
+		time.Sleep(step)
+	}
+	return shouldStop != nil && shouldStop()
 }
 
 func (r *RobotRuntime) ExpireStore(uid int) robotcap.ActionResult {
