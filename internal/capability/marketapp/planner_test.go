@@ -429,6 +429,48 @@ func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
 	}
 }
 
+func TestAuctionQueueSkipsNullNameItemInfoRows(t *testing.T) {
+	app := testApp(t)
+	dir := t.TempDir()
+	app.configDir = dir
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	mustWriteText(t, app.cfg.ItemInfoTargets[0], ""+
+		"2600557 2 1 1 1 1 1 1 1 1 1 1 1 80 `name2_2600557 == NULL, stackable/Stackable.kor.str : ` 33001\r\n"+
+		"2600558 2 1 1 1 1 1 1 1 1 1 1 1 80 `valid` `valid` 33001\r\n")
+	catalog := map[uint32]catalogItem{
+		2600557: {ItemID: 2600557, Kind: "stackable", StackLimit: 1000, Price: 100},
+		2600558: {ItemID: 2600558, Kind: "stackable", StackLimit: 1000, Price: 100},
+	}
+
+	selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := selection.Rows
+	if len(rows) != 1 || rows[0].ItemID != 2600558 {
+		t.Fatalf("selected rows = %#v, want only non-null-name iteminfo row", rows)
+	}
+}
+
+func TestRecoverAuctionRegistItemFailureClearsAuctionStock(t *testing.T) {
+	app := testApp(t)
+	repo := &clearStockRepository{counts: map[string]int{app.cfg.AuctionDB: 3}}
+	app.repository = repo
+	app.auctionQueue = []uint32{1001}
+	app.auctionRejected = []uint32{1002}
+	app.auctionRejectedMeta = map[uint32]auctionRejectedState{1002: {Count: 1}}
+
+	if !app.recoverAuctionRegistItemFailure("auction.log") {
+		t.Fatal("recovery returned false")
+	}
+	if repo.counts[app.cfg.AuctionDB] != 0 {
+		t.Fatalf("auction stock count = %d, want 0", repo.counts[app.cfg.AuctionDB])
+	}
+	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || len(app.auctionRejectedMeta) != 0 {
+		t.Fatalf("auction queues were not reset: queue=%v rejected=%v meta=%v", app.auctionQueue, app.auctionRejected, app.auctionRejectedMeta)
+	}
+}
+
 func TestReloadAuctionQueuesOnlyUpgradesToPVFItemInfo(t *testing.T) {
 	app := testApp(t)
 	app.auctionQueue = []uint32{10075}

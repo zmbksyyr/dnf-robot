@@ -374,6 +374,10 @@ func marketServiceName(market string) string {
 }
 
 func (a *App) ensureMarketService(service marketServiceSpec) bool {
+	return a.ensureMarketServiceOnce(service, false)
+}
+
+func (a *App) ensureMarketServiceOnce(service marketServiceSpec, recovered bool) bool {
 	status := MarketServiceStatus{Name: service.name, Addr: service.addr, Dir: service.dir, Bin: service.bin, CheckedAt: time.Now(), LogPath: a.marketServiceLogPath(service.name)}
 	if tcpReady(service.addr, 500*time.Millisecond) {
 		status.Listening = true
@@ -438,6 +442,9 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 				status.Message = "service log contains RegistItem failure"
 				a.setMarketServiceStatus(status)
 				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
+				if !recovered && service.name == marketServiceNameAuction && a.recoverAuctionRegistItemFailure(status.LogPath) {
+					return a.ensureMarketServiceOnce(service, true)
+				}
 				return false
 			}
 			if status.PID <= 0 {
@@ -466,7 +473,21 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 	status.Message = service.addr
 	a.setMarketServiceStatus(status)
 	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
+	if !recovered && service.name == marketServiceNameAuction && hasMarketServiceFailure(status.LogPath) && a.recoverAuctionRegistItemFailure(status.LogPath) {
+		return a.ensureMarketServiceOnce(service, true)
+	}
 	return false
+}
+
+func (a *App) recoverAuctionRegistItemFailure(logPath string) bool {
+	deleted, err := a.repository.DeleteSystemStock(a.cfg.AuctionDB, a.cfg.SystemOwner.IDBase)
+	if err != nil {
+		a.appendLog(LogEvent{Type: "market_service", Market: marketServiceNameAuction, Status: marketLogStatusFailed, Message: fmt.Sprintf("regist item recovery clear failed: %v", err)})
+		return false
+	}
+	a.resetAuctionQueues()
+	a.appendLog(LogEvent{Type: "market_service", Market: marketServiceNameAuction, Status: marketLogStatusDBDeleted, Message: fmt.Sprintf("regist item recovery cleared auction rows=%d log=%s", deleted, logPath)})
+	return deleted > 0
 }
 
 func (a *App) refreshMarketServiceStatuses() {

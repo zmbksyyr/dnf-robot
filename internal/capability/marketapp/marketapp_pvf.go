@@ -347,7 +347,11 @@ func readItemInfoIDs(path string) (map[uint32]bool, error) {
 	}
 	ids := make(map[uint32]bool)
 	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
+		line = strings.TrimSpace(line)
+		if itemInfoLineHasNullName(line) {
+			continue
+		}
+		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}
@@ -361,6 +365,10 @@ func readItemInfoIDs(path string) (map[uint32]bool, error) {
 		return nil, fmt.Errorf("iteminfo target has no ids: %s", path)
 	}
 	return ids, nil
+}
+
+func itemInfoLineHasNullName(line string) bool {
+	return strings.Contains(line, "== NULL")
 }
 
 func (a *App) resolveConfigPath(path string) string {
