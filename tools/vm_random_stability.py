@@ -6,7 +6,8 @@ VM-local random stability pressure for the robot system.
 Compatible with the VM's default Python 2.7 and modern Python 3.
 
 Default full scenario:
-- run 1 hour by default; all scenario intervals are scaled by --hours
+- run one full shuffled round by default
+- pass a round count and optional deadline, for example: `5`, `1 6h`, `3 8h`
 - sample CPU/status/resource counters every 10 seconds
 - collect filtered robot/web/resource logs every 5 minutes
 - run service, market, DB, web/API, cleanup, monitor, game and robot fault phases
@@ -188,6 +189,32 @@ def sanitize_name(value):
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", safe_text(value)).strip("_") or "snapshot"
 
 
+def to_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def parse_time_limit(value):
+    if value is None or safe_text(value).strip() == "":
+        return 0
+    text = safe_text(value).strip().lower()
+    match = re.match(r"^(\d+(?:\.\d+)?)([smhd]?)$", text)
+    if match:
+        amount = float(match.group(1))
+        unit = match.group(2) or "s"
+        factors = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+        return int(amount * factors[unit])
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            target = datetime.datetime.strptime(text, fmt)
+            return max(0, int((target - datetime.datetime.now()).total_seconds()))
+        except Exception:
+            pass
+    raise ValueError("invalid time limit %r; use seconds, 30m, 6h, or YYYY-MM-DDTHH:MM:SS" % value)
+
+
 class RobotAPI(object):
     def __init__(self, host, port, timeout):
         self.host = host
@@ -239,12 +266,15 @@ class StabilityRun(object):
             self.samples.writerow(dict((k, k) for k in SAMPLE_FIELDS))
         self.deleted_total = 0
         self.started = time.time()
-        self.total_sec = max(int(args.hours * 3600), 600)
+        self.time_limit_sec = parse_time_limit(args.time_limit)
+        self.deadline_at = self.started + self.time_limit_sec if self.time_limit_sec > 0 else 0
+        self.total_sec = max(self.time_limit_sec or 3600, 600)
         self.baseline_dir = os.path.join(self.out_dir, "baseline")
         self.snapshot_dir = os.path.join(self.out_dir, "snapshots")
         if not os.path.isdir(self.snapshot_dir):
             os.makedirs(self.snapshot_dir)
         self.results = []
+        self.round_orders = []
         self.market_auto_stopped_since = 0
         self.market_zero_since = 0
         self.market_zero_last_seen = 0
@@ -256,8 +286,10 @@ class StabilityRun(object):
         self.events.write(line + u"\n")
 
     def run(self):
-        random.seed(self.args.seed or int(time.time() * 1000000))
-        self.log("start out_dir=%s args=%s" % (self.out_dir, vars(self.args)))
+        seed = self.args.seed or int(time.time() * 1000000)
+        random.seed(seed)
+        self.args.seed = seed
+        self.log("start out_dir=%s args=%s seed=%s min_rounds=%s time_limit_sec=%s" % (self.out_dir, vars(self.args), seed, self.args.rounds, self.time_limit_sec))
         self.prepare_baseline()
         self.ensure_auto()
         next_target = time.time() + random.randint(self.args.target_min_interval, self.args.target_max_interval)
@@ -266,11 +298,49 @@ class StabilityRun(object):
         next_log_snapshot = time.time()
         next_sample = 0
         next_invariant = 0
-        end_at = time.time() + self.total_sec
-        scenario = self.scenario_events()
-        fired = {}
+        scenarios = self.scenario_events()
+        round_no = 0
+        stop_reason = ""
         try:
-            while time.time() < end_at:
+            while True:
+                round_no += 1
+                round_scenarios = list(scenarios)
+                random.shuffle(round_scenarios)
+                order = [item["name"] for item in round_scenarios]
+                self.round_orders.append({"round": round_no, "order": order})
+                self.log("scenario round start round=%s order=%s" % (round_no, ",".join(order)))
+                for event in round_scenarios:
+                    now = time.time()
+                    if now >= next_sample:
+                        self.sample()
+                        next_sample = now + self.args.sample_interval
+                    if now >= next_log_snapshot:
+                        self.collect_logs("periodic")
+                        next_log_snapshot = now + self.args.log_snapshot_interval
+                    if now >= next_target:
+                        self.random_target()
+                        next_target = now + random.randint(self.args.target_min_interval, self.args.target_max_interval)
+                    if now >= next_cleanup:
+                        self.random_cleanup()
+                        next_cleanup = now + random.randint(self.args.cleanup_min_interval, self.args.cleanup_max_interval)
+                    if now >= next_user_interleave:
+                        self.random_user_interleave()
+                        next_user_interleave = now + random.randint(self.args.user_interleave_min_interval, self.args.user_interleave_max_interval)
+                    if now >= next_invariant:
+                        self.check_market_invariants("main_loop")
+                        next_invariant = now + self.args.sample_interval
+                    self.run_event(event, round_no)
+                    self.write_report()
+                    if self.should_stop_after_scene(round_no):
+                        stop_reason = self.stop_reason(round_no)
+                        self.log("scenario stop after scene round=%s event=%s reason=%s" % (round_no, event["name"], stop_reason))
+                        raise StopIteration
+                self.log("scenario round done round=%s" % round_no)
+                self.write_report()
+                if self.should_stop_after_round(round_no):
+                    stop_reason = self.stop_reason(round_no)
+                    self.log("scenario stop after round=%s reason=%s" % (round_no, stop_reason))
+                    break
                 now = time.time()
                 if now >= next_sample:
                     self.sample()
@@ -278,12 +348,6 @@ class StabilityRun(object):
                 if now >= next_log_snapshot:
                     self.collect_logs("periodic")
                     next_log_snapshot = now + self.args.log_snapshot_interval
-                for event in scenario:
-                    if event["name"] in fired:
-                        continue
-                    if now - self.started >= event["at"]:
-                        fired[event["name"]] = True
-                        self.run_event(event)
                 if now >= next_target:
                     self.random_target()
                     next_target = now + random.randint(self.args.target_min_interval, self.args.target_max_interval)
@@ -297,9 +361,14 @@ class StabilityRun(object):
                     self.check_market_invariants("main_loop")
                     next_invariant = now + self.args.sample_interval
                 time.sleep(1)
+        except StopIteration:
+            pass
         except KeyboardInterrupt:
             self.log("interrupted by user")
         finally:
+            if not stop_reason:
+                stop_reason = self.stop_reason(round_no)
+            self.log("run finishing rounds=%s stop_reason=%s" % (round_no, stop_reason))
             self.collect_logs("before_final_recover")
             self.final_recover_environment()
             self.collect_logs("final")
@@ -308,10 +377,27 @@ class StabilityRun(object):
             self.events.close()
             self.samples_file.close()
 
-    def run_event(self, event):
+    def should_stop_after_scene(self, round_no):
+        return round_no > self.args.rounds and self.deadline_at > 0 and time.time() >= self.deadline_at
+
+    def should_stop_after_round(self, round_no):
+        if round_no < self.args.rounds:
+            return False
+        if self.deadline_at <= 0:
+            return True
+        return time.time() >= self.deadline_at
+
+    def stop_reason(self, round_no):
+        if round_no < self.args.rounds:
+            return "interrupted_before_min_rounds"
+        if self.deadline_at > 0 and time.time() >= self.deadline_at:
+            return "deadline_reached"
+        return "min_rounds_complete"
+
+    def run_event(self, event, round_no=1):
         name = event["name"]
-        self.log("scenario event start name=%s at=%ss" % (name, event["at"]))
-        before_path = self.write_snapshot(name + "_before")
+        self.log("scenario event start round=%s name=%s" % (round_no, name))
+        before_path = self.write_snapshot("round%s_%s_before" % (round_no, name))
         started = time.time()
         err = ""
         recovered = False
@@ -322,9 +408,10 @@ class StabilityRun(object):
             err = repr(exc)
             self.log("scenario event error name=%s err=%s" % (name, err))
             recovered = self.check_recovered(name)
-        after_path = self.write_snapshot(name + "_after")
+        after_path = self.write_snapshot("round%s_%s_after" % (round_no, name))
         result = {
             "name": name,
+            "round": round_no,
             "started_at": datetime.datetime.fromtimestamp(started).isoformat(),
             "duration_sec": int(time.time() - started),
             "recovered": recovered,
@@ -505,6 +592,36 @@ class StabilityRun(object):
                 counts[parts[0] + "_kinds"] = parts[2]
         return counts
 
+    def store_db_counts(self):
+        query = (
+            "SELECT 'dummy_total',COUNT(*) FROM d_starsky.Dummylist;"
+            "SELECT 'dummy_store',COUNT(*) FROM d_starsky.Dummylist WHERE CAST(function_type AS UNSIGNED)=2;"
+            "SELECT 'dummy_disjoint',COUNT(*) FROM d_starsky.Dummylist WHERE CAST(function_type AS UNSIGNED)=3;"
+            "SELECT 'stall_rows',COUNT(*),COUNT(DISTINCT UID) FROM d_starsky.Robot_stall WHERE function_type=2 AND state=1;"
+            "SELECT 'stall_config',COUNT(*),COUNT(DISTINCT UID) FROM d_starsky.Robot_stall_config WHERE function_type=2 AND state=1;"
+        )
+        out = self.shell("mysql -ugame -puu5!^%%jg -N -e %s" % shell_quote(query), 30, log_output=False)
+        counts = {}
+        for line in safe_text(out).splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                counts[parts[0]] = parts[1]
+            if len(parts) >= 3:
+                counts[parts[0] + "_uids"] = parts[2]
+        return counts
+
+    def assert_store_presence(self, label):
+        counts = self.store_db_counts()
+        self.log("%s store_counts=%s" % (label, json_text(counts, 1200)))
+        store = to_int(counts.get("dummy_store"))
+        disjoint = to_int(counts.get("dummy_disjoint"))
+        stall_rows = to_int(counts.get("stall_rows"))
+        if store + disjoint <= 0:
+            self.record_failure(label + "_no_store_function_type", "Dummylist has no function_type=2 or function_type=3 rows after store scenario")
+        if store > 0 and stall_rows <= 0:
+            self.record_failure(label + "_store_without_stall_rows", "Dummylist has function_type=2 rows but Robot_stall has no active function_type=2 rows")
+        return counts
+
     def wait_market_count(self, label, predicate, timeout, interval):
         deadline = time.time() + timeout
         last = {}
@@ -585,43 +702,39 @@ echo RESTORED
         mid = max(self.args.target_min, min(high, max(100, high // 2)))
         low = max(20, min(self.args.target_min, 80))
         return [
-            {"name": "target20", "at": 0, "fn": lambda: self.set_target(20)},
-            {"name": "robot_scale_wave", "at": self.event_at(0.025), "fn": lambda: self.robot_scale_wave(low, mid, high)},
-            {"name": "smoke_actions", "at": self.event_at(0.055), "fn": self.smoke_actions},
-            {"name": "robot_action_storm", "at": self.event_at(0.085), "fn": self.robot_action_storm},
-            {"name": "announcement_check", "at": self.event_at(0.115), "fn": self.announcement_check},
-            {"name": "market_fault", "at": self.event_at(0.145), "fn": self.market_fault},
-            {"name": "market_operation_storm", "at": self.event_at(0.185), "fn": self.market_operation_storm},
-            {"name": "robot_manual_mode_drill", "at": self.event_at(0.225), "fn": self.robot_manual_mode_drill},
-            {"name": "market_special_smoke", "at": self.event_at(0.265), "fn": self.market_special_smoke},
-            {"name": "market_cera_drill", "at": self.event_at(0.305), "fn": self.market_cera_drill},
-            {"name": "market_startup_iteminfo_race", "at": self.event_at(0.345), "fn": self.market_startup_iteminfo_race},
-            {"name": "pvf_file_fault", "at": self.event_at(0.385), "fn": self.pvf_file_fault},
-            {"name": "market_button_flow", "at": self.event_at(0.425), "fn": self.market_button_flow},
-            {"name": "target_mid", "at": self.event_at(0.465), "fn": lambda: self.set_target(mid)},
-            {"name": "manual_collision", "at": self.event_at(0.505), "fn": self.manual_collision},
-            {"name": "robot_store_lifecycle_storm", "at": self.event_at(0.545), "fn": self.robot_store_lifecycle_storm},
-            {"name": "db_stock_external_clear", "at": self.event_at(0.585), "fn": self.db_stock_external_clear},
-            {"name": "db_schema_drift", "at": self.event_at(0.625), "fn": self.db_schema_drift},
-            {"name": "target_high", "at": self.event_at(0.665), "fn": lambda: self.set_target(high)},
-            {"name": "cleanup_burst", "at": self.event_at(0.705), "fn": self.cleanup_burst},
-            {"name": "robot_cleanup_edge_cases", "at": self.event_at(0.745), "fn": self.robot_cleanup_edge_cases},
-            {"name": "config_dir_fault", "at": self.event_at(0.785), "fn": self.config_dir_fault},
-            {"name": "web_api_fault", "at": self.event_at(0.825), "fn": self.web_api_fault},
-            {"name": "port_conflict_fault", "at": self.event_at(0.855), "fn": self.port_conflict_fault},
-            {"name": "mysql_restart_fault", "at": self.event_at(0.885), "fn": self.mysql_restart_fault},
-            {"name": "monitor_fault", "at": self.event_at(0.915), "fn": self.monitor_fault},
-            {"name": "game_port_fault", "at": self.event_at(0.94), "fn": self.game_port_fault},
-            {"name": "robot_restart_under_load", "at": self.event_at(0.955), "fn": lambda: self.robot_restart_under_load(high)},
-            {"name": "robot_restart", "at": self.event_at(0.965), "fn": self.robot_restart},
-            {"name": "custom_key_test", "at": self.event_at(0.975), "fn": self.custom_key_test},
-            {"name": "final_target_mid", "at": self.event_at(0.985), "fn": lambda: self.set_target(mid)},
+            {"name": "target20", "fn": lambda: self.set_target(20)},
+            {"name": "robot_scale_wave", "fn": lambda: self.robot_scale_wave(low, mid, high)},
+            {"name": "smoke_actions", "fn": self.smoke_actions},
+            {"name": "robot_action_storm", "fn": self.robot_action_storm},
+            {"name": "announcement_check", "fn": self.announcement_check},
+            {"name": "market_fault", "fn": self.market_fault},
+            {"name": "market_operation_storm", "fn": self.market_operation_storm},
+            {"name": "robot_manual_mode_drill", "fn": self.robot_manual_mode_drill},
+            {"name": "market_special_smoke", "fn": self.market_special_smoke},
+            {"name": "market_weapon_target_smoke", "fn": self.market_weapon_target_smoke},
+            {"name": "market_cera_drill", "fn": self.market_cera_drill},
+            {"name": "market_startup_iteminfo_race", "fn": self.market_startup_iteminfo_race},
+            {"name": "pvf_file_fault", "fn": self.pvf_file_fault},
+            {"name": "market_button_flow", "fn": self.market_button_flow},
+            {"name": "target_mid", "fn": lambda: self.set_target(mid)},
+            {"name": "manual_collision", "fn": self.manual_collision},
+            {"name": "robot_store_lifecycle_storm", "fn": self.robot_store_lifecycle_storm},
+            {"name": "db_stock_external_clear", "fn": self.db_stock_external_clear},
+            {"name": "db_schema_drift", "fn": self.db_schema_drift},
+            {"name": "target_high", "fn": lambda: self.set_target(high)},
+            {"name": "cleanup_burst", "fn": self.cleanup_burst},
+            {"name": "robot_cleanup_edge_cases", "fn": self.robot_cleanup_edge_cases},
+            {"name": "config_dir_fault", "fn": self.config_dir_fault},
+            {"name": "web_api_fault", "fn": self.web_api_fault},
+            {"name": "port_conflict_fault", "fn": self.port_conflict_fault},
+            {"name": "mysql_restart_fault", "fn": self.mysql_restart_fault},
+            {"name": "monitor_fault", "fn": self.monitor_fault},
+            {"name": "game_port_fault", "fn": self.game_port_fault},
+            {"name": "robot_restart_under_load", "fn": lambda: self.robot_restart_under_load(high)},
+            {"name": "robot_restart", "fn": self.robot_restart},
+            {"name": "custom_key_test", "fn": self.custom_key_test},
+            {"name": "final_target_mid", "fn": lambda: self.set_target(mid)},
         ]
-
-    def event_at(self, ratio):
-        if ratio <= 0:
-            return 0
-        return int(min(max(self.total_sec * ratio, 1), max(self.total_sec - 30, 1)))
 
     def scaled_seconds(self, low, high):
         value = int(self.total_sec / 40)
@@ -799,6 +912,46 @@ echo RESTORED
         self.market_enable_auto(max_concurrent=8)
         self.sample_with_event("market_special_smoke_done")
         self.log("market_special_smoke done")
+
+    def market_weapon_target_smoke(self):
+        self.log("market_weapon_target_smoke begin")
+        targets = [
+            (28237, "swordman_beamsword"),
+            (37603, "thief_wand"),
+            (37605, "thief_dagger"),
+        ]
+        self.market_enable_auto(max_concurrent=8)
+        res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 2000, "max_concurrent": 8, "continue_on_error": True}, "market_weapon_target_smoke", attempts=36, delay_sec=5)
+        self.log("market_weapon_target_smoke restock result=%s" % json_text(res, 2600))
+        self.burst_sample("market_weapon_target_after_restock", self.scaled_seconds(20, 60), 10)
+        counts = self.auction_item_counts([item_id for item_id, _ in targets])
+        self.log("market_weapon_target_smoke counts=%s" % json_text(counts, 1200))
+        missing = []
+        for item_id, label in targets:
+            if to_int(counts.get(str(item_id))) <= 0:
+                missing.append("%s:%s" % (item_id, label))
+        if missing:
+            self.record_failure("market_weapon_target_missing", "target auction item ids missing from robot stock: %s" % ",".join(missing))
+        self.sample_with_event("market_weapon_target_smoke_done")
+        self.log("market_weapon_target_smoke done")
+
+    def auction_item_counts(self, item_ids):
+        ids = []
+        for item_id in item_ids:
+            try:
+                ids.append(str(int(item_id)))
+            except Exception:
+                pass
+        if not ids:
+            return {}
+        query = "SELECT item_id,COUNT(*) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND item_id IN (%s) GROUP BY item_id;" % ",".join(ids)
+        out = self.shell("mysql -ugame -puu5!^%%jg -N -e %s" % shell_quote(query), 30, log_output=False)
+        counts = {}
+        for line in safe_text(out).splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                counts[parts[0]] = parts[1]
+        return counts
 
     def market_operation_storm(self):
         self.log("market_operation_storm begin")
@@ -1288,6 +1441,7 @@ fi
             return
         self.robot_call("robotsStoreAsync", {"uids": uids[:18]}, "robot_store_lifecycle")
         self.burst_sample("robot_store_lifecycle_store", self.scaled_seconds(20, 60), 10)
+        self.assert_store_presence("robot_store_lifecycle")
         self.robot_call("robotsLogoutAsync", {"uids": uids[6:14]}, "robot_store_lifecycle")
         time.sleep(10)
         if not self.args.no_cleanup:
@@ -1994,6 +2148,7 @@ tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth 
             "deleted_total": self.deleted_total,
             "out_dir": self.out_dir,
             "args": vars(self.args),
+            "round_orders": self.round_orders,
             "events": self.results,
             "failure_count": len(failures),
         }
@@ -2018,15 +2173,25 @@ tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth 
         lines.append("- started_at: %s" % datetime.datetime.fromtimestamp(self.started).isoformat())
         lines.append("- finished_at: %s" % datetime.datetime.now().isoformat())
         lines.append("- duration_sec: %s" % int(time.time() - self.started))
+        lines.append("- seed: %s" % self.args.seed)
+        lines.append("- min_rounds: %s" % self.args.rounds)
+        lines.append("- time_limit_sec: %s" % self.time_limit_sec)
+        lines.append("- completed_rounds_seen: %s" % len(self.round_orders))
         lines.append("- events: %s" % len(self.results))
         lines.append("- failures: %s" % len(failures))
+        lines.append("")
+        lines.append("## Round Orders")
+        lines.append("")
+        for item in self.round_orders:
+            lines.append("- round %s: %s" % (item.get("round"), ", ".join(item.get("order") or [])))
         lines.append("")
         lines.append("## Events")
         lines.append("")
         for item in self.results:
             status = "FAIL" if item.get("error") or not item.get("recovered") else "OK"
-            lines.append("- %s %s duration=%ss recovered=%s error=%s" % (
+            lines.append("- %s round=%s %s duration=%ss recovered=%s error=%s" % (
                 status,
+                item.get("round", ""),
                 item.get("name"),
                 item.get("duration_sec"),
                 item.get("recovered"),
@@ -2049,37 +2214,45 @@ tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="VM-local random stability pressure script")
-    parser.add_argument("--hours", type=float, default=1.0)
-    parser.add_argument("--robot-host", default="127.0.0.1")
-    parser.add_argument("--robot-port", type=int, default=8111)
-    parser.add_argument("--api-timeout", type=float, default=20.0)
-    parser.add_argument("--out-dir", default="")
-    parser.add_argument("--sample-interval", type=int, default=10)
-    parser.add_argument("--log-snapshot-interval", type=int, default=5 * 60)
-    parser.add_argument("--target-min", type=int, default=100)
-    parser.add_argument("--target-max", type=int, default=600)
-    parser.add_argument("--target-min-interval", type=int, default=20 * 60)
-    parser.add_argument("--target-max-interval", type=int, default=40 * 60)
-    parser.add_argument("--cleanup-min-interval", type=int, default=30 * 60)
-    parser.add_argument("--cleanup-max-interval", type=int, default=45 * 60)
-    parser.add_argument("--user-interleave-min-interval", type=int, default=90)
-    parser.add_argument("--user-interleave-max-interval", type=int, default=180)
-    parser.add_argument("--market-zero-grace", type=int, default=180)
-    parser.add_argument("--cleanup-min-count", type=int, default=1)
-    parser.add_argument("--cleanup-max-count", type=int, default=3)
-    parser.add_argument("--cleanup-max-total", type=int, default=30)
-    parser.add_argument("--cleanup-logout-wait", type=int, default=15)
-    parser.add_argument("--status-count", type=int, default=1000)
-    parser.add_argument("--log-tail-lines", type=int, default=2000)
-    parser.add_argument("--no-cleanup", action="store_true")
-    parser.add_argument("--allow-online-cleanup", dest="allow_online_cleanup", action="store_true", default=True)
-    parser.add_argument("--no-allow-online-cleanup", dest="allow_online_cleanup", action="store_false")
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("rounds", nargs="?", type=int, default=1, help="minimum complete shuffled rounds to run; default: 1")
+    parser.add_argument("time_limit", nargs="?", default="", help="optional deadline duration, for example 30m, 6h, 1d")
+    parser.add_argument("--robot-host", default="127.0.0.1", help=argparse.SUPPRESS)
+    parser.add_argument("--robot-port", type=int, default=8111, help=argparse.SUPPRESS)
+    parser.add_argument("--api-timeout", type=float, default=20.0, help=argparse.SUPPRESS)
+    parser.add_argument("--out-dir", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--sample-interval", type=int, default=10, help=argparse.SUPPRESS)
+    parser.add_argument("--log-snapshot-interval", type=int, default=5 * 60, help=argparse.SUPPRESS)
+    parser.add_argument("--target-min", type=int, default=100, help=argparse.SUPPRESS)
+    parser.add_argument("--target-max", type=int, default=600, help=argparse.SUPPRESS)
+    parser.add_argument("--target-min-interval", type=int, default=20 * 60, help=argparse.SUPPRESS)
+    parser.add_argument("--target-max-interval", type=int, default=40 * 60, help=argparse.SUPPRESS)
+    parser.add_argument("--cleanup-min-interval", type=int, default=30 * 60, help=argparse.SUPPRESS)
+    parser.add_argument("--cleanup-max-interval", type=int, default=45 * 60, help=argparse.SUPPRESS)
+    parser.add_argument("--user-interleave-min-interval", type=int, default=90, help=argparse.SUPPRESS)
+    parser.add_argument("--user-interleave-max-interval", type=int, default=180, help=argparse.SUPPRESS)
+    parser.add_argument("--market-zero-grace", type=int, default=180, help=argparse.SUPPRESS)
+    parser.add_argument("--cleanup-min-count", type=int, default=1, help=argparse.SUPPRESS)
+    parser.add_argument("--cleanup-max-count", type=int, default=3, help=argparse.SUPPRESS)
+    parser.add_argument("--cleanup-max-total", type=int, default=30, help=argparse.SUPPRESS)
+    parser.add_argument("--cleanup-logout-wait", type=int, default=15, help=argparse.SUPPRESS)
+    parser.add_argument("--status-count", type=int, default=1000, help=argparse.SUPPRESS)
+    parser.add_argument("--log-tail-lines", type=int, default=2000, help=argparse.SUPPRESS)
+    parser.add_argument("--no-cleanup", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--allow-online-cleanup", dest="allow_online_cleanup", action="store_true", default=True, help=argparse.SUPPRESS)
+    parser.add_argument("--no-allow-online-cleanup", dest="allow_online_cleanup", action="store_false", help=argparse.SUPPRESS)
+    parser.add_argument("--seed", type=int, default=0, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.rounds < 1:
+        args.rounds = 1
+    try:
+        parse_time_limit(args.time_limit)
+    except ValueError as exc:
+        print(safe_text(exc))
+        return 2
     if args.target_min > args.target_max:
         args.target_min, args.target_max = args.target_max, args.target_min
     if args.user_interleave_min_interval > args.user_interleave_max_interval:
