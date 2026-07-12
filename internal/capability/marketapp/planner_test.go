@@ -927,8 +927,8 @@ func TestRecordMarketPolicyJobKeepsPolicyAndAddsFeedback(t *testing.T) {
 		Plan:   &PlanSummary{Actions: 3},
 		Actions: []ActionEntry{
 			{OK: true},
-			{OK: false},
-			{OK: true, Error: "write timeout"},
+			{OK: false, Action: Action{Market: marketNameAuction, ItemID: 1001}, Reason: bytePtr(152)},
+			{OK: false, Action: Action{Market: marketNameAuction, ItemID: 1002}},
 		},
 	})
 
@@ -936,8 +936,26 @@ func TestRecordMarketPolicyJobKeepsPolicyAndAddsFeedback(t *testing.T) {
 	if status.Mode != marketPolicyModeRecover || status.Reason != "recovering" || status.DBKinds != 10 {
 		t.Fatalf("policy judgement was overwritten: %#v", status)
 	}
-	if status.LastJobStatus != MarketJobStatusPartialFailed || status.LastJobError != "1 actions failed" || status.LastPlanActions != 3 || status.LastActionResults != 3 || status.LastActionFailed != 2 {
+	if status.LastJobStatus != MarketJobStatusPartialFailed || status.LastJobError != "1 actions failed" || status.LastPlanActions != 3 || status.LastActionResults != 3 || status.LastActionFailed != 1 {
 		t.Fatalf("job feedback not recorded: %#v", status)
+	}
+}
+
+func TestRecordMarketPolicyJobIgnoresExplicitAuctionRejectsForServiceHealth(t *testing.T) {
+	app := testApp(t)
+	app.recordMarketPolicyJob("auction", JobSummary{
+		Status: MarketJobStatusPartialFailed,
+		Error:  "20 actions rejected",
+		Actions: []ActionEntry{
+			{OK: false, Action: Action{Market: marketNameAuction, ItemID: 1001}, Reason: bytePtr(152)},
+			{OK: false, Action: Action{Market: marketNameAuction, ItemID: 1002}, Reason: bytePtr(152)},
+			{OK: false, Action: Action{Market: marketNameAuction, ItemID: 1003}, Reason: bytePtr(152)},
+		},
+	})
+
+	status := app.policy["auction"]
+	if status.LastActionResults != 3 || status.LastActionFailed != 0 {
+		t.Fatalf("explicit rejects should not count as service failures: %#v", status)
 	}
 }
 
@@ -976,13 +994,10 @@ func TestNextMarketPolicyStateIsPureCounterLogic(t *testing.T) {
 	}
 }
 
-func TestMarketPolicyDegradesAfterRepeatedActionFailures(t *testing.T) {
+func TestMarketPolicyDegradesWithoutRestartAfterRepeatedActionFailures(t *testing.T) {
 	app := testApp(t)
 	restarts := 0
 	app.restarter = func(name, reason string) {
-		if name != marketServiceNameAuction || !strings.Contains(reason, "failures") {
-			t.Fatalf("unexpected restart name=%q reason=%q", name, reason)
-		}
 		restarts++
 	}
 	app.auctionQueue = []uint32{10075}
@@ -993,11 +1008,11 @@ func TestMarketPolicyDegradesAfterRepeatedActionFailures(t *testing.T) {
 	if status.Mode != marketPolicyModeDegraded || policy.MaxActions != 2000 || policy.MaxConcurrent != 4 {
 		t.Fatalf("repeated failure policy status=%#v policy=%#v", status, policy)
 	}
-	if restarts != 1 {
-		t.Fatalf("restarts=%d, want 1", restarts)
+	if restarts != 0 {
+		t.Fatalf("restarts=%d, want 0", restarts)
 	}
-	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 {
-		t.Fatalf("queues were not reset after action failure recovery: normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)
+	if len(app.auctionQueue) != 1 || len(app.auctionRejected) != 1 {
+		t.Fatalf("action failure backoff should keep queues: normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)
 	}
 }
 
@@ -1638,3 +1653,7 @@ func (r *clearStockRepository) DeleteSystemCreatureItems(string, uint32) (int64,
 }
 
 var _ Repository = (*clearStockRepository)(nil)
+
+func bytePtr(v byte) *byte {
+	return &v
+}

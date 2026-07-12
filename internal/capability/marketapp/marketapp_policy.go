@@ -88,8 +88,7 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 		status.Reason = "auction action failures are high; observing one recovery round"
 		status.Mode = marketPolicyModeRecover
 	case status.ActionFailureRounds == 2:
-		a.restartAuctionPolicyService(status, "action_failure_recovery", "auction action failures stayed high", "")
-		return degradeMarketPolicy(status, policy, "auction action failures stayed high; auction service restarted and send pressure reduced")
+		return degradeMarketPolicy(status, policy, "auction action failures stayed high; send pressure reduced")
 	case status.ActionFailureRounds >= 2:
 		return degradeMarketPolicy(status, policy, "auction action failures stayed high; send pressure reduced")
 	}
@@ -304,7 +303,7 @@ func (a *App) recordMarketPolicyJob(market string, job JobSummary) {
 		status.LastPlanActions = job.Plan.Actions
 	}
 	status.LastActionResults = len(job.Actions)
-	status.LastActionFailed = countFailedActionEntries(job.Actions)
+	status.LastActionFailed = countPolicyActionFailureEntries(job.Actions)
 	status.UpdatedAt = time.Now()
 	status.applyHealth()
 	a.policy[market] = status
@@ -325,14 +324,33 @@ func (a *App) currentMarketKinds(market string) (int, error) {
 	}
 }
 
-func countFailedActionEntries(entries []ActionEntry) int {
+func countPolicyActionFailureEntries(entries []ActionEntry) int {
 	failed := 0
 	for _, entry := range entries {
-		if !entry.OK || entry.Error != "" {
+		if isPolicyActionFailure(entry) {
 			failed++
 		}
 	}
 	return failed
+}
+
+func isPolicyActionFailure(entry ActionEntry) bool {
+	if entry.OK && entry.Error == "" {
+		return false
+	}
+	if entry.Error != "" {
+		return true
+	}
+	// A server-provided rejection reason means this item was explicitly refused.
+	// The item feedback path moves it to the rejected/cooldown queue, so it must
+	// not count as a service-health failure or trigger auction service recovery.
+	if entry.Reason != nil {
+		return false
+	}
+	if actionRequiresAuctionID(entry.Action) && entry.AuctionID == 0 {
+		return true
+	}
+	return false
 }
 
 func (s *MarketPolicyStatus) applyHealth() {
