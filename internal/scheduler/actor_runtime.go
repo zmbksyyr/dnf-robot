@@ -249,10 +249,16 @@ func (r *RobotRuntime) tryDisjointPosition(info robotcap.Info, rc robotconfig.Ru
 		robotLogf("[DISJOINT_VILLAGE_ERROR] uid=%d cid=%d village=%d err=%v\n", info.UID, info.CID, info.Village, err)
 		return false, "prepare_failed"
 	}
-	online, err := r.manager.sessionService().OnlineDisjoint(robotcap.CommandRequest{UIDs: []int{info.UID}}, disjointStoreCostGold, true, rc)
+	// Disjoint stalls are created by CMD 238 after the robot is fully running.
+	// Keep the login path normal here; setting disopen/discost in Dummylist and
+	// then also sending CMD 238 can leave the runtime without a direct 238 ACK.
+	online, err := r.manager.sessionService().Online(robotcap.CommandRequest{UIDs: []int{info.UID}}, false, true, rc)
 	if err != nil || online.Confirmed != 1 {
 		robotLogf("[DISJOINT_ONLINE_ERROR] uid=%d confirmed=%d failed=%d err=%v\n", info.UID, online.Confirmed, online.Failed, err)
 		return false, "online_failed"
+	}
+	if sleepWithStop(time.Second, shouldStop) {
+		return false, "cancelled"
 	}
 	fromGate := storecap.GateAreaForVillage(info.Village)
 	if fromGate != info.Area {
