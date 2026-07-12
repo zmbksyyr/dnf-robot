@@ -19,7 +19,7 @@ import (
 	"robot/internal/foundation/rsakey"
 )
 
-//go:embed defaults/*
+//go:embed defaults/*.pem
 var defaultFiles embed.FS
 
 type RuntimeKeySink func(*rsa.PrivateKey)

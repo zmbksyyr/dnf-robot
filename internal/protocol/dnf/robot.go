@@ -969,7 +969,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		if err == nil {
 			if r.sendRaw(pkt) {
 				if r.IsRefishUser == 1 && r.DB != nil {
-					_, _ = r.DB.Exec("update taiwan_cain_2nd.inventory set money=2000000000 where charac_no in(select b.charac_no from d_taiwan.accounts a left join taiwan_cain.charac_info b on a.uid=b.m_id where a.uid=?);", r.UID)
+					_, _ = r.DB.Exec("update taiwan_cain_2nd.inventory set money=1000000 where charac_no in(select b.charac_no from d_taiwan.accounts a left join taiwan_cain.charac_info b on a.uid=b.m_id where a.uid=?);", r.UID)
 				} else {
 					r.PacketID = 29
 					r.State = StateRun
