@@ -294,7 +294,7 @@ func generatedEquipmentItemInfoCategory(item shared.EquipmentCatalogItem) int {
 	parts := strings.Split(path, "/")
 	slot := strings.ToLower(item.Slot)
 	if slot == "weapon" {
-		return 10000 + equipmentCharacterCategoryCode(parts)*100 + nonNegativeInt(item.SubType) + 2
+		return 10000 + equipmentCharacterCategoryCode(parts)*100 + equipmentWeaponCategorySuffix(parts, item)
 	}
 	if armorClass := armorCategoryClass(parts); armorClass >= 0 {
 		if suffix := armorCategorySuffix(slot, armorClass); suffix > 0 {
@@ -374,6 +374,25 @@ func equipmentCharacterCategoryCode(parts []string) int {
 		}
 	}
 	return 0
+}
+
+func equipmentWeaponCategorySuffix(parts []string, item shared.EquipmentCatalogItem) int {
+	for i, part := range parts {
+		if part != "weapon" || i+1 >= len(parts) {
+			continue
+		}
+		switch parts[i+1] {
+		case "dagger":
+			return 2
+		case "twinsword":
+			return 3
+		case "wand":
+			return 4
+		case "beamsword":
+			return 6
+		}
+	}
+	return nonNegativeInt(item.SubType) + 2
 }
 
 func armorCategoryClass(parts []string) int {

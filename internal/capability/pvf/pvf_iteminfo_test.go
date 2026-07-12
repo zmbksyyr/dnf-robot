@@ -34,13 +34,17 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 	got := formatExtendedPVFItemInfoDAT(raw, []shared.EquipmentCatalogItem{
 		{ID: 3100060, Level: 90, Rarity: 4, ItemType: 8, Slot: "amulet", Path: "equipment/ancient/halin/3100060.equ"},
 		{ID: 35500001, Level: 90, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 3, Path: "equipment/character/fighter/weapon/boxglove/35500001.equ", UseJob: []int{1, 7}},
+		{ID: 28237, Level: 85, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 3, Path: "equipment/character/swordman/weapon/beamsword/28237.equ"},
+		{ID: 37603, Level: 85, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 1, Path: "equipment/character/thief/weapon/wand/37603.equ"},
+		{ID: 37604, Level: 85, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 1, Path: "equipment/character/thief/weapon/twinsword/37604.equ"},
+		{ID: 37605, Level: 85, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 1, Path: "equipment/character/thief/weapon/dagger/37605.equ"},
 		{ID: 100050203, Level: 85, Rarity: 4, ItemType: 3, Slot: "coat", Path: "equipment/character/common/jacket/cloth/100050203.equ"},
 	}, []shared.EquipmentCatalogItem{
 		{ID: 5057, Level: 85, Rarity: 1, Slot: "recipe", Path: "stackable/recipe/rcp_cloth_piece2.stk"},
 	})
 	lines := strings.Split(strings.TrimSpace(got), "\r\n")
-	if len(lines) != 5 {
-		t.Fatalf("lines = %d, want 5: %q", len(lines), got)
+	if len(lines) != 9 {
+		t.Fatalf("lines = %d, want 9: %q", len(lines), got)
 	}
 	assertLineContains(t, lines, "2675336 ", "13002")
 	assertLineContains(t, lines, "3100060 ", "12001")
@@ -53,6 +57,10 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 	assertLineHasToken(t, lines, "35500001 ", 3, "1")
 	assertLineHasToken(t, lines, "35500001 ", 12, "1")
 	assertLineHasToken(t, lines, "35500001 ", 13, "70")
+	assertLineContains(t, lines, "28237 ", "10106")
+	assertLineContains(t, lines, "37603 ", "10604")
+	assertLineContains(t, lines, "37604 ", "10603")
+	assertLineContains(t, lines, "37605 ", "10602")
 	assertLineContains(t, lines, "100050203 ", "11002")
 	assertLineHasToken(t, lines, "100050203 ", 13, "70")
 	assertLineContains(t, lines, "5057 ", "31305")
