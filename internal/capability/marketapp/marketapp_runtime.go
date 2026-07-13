@@ -1,7 +1,6 @@
 package marketapp
 
 import (
-	"bytes"
 	"database/sql"
 	"embed"
 	"encoding/json"
@@ -21,11 +20,6 @@ import (
 	"time"
 )
 
-// ---- auction_guard.go ----
-const defaultDFGameRJSPath = "/dp2/df_game_r.js"
-
-const auctionSearchGuardBegin = "// DP2_AUCTION_SEARCH_HOOK_GUARD_BEGIN"
-const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
 const auctionRejectedRetryEvery = 10
 const auctionRejectedRetryDivisor = 100
 const auctionSpecialBudgetDivisor = 10
@@ -33,88 +27,6 @@ const ceraRejectedTTL = 30 * time.Minute
 const marketServiceRestartCooldown = 10 * time.Minute
 const specialAddInfoBase int32 = 210000000
 const maxInt32 int32 = 2147483647
-
-const auctionSearchGuardSource = auctionSearchGuardBegin + `
-(function () {
-    var root = (typeof globalThis !== 'undefined') ? globalThis : this;
-    var key = '__dp2_auction_search_hook_guard_v1__';
-    if (root[key]) {
-        return;
-    }
-    root[key] = true;
-
-    var blocked = {};
-    blocked[ptr('0x084D75BC').toString().toLowerCase()] = true;
-
-    var rawReplace = Interceptor.replace.bind(Interceptor);
-    var rawRevert = Interceptor.revert.bind(Interceptor);
-
-    function addrOf(target) {
-        try {
-            return ptr(target).toString().toLowerCase();
-        } catch (e) {
-            try {
-                return target.toString().toLowerCase();
-            } catch (_) {
-                return '';
-            }
-        }
-    }
-
-    Interceptor.replace = function (target, replacement) {
-        var addr = addrOf(target);
-        if (blocked[addr]) {
-            try {
-                rawRevert(target);
-                Interceptor.flush();
-            } catch (e) {
-            }
-            console.log('[dp2 guard] blocked auction search Interceptor.replace at ' + addr);
-            return;
-        }
-        return rawReplace(target, replacement);
-    };
-
-    console.log('[dp2 guard] auction search hook guard installed');
-})();
-` + auctionSearchGuardEnd + `
-
-`
-
-func (a *App) InstallAuctionSearchGuard(req AuctionSearchGuardRequest) (AuctionSearchGuardResult, error) {
-	path := strings.TrimSpace(req.Path)
-	if path == "" {
-		path = defaultDFGameRJSPath
-	}
-	result := AuctionSearchGuardResult{Path: path}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return result, fmt.Errorf("read %s: %w", path, err)
-	}
-	if bytes.Contains(data, []byte(auctionSearchGuardBegin)) {
-		result.Installed = true
-		result.Message = "auction search hook guard already installed"
-		a.appendLog(LogEvent{Type: "auction_guard", Status: marketLogStatusExists, Message: path})
-		return result, nil
-	}
-	backup := fmt.Sprintf("%s.bak_auction_guard_%s", path, time.Now().Format("20060102-150405"))
-	if err := os.MkdirAll(filepath.Dir(backup), 0755); err != nil {
-		return result, fmt.Errorf("prepare backup dir: %w", err)
-	}
-	if err := os.WriteFile(backup, data, 0644); err != nil {
-		return result, fmt.Errorf("backup %s: %w", backup, err)
-	}
-	next := append([]byte(auctionSearchGuardSource), data...)
-	if err := os.WriteFile(path, next, 0644); err != nil {
-		return result, fmt.Errorf("write %s: %w", path, err)
-	}
-	result.Backup = backup
-	result.Installed = true
-	result.Changed = true
-	result.Message = "auction search hook guard installed; restart df_game_r to apply"
-	a.appendLog(LogEvent{Type: "auction_guard", Status: marketLogStatusInstalled, Message: fmt.Sprintf("%s backup=%s", path, backup)})
-	return result, nil
-}
 
 // ---- auto.go ----
 func (a *App) StartAuto() {
@@ -724,229 +636,6 @@ func tcpReady(addr string, timeout time.Duration) bool {
 	return true
 }
 
-// ---- collector.go ----
-type collectRow struct {
-	Market       string
-	AuctionID    uint64
-	OwnerID      uint32
-	ItemID       uint32
-	Count        int32
-	StartPrice   int32
-	InstantPrice int32
-}
-
-func (a *App) CollectPlan(req CollectRequest) (PlanResult, error) {
-	result := PlanResult{GeneratedAt: time.Now()}
-	market := strings.ToLower(strings.TrimSpace(req.Market))
-	if market == "" || market == marketNameAuction {
-		rows, err := a.repository.LoadCollectRows(a.cfg.AuctionDB, marketNameAuction, a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
-		if err != nil {
-			return PlanResult{}, err
-		}
-		a.appendCollectActions(rows, &result)
-	}
-	if market == "" || market == marketNameCera || market == marketAliasGold {
-		rows, err := a.repository.LoadCollectRows(a.cfg.CeraDB, marketNameCera, a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
-		if err != nil {
-			return PlanResult{}, err
-		}
-		a.appendCollectActions(rows, &result)
-	}
-	result.Summary.Actions = len(result.Actions)
-	for _, action := range result.Actions {
-		switch action.Market {
-		case marketNameAuction:
-			result.Summary.AuctionActions++
-		case marketNameCera:
-			result.Summary.CeraActions++
-		}
-	}
-	if req.MaxActions > 0 && len(result.Actions) > req.MaxActions {
-		result.Actions = result.Actions[:req.MaxActions]
-	}
-	a.appendLog(LogEvent{Type: "collect_plan", Market: market, Summary: &result.Summary})
-	return result, nil
-}
-
-func (r SQLRepository) LoadCollectRows(dbName, market string, systemOwnerBase uint32, includeSystemOwners bool) ([]collectRow, error) {
-	ownerClause := "owner_id < ?"
-	if includeSystemOwners {
-		ownerClause = "owner_id >= 0 AND ? >= 0"
-	}
-	return r.loadCollectRowsWhere(dbName, market, ownerClause, systemOwnerBase)
-}
-
-func (r SQLRepository) LoadSystemCollectRows(dbName, market string, systemOwnerBase uint32) ([]collectRow, error) {
-	return r.loadCollectRowsWhere(dbName, market, "owner_id >= ?", systemOwnerBase)
-}
-
-func (r SQLRepository) loadCollectRowsWhere(dbName, market, ownerClause string, systemOwnerBase uint32) ([]collectRow, error) {
-	extraClause := ""
-	if market == marketNameCera {
-		extraClause = " AND price = -1 AND instant_price > 0"
-	}
-	query := fmt.Sprintf(
-		"SELECT auction_id,owner_id,item_id,IFNULL(add_info,0),IFNULL(price,0),IFNULL(instant_price,0) FROM %s.`auction_main` WHERE %s%s ORDER BY auction_id ASC",
-		quoteIdent(dbName), ownerClause, extraClause,
-	)
-	rows, err := r.db.Query(query, systemOwnerBase)
-	if err != nil {
-		if isMissingTable(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer rows.Close()
-	var out []collectRow
-	for rows.Next() {
-		var row collectRow
-		var count, start, instant sql.NullInt64
-		row.Market = market
-		if err := rows.Scan(&row.AuctionID, &row.OwnerID, &row.ItemID, &count, &start, &instant); err != nil {
-			return nil, err
-		}
-		if count.Valid {
-			row.Count = int32(count.Int64)
-		}
-		if start.Valid {
-			row.StartPrice = int32(start.Int64)
-		}
-		if instant.Valid {
-			row.InstantPrice = int32(instant.Int64)
-		}
-		if row.AuctionID == 0 {
-			continue
-		}
-		if row.InstantPrice <= 0 {
-			row.InstantPrice = row.StartPrice
-		}
-		if row.InstantPrice <= 0 {
-			continue
-		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func (r SQLRepository) CountSystemStock(dbName string, systemOwnerBase uint32) (int, error) {
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s.`auction_main` WHERE owner_id >= ?", quoteIdent(dbName))
-	var count int
-	if err := r.db.QueryRow(query, systemOwnerBase).Scan(&count); err != nil {
-		if isMissingTable(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return count, nil
-}
-
-func (r SQLRepository) DeleteSystemStock(dbName string, systemOwnerBase uint32) (int64, error) {
-	query := fmt.Sprintf("DELETE FROM %s.`auction_main` WHERE owner_id >= ?", quoteIdent(dbName))
-	res, err := r.db.Exec(query, systemOwnerBase)
-	if err != nil {
-		if isMissingTable(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return res.RowsAffected()
-}
-
-func (a *App) appendCollectActions(rows []collectRow, result *PlanResult) {
-	for i, row := range rows {
-		buyerID := a.cfg.SystemOwner.BuyerBase + uint32(i%maxInt(a.cfg.SystemOwner.RotateEvery, 1))
-		result.Actions = append(result.Actions, Action{
-			Market:       row.Market,
-			Kind:         "collect",
-			Operation:    "collect",
-			ItemID:       row.ItemID,
-			Count:        row.Count,
-			UnitPrice:    row.InstantPrice,
-			TotalPrice:   row.InstantPrice,
-			OwnerID:      buyerID,
-			OwnerName:    a.cfg.SystemOwner.OwnerName,
-			CountAddInfo: row.Count,
-			StartPrice:   row.StartPrice,
-			InstantPrice: row.InstantPrice,
-			AuctionID:    row.AuctionID,
-			Source:       "auction_main",
-		})
-	}
-}
-
-func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
-	if !a.jobMu.TryLock() {
-		job := busyMarketJob("collect")
-		return job, fmt.Errorf(job.Error)
-	}
-	defer a.jobMu.Unlock()
-	start := time.Now()
-	job := JobSummary{
-		ID:        fmt.Sprintf("collect-%d", start.UnixNano()),
-		Kind:      "collect",
-		Status:    MarketJobStatusRunning,
-		StartedAt: start,
-	}
-	a.setLastJob(job)
-	a.appendLog(LogEvent{Type: "job_start", JobID: job.ID, Status: job.Status})
-	plan, err := a.CollectPlan(req)
-	if err != nil {
-		job.Status = MarketJobStatusFailed
-		job.Error = err.Error()
-		job.EndedAt = time.Now()
-		job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
-		a.setLastJob(job)
-		a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Message: job.Error})
-		return job, err
-	}
-	job.Plan = &plan.Summary
-	maxActions := req.MaxActions
-	if maxActions <= 0 {
-		maxActions = a.cfg.Collector.MaxActions
-	}
-	actions := plan.Actions
-	if maxActions > 0 && len(actions) > maxActions {
-		actions = actions[:maxActions]
-	}
-	if !req.Execute {
-		job.Status = MarketJobStatusPlanned
-		job.EndedAt = time.Now()
-		job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
-		a.setLastJob(job)
-		a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Summary: job.Plan})
-		return job, nil
-	}
-	failedActions, entries, firstErr := a.executeActions(job.ID, actions, req.MaxConcurrent, req.ContinueOnError, &job)
-	a.reconcileCeraLanding(entries)
-	if firstErr != nil && !req.ContinueOnError {
-		job.Status = MarketJobStatusPartialFailed
-		job.Error = firstErr.Error()
-		job.EndedAt = time.Now()
-		job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
-		a.setLastJob(job)
-		a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Message: job.Error, Summary: job.Plan})
-		return job, firstErr
-	}
-	if failedActions > 0 {
-		job.Status = MarketJobStatusPartialFailed
-		job.Error = fmt.Sprintf("%d actions failed", failedActions)
-	} else {
-		job.Status = MarketJobStatusSuccess
-	}
-	job.EndedAt = time.Now()
-	job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
-	a.setLastJob(job)
-	a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Summary: job.Plan, Message: job.Error})
-	return job, firstErr
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // ---- db.go ----
 var mysqlIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
@@ -1222,8 +911,13 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 		count := auctionPlanActionCount(plan, i)
 		addInfo := count
 		upgrade := 0
+		endurance := 0
 		if plan.IsEquipment {
 			addInfo = 0
+			endurance = plan.Row.Endurance
+			if endurance <= 0 {
+				endurance = defaultAuctionEquipmentEndurance
+			}
 			upgrade = plan.Row.Upgrade
 			if upgrade <= 0 {
 				upgrade = randRange(a.rand, a.cfg.Restock.UpgradeMin, a.cfg.Restock.UpgradeMax)
@@ -1232,7 +926,9 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 		unit := a.auctionUnitPrice(plan.Row.SystemPrice, plan.IsEquipment, plan.BatchInflate, upgrade)
 		total := unit
 		if !plan.IsEquipment {
-			total = unit * count
+			count = safeAuctionStackCount(unit, count)
+			addInfo = count
+			total = safeAuctionTotalPrice(unit, count)
 		}
 		result.Actions = append(result.Actions, Action{
 			Market:       marketNameAuction,
@@ -1249,9 +945,44 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			StartPrice:   total - 1,
 			InstantPrice: total,
 			Upgrade:      upgrade,
+			Endurance:    endurance,
 			Source:       auctionActionSource(plan.Row),
 		})
 	}
+}
+
+func safeAuctionStackCount(unit int32, count int32) int32 {
+	if count <= 0 {
+		return 1
+	}
+	if unit <= 0 {
+		return count
+	}
+	maxCount := maxInt32 / unit
+	if maxCount < 1 {
+		return 1
+	}
+	if count > maxCount {
+		return maxCount
+	}
+	return count
+}
+
+func safeAuctionTotalPrice(unit int32, count int32) int32 {
+	if unit <= 0 {
+		unit = 1
+	}
+	if count <= 0 {
+		count = 1
+	}
+	total := int64(unit) * int64(count)
+	if total > int64(maxInt32) {
+		return maxInt32
+	}
+	if total < 1 {
+		return 1
+	}
+	return int32(total)
 }
 
 func auctionPlanActionCount(plan normalAuctionPlan, pos int) int32 {
@@ -1562,90 +1293,6 @@ func (a *App) allowMarketServiceRestart(name, reason string) bool {
 	return true
 }
 
-// ---- pricing.go ----
-func (a *App) price(base int32) int32 {
-	if base <= 0 {
-		base = 1
-	}
-	low, high := a.cfg.Restock.RandLow, a.cfg.Restock.RandHigh
-	if low <= 0 || high <= 0 || low == high {
-		return base
-	}
-	v := float64(base) * (low + a.rand.Float64()*(high-low))
-	if v < 1 {
-		return 1
-	}
-	return int32(v)
-}
-
-func (a *App) auctionUnitPrice(base int32, isEquipment bool, batchInflate float64, upgrade int) int32 {
-	if !isEquipment {
-		return a.price(base)
-	}
-	if base <= 0 {
-		base = 1000
-	}
-	if batchInflate <= 0 {
-		batchInflate = 1
-	}
-	price := float64(base) * batchInflate
-	price *= 1 + float64(upgrade)*a.cfg.Restock.UpgradePriceRate
-	low, high := a.cfg.Restock.RandLow, a.cfg.Restock.RandHigh
-	if low > 0 && high > 0 && low != high {
-		if high < low {
-			high = low
-		}
-		price *= low + a.rand.Float64()*(high-low)
-	}
-	if price < 1 {
-		return 1
-	}
-	const maxAuctionPrice = int32(2_000_000_000)
-	if price > float64(maxAuctionPrice) {
-		return maxAuctionPrice
-	}
-	return int32(price)
-}
-
-func marketBasePrice(item catalogItem) int32 {
-	base := item.Price
-	if base <= 0 {
-		base = item.Value
-	}
-	if base <= 0 {
-		base = 1000
-	}
-	return base
-}
-
-func (a *App) pickOwner(occ map[uint32]int) uint32 {
-	owner := a.cfg.SystemOwner.IDBase
-	for occ[owner] >= a.cfg.SystemOwner.RotateEvery {
-		owner++
-	}
-	occ[owner]++
-	return owner
-}
-
-func (a *App) nextSpecialAddInfo() int32 {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
-	if a.specialAddInfo < specialAddInfoBase {
-		a.specialAddInfo = specialAddInfoBase
-		if a.repository != nil {
-			if max, err := a.repository.LoadMaxAddInfo(a.cfg.AuctionDB, specialAddInfoBase); err == nil && max >= a.specialAddInfo && max < maxInt32 {
-				a.specialAddInfo = max + 1
-			}
-		}
-	}
-	if a.specialAddInfo <= 0 || a.specialAddInfo >= maxInt32 {
-		a.specialAddInfo = specialAddInfoBase
-	}
-	v := a.specialAddInfo
-	a.specialAddInfo++
-	return v
-}
-
 // ---- auction_queue.go ----
 //
 //go:embed seeds/market_fallback_seed.json
@@ -1653,6 +1300,49 @@ var seedFiles embed.FS
 
 type fallbackSeed struct {
 	Core []corePoolItem `json:"core"`
+}
+
+func (a *App) targetAuctionSelection(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, itemIDs []uint32) (auctionQueueSelection, error) {
+	itemInfo := map[uint32]itemInfoEntry(nil)
+	if pvfReady {
+		var err error
+		itemInfo, _, err = a.currentItemInfoEntries()
+		if err != nil {
+			a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusBlocked, Message: err.Error()})
+			return auctionQueueSelection{}, nil
+		}
+	}
+
+	rows := make([]restockRow, 0, len(itemIDs))
+	selected := auctionQueueCounts{}
+	seen := map[uint32]bool{}
+	for _, id := range itemIDs {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if have[id] > 0 {
+			continue
+		}
+		entry, itemInfoAllowed := itemInfo[id]
+		if itemInfo != nil && !itemInfoAllowed {
+			continue
+		}
+		row, ok := a.auctionRowForID(pvfReady, catalog, id)
+		if !ok {
+			continue
+		}
+		if itemInfoAllowed && entry.ItemType >= 0 {
+			row.ItemType = entry.ItemType
+		}
+		rows = append(rows, row)
+		if specialAuctionKind(row.marketItem()) != "" {
+			selected.Special++
+		} else {
+			selected.Normal++
+		}
+	}
+	return auctionQueueSelection{Rows: rows, Selected: selected}, nil
 }
 
 func (a *App) nextAuctionQueueSelection(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) (auctionQueueSelection, error) {
@@ -2219,118 +1909,6 @@ func defaultCeraRows() []ceraRow {
 type actionTask struct {
 	index  int
 	action Action
-}
-
-type actionLogAccumulator struct {
-	total       int
-	ok          int
-	failed      int
-	errorCount  int
-	byMarket    map[string]int
-	byReason    map[string]int
-	failedItems map[uint32]actionLogFailedItem
-}
-
-type actionLogFailedItem struct {
-	count  int
-	reason string
-}
-
-func newActionLogAccumulator() actionLogAccumulator {
-	return actionLogAccumulator{
-		byMarket:    map[string]int{},
-		byReason:    map[string]int{},
-		failedItems: map[uint32]actionLogFailedItem{},
-	}
-}
-
-func (s *actionLogAccumulator) add(entry ActionEntry, err error) {
-	s.total++
-	s.byMarket[entry.Action.Market]++
-	if err == nil && entry.OK {
-		s.ok++
-		return
-	}
-	s.failed++
-	reason := actionLogReason(entry, err)
-	s.byReason[reason]++
-	if err != nil {
-		s.errorCount++
-	}
-	if entry.Action.ItemID != 0 {
-		item := s.failedItems[entry.Action.ItemID]
-		item.count++
-		if item.reason == "" {
-			item.reason = reason
-		}
-		s.failedItems[entry.Action.ItemID] = item
-	}
-}
-
-func (s actionLogAccumulator) summary() ActionLogSummary {
-	return ActionLogSummary{
-		Total:      s.total,
-		OK:         s.ok,
-		Failed:     s.failed,
-		ErrorCount: s.errorCount,
-		ByMarket:   compactCountMap(s.byMarket),
-		ByReason:   compactCountMap(s.byReason),
-		TopFailed:  topActionLogFailedItems(s.failedItems, 20),
-	}
-}
-
-func actionLogReason(entry ActionEntry, err error) string {
-	if err != nil {
-		return "executor_error"
-	}
-	if entry.Reason != nil {
-		return fmt.Sprintf("%d", *entry.Reason)
-	}
-	if actionRequiresAuctionID(entry.Action) && entry.AuctionID == 0 {
-		return "missing_auction_id"
-	}
-	return "rejected"
-}
-
-func auctionRejectionReason(entry ActionEntry, err error) string {
-	return actionLogReason(entry, err)
-}
-
-func actionRequiresAuctionID(action Action) bool {
-	return action.Market == marketNameAuction && action.Operation != "collect"
-}
-
-func compactCountMap(in map[string]int) map[string]int {
-	out := make(map[string]int, len(in))
-	for k, v := range in {
-		if k != "" && v > 0 {
-			out[k] = v
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func topActionLogFailedItems(in map[uint32]actionLogFailedItem, limit int) []ActionLogItem {
-	if len(in) == 0 || limit <= 0 {
-		return nil
-	}
-	items := make([]ActionLogItem, 0, len(in))
-	for id, stat := range in {
-		items = append(items, ActionLogItem{ItemID: id, Count: stat.count, Reason: stat.reason})
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Count == items[j].Count {
-			return items[i].ItemID < items[j].ItemID
-		}
-		return items[i].Count > items[j].Count
-	})
-	if len(items) > limit {
-		items = items[:limit]
-	}
-	return items
 }
 
 func (a *App) executeActions(jobID string, actions []Action, maxConcurrent int, continueOnError bool, job *JobSummary) (int, []ActionEntry, error) {

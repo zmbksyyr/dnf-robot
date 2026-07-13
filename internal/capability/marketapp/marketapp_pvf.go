@@ -251,6 +251,14 @@ func (a *App) waitSystemStockEmpty(logType, market, dbName string, timeout time.
 }
 
 func (a *App) currentItemInfoIDs() (map[uint32]bool, string, error) {
+	entries, path, err := a.currentItemInfoEntries()
+	if err != nil {
+		return nil, path, err
+	}
+	return itemInfoEntryIDSet(entries), path, nil
+}
+
+func (a *App) currentItemInfoEntries() (map[uint32]itemInfoEntry, string, error) {
 	for _, target := range a.cfg.ItemInfoTargets {
 		target = strings.TrimSpace(target)
 		if target == "" {
@@ -259,11 +267,11 @@ func (a *App) currentItemInfoIDs() (map[uint32]bool, string, error) {
 		if err := a.auctionServiceLoadedItemInfo(target); err != nil {
 			return nil, target, err
 		}
-		ids, err := readItemInfoIDs(target)
+		entries, err := readItemInfoEntries(target)
 		if err != nil {
 			continue
 		}
-		return ids, target, nil
+		return entries, target, nil
 	}
 	return nil, "", fmt.Errorf("no readable iteminfo target")
 }
@@ -341,11 +349,19 @@ func linuxClockTicks() int64 {
 }
 
 func readItemInfoIDs(path string) (map[uint32]bool, error) {
+	entries, err := readItemInfoEntries(path)
+	if err != nil {
+		return nil, err
+	}
+	return itemInfoEntryIDSet(entries), nil
+}
+
+func readItemInfoEntries(path string) (map[uint32]itemInfoEntry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	ids := make(map[uint32]bool)
+	entries := make(map[uint32]itemInfoEntry)
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if itemInfoLineHasNullName(line) {
@@ -359,12 +375,26 @@ func readItemInfoIDs(path string) (map[uint32]bool, error) {
 		if err != nil || id == 0 {
 			continue
 		}
-		ids[uint32(id)] = true
+		entry := itemInfoEntry{ItemType: -1}
+		if len(fields) > 1 {
+			if itemType, err := strconv.Atoi(fields[1]); err == nil {
+				entry.ItemType = itemType
+			}
+		}
+		entries[uint32(id)] = entry
 	}
-	if len(ids) == 0 {
+	if len(entries) == 0 {
 		return nil, fmt.Errorf("iteminfo target has no ids: %s", path)
 	}
-	return ids, nil
+	return entries, nil
+}
+
+func itemInfoEntryIDSet(entries map[uint32]itemInfoEntry) map[uint32]bool {
+	ids := make(map[uint32]bool, len(entries))
+	for id := range entries {
+		ids[id] = true
+	}
+	return ids
 }
 
 func itemInfoLineHasNullName(line string) bool {

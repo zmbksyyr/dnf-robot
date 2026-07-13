@@ -957,7 +957,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		binary.LittleEndian.PutUint16(r.setArea[4:6], r.CurY)
 		r.setArea[7] = 0x01
 		binary.LittleEndian.PutUint16(r.setArea[8:10], uint16(r.CurVillage))
-		binary.LittleEndian.PutUint16(r.setArea[10:12], uint16(dnfGateAreaForVillage(int(r.CurVillage))))
+		binary.LittleEndian.PutUint16(r.setArea[10:12], uint16(r.CurArea))
 		pkt, err = buildSendPacket(38, 26, r.setArea[:], r.Cipher)
 		if err == nil {
 			r.sendRaw(pkt)

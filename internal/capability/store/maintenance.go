@@ -63,12 +63,36 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 	normal.Area = rc.SpawnArea
 	normal.X = env.RandBetween(rc.SpawnXMin, rc.SpawnXMax)
 	normal.Y = env.RandBetween(rc.SpawnYMin, rc.SpawnYMax)
-	if mp, ok := env.RandomMap(maps, normal.Level); ok {
+	safeMaps := filterEligibleMaps(maps)
+	if mp, ok := env.RandomMap(safeMaps, normal.Level); ok {
 		normal.Village = mp.Village
 		normal.Area = mp.Area
 		normal.X = env.RandBetween(mp.XMin, mp.XMax)
 		normal.Y = env.RandBetween(mp.YMin, mp.YMax)
 	}
-	env.ApplyConfiguredLocation(&normal, rc, maps)
+	env.ApplyConfiguredLocation(&normal, rc, safeMaps)
+	if !IsAreaEligible(normal.Village, normal.Area) {
+		normal.Village = rc.SpawnFallbackVillage
+		normal.Area = rc.SpawnArea
+		normal.X = env.RandBetween(rc.SpawnXMin, rc.SpawnXMax)
+		normal.Y = env.RandBetween(rc.SpawnYMin, rc.SpawnYMax)
+		if !IsAreaEligible(normal.Village, normal.Area) {
+			normal.Village = 1
+			normal.Area = 0
+		}
+	}
 	return normal
+}
+
+func filterEligibleMaps(maps []shared.MapCatalogItem) []shared.MapCatalogItem {
+	if len(maps) == 0 {
+		return nil
+	}
+	out := maps[:0]
+	for _, mp := range maps {
+		if mp.Use && IsAreaEligible(mp.Village, mp.Area) {
+			out = append(out, mp)
+		}
+	}
+	return out
 }

@@ -48,6 +48,7 @@ const (
 	StoreReasonCancelled           = "cancelled"
 	StoreReasonRuntimeStopped      = "runtime_stopped"
 	StoreReasonDisplayWaitFailed   = "display_wait_failed"
+	StoreReasonErr011              = "store_err_0x11"
 	StoreReasonErr052              = "store_err_0x52"
 	StoreReasonErr052Zone          = "store_err_0x52_zone"
 )
@@ -415,10 +416,12 @@ func (c *PointCoordinator) load() error {
 			c.sourceName = cache.SourceFile
 			c.sourceMD5 = cache.SourceMD5
 			c.generatedAt = cache.Generated
-			c.points = cache.Points
-			c.rebuildIndexes()
-			c.logf("[StorePoint] cache_loaded source=%s md5=%s points=%d areas=%d tried=%d success=%d failed=%d\n", c.sourceName, c.sourceMD5, len(c.points), len(c.areaOrder), len(c.triedPoints), len(c.successPoints), len(c.failedPoints))
-			return nil
+			c.points = FilterEligibleGridPoints(cache.Points)
+			if len(c.points) > 0 {
+				c.rebuildIndexes()
+				c.logf("[StorePoint] cache_loaded source=%s md5=%s points=%d raw_points=%d areas=%d tried=%d success=%d failed=%d\n", c.sourceName, c.sourceMD5, len(c.points), len(cache.Points), len(c.areaOrder), len(c.triedPoints), len(c.successPoints), len(c.failedPoints))
+				return nil
+			}
 		}
 	}
 	var maps []shared.MapCatalogItem
@@ -559,6 +562,20 @@ func BuildGridPoints(maps []shared.MapCatalogItem) []GridPoint {
 	return points
 }
 
+func FilterEligibleGridPoints(points []GridPoint) []GridPoint {
+	if len(points) == 0 {
+		return nil
+	}
+	out := points[:0]
+	for _, pt := range points {
+		if !IsAreaEligible(pt.Village, pt.Area) {
+			continue
+		}
+		out = append(out, pt)
+	}
+	return out
+}
+
 func PointYStart(mp shared.MapCatalogItem) int {
 	if mp.YMax <= mp.YMin {
 		return mp.YMin
@@ -606,7 +623,7 @@ var GateAreaByVillage = map[int]int{
 var AreaEligible = map[[2]int]bool{
 	{1, 0}: true,
 	{2, 0}: true, {2, 1}: true, {2, 2}: true, {2, 3}: true, {2, 8}: true,
-	{3, 0}: true, {3, 1}: true, {3, 8}: true,
+	{3, 0}: true, {3, 8}: true,
 	{4, 0}: true, {4, 5}: true,
 	{5, 0}: true,
 	{6, 0}: true, {6, 1}: true,
@@ -640,7 +657,6 @@ var AreaPriority = map[string]int{
 	"3/0":  9,
 	"2/2":  9,
 	"10/2": 7,
-	"3/1":  6,
 	"1/0":  6,
 	"6/1":  4,
 	"25/1": 4,

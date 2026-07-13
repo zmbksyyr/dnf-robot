@@ -281,6 +281,9 @@ func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) string 
 		if err := decodePayload(pkt, &req); err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
 		}
+		if cleanupRequiresAsync(req) {
+			return wrapResult(map[string]interface{}{"ok": false, "error": "full cleanup must use cleanupRobotsAsync"})
+		}
 		res, err := manager.CleanupRobots(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res})
 	case "cleanupRobotsAsync":
@@ -301,6 +304,10 @@ func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) string 
 		logRobotActionf("unknown command: %s\n", cmd)
 		return wrapResult(map[string]interface{}{"ok": false, "error": "unknown command"})
 	}
+}
+
+func cleanupRequiresAsync(req robotcap.CleanupRequest) bool {
+	return req.Force && len(req.UIDs) == 0 && req.MinUID <= 0 && req.MaxUID <= 0
 }
 
 func goroutineDump() map[string]interface{} {

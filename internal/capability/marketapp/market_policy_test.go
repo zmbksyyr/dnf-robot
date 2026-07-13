@@ -39,16 +39,16 @@ func TestMarketPolicyRebuildsQueueAfterRepeatedZeroKinds(t *testing.T) {
 	app.auctionQueueSource = "pvf_iteminfo"
 
 	first := app.marketAutoPolicy("auction", app.cfg.Auto)
-	if first.MaxActions != app.cfg.Auto.MaxActions || first.MaxConcurrent != app.cfg.Auto.MaxConcurrent {
-		t.Fatalf("first policy changed pressure: %#v", first)
+	if first.MaxActions != 2000 || first.MaxConcurrent != 4 {
+		t.Fatalf("first zero round should reduce pressure: %#v", first)
 	}
 	if len(app.auctionQueue) == 0 || len(app.auctionRejected) == 0 {
 		t.Fatalf("first zero round should only observe queues: normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)
 	}
 
 	second := app.marketAutoPolicy("auction", app.cfg.Auto)
-	if second.MaxActions != app.cfg.Auto.MaxActions || second.MaxConcurrent != app.cfg.Auto.MaxConcurrent {
-		t.Fatalf("second policy should rebuild only: %#v", second)
+	if second.MaxActions != 2000 || second.MaxConcurrent != 4 {
+		t.Fatalf("second policy should rebuild and reduce pressure: %#v", second)
 	}
 	if len(app.auctionQueue) != 0 || len(app.auctionSpecialQueue) != 0 || len(app.auctionRejected) != 0 || app.auctionRejectedTick != 0 || app.auctionQueueSource != "" {
 		t.Fatalf("second zero round did not reset queues: normal=%v special=%v rejected=%v tick=%d source=%q", app.auctionQueue, app.auctionSpecialQueue, app.auctionRejected, app.auctionRejectedTick, app.auctionQueueSource)
@@ -291,6 +291,26 @@ func TestMarketPolicyDegradesWithoutRestartAfterRepeatedActionFailures(t *testin
 	}
 }
 
+func TestMarketPolicyReducesPressureOnFirstZeroKindRound(t *testing.T) {
+	app := testApp(t)
+	restarts := 0
+	app.restarter = func(name, reason string) {
+		restarts++
+	}
+	status := MarketPolicyStatus{Market: "auction", ZeroKindRounds: 1}
+	policy := app.applyAuctionPolicyActions(marketCandidateSnapshot{Count: 100}, &status, marketAutoPolicy{MaxActions: 10000, MaxConcurrent: 8})
+
+	if restarts != 0 {
+		t.Fatalf("restarts=%d, want 0", restarts)
+	}
+	if status.Mode != marketPolicyModeRecover || !strings.Contains(status.Reason, "zero") {
+		t.Fatalf("zero-kind first round should recover with zero reason: status=%#v", status)
+	}
+	if policy.MaxActions != 2000 || policy.MaxConcurrent != 4 {
+		t.Fatalf("zero-kind first round should reduce pressure: %#v", policy)
+	}
+}
+
 func TestMarketPolicyPrioritizesZeroKindRecoveryOverActionFailure(t *testing.T) {
 	app := testApp(t)
 	restarts := 0
@@ -311,8 +331,8 @@ func TestMarketPolicyPrioritizesZeroKindRecoveryOverActionFailure(t *testing.T) 
 	if status.Mode != marketPolicyModeRecover || !strings.Contains(status.Reason, "zero") {
 		t.Fatalf("zero-kind recovery was not prioritized: status=%#v", status)
 	}
-	if policy.MaxActions != 10000 || policy.MaxConcurrent != 8 {
-		t.Fatalf("zero-kind recovery should not be overwritten by action-failure degradation: %#v", policy)
+	if policy.MaxActions != 2000 || policy.MaxConcurrent != 4 {
+		t.Fatalf("zero-kind recovery should restart and reduce pressure: %#v", policy)
 	}
 	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 {
 		t.Fatalf("queues were not reset after zero-kind recovery: normal=%v rejected=%v", app.auctionQueue, app.auctionRejected)

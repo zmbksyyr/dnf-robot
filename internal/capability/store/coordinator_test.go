@@ -46,6 +46,7 @@ func TestStorePointFactConstants(t *testing.T) {
 		{StoreReasonCancelled, "cancelled"},
 		{StoreReasonRuntimeStopped, "runtime_stopped"},
 		{StoreReasonDisplayWaitFailed, "display_wait_failed"},
+		{StoreReasonErr011, "store_err_0x11"},
 		{StoreReasonErr052, "store_err_0x52"},
 		{StoreReasonErr052Zone, "store_err_0x52_zone"},
 	}
@@ -53,6 +54,21 @@ func TestStorePointFactConstants(t *testing.T) {
 		if tt.got != tt.want {
 			t.Fatalf("store fact constant got %q want %q", tt.got, tt.want)
 		}
+	}
+}
+
+func TestStoreErrReasonRetryClassification(t *testing.T) {
+	if got := StoreErrReason(0x11); got != StoreReasonErr011 {
+		t.Fatalf("StoreErrReason(0x11) got %q want %q", got, StoreReasonErr011)
+	}
+	if RetryStoreReasonWithNewPoint(StoreReasonErr011) {
+		t.Fatalf("store_err_0x11 should stop same-attempt point retries")
+	}
+	if !RetryStoreReasonWithNewPoint(StoreReasonErr052) {
+		t.Fatalf("store_err_0x52 should remain point-retryable")
+	}
+	if RetryStoreReasonWithNewPoint(StoreReasonRuntimeStopped) {
+		t.Fatalf("runtime_stopped should not retry another point")
 	}
 }
 
@@ -86,6 +102,48 @@ func TestBuildStoreGridPointsUsesLowerHalf(t *testing.T) {
 		if pt.Y < 320 {
 			t.Fatalf("generated upper-half point y=%d", pt.Y)
 		}
+	}
+}
+
+func TestBuildStoreGridPointsExcludesUnsafeVillageArea(t *testing.T) {
+	points := BuildGridPoints([]shared.MapCatalogItem{
+		{Village: 3, Area: 1, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+		{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+	})
+	if len(points) != 1 {
+		t.Fatalf("points got %d want 1", len(points))
+	}
+	if points[0].Village != 3 || points[0].Area != 0 {
+		t.Fatalf("unsafe area was not filtered: %+v", points[0])
+	}
+}
+
+func TestStorePointCoordinatorFiltersUnsafeCachedPoint(t *testing.T) {
+	configDir := t.TempDir()
+	data := writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
+	sum := md5.Sum(data)
+	cache := PointCache{
+		Version: PointCacheVer, SourceFile: "pvf_map_catalog.json", SourceMD5: hex.EncodeToString(sum[:]),
+		XStep: PointXStep, YStep: PointYStep, RegionX: PointRegionX, RegionY: PointRegionY,
+		Points: []GridPoint{
+			{ID: "3-1-0-0", Village: 3, Area: 1, X: 0, Y: 0, Region: "3/1/0/0"},
+			{ID: "3-0-0-0", Village: 3, Area: 0, X: 0, Y: 0, Region: "3/0/0/0"},
+		},
+	}
+	cacheData, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, PointCacheFile), cacheData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	c := NewPointCoordinator(configDir, nil)
+	pos, ok := c.Claim(1001)
+	if !ok {
+		t.Fatalf("claim failed")
+	}
+	if pos.Village != 3 || pos.Area != 0 {
+		t.Fatalf("claimed unsafe cached point: %+v", pos)
 	}
 }
 

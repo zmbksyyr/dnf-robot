@@ -77,9 +77,13 @@ func (a *App) applyAuctionPolicyActions(candidates marketCandidateSnapshot, stat
 		return degradeMarketPolicy(status, policy, "auction kinds still not growing below candidate count; send pressure reduced")
 	}
 	switch {
+	case status.ZeroKindRounds == 1:
+		status.Reason = "auction database has zero system item kinds; send pressure reduced"
+		status.Mode = marketPolicyModeRecover
+		return reduceMarketPolicyPressure(status, policy)
 	case status.ZeroKindRounds == 2:
 		a.restartAuctionPolicyService(status, "zero_kind_recovery", "auction kinds stayed zero", "auction kinds stayed zero; auction service restarted and queues rebuilt")
-		return policy
+		return reduceMarketPolicyPressure(status, policy)
 	case status.ZeroKindRounds >= 3:
 		return degradeMarketPolicy(status, policy, "auction kinds still zero; send pressure reduced")
 	}
@@ -122,6 +126,10 @@ func (a *App) recoverAuctionService(message, restartReason string) {
 func degradeMarketPolicy(status *MarketPolicyStatus, policy marketAutoPolicy, reason string) marketAutoPolicy {
 	status.Mode = marketPolicyModeDegraded
 	status.Reason = reason
+	return reduceMarketPolicyPressure(status, policy)
+}
+
+func reduceMarketPolicyPressure(status *MarketPolicyStatus, policy marketAutoPolicy) marketAutoPolicy {
 	policy.MaxActions = minPositive(policy.MaxActions, 2000)
 	policy.MaxConcurrent = minPositive(policy.MaxConcurrent, 4)
 	status.EffectiveMaxActions = policy.MaxActions

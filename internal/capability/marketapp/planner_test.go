@@ -120,6 +120,42 @@ func TestPlanAuctionStackableClampsToPVFStackLimit(t *testing.T) {
 	}
 }
 
+func TestPlanAuctionStackableAvoidsInt32TotalOverflow(t *testing.T) {
+	app := testApp(t)
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		63041: {ItemID: 63041, Name: "fallback stack", Kind: "stackable"},
+	}
+	app.planAuction([]restockRow{{
+		ItemID:      63041,
+		SystemPrice: 10276010,
+		Quantity:    2000,
+		StackSize:   2000,
+		Enabled:     true,
+		Source:      marketRowSourceFallbackSeed,
+	}}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 1 {
+		t.Fatalf("actions = %d, want 1", len(result.Actions))
+	}
+	action := result.Actions[0]
+	if action.Count <= 0 || action.Count >= 2000 {
+		t.Fatalf("count = %d, want reduced positive count", action.Count)
+	}
+	if action.CountAddInfo != action.Count {
+		t.Fatalf("count_add_info = %d, want %d", action.CountAddInfo, action.Count)
+	}
+	if action.TotalPrice <= 0 || action.InstantPrice <= 0 || action.StartPrice < 0 {
+		t.Fatalf("unexpected non-positive prices: %#v", action)
+	}
+	if int64(action.UnitPrice)*int64(action.Count) != int64(action.TotalPrice) {
+		t.Fatalf("total price mismatch: unit=%d count=%d total=%d", action.UnitPrice, action.Count, action.TotalPrice)
+	}
+	if action.TotalPrice > maxInt32 || action.InstantPrice > maxInt32 {
+		t.Fatalf("price exceeds int32 max: %#v", action)
+	}
+}
+
 func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}
@@ -140,9 +176,30 @@ func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 		if action.Upgrade < 7 || action.Upgrade > 13 {
 			t.Fatalf("equipment upgrade = %d, want 7..13", action.Upgrade)
 		}
+		if action.Endurance != defaultAuctionEquipmentEndurance {
+			t.Fatalf("equipment endurance = %d, want default", action.Endurance)
+		}
 		if action.ExtraAddInfo != 0 {
 			t.Fatalf("equipment extra_add_info = %d, want 0", action.ExtraAddInfo)
 		}
+	}
+}
+
+func TestPlanAuctionEquipmentKeepsExplicitEndurance(t *testing.T) {
+	app := testApp(t)
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		31056: {ItemID: 31056, Name: "weapon", Kind: "equipment", Attach: "trade", Slot: "weapon"},
+	}
+	app.planAuction([]restockRow{{
+		ItemID: 31056, SystemPrice: 88888, Quantity: 1, StackSize: 1, Endurance: 345, Enabled: true,
+	}}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 1 {
+		t.Fatalf("actions = %d, want 1", len(result.Actions))
+	}
+	if result.Actions[0].Endurance != 345 {
+		t.Fatalf("equipment endurance = %d, want explicit value", result.Actions[0].Endurance)
 	}
 }
 

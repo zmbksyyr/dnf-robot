@@ -397,6 +397,23 @@ class StabilityRun(object):
     def run_event(self, event, round_no=1):
         name = event["name"]
         self.log("scenario event start round=%s name=%s" % (round_no, name))
+        baseline_ready = self.ensure_baseline_ready("before_%s" % name)
+        if not baseline_ready:
+            before_path = self.write_snapshot("round%s_%s_baseline_before" % (round_no, name))
+            after_path = self.write_snapshot("round%s_%s_baseline_after" % (round_no, name))
+            result = {
+                "name": "baseline_before_%s" % name,
+                "round": round_no,
+                "started_at": datetime.datetime.now().isoformat(),
+                "duration_sec": 0,
+                "recovered": False,
+                "error": "baseline services were not ready before scenario",
+                "before": before_path,
+                "after": after_path,
+            }
+            self.results.append(result)
+            self.log("scenario event skipped name=%s reason=baseline_not_ready" % name)
+            return
         before_path = self.write_snapshot("round%s_%s_before" % (round_no, name))
         started = time.time()
         err = ""
@@ -438,18 +455,42 @@ class StabilityRun(object):
 
     def check_recovered(self, event):
         api = self.safe_call("systemStatus", {})
+        sched_res = self.safe_call("schedulerStatus", {})
+        sched = (sched_res.get("result") or {}) if isinstance(sched_res, dict) else {}
         market = self.market_status_result()
         ports = self.port_snapshot()
         ok = bool(isinstance(api, dict) and api.get("ok"))
+        scheduler_ok = not (sched.get("mode") == "maintenance" and sched.get("operation_active"))
         game_ok = bool(ports.get("10011"))
         market_ok = self.market_services_ready(market)
+        scaling_ok = ok and game_ok and market_ok and self.scaling_recovery_ok(event, sched)
+        if scaling_ok:
+            self.log("recover_check event=%s scaling_recovery_ok scheduler=%s" % (event, json_text(sched, 1400)))
+            return True
         if not ok:
             self.log("recover_check event=%s failed reason=robot_api api=%s" % (event, json_text(api, 1000)))
+        if not scheduler_ok:
+            self.log("recover_check event=%s failed reason=scheduler_maintenance scheduler=%s" % (event, json_text(sched, 1400)))
         if not game_ok:
             self.log("recover_check event=%s failed reason=game_port ports=%s" % (event, ports))
         if not market_ok:
             self.log("recover_check event=%s failed reason=market_services services=%s" % (event, json_text((market.get("services") or {}), 1400)))
-        return bool(ok and game_ok and market_ok)
+        return bool(ok and scheduler_ok and game_ok and market_ok)
+
+    def scaling_recovery_ok(self, event, sched):
+        if event not in ("target20", "target_mid", "target_high", "final_target_mid", "robot_scale_wave", "robot_restart", "robot_restart_under_load"):
+            return False
+        if not (sched.get("mode") == "maintenance" and sched.get("operation_active")):
+            return False
+        operation = str(sched.get("operation") or sched.get("recent_operation") or "")
+        if operation not in ("create", "cleanup"):
+            return False
+        target = int(sched.get("target_online") or 0)
+        actors = int(sched.get("actors") or 0)
+        running = int(sched.get("running") or 0)
+        connecting = int(sched.get("connecting") or 0)
+        actor_online = int(sched.get("actor_online") or 0)
+        return target > 0 and actors > 0 and (running > 0 or connecting > 0 or actor_online > 0)
 
     def check_market_invariants(self, event):
         status = self.market_status_result()
@@ -672,6 +713,7 @@ echo RESTORED
         self.robot_restart_without_target("final_recover_robot")
         if not self.wait_robot_api("final_recover_api", 90, 5):
             self.record_failure("final_recover_api_timeout", "robot API was not ready after final recovery")
+        self.set_target(20, settle_sec=0)
         self.market_enable_auto(max_concurrent=8)
         if not self.wait_market_services("final_recover_market", 240, 10):
             self.log("final_recover_market first attempt failed; clear system stock and retry")
@@ -695,6 +737,52 @@ echo RESTORED
                 return True
             time.sleep(interval_sec)
         self.log("wait_robot_api timeout event=%s last=%s" % (event, json_text(last, 1200)))
+        return False
+
+    def wait_game_port(self, event, timeout_sec=90, interval_sec=5):
+        self.log("wait_game_port start event=%s timeout=%s" % (event, timeout_sec))
+        deadline = time.time() + timeout_sec
+        last = {}
+        while time.time() < deadline:
+            last = self.port_snapshot()
+            if last.get("10011"):
+                self.log("wait_game_port ready event=%s ports=%s" % (event, last))
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_game_port timeout event=%s ports=%s" % (event, last))
+        return False
+
+    def ensure_baseline_ready(self, event, timeout_sec=120):
+        api_ok = self.wait_robot_api("%s_api" % event, 30, 5)
+        scheduler_ok = self.wait_scheduler_ready("%s_scheduler" % event, 30, 5)
+        game_ok = self.wait_game_port("%s_game" % event, 30, 5)
+        market_ok = self.wait_market_services("%s_market" % event, 30, 5)
+        if api_ok and scheduler_ok and game_ok and market_ok:
+            return True
+        self.log("ensure_baseline_ready recover event=%s api=%s scheduler=%s game=%s market=%s" % (event, api_ok, scheduler_ok, game_ok, market_ok))
+        self.shell("cd /root && (./run >/tmp/vm_random_baseline_run.log 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
+        if not api_ok:
+            self.robot_restart_without_target("%s_robot_restart" % event)
+        api_ok = self.wait_robot_api("%s_api_retry" % event, timeout_sec, 5)
+        scheduler_ok = self.wait_scheduler_ready("%s_scheduler_retry" % event, timeout_sec, 5)
+        game_ok = self.wait_game_port("%s_game_retry" % event, timeout_sec, 5)
+        market_ok = self.wait_market_services("%s_market_retry" % event, timeout_sec, 10)
+        ready = bool(api_ok and scheduler_ok and game_ok and market_ok)
+        self.log("ensure_baseline_ready done event=%s ready=%s api=%s scheduler=%s game=%s market=%s" % (event, ready, api_ok, scheduler_ok, game_ok, market_ok))
+        return ready
+
+    def wait_scheduler_ready(self, event, timeout_sec=90, interval_sec=5):
+        self.log("wait_scheduler_ready start event=%s timeout=%s" % (event, timeout_sec))
+        deadline = time.time() + timeout_sec
+        last = {}
+        while time.time() < deadline:
+            res = self.safe_call("schedulerStatus", {})
+            last = (res.get("result") or {}) if isinstance(res, dict) else {}
+            if isinstance(res, dict) and res.get("ok") and not (last.get("mode") == "maintenance" and last.get("operation_active")):
+                self.log("wait_scheduler_ready ready event=%s scheduler=%s" % (event, json_text(last, 1200)))
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_scheduler_ready timeout event=%s scheduler=%s" % (event, json_text(last, 1400)))
         return False
 
     def scenario_events(self):
@@ -721,7 +809,7 @@ echo RESTORED
             {"name": "robot_store_lifecycle_storm", "fn": self.robot_store_lifecycle_storm},
             {"name": "db_stock_external_clear", "fn": self.db_stock_external_clear},
             {"name": "db_schema_drift", "fn": self.db_schema_drift},
-            {"name": "target_high", "fn": lambda: self.set_target(high)},
+            {"name": "target_high", "fn": lambda: self.set_target(high, settle_sec=self.scaled_seconds(45, 90))},
             {"name": "cleanup_burst", "fn": self.cleanup_burst},
             {"name": "robot_cleanup_edge_cases", "fn": self.robot_cleanup_edge_cases},
             {"name": "config_dir_fault", "fn": self.config_dir_fault},
@@ -742,14 +830,17 @@ echo RESTORED
 
     def ensure_auto(self):
         self.set_target(20)
+        self.ensure_baseline_ready("initial")
 
-    def set_target(self, target):
+    def set_target(self, target, settle_sec=0):
         payload = {"updates": {"auto.auto_target_online_count": str(target), "auto.auto_actions": "true"}}
         res = self.safe_call("robotConfigUpdate", payload)
         self.log("set_target target=%s config=%s" % (target, json_text(res, 1200)))
         res = self.safe_call("autoStart", {})
         self.log("autoStart result=%s" % json_text(res, 1200))
         self.sample_with_event("after_set_target:%s" % target)
+        if settle_sec > 0:
+            self.burst_sample("set_target:%s" % target, settle_sec)
 
     def random_target(self):
         self.set_target(random.randint(self.args.target_min, self.args.target_max))
@@ -861,6 +952,8 @@ echo RESTORED
         self.log("announcement_check begin")
         res = self.safe_call("systemAnnouncement", {})
         self.log("announcement_check result=%s" % json_text(res, 1600))
+        if not (isinstance(res, dict) and res.get("ok")):
+            raise RuntimeError("systemAnnouncement failed: %s" % json_text(res, 1000))
         self.sample_with_event("announcement_check")
         self.burst_sample("announcement_recover", self.scaled_seconds(30, 90), 10)
 
@@ -886,6 +979,7 @@ echo RESTORED
         self.log("market_special_smoke before=%s" % json_text(before, 1200))
         res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 1000, "max_concurrent": 8, "continue_on_error": True}, "market_special_smoke", attempts=24, delay_sec=5)
         self.log("market_special_smoke restock result=%s" % json_text(res, 2600))
+        self.validate_market_action_prices(res, "market_special_smoke")
         special_action_ok = self.market_result_has_special_success(res)
         self.burst_sample("market_special_after_restock", self.scaled_seconds(30, 90), 10)
         after = self.wait_market_count(
@@ -920,20 +1014,116 @@ echo RESTORED
             (37603, "thief_wand"),
             (37605, "thief_dagger"),
         ]
-        self.market_enable_auto(max_concurrent=8)
-        res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 2000, "max_concurrent": 8, "continue_on_error": True}, "market_weapon_target_smoke", attempts=36, delay_sec=5)
+        stop = self.safe_call("marketStop", {})
+        self.log("market_weapon_target_smoke stop_auto=%s" % json_text(stop, 1200))
+        self.wait_market_job_idle("market_weapon_target_pre", 300, 5)
+        clear = self.market_call_when_idle("marketClearSystemStock", {}, "market_weapon_target_clear", attempts=24, delay_sec=5)
+        self.log("market_weapon_target_smoke clear result=%s" % json_text(clear, 1600))
+        target_ids = [item_id for item_id, _ in targets]
+        iteminfo = self.auction_iteminfo_presence(target_ids)
+        self.log("market_weapon_target_smoke iteminfo=%s" % json_text(iteminfo, 1200))
+        missing_iteminfo = []
+        for item_id, label in targets:
+            if not iteminfo.get(str(item_id)):
+                missing_iteminfo.append("%s:%s" % (item_id, label))
+        if missing_iteminfo:
+            self.record_failure("market_weapon_target_iteminfo_missing", "target auction item ids missing from auction iteminfo: %s" % ",".join(missing_iteminfo))
+        res = self.market_call_when_idle("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 64, "max_concurrent": 4, "continue_on_error": True, "item_ids": target_ids}, "market_weapon_target_smoke", attempts=24, delay_sec=5)
         self.log("market_weapon_target_smoke restock result=%s" % json_text(res, 2600))
+        self.validate_market_action_prices(res, "market_weapon_target_smoke")
         self.burst_sample("market_weapon_target_after_restock", self.scaled_seconds(20, 60), 10)
-        counts = self.auction_item_counts([item_id for item_id, _ in targets])
+        counts = self.auction_item_counts(target_ids)
         self.log("market_weapon_target_smoke counts=%s" % json_text(counts, 1200))
         missing = []
         for item_id, label in targets:
             if to_int(counts.get(str(item_id))) <= 0:
                 missing.append("%s:%s" % (item_id, label))
-        if missing:
+        target_actions, target_rejected = self.target_restock_rejected(res, target_ids)
+        self.log("market_weapon_target_smoke target_actions=%s target_rejected=%s" % (target_actions, target_rejected))
+        if missing and target_actions <= 0:
+            self.record_failure("market_weapon_target_no_actions", "target auction item ids produced no restock actions: %s" % ",".join(missing))
+        elif missing and not target_rejected:
             self.record_failure("market_weapon_target_missing", "target auction item ids missing from robot stock: %s" % ",".join(missing))
+        elif missing:
+            self.log("market_weapon_target_smoke stock_missing_but_server_rejected=%s" % ",".join(missing))
+        self.market_enable_auto(max_concurrent=8)
         self.sample_with_event("market_weapon_target_smoke_done")
         self.log("market_weapon_target_smoke done")
+
+    def auction_iteminfo_presence(self, item_ids):
+        wanted = set()
+        for item_id in item_ids:
+            try:
+                wanted.add(int(item_id))
+            except Exception:
+                pass
+        result = dict((str(item_id), False) for item_id in wanted)
+        paths = ["/home/neople/auction/iteminfo.dat", "/root/config/pvf_iteminfo.dat"]
+        for path in paths:
+            try:
+                with io.open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                    for line in fh:
+                        parts = line.strip().split()
+                        if not parts:
+                            continue
+                        try:
+                            item_id = int(parts[0])
+                        except Exception:
+                            continue
+                        if item_id in wanted and "== NULL" not in line:
+                            result[str(item_id)] = True
+                result["_source"] = path
+                return result
+            except Exception:
+                continue
+        result["_source"] = ""
+        return result
+
+    def target_restock_rejected(self, result, item_ids):
+        wanted = set([int(item_id) for item_id in item_ids])
+        payload = (result.get("result") or {}) if isinstance(result, dict) else {}
+        actions = payload.get("actions") or []
+        target_actions = []
+        for entry in actions:
+            action = entry.get("action") or {}
+            try:
+                item_id = int(action.get("item_id") or 0)
+            except Exception:
+                item_id = 0
+            if item_id in wanted:
+                target_actions.append(entry)
+        if not target_actions:
+            return 0, False
+        rejected = True
+        for entry in target_actions:
+            if entry.get("ok"):
+                rejected = False
+                break
+        return len(target_actions), rejected
+
+    def validate_market_action_prices(self, result, label):
+        payload = (result.get("result") or {}) if isinstance(result, dict) else {}
+        actions = payload.get("actions") or []
+        for idx, entry in enumerate(actions):
+            action = entry.get("action") or {}
+            market = safe_text(action.get("market") or "")
+            kind = safe_text(action.get("kind") or "")
+            item_id = action.get("item_id")
+            count = to_int(action.get("count"))
+            unit = to_int(action.get("unit_price"))
+            total = to_int(action.get("total_price"))
+            start = to_int(action.get("start_price"))
+            instant = to_int(action.get("instant_price"))
+            prefix = "%s action[%s] item_id=%s market=%s kind=%s" % (label, idx, item_id, market, kind)
+            if unit <= 0 or total <= 0 or instant <= 0:
+                self.record_failure("market_action_non_positive_price", "%s unit=%s total=%s instant=%s" % (prefix, unit, total, instant))
+            if market == "auction":
+                if start < 0:
+                    self.record_failure("market_action_negative_start_price", "%s start=%s instant=%s" % (prefix, start, instant))
+                if start >= instant:
+                    self.record_failure("market_action_invalid_price_order", "%s start=%s instant=%s" % (prefix, start, instant))
+                if kind == "stackable" and count > 0 and unit > 0 and total != unit * count:
+                    self.record_failure("market_action_total_mismatch", "%s unit=%s count=%s total=%s" % (prefix, unit, count, total))
 
     def auction_item_counts(self, item_ids):
         ids = []
@@ -967,6 +1157,7 @@ echo RESTORED
             command, payload = item
             res = self.safe_call(command, payload)
             self.log("market_operation_storm step=%s command=%s result=%s" % (idx, command, json_text(res, 2600)))
+            self.validate_market_action_prices(res, "market_operation_storm:%s:%s" % (idx, command))
             self.sample_with_event("market_operation_storm:%s:%s" % (idx, command))
             time.sleep(random.randint(2, 6))
         self.safe_call("marketStop", {})
@@ -986,6 +1177,7 @@ echo RESTORED
         for idx in range(3):
             res = self.market_call_when_idle("marketRestockOnce", {"market": "cera", "execute": True, "max_actions": 256, "max_concurrent": 8, "continue_on_error": True}, "market_cera_drill:%s" % idx, attempts=60, delay_sec=5)
             self.log("market_cera_drill restock idx=%s result=%s" % (idx, json_text(res, 2200)))
+            self.validate_market_action_prices(res, "market_cera_drill:%s" % idx)
             self.sample_with_event("market_cera_restock:%s" % idx)
             time.sleep(5)
         self.burst_sample("market_cera_drill_recover", self.scaled_seconds(20, 60), 10)
@@ -1203,6 +1395,7 @@ echo RESTORED
             self.sample_with_event("market_catalog_removed")
             res = self.safe_call("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 128, "max_concurrent": 4, "continue_on_error": True})
             self.log("market_missing_catalog restock result=%s" % json_text(res, 2200))
+            self.validate_market_action_prices(res, "market_missing_catalog")
             self.burst_sample("market_missing_catalog_fallback", 60, 10)
         finally:
             for path, backup in zip(paths, backups):
@@ -1222,6 +1415,7 @@ echo RESTORED
             self.sample_with_event("market_partial_catalog_written")
             res = self.safe_call("marketRestockOnce", {"market": "auction", "execute": True, "max_actions": 128, "max_concurrent": 4, "continue_on_error": True})
             self.log("market_partial_catalog restock result=%s" % json_text(res, 2200))
+            self.validate_market_action_prices(res, "market_partial_catalog")
             self.burst_sample("market_partial_catalog", self.scaled_seconds(20, 60), 10)
         finally:
             for path, backup in zip(paths, backups):
@@ -1465,7 +1659,7 @@ fi
             {"uids": [999999991, 999999992], "force": True},
             {"uids": ([uids[0], uids[0]] if uids else [999999993, 999999993]), "force": True},
             {"uids": (uids[:2] if len(uids) >= 2 else [999999994]), "force": False},
-            {"uids": [], "force": True},
+            {"uids": [999999995], "force": True},
         ]
         for idx, payload in enumerate(cases):
             res = self.safe_call("cleanupRobots", payload)

@@ -61,6 +61,41 @@ func TestAuctionQueueUsesCurrentItemInfoIntersection(t *testing.T) {
 	}
 }
 
+func TestTargetAuctionSelectionUsesExplicitItemIDs(t *testing.T) {
+	app := testApp(t)
+	dir := t.TempDir()
+	app.configDir = dir
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	mustWriteText(t, app.cfg.ItemInfoTargets[0], ""+
+		"28237 0 1 1 1 1 1 1 1 1 1 1 1 35 `beam` `beam` 10106\r\n"+
+		"37603 1 1 1 1 1 1 1 1 1 1 1 1 5 `wand` `wand` 10604\r\n")
+	catalog := map[uint32]catalogItem{
+		28237: {ItemID: 28237, Kind: "equipment", Level: 35, Attach: "trade", Slot: "weapon", Price: 100},
+		37603: {ItemID: 37603, Kind: "equipment", Level: 5, Attach: "trade", Slot: "weapon", Price: 100},
+		37605: {ItemID: 37605, Kind: "equipment", Level: 10, Attach: "trade", Slot: "weapon", Price: 100},
+		40000: {ItemID: 40000, Kind: "equipment", Level: 80, Attach: "trade", Slot: "weapon", Price: 100},
+	}
+	app.auctionQueue = []uint32{40000}
+
+	selection, err := app.targetAuctionSelection(true, catalog, map[uint32]int{37603: 1}, []uint32{37605, 28237, 37603, 28237})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := selection.Rows
+	if len(rows) != 1 || rows[0].ItemID != 28237 {
+		t.Fatalf("target rows = %#v, want only missing target allowed by iteminfo", rows)
+	}
+	if rows[0].ItemType != 0 {
+		t.Fatalf("target row item_type = %d, want iteminfo register type", rows[0].ItemType)
+	}
+	if selection.Selected.Normal != 1 || selection.Selected.Special != 0 {
+		t.Fatalf("selected counts = %#v", selection.Selected)
+	}
+	if !reflect.DeepEqual(app.auctionQueue, []uint32{40000}) {
+		t.Fatalf("target selection mutated normal queue: %v", app.auctionQueue)
+	}
+}
+
 func TestAuctionQueueSkipsNullNameItemInfoRows(t *testing.T) {
 	app := testApp(t)
 	dir := t.TempDir()

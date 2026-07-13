@@ -184,6 +184,7 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 		env.EndStoreBusy(info.UID)
 	}()
 	points := env.StorePoints()
+	finalReason := StoreReasonFailed
 	for try := 1; try <= tries; try++ {
 		if shouldStop != nil && shouldStop() {
 			env.Logf("[AutoStore] uid=%d cancelled_before_try=%d\n", info.UID, try)
@@ -202,16 +203,21 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 			return AutoAttemptSuccess
 		} else if reason != "" {
 			points.Report(info.UID, pos, try, false, reason)
+			if !RetryStoreReasonWithNewPoint(reason) {
+				finalReason = reason
+				env.Logf("[AutoStore] uid=%d hard_fail reason=%s try=%d/%d\n", info.UID, reason, try, tries)
+				break
+			}
 			continue
 		}
 		points.Report(info.UID, pos, try, false, StoreReasonFailed)
 	}
 	points.Flush()
 	_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
-	env.FinishStoreState(info.UID, info.CID, StoreReasonFailed)
-	env.Logf("[AutoStore] uid=%d failed_after=%d\n", info.UID, tries)
+	env.FinishStoreState(info.UID, info.CID, finalReason)
+	env.Logf("[AutoStore] uid=%d failed_after=%d reason=%s\n", info.UID, tries, finalReason)
 	env.AddAutoStore(0, 1, 0)
-	env.RestoreAutoNormalPosition(info, rc, StoreReasonFailed)
+	env.RestoreAutoNormalPosition(info, rc, finalReason)
 	return AutoAttemptFailed
 }
 
@@ -259,9 +265,17 @@ func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 	if shouldStop != nil && shouldStop() {
 		return false, StoreReasonCancelled
 	}
-	fromGate := GateAreaForVillage(info.Village)
-	if fromGate != info.Area {
-		areaSet := env.SetAreaFrom(info.UID, info.Village, info.Area, info.X, info.Y, info.Village, fromGate)
+	stAfterOnline, stOK := env.RuntimeStatusMap()[info.UID]
+	if stOK && stAfterOnline.Village == info.Village && stAfterOnline.Area == info.Area {
+		return w.startAndWaitDisplay(info, rc, try, shouldStop)
+	}
+	if stOK && (stAfterOnline.Village != info.Village || stAfterOnline.Area != info.Area) {
+		if !IsAreaEligible(stAfterOnline.Village, stAfterOnline.Area) || !IsAreaEligible(info.Village, info.Area) {
+			env.Logf("[AutoStore] uid=%d set_area_skipped_unsafe try=%d from=%d/%d to=%d/%d\n", info.UID, try, stAfterOnline.Village, stAfterOnline.Area, info.Village, info.Area)
+			env.FinishStoreState(info.UID, info.CID, StoreReasonSetAreaFailed)
+			return false, StoreReasonSetAreaFailed
+		}
+		areaSet := env.SetAreaFrom(info.UID, info.Village, info.Area, info.X, info.Y, stAfterOnline.Village, stAfterOnline.Area)
 		if !areaSet {
 			env.FinishStoreState(info.UID, info.CID, StoreReasonSetAreaFailed)
 			return false, StoreReasonSetAreaFailed
@@ -270,6 +284,11 @@ func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 			return false, StoreReasonCancelled
 		}
 	}
+	return w.startAndWaitDisplay(info, rc, try, shouldStop)
+}
+
+func (w Workflow) startAndWaitDisplay(info robotcap.Info, rc robotconfig.RuntimeConfig, try int, shouldStop func() bool) (bool, string) {
+	env := w.Env
 	title := fmt.Sprintf("tw-%d", info.UID%100000)
 	if !env.StartPrivateStore(info.UID, title) {
 		env.Logf("[AutoStore] uid=%d store_start_failed try=%d\n", info.UID, try)
@@ -333,7 +352,21 @@ func StoreErrReason(err byte) string {
 	if err == 0 {
 		return StoreReasonFailed
 	}
+	if err == 0x11 {
+		return StoreReasonErr011
+	}
 	return fmt.Sprintf("store_err_0x%02x", err)
+}
+
+func RetryStoreReasonWithNewPoint(reason string) bool {
+	switch reason {
+	case "", StoreReasonCancelled, StoreReasonRuntimeStopped, StoreReasonOnlineFailed, StoreReasonOnlineAttemptFailed, StoreReasonStartFailed, StoreReasonPrepareFailed:
+		return false
+	case StoreReasonErr011:
+		return false
+	default:
+		return true
+	}
 }
 
 func SleepWithStop(d time.Duration, shouldStop func() bool) bool {

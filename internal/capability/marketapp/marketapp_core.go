@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const defaultAuctionEquipmentEndurance = 1000
+
 // ---- app.go ----
 type App struct {
 	repository Repository
@@ -81,6 +83,10 @@ type auctionQueueCandidatesResult struct {
 	Normal  []uint32
 	Special []uint32
 	Source  string
+}
+
+type itemInfoEntry struct {
+	ItemType int
 }
 
 type auctionQueueSnapshot struct {
@@ -340,14 +346,24 @@ func (a *App) planAuctionMarket(req RestockRequest, catalog map[uint32]catalogIt
 		maxActions = a.cfg.Restock.MaxActions
 	}
 	decision.EffectiveMaxActions = maxActions
-	selection, err := a.nextAuctionQueueSelection(pvfReady, catalog, haveAuction, maxActions)
-	if err != nil {
-		return err
+	var rows []restockRow
+	if len(req.ItemIDs) > 0 {
+		selection, err := a.targetAuctionSelection(pvfReady, catalog, haveAuction, req.ItemIDs)
+		if err != nil {
+			return err
+		}
+		rows = selection.Rows
+		decision.AuctionSelected = selection.Selected
+	} else {
+		selection, err := a.nextAuctionQueueSelection(pvfReady, catalog, haveAuction, maxActions)
+		if err != nil {
+			return err
+		}
+		rows = selection.Rows
+		decision.AuctionBudget = selection.Budget
+		decision.AuctionSelected = selection.Selected
 	}
-	rows := selection.Rows
 	decision.SelectedAuctionRows = len(rows)
-	decision.AuctionBudget = selection.Budget
-	decision.AuctionSelected = selection.Selected
 	a.planAuction(rows, catalog, haveAuction, occ, result)
 	decision.captureQueues(a)
 	return nil
@@ -918,11 +934,12 @@ type AutoCfg struct {
 }
 
 type RestockRequest struct {
-	Market          string `json:"market,omitempty"`
-	Execute         bool   `json:"execute,omitempty"`
-	MaxActions      int    `json:"max_actions,omitempty"`
-	MaxConcurrent   int    `json:"max_concurrent,omitempty"`
-	ContinueOnError bool   `json:"continue_on_error,omitempty"`
+	Market          string   `json:"market,omitempty"`
+	Execute         bool     `json:"execute,omitempty"`
+	MaxActions      int      `json:"max_actions,omitempty"`
+	MaxConcurrent   int      `json:"max_concurrent,omitempty"`
+	ContinueOnError bool     `json:"continue_on_error,omitempty"`
+	ItemIDs         []uint32 `json:"item_ids,omitempty"`
 }
 
 type CollectRequest struct {
@@ -1192,6 +1209,7 @@ type Action struct {
 	StartPrice   int32  `json:"start_price"`
 	InstantPrice int32  `json:"instant_price"`
 	Upgrade      int    `json:"upgrade,omitempty"`
+	Endurance    int    `json:"endurance,omitempty"`
 	ExtraAddInfo int32  `json:"extra_add_info,omitempty"`
 	AuctionID    uint64 `json:"auction_id,omitempty"`
 	Source       string `json:"source"`
