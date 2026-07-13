@@ -19,7 +19,6 @@ type CreateEnv interface {
 	CopyTemplateDefaults(cid int) error
 	CreateBaseCharacter(info robotcap.Info, rc robotconfig.RuntimeConfig) error
 	EnsureAccount(uid int, innerIP string) error
-	EnsureStorePermission(uid, cid int) error
 	EnsureWorldHornByCID(cid int) error
 	EnsureSchema() error
 	EquipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error
@@ -108,9 +107,6 @@ func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig) e
 		return err
 	}
 	if err := env.EnsureWorldHornByCID(info.CID); err != nil {
-		return err
-	}
-	if err := env.EnsureStorePermission(info.UID, info.CID); err != nil {
 		return err
 	}
 	if err := env.RebuildCharacView(info.UID); err != nil {

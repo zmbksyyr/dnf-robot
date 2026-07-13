@@ -44,10 +44,6 @@ func (e lifecycleCreateEnv) EnsureAccount(uid int, innerIP string) error {
 	return e.manager.schemaRepo().EnsureAccount(uid, innerIP)
 }
 
-func (e lifecycleCreateEnv) EnsureStorePermission(uid, cid int) error {
-	return e.manager.storePreparer().EnsureStorePermission(uid, cid)
-}
-
 func (e lifecycleCreateEnv) EnsureWorldHornByCID(cid int) error {
 	return e.manager.storePreparer().EnsureWorldHornByCID(cid)
 }

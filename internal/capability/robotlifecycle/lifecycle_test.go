@@ -90,8 +90,6 @@ func (e *testCreateEnv) CreateBaseCharacter(robotcap.Info, robotconfig.RuntimeCo
 
 func (e *testCreateEnv) EnsureAccount(int, string) error { return nil }
 
-func (e *testCreateEnv) EnsureStorePermission(int, int) error { return nil }
-
 func (e *testCreateEnv) EnsureWorldHornByCID(int) error { return nil }
 
 func (e *testCreateEnv) EnsureSchema() error { return nil }
