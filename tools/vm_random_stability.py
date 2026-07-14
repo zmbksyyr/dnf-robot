@@ -1192,6 +1192,8 @@ echo RESTORED
 
     def market_startup_iteminfo_race(self):
         self.log("market_startup_iteminfo_race begin")
+        self.market_enable_auto(max_concurrent=8)
+        self.wait_market_auto_running("market_startup_race_auto_before", 120, 10)
         self.sample_with_event("market_startup_race_before")
         self.shell("cd /root && (./stop >/tmp/vm_random_stop_market_race.log 2>&1 || true); sleep 12; ss -lntp | grep -E ':(10011|30303)' || true", 180)
         self.robot_restart_without_target("market_startup_race_robot_restart_game_down")
