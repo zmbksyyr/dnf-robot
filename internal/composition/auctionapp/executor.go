@@ -88,6 +88,7 @@ func (e *actionExecutor) executeDirectWithSession(action marketapp.Action) (auct
 			CID:            action.OwnerID,
 			OwnerID:        action.OwnerID,
 			OwnerName:      action.OwnerName,
+			OwnerType:      1,
 			ItemID:         action.ItemID,
 			CountOrAddInfo: action.CountAddInfo,
 			ItemType:       byte(action.ItemType),

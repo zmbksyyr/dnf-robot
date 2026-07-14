@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const defaultAuctionEquipmentEndurance = 1000
+const defaultAuctionEquipmentEndurance = 10
 
 // ---- app.go ----
 type App struct {

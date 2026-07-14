@@ -96,6 +96,32 @@ func TestTargetAuctionSelectionUsesExplicitItemIDs(t *testing.T) {
 	}
 }
 
+func TestTargetAuctionSelectionKeepsPVFNormalEquipmentType(t *testing.T) {
+	app := testApp(t)
+	dir := t.TempDir()
+	app.configDir = dir
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	mustWriteText(t, app.cfg.ItemInfoTargets[0], "10016 2 1 1 1 1 1 1 1 1 1 1 1 28 `seal coat` `seal coat` 11001\r\n")
+	catalog := map[uint32]catalogItem{
+		10016: {ItemID: 10016, Kind: "equipment", ItemType: 3, Attach: "sealing", Slot: "coat", Price: 100},
+	}
+
+	selection, err := app.targetAuctionSelection(true, catalog, map[uint32]int{}, []uint32{10016})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := selection.Rows
+	if len(rows) != 1 {
+		t.Fatalf("target rows = %#v, want one row", rows)
+	}
+	if rows[0].Kind != "equipment" || rows[0].ItemType != 3 {
+		t.Fatalf("target row = %#v, want PVF normal equipment type 3", rows[0])
+	}
+	if selection.Selected.Normal != 1 || selection.Selected.Special != 0 {
+		t.Fatalf("selected counts = %#v, want one normal row", selection.Selected)
+	}
+}
+
 func TestAuctionQueueSkipsNullNameItemInfoRows(t *testing.T) {
 	app := testApp(t)
 	dir := t.TempDir()

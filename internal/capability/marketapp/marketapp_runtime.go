@@ -912,8 +912,10 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 		addInfo := count
 		upgrade := 0
 		endurance := 0
+		itemType := plan.Item.ItemType
 		if plan.IsEquipment {
 			addInfo = 0
+			itemType = auctionEquipmentProtocolItemType(plan.Item)
 			endurance = plan.Row.Endurance
 			if endurance <= 0 {
 				endurance = defaultAuctionEquipmentEndurance
@@ -934,7 +936,7 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			Market:       marketNameAuction,
 			Kind:         plan.Item.Kind,
 			ItemID:       plan.Row.ItemID,
-			ItemType:     plan.Item.ItemType,
+			ItemType:     itemType,
 			Name:         plan.Item.Name,
 			Count:        count,
 			UnitPrice:    unit,
@@ -949,6 +951,20 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			Source:       auctionActionSource(plan.Row),
 		})
 	}
+}
+
+func auctionEquipmentProtocolItemType(item catalogItem) int {
+	if specialAuctionKind(item) != "" {
+		return item.ItemType
+	}
+	if auctionEquipmentShouldSeal(item) {
+		return 1
+	}
+	return 0
+}
+
+func auctionEquipmentShouldSeal(item catalogItem) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(item.Attach)), "sealing")
 }
 
 func safeAuctionStackCount(unit int32, count int32) int32 {
@@ -1332,7 +1348,7 @@ func (a *App) targetAuctionSelection(pvfReady bool, catalog map[uint32]catalogIt
 		if !ok {
 			continue
 		}
-		if itemInfoAllowed && entry.ItemType >= 0 {
+		if itemInfoAllowed && shouldApplyItemInfoType(row, entry) {
 			row.ItemType = entry.ItemType
 		}
 		rows = append(rows, row)
@@ -1343,6 +1359,16 @@ func (a *App) targetAuctionSelection(pvfReady bool, catalog map[uint32]catalogIt
 		}
 	}
 	return auctionQueueSelection{Rows: rows, Selected: selected}, nil
+}
+
+func shouldApplyItemInfoType(row restockRow, entry itemInfoEntry) bool {
+	if entry.ItemType < 0 {
+		return false
+	}
+	if row.Kind == "equipment" && row.ItemType > 0 && specialAuctionKind(row.marketItem()) == "" {
+		return false
+	}
+	return true
 }
 
 func (a *App) nextAuctionQueueSelection(pvfReady bool, catalog map[uint32]catalogItem, have map[uint32]int, maxActions int) (auctionQueueSelection, error) {

@@ -203,6 +203,29 @@ func TestPlanAuctionEquipmentKeepsExplicitEndurance(t *testing.T) {
 	}
 }
 
+func TestPlanAuctionEquipmentProtocolTypeUsesSealFlag(t *testing.T) {
+	app := testApp(t)
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		10016: {ItemID: 10016, Name: "sealing coat", Kind: "equipment", ItemType: 3, Attach: "sealing", Slot: "coat"},
+		10017: {ItemID: 10017, Name: "trade coat", Kind: "equipment", ItemType: 3, Attach: "trade", Slot: "coat"},
+	}
+	app.planAuction([]restockRow{
+		{ItemID: 10016, SystemPrice: 1000, Quantity: 1, StackSize: 1, Enabled: true},
+		{ItemID: 10017, SystemPrice: 1000, Quantity: 1, StackSize: 1, Enabled: true},
+	}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 2 {
+		t.Fatalf("actions = %d, want 2", len(result.Actions))
+	}
+	if result.Actions[0].ItemType != 1 {
+		t.Fatalf("sealing protocol item_type = %d, want 1", result.Actions[0].ItemType)
+	}
+	if result.Actions[1].ItemType != 0 {
+		t.Fatalf("trade protocol item_type = %d, want 0", result.Actions[1].ItemType)
+	}
+}
+
 func TestAuctionPlanHelpersKeepFilteringAndBatchRules(t *testing.T) {
 	if reason := auctionPlanSkipReason(restockRow{}, catalogItem{Kind: "blocked"}); reason != "not_auctionable" {
 		t.Fatalf("blocked skip reason = %q", reason)
