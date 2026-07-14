@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"net"
 	"robot/internal/capability/catalog"
+	robotcap "robot/internal/capability/robot"
 	"robot/internal/shared"
 	"strconv"
 	"strings"
@@ -81,6 +82,47 @@ func (m *RobotManager) endStoreBusy(uid int) {
 	m.autoMu.Lock()
 	delete(m.autoStoreBusy, uid)
 	m.autoMu.Unlock()
+}
+
+func (m *RobotManager) beginAdaptiveStoreType() (disjoint bool, done func()) {
+	itemRunning, disjointRunning := m.autoStoreTypeCounts()
+	m.autoMu.Lock()
+	itemPlanned := itemRunning + m.autoStoreItemPending
+	disjointPlanned := disjointRunning + m.autoStoreDisjointPending
+	disjoint = disjointPlanned < itemPlanned
+	if disjoint {
+		m.autoStoreDisjointPending++
+	} else {
+		m.autoStoreItemPending++
+	}
+	m.autoMu.Unlock()
+
+	return disjoint, func() {
+		m.autoMu.Lock()
+		if disjoint {
+			if m.autoStoreDisjointPending > 0 {
+				m.autoStoreDisjointPending--
+			}
+		} else if m.autoStoreItemPending > 0 {
+			m.autoStoreItemPending--
+		}
+		m.autoMu.Unlock()
+	}
+}
+
+func (m *RobotManager) autoStoreTypeCounts() (item, disjoint int) {
+	for _, st := range m.runtimeStatusMap() {
+		if !robotcap.ActiveRuntimeStatus(st) {
+			continue
+		}
+		switch {
+		case st.RobotType == 2 && st.StoreDisplayAck:
+			item++
+		case st.RobotType == 3 && st.DisjointActive:
+			disjoint++
+		}
+	}
+	return item, disjoint
 }
 
 func (m *RobotManager) markCleanupPending(uids []int) {

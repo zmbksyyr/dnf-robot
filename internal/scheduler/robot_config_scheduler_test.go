@@ -49,6 +49,34 @@ func TestSortActorsForStopByPolicy(t *testing.T) {
 	assertIntSlice(t, got, []int{0, 17000003, 17000002, 17000001})
 }
 
+func TestBeginAdaptiveStoreTypeBalancesPlannedStores(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	m.runtimeStatusCache = map[int]robotcap.RuntimeStatus{
+		1: {UID: 1, StateName: robotcap.RuntimeStateRunning, RobotType: 2, StoreDisplayAck: true},
+		2: {UID: 2, StateName: robotcap.RuntimeStateRunning, RobotType: 2, StoreDisplayAck: true},
+		3: {UID: 3, StateName: robotcap.RuntimeStateRunning, RobotType: 3, DisjointActive: true},
+	}
+	m.runtimeStatusCacheAt = time.Now()
+
+	disjoint, done := m.beginAdaptiveStoreType()
+	if !disjoint {
+		t.Fatalf("expected disjoint store when item stores are ahead")
+	}
+	done()
+
+	m.runtimeStatusCache = map[int]robotcap.RuntimeStatus{
+		1: {UID: 1, StateName: robotcap.RuntimeStateRunning, RobotType: 2, StoreDisplayAck: true},
+		2: {UID: 2, StateName: robotcap.RuntimeStateRunning, RobotType: 3, DisjointActive: true},
+	}
+	firstDisjoint, firstDone := m.beginAdaptiveStoreType()
+	secondDisjoint, secondDone := m.beginAdaptiveStoreType()
+	defer firstDone()
+	defer secondDone()
+	if firstDisjoint || !secondDisjoint {
+		t.Fatalf("balanced stores should plan item then disjoint, got first=%v second=%v", firstDisjoint, secondDisjoint)
+	}
+}
+
 func TestLoadRobotConfigSchedulerOnlineDefaults(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	rc := m.loadRobotConfig()

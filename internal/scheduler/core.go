@@ -25,6 +25,8 @@ type RobotManager struct {
 	autoMu                          lockhub.Locker
 	rand                            *rand.Rand
 	autoStoreBusy                   map[int]bool
+	autoStoreItemPending            int
+	autoStoreDisjointPending        int
 	cleanupPendingUIDs              map[int]time.Time
 	autoStoreSlots                  chan struct{}
 	autoStoreCap                    int

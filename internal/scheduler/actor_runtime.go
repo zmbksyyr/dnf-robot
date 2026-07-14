@@ -148,7 +148,9 @@ func (r *RobotRuntime) AutoStore(uid int, shouldStop func() bool) robotcap.Actio
 		if shouldStop != nil && shouldStop() {
 			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateCancelled}
 		}
-		if r.manager.randIntn(100) < 50 {
+		disjoint, releaseStoreType := r.manager.beginAdaptiveStoreType()
+		defer releaseStoreType()
+		if disjoint {
 			return r.autoDisjointStore(uid, st, shouldStop)
 		}
 		switch r.manager.storeWorkflow().AutoUntilSuccess(st, r.Config(), shouldStop) {
