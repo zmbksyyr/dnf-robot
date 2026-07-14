@@ -120,7 +120,7 @@ func Default() RuntimeConfig {
 		EquipSlots: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, EquipRarityMin: 0, EquipRarityMax: 5, EquipIntensifyMin: 7, EquipIntensifyMax: 10, EquipSmithingMin: 0, EquipSmithingMax: 8,
 		PreferEquipSets: true, EquipSetMinSlots: 2,
 		AvatarSlots: []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, MinAvatarSlots: 10, PreferAvatarSets: true, AvatarSetMinSlots: 2,
-		StoreItemSlots: 3, StoreItemCountMin: 2, StoreItemCountMax: 20, StorePriceMin: 100000, StorePriceMax: 5000000, StoreInventoryStartBox: 7, StoreItemAllowIDs: []int{3037, 3031, 3032, 3034, 3035}, StoreItemDenyIDs: []int{7312, 7404, 7560, 7563, 7567, 7746},
+		StoreItemSlots: 1, StoreItemCountMin: 1, StoreItemCountMax: 1, StorePriceMin: 100000, StorePriceMax: 5000000, StoreInventoryStartBox: 7, StoreItemAllowIDs: []int{3037, 3031, 3032, 3034, 3035}, StoreItemDenyIDs: []int{7312, 7404, 7560, 7563, 7567, 7746},
 		StoreConfirmTimeoutSec: 30,
 		FollowRadiusX:          120, FollowRadiusY: 30, ShoutDelayMS: 1000, ShoutSendEnabled: true,
 		AutoActions: true, AutoTargetOnlineCount: 20,
@@ -357,13 +357,16 @@ func Normalize(rc *RuntimeConfig) {
 		rc.SystemPacketRatePerSec = 20
 	}
 	if rc.StoreItemSlots <= 0 {
-		rc.StoreItemSlots = 3
+		rc.StoreItemSlots = 1
 	}
 	if rc.StoreItemSlots > 24 {
 		rc.StoreItemSlots = 24
 	}
 	if rc.StoreItemCountMin <= 0 {
-		rc.StoreItemCountMin = 2
+		rc.StoreItemCountMin = 1
+	}
+	if rc.StoreItemCountMax <= 0 {
+		rc.StoreItemCountMax = rc.StoreItemCountMin
 	}
 	if rc.StoreItemCountMax < rc.StoreItemCountMin {
 		rc.StoreItemCountMin, rc.StoreItemCountMax = rc.StoreItemCountMax, rc.StoreItemCountMin

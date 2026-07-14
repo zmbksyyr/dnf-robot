@@ -61,14 +61,50 @@ func TestStoreErrReasonRetryClassification(t *testing.T) {
 	if got := StoreErrReason(0x11); got != StoreReasonErr011 {
 		t.Fatalf("StoreErrReason(0x11) got %q want %q", got, StoreReasonErr011)
 	}
-	if RetryStoreReasonWithNewPoint(StoreReasonErr011) {
-		t.Fatalf("store_err_0x11 should stop same-attempt point retries")
+	if !RetryStoreReasonWithNewPoint(StoreReasonErr011) {
+		t.Fatalf("store_err_0x11 should retry another point")
 	}
 	if !RetryStoreReasonWithNewPoint(StoreReasonErr052) {
 		t.Fatalf("store_err_0x52 should remain point-retryable")
 	}
 	if RetryStoreReasonWithNewPoint(StoreReasonRuntimeStopped) {
 		t.Fatalf("runtime_stopped should not retry another point")
+	}
+}
+
+func TestStoreErr011DoesNotPollutePointExploration(t *testing.T) {
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
+	c := NewPointCoordinator(configDir, nil)
+	first, ok := c.Claim(1001)
+	if !ok {
+		t.Fatalf("first claim failed")
+	}
+	c.Report(1001, first, 1, false, StoreReasonErr011)
+	c.Flush()
+
+	reloaded := NewPointCoordinator(configDir, nil)
+	next, ok := reloaded.Claim(1002)
+	if !ok {
+		t.Fatalf("second claim failed")
+	}
+	if next.PointID != first.PointID || next.Source != PointSourceUnknown {
+		t.Fatalf("0x11 polluted point state: got point=%s source=%s want point=%s source=%s", next.PointID, next.Source, first.PointID, PointSourceUnknown)
+	}
+}
+
+func TestBuildStoreGridPointsExcludesKnownBadStoreAreas(t *testing.T) {
+	points := BuildGridPoints([]shared.MapCatalogItem{
+		{Village: 2, Area: 3, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+		{Village: 9, Area: 3, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+		{Village: 11, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+		{Village: 11, Area: 1, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+		{Village: 14, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+		{Village: 14, Area: 1, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+		{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+	})
+	if len(points) != 1 || points[0].Village != 3 || points[0].Area != 0 {
+		t.Fatalf("bad store areas were not filtered: %+v", points)
 	}
 }
 

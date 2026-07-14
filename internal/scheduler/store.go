@@ -4,6 +4,7 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	storecap "robot/internal/capability/store"
+	"robot/internal/foundation/mathx"
 )
 
 func (m *RobotManager) storePoints() *storecap.PointCoordinator {
@@ -23,10 +24,7 @@ func (m *RobotManager) storePoints() *storecap.PointCoordinator {
 }
 
 func (m *RobotManager) acquireAutoStoreSlot(rc robotconfig.RuntimeConfig) (chan struct{}, bool) {
-	limit := rc.SchedulerStoreConcurrent
-	if limit <= 0 {
-		limit = 30
-	}
+	limit := normalizedStoreConcurrent(rc)
 	var slots chan struct{}
 	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerStoreSlots, "acquire_auto_store_slot", func() error {
 		if m.autoStoreSlots == nil || m.autoStoreCap != limit {
@@ -42,6 +40,61 @@ func (m *RobotManager) acquireAutoStoreSlot(rc robotconfig.RuntimeConfig) (chan 
 	default:
 		return nil, false
 	}
+}
+
+func normalizedStoreConcurrent(rc robotconfig.RuntimeConfig) int {
+	limit := rc.SchedulerStoreConcurrent
+	if limit <= 0 {
+		limit = 30
+	}
+	return limit
+}
+
+func (m *RobotManager) acquireAutoItemStoreSlot(rc robotconfig.RuntimeConfig) (func(), bool) {
+	itemLimit := m.effectiveAutoItemStoreLimit(rc)
+	var itemSlots chan struct{}
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerStoreSlots, "acquire_auto_item_store_slot", func() error {
+		if m.autoItemStoreSlots == nil || m.autoItemStoreCap != itemLimit {
+			m.autoItemStoreSlots = make(chan struct{}, itemLimit)
+			m.autoItemStoreCap = itemLimit
+		}
+		itemSlots = m.autoItemStoreSlots
+		return nil
+	})
+	select {
+	case itemSlots <- struct{}{}:
+	default:
+		return nil, false
+	}
+
+	sharedSlots, ok := m.acquireAutoStoreSlot(rc)
+	if !ok {
+		m.releaseAutoStoreSlot(itemSlots)
+		return nil, false
+	}
+	return func() {
+		m.releaseAutoStoreSlot(sharedSlots)
+		m.releaseAutoStoreSlot(itemSlots)
+	}, true
+}
+
+func (m *RobotManager) effectiveAutoItemStoreLimit(rc robotconfig.RuntimeConfig) int {
+	configLimit := normalizedStoreConcurrent(rc)
+	if configLimit <= 0 {
+		return 1
+	}
+	success := 0
+	if points := m.storePoints(); points != nil {
+		success = points.SuccessCount()
+	}
+	limit := mathx.MinInt(configLimit, 8)
+	if success >= 20 {
+		limit = mathx.MinInt(configLimit, mathx.MaxInt(2, success/3))
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	return limit
 }
 
 func (m *RobotManager) releaseAutoStoreSlot(slots chan struct{}) {

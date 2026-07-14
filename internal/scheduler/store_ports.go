@@ -20,8 +20,8 @@ func (e storeWorkflowEnv) AddAutoStore(success, failed, expired int) {
 	e.manager.addAutoStore(success, failed, expired)
 }
 
-func (e storeWorkflowEnv) AcquireAutoStoreSlot(rc robotconfig.RuntimeConfig) (chan struct{}, bool) {
-	return e.manager.acquireAutoStoreSlot(rc)
+func (e storeWorkflowEnv) AcquireAutoStoreSlot(rc robotconfig.RuntimeConfig) (func(), bool) {
+	return e.manager.acquireAutoItemStoreSlot(rc)
 }
 
 func (e storeWorkflowEnv) BeginStoreBusy(uid int) bool {
@@ -66,10 +66,6 @@ func (e storeWorkflowEnv) Online(req robotcap.CommandRequest, store bool, confir
 
 func (e storeWorkflowEnv) PrepareStorePosition(info robotcap.Info) error {
 	return e.manager.schemaRepo().PrepareStorePosition(info)
-}
-
-func (e storeWorkflowEnv) ReleaseAutoStoreSlot(slots chan struct{}) {
-	e.manager.releaseAutoStoreSlot(slots)
 }
 
 func (e storeWorkflowEnv) RestoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) robotcap.Info {

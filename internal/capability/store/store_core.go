@@ -280,7 +280,10 @@ func (c *PointCoordinator) Report(uid int, pos Position, try int, ok bool, reaso
 		delete(c.pointClaims, pos.PointID)
 		delete(c.regionClaims, pos.Region)
 	}
-	c.triedPoints[pos.PointID] = true
+	penalty := pointPenaltyReason(reason)
+	if ok || penalty {
+		c.triedPoints[pos.PointID] = true
+	}
 	idx, hasPoint := c.byID[pos.PointID]
 	now := time.Now().Format(time.RFC3339)
 	if ok {
@@ -294,21 +297,27 @@ func (c *PointCoordinator) Report(uid int, pos Position, try int, ok bool, reaso
 		}
 	} else {
 		if hasPoint {
-			if c.points[idx].Success > 0 {
+			if !penalty {
+				c.points[idx].LastUID = uid
+				c.points[idx].LastReason = reason
+				c.points[idx].LastResultAt = now
+			} else if c.points[idx].Success > 0 {
 				c.successPoints[pos.PointID] = true
 				c.points[idx].Status = PointStatusSuccess
 			} else {
 				c.failedPoints[pos.PointID] = true
 				c.points[idx].Status = PointStatusFailed
 			}
-			c.points[idx].Failed++
-			c.points[idx].LastUID = uid
-			c.points[idx].LastReason = reason
-			c.points[idx].LastResultAt = now
-		} else {
+			if penalty {
+				c.points[idx].Failed++
+				c.points[idx].LastUID = uid
+				c.points[idx].LastReason = reason
+				c.points[idx].LastResultAt = now
+			}
+		} else if penalty {
 			c.failedPoints[pos.PointID] = true
 		}
-		if reason == StoreReasonErr052 {
+		if penalty && reason == StoreReasonErr052 {
 			c.markRestrictiveZoneLocked(uid, pos, now)
 		}
 	}
@@ -316,6 +325,21 @@ func (c *PointCoordinator) Report(uid int, pos Position, try int, ok bool, reaso
 	if c.dirtyCount >= pointSaveMax || time.Since(c.lastCacheSave) >= pointSaveAge {
 		c.saveCacheLocked()
 	}
+}
+
+func pointPenaltyReason(reason string) bool {
+	switch reason {
+	case StoreReasonErr011:
+		return false
+	default:
+		return true
+	}
+}
+
+func (c *PointCoordinator) SuccessCount() int {
+	c.pointMu.Lock()
+	defer c.pointMu.Unlock()
+	return len(c.successPoints)
 }
 
 func (c *PointCoordinator) markRestrictiveZoneLocked(uid int, pos Position, now string) {
@@ -463,7 +487,7 @@ func (c *PointCoordinator) rebuildIndexes() {
 		c.byID[pt.ID] = i
 		key := AreaKey(pt.Village, pt.Area)
 		c.byArea[key] = append(c.byArea[key], i)
-		if pt.Success > 0 || pt.Failed > 0 || (pt.Status != "" && pt.Status != PointStatusUnknown) {
+		if pt.Success > 0 || pt.Status == PointStatusSuccess || pt.Status == PointStatusFailed {
 			c.triedPoints[pt.ID] = true
 		}
 		if pt.Success > 0 || pt.Status == PointStatusSuccess {
@@ -490,7 +514,7 @@ func (c *PointCoordinator) rebuildIndexes() {
 // ---- grid.go ----
 const (
 	PointCacheFile = "store_points_cache.json"
-	PointCacheVer  = 6
+	PointCacheVer  = 14
 	PointXStep     = 120
 	PointYStep     = 80
 	RestrictHalfX  = 80
@@ -622,16 +646,15 @@ var GateAreaByVillage = map[int]int{
 
 var AreaEligible = map[[2]int]bool{
 	{1, 0}: true,
-	{2, 0}: true, {2, 1}: true, {2, 2}: true, {2, 3}: true, {2, 8}: true,
+	{2, 0}: true, {2, 1}: true, {2, 2}: true, {2, 8}: true,
 	{3, 0}: true, {3, 8}: true,
 	{4, 0}: true, {4, 5}: true,
 	{5, 0}: true,
 	{6, 0}: true, {6, 1}: true,
-	{8, 0}: true,
-	{9, 0}: true, {9, 3}: true,
+	{8, 0}:  true,
+	{9, 0}:  true,
 	{10, 2}: true, {10, 3}: true,
-	{11, 0}: true, {11, 1}: true,
-	{14, 0}: true, {14, 1}: true, {14, 4}: true, {14, 5}: true,
+	{14, 4}: true, {14, 5}: true,
 	{15, 1}: true, {15, 3}: true,
 	{16, 1}: true,
 	{17, 1}: true, {17, 3}: true, {17, 4}: true,

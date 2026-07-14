@@ -13,7 +13,7 @@ type Workflow struct {
 
 type WorkflowEnv interface {
 	AddAutoStore(success, failed, expired int)
-	AcquireAutoStoreSlot(rc robotconfig.RuntimeConfig) (chan struct{}, bool)
+	AcquireAutoStoreSlot(rc robotconfig.RuntimeConfig) (func(), bool)
 	BeginStoreBusy(uid int) bool
 	CompletePrivateStoreDisplay(uid int) bool
 	Config() robotconfig.RuntimeConfig
@@ -25,7 +25,6 @@ type WorkflowEnv interface {
 	MarkStoreStarted(uid int) error
 	Online(req robotcap.CommandRequest, store bool, confirm bool) (robotcap.CommandResult, error)
 	PrepareStorePosition(info robotcap.Info) error
-	ReleaseAutoStoreSlot(slots chan struct{})
 	RestoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) robotcap.Info
 	RobotGamePort() int
 	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
@@ -174,13 +173,13 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 	if !env.BeginStoreBusy(info.UID) {
 		return AutoAttemptBusy
 	}
-	slot, ok := env.AcquireAutoStoreSlot(rc)
+	releaseSlot, ok := env.AcquireAutoStoreSlot(rc)
 	if !ok {
 		env.EndStoreBusy(info.UID)
 		return AutoAttemptBusy
 	}
 	defer func() {
-		env.ReleaseAutoStoreSlot(slot)
+		releaseSlot()
 		env.EndStoreBusy(info.UID)
 	}()
 	points := env.StorePoints()
@@ -193,7 +192,8 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 		pos, ok := points.Claim(info.UID)
 		if !ok {
 			env.Logf("[AutoStore] uid=%d no_store_point try=%d/%d\n", info.UID, try, tries)
-			break
+			points.Flush()
+			return AutoAttemptBusy
 		}
 		info.Village, info.Area, info.X, info.Y = pos.Village, pos.Area, pos.X, pos.Y
 		if ok, reason := w.tryPosition(info, rc, try, shouldStop); ok {
@@ -361,8 +361,6 @@ func StoreErrReason(err byte) string {
 func RetryStoreReasonWithNewPoint(reason string) bool {
 	switch reason {
 	case "", StoreReasonCancelled, StoreReasonRuntimeStopped, StoreReasonOnlineFailed, StoreReasonOnlineAttemptFailed, StoreReasonStartFailed, StoreReasonPrepareFailed:
-		return false
-	case StoreReasonErr011:
 		return false
 	default:
 		return true

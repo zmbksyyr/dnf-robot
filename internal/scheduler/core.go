@@ -30,6 +30,8 @@ type RobotManager struct {
 	cleanupPendingUIDs              map[int]time.Time
 	autoStoreSlots                  chan struct{}
 	autoStoreCap                    int
+	autoItemStoreSlots              chan struct{}
+	autoItemStoreCap                int
 	autoEnabled                     bool
 	autoPortSince                   time.Time
 	autoPortReady                   bool
