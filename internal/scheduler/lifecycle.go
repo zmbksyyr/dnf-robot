@@ -51,6 +51,7 @@ func (m *RobotManager) RobotsStatus(req robotcap.CommandRequest) (RobotStatusRes
 	runtime := m.runtimeStatusMap()
 	actors := m.actorStatusMap()
 	cleanupPending := m.cleanupPendingSet()
+	villageNames := mapCatalogVillageNames(m.loadMapCatalog())
 	items, err := m.schemaRepo().RobotStatusRows(req)
 	if err != nil {
 		return RobotStatusResult{}, err
@@ -82,6 +83,7 @@ func (m *RobotManager) RobotsStatus(req robotcap.CommandRequest) (RobotStatusRes
 				item.Y = st.Y
 			}
 		}
+		item.VillageName = villageNames[item.Village]
 		if actor, ok := actors[item.UID]; ok {
 			item.ActorAttached = true
 			item.ActorSlot = actor.SlotID
@@ -105,6 +107,19 @@ func (m *RobotManager) RobotsStatus(req robotcap.CommandRequest) (RobotStatusRes
 	}
 	out.Total = len(out.Robots)
 	return out, nil
+}
+
+func mapCatalogVillageNames(maps []shared.MapCatalogItem) map[int]string {
+	out := make(map[int]string)
+	for _, mp := range maps {
+		if mp.Village <= 0 || strings.TrimSpace(mp.VillageName) == "" {
+			continue
+		}
+		if _, ok := out[mp.Village]; !ok {
+			out[mp.Village] = strings.TrimSpace(mp.VillageName)
+		}
+	}
+	return out
 }
 
 func robotStateView(item robotcap.StatusItem, stateName string, onlineDesired bool) shared.RobotState {

@@ -514,7 +514,7 @@ func (c *PointCoordinator) rebuildIndexes() {
 // ---- grid.go ----
 const (
 	PointCacheFile = "store_points_cache.json"
-	PointCacheVer  = 14
+	PointCacheVer  = 1
 	PointXStep     = 120
 	PointYStep     = 80
 	RestrictHalfX  = 80

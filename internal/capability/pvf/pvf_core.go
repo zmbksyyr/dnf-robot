@@ -994,16 +994,18 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 		}
 		lines := splitPVFLines(body)
 		level := 0
+		villageName := ""
 		for i, line := range lines {
 			switch line {
 			case "[name]":
+				villageName = cleanPVFString(nextLine(lines, i))
 			case "[limit level]":
 				level = atoi(nextLine(lines, i))
 			}
 		}
 		for _, area := range parseAreas(body) {
 			out = append(out, shared.MapCatalogItem{
-				Village: entry.ID, Area: area, Level: level,
+				Village: entry.ID, VillageName: villageName, Area: area, Level: level,
 				XMin: 240, XMax: 420, YMin: 180, YMax: 320, Use: true,
 			})
 		}
@@ -1822,6 +1824,7 @@ func applyReferenceTownCoordinates(items []shared.MapCatalogItem) []shared.MapCa
 	for _, ref := range referenceTownMaps {
 		key := [2]int{ref.Village, ref.Area}
 		if idx, ok := byKey[key]; ok {
+			ref.VillageName = items[idx].VillageName
 			items[idx] = ref
 			continue
 		}
