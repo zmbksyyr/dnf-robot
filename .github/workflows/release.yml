@@ -41,6 +41,7 @@ jobs:
           $env:GOARCH = "amd64"
           $env:CGO_ENABLED = "0"
           go build -trimpath -ldflags="-s -w" -o dist/robot ./cmd/robot
+          Copy-Item -LiteralPath dist/robot -Destination dist/robot-no-upx
 
       - name: Generate deploy launcher manifest resource
         working-directory: tools/deploy-launcher
@@ -85,4 +86,5 @@ jobs:
             --title "Latest Build" `
             --notes "Auto-built from main branch" `
             dist/robot `
+            dist/robot-no-upx `
             dist/deploy-launcher.exe
