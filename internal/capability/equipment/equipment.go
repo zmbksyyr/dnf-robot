@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"math/rand"
+	"sort"
 
 	robotconfig "robot/internal/capability/robotconfig"
 	foundrand "robot/internal/foundation/random"
@@ -174,7 +175,7 @@ func SelectAvatar(items []shared.EquipmentCatalogItem, job int, rc robotconfig.R
 	}
 	selected := make(map[int]shared.EquipmentCatalogItem)
 	if rc.PreferAvatarSets {
-		selected = SelectSetItems(candidatesBySlot, rc.AvatarSetMinSlots, randIntn)
+		selected = SelectAvatarSetItems(candidatesBySlot, rc.AvatarSetMinSlots, randIntn)
 	}
 	FillRandomItems(selected, candidatesBySlot, randIntn)
 	return selected
@@ -201,17 +202,39 @@ func BuildEquipmentSlots(items []shared.EquipmentCatalogItem, level int, job int
 	return raw
 }
 
+type setGroup struct {
+	key       string
+	bySlot    map[int][]shared.EquipmentCatalogItem
+	coverage  int
+	levelSum  int
+	raritySum int
+	count     int
+}
+
 func SelectSetItems(candidatesBySlot map[int][]shared.EquipmentCatalogItem, minSlots int, randIntn func(int) int) map[int]shared.EquipmentCatalogItem {
-	if minSlots <= 1 {
-		minSlots = 2
+	return selectBestSetItems(buildSetGroups(candidatesBySlot), minSlots, randIntn)
+}
+
+func SelectAvatarSetItems(candidatesBySlot map[int][]shared.EquipmentCatalogItem, minSlots int, randIntn func(int) int) map[int]shared.EquipmentCatalogItem {
+	groups := buildSetGroups(candidatesBySlot)
+	coverageFloor := 6
+	if minSlots > coverageFloor {
+		coverageFloor = minSlots
 	}
-	type setGroup struct {
-		bySlot    map[int][]shared.EquipmentCatalogItem
-		coverage  int
-		levelSum  int
-		raritySum int
-		count     int
+	eligible := make([]*setGroup, 0, len(groups))
+	for _, group := range groups {
+		if group.coverage >= coverageFloor {
+			eligible = append(eligible, group)
+		}
 	}
+	if len(eligible) == 0 {
+		return selectBestSetItems(groups, minSlots, randIntn)
+	}
+	sort.Slice(eligible, func(i, j int) bool { return eligible[i].key < eligible[j].key })
+	return selectSetGroup(eligible[safeRandIntn(randIntn, len(eligible))], randIntn)
+}
+
+func buildSetGroups(candidatesBySlot map[int][]shared.EquipmentCatalogItem) map[string]*setGroup {
 	groups := make(map[string]*setGroup)
 	for slot, candidates := range candidatesBySlot {
 		for _, item := range candidates {
@@ -220,7 +243,7 @@ func SelectSetItems(candidatesBySlot map[int][]shared.EquipmentCatalogItem, minS
 			}
 			group := groups[item.SetKey]
 			if group == nil {
-				group = &setGroup{bySlot: make(map[int][]shared.EquipmentCatalogItem)}
+				group = &setGroup{key: item.SetKey, bySlot: make(map[int][]shared.EquipmentCatalogItem)}
 				groups[item.SetKey] = group
 			}
 			if len(group.bySlot[slot]) == 0 {
@@ -231,6 +254,13 @@ func SelectSetItems(candidatesBySlot map[int][]shared.EquipmentCatalogItem, minS
 			group.raritySum += item.Rarity
 			group.count++
 		}
+	}
+	return groups
+}
+
+func selectBestSetItems(groups map[string]*setGroup, minSlots int, randIntn func(int) int) map[int]shared.EquipmentCatalogItem {
+	if minSlots <= 1 {
+		minSlots = 2
 	}
 	var best []*setGroup
 	bestScore := -1
@@ -250,7 +280,14 @@ func SelectSetItems(candidatesBySlot map[int][]shared.EquipmentCatalogItem, minS
 	if len(best) == 0 {
 		return selected
 	}
-	group := best[safeRandIntn(randIntn, len(best))]
+	return selectSetGroup(best[safeRandIntn(randIntn, len(best))], randIntn)
+}
+
+func selectSetGroup(group *setGroup, randIntn func(int) int) map[int]shared.EquipmentCatalogItem {
+	selected := make(map[int]shared.EquipmentCatalogItem)
+	if group == nil {
+		return selected
+	}
 	for slot, candidates := range group.bySlot {
 		if len(candidates) == 0 {
 			continue
