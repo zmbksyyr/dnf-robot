@@ -1,6 +1,10 @@
 package pvf
 
-import "testing"
+import (
+	"testing"
+
+	"robot/internal/shared"
+)
 
 func assertIntSlice(t *testing.T, got, want []int) {
 	t.Helper()
@@ -33,11 +37,34 @@ func TestEquipmentTypeRecognizesTitleAndMagicStone(t *testing.T) {
 }
 
 func TestParseJobsRecognizesMultiWordJobs(t *testing.T) {
-	got := parseJobs("`[swordman]`\t\n`[at gunner]`\n`[thief]`\n`[at fighter]`\n`[at mage]`\n`[demonic swordman]`")
-	assertIntSlice(t, got, []int{0, 5, 6, 7, 8, 9})
+	got := parseJobs("`[swordman]`\t\n`[at gunner]`\n`[thief]`\n`[at fighter]`\n`[at mage]`\n`[at priest]`\n`[demonic swordman]`")
+	assertIntSlice(t, got, []int{0, 5, 6, 7, 8, 14, 9})
 
-	got = parseJobs("swordman at gunner thief at fighter at mage demonic swordman")
-	assertIntSlice(t, got, []int{0, 5, 6, 7, 8, 9})
+	got = parseJobs("swordman at gunner thief at fighter at mage at priest demonic swordman")
+	assertIntSlice(t, got, []int{0, 5, 6, 7, 8, 14, 9})
+}
+
+func TestPriestAvatarPathKeepsGenderJob(t *testing.T) {
+	if got := jobFromEquipmentPath("character/priest/avatar/coat/100.equ"); got != 4 {
+		t.Fatalf("male priest avatar job got %d want 4", got)
+	}
+	if got := jobFromEquipmentPath("character/priest/at_avatar/coat/200.equ"); got != 14 {
+		t.Fatalf("female priest avatar job got %d want 14", got)
+	}
+}
+
+func TestEquipmentExplicitJobsOverridePathFallback(t *testing.T) {
+	item := shared.EquipmentCatalogItem{ItemType: 1, UseJob: []int{14}}
+	applyEquipmentPathJob(&item, 4)
+	assertIntSlice(t, item.UseJob, []int{14})
+
+	item = shared.EquipmentCatalogItem{ItemType: 1}
+	applyEquipmentPathJob(&item, 4)
+	assertIntSlice(t, item.UseJob, []int{4})
+
+	item = shared.EquipmentCatalogItem{ItemType: 23, UseJob: []int{4}}
+	applyEquipmentPathJob(&item, 14)
+	assertIntSlice(t, item.UseJob, []int{14})
 }
 
 func TestAppendItemInfoCreatureArtifacts(t *testing.T) {

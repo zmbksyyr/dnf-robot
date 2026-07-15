@@ -679,6 +679,7 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 		}
 		lines := splitPVFLines(body)
 		item := shared.EquipmentCatalogItem{ID: entry.ID, Path: itemPath}
+		pathJob := -1
 		if stackable {
 			item.BasicMaterial = strings.HasPrefix(normalizePVFPath(entry.Path), "material/")
 			parseStackableTradeBlock(body, &item)
@@ -688,9 +689,7 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 				item.ItemType = typ
 				item.Slot = slot
 			}
-			if job := jobFromEquipmentPath(entry.Path); job >= 0 {
-				item.UseJob = appendUniqueInt(item.UseJob, job)
-			}
+			pathJob = jobFromEquipmentPath(entry.Path)
 		}
 		for i, line := range lines {
 			lowerLine := strings.ToLower(line)
@@ -752,10 +751,8 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 				item.Slot = cleanPVFString(nextLine(lines, i))
 			}
 		}
-		if !stackable && item.ItemType >= 20 && item.ItemType <= 29 {
-			if job := jobFromEquipmentPath(entry.Path); job >= 0 {
-				item.UseJob = []int{job}
-			}
+		if !stackable {
+			applyEquipmentPathJob(&item, pathJob)
 		}
 		if !stackable {
 			item.SetKey = deriveItemSetKey(itemPath, body, item)
@@ -934,6 +931,8 @@ func jobFromEquipmentPath(path string) int {
 		return 8
 	case strings.Contains(p, "/character/mage/"):
 		return 3
+	case strings.Contains(p, "/character/priest/at_avatar/"):
+		return 14
 	case strings.Contains(p, "/character/priest/"):
 		return 4
 	case strings.Contains(p, "/character/thief/"):
@@ -942,6 +941,19 @@ func jobFromEquipmentPath(path string) int {
 		return 9
 	default:
 		return -1
+	}
+}
+
+func applyEquipmentPathJob(item *shared.EquipmentCatalogItem, pathJob int) {
+	if item == nil || pathJob < 0 {
+		return
+	}
+	if item.ItemType >= 20 && item.ItemType <= 29 {
+		item.UseJob = []int{pathJob}
+		return
+	}
+	if len(item.UseJob) == 0 {
+		item.UseJob = []int{pathJob}
 	}
 }
 
@@ -1255,6 +1267,8 @@ func jobID(job string) int {
 		return 3
 	case "priest":
 		return 4
+	case "atpriest":
+		return 14
 	case "atgunner":
 		return 5
 	case "thief":
