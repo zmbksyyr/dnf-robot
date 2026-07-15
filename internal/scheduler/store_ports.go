@@ -68,8 +68,8 @@ func (e storeWorkflowEnv) PrepareStorePosition(info robotcap.Info) error {
 	return e.manager.schemaRepo().PrepareStorePosition(info)
 }
 
-func (e storeWorkflowEnv) RestoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) robotcap.Info {
-	return e.manager.restoreAutoNormalPosition(info, rc, reason)
+func (e storeWorkflowEnv) RestoreAutoNormalOnline(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, bool) {
+	return e.manager.restoreAutoNormalOnline(info, rc, reason)
 }
 
 func (e storeWorkflowEnv) RobotGamePort() int {

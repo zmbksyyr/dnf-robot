@@ -25,7 +25,7 @@ type WorkflowEnv interface {
 	MarkStoreStarted(uid int) error
 	Online(req robotcap.CommandRequest, store bool, confirm bool) (robotcap.CommandResult, error)
 	PrepareStorePosition(info robotcap.Info) error
-	RestoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) robotcap.Info
+	RestoreAutoNormalOnline(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, bool)
 	RobotGamePort() int
 	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
 	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
@@ -217,7 +217,9 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 	env.FinishStoreState(info.UID, info.CID, finalReason)
 	env.Logf("[AutoStore] uid=%d failed_after=%d reason=%s\n", info.UID, tries, finalReason)
 	env.AddAutoStore(0, 1, 0)
-	env.RestoreAutoNormalPosition(info, rc, finalReason)
+	if _, recovered := env.RestoreAutoNormalOnline(info, rc, finalReason); !recovered {
+		env.Logf("[AutoStore] uid=%d restore_normal_online_failed reason=%s\n", info.UID, finalReason)
+	}
 	return AutoAttemptFailed
 }
 

@@ -219,7 +219,7 @@ func (r *RobotRuntime) autoDisjointStore(uid int, st robotcap.RuntimeStatus, sho
 	_, _ = r.manager.sessionService().Logout(robotcap.CommandRequest{UIDs: []int{uid}})
 	r.manager.finishStoreState(uid, info.CID, "disjoint_failed")
 	r.manager.addAutoStore(0, 1, 0)
-	r.manager.restoreAutoNormalPosition(info, rc, "disjoint_failed")
+	_, _ = r.manager.restoreAutoNormalOnline(info, rc, "disjoint_failed")
 	return robotcap.ActionResult{UID: uid, CID: info.CID, OK: false, State: robotcap.ActionStateStoreFailed}
 }
 
@@ -324,8 +324,8 @@ func (r *RobotRuntime) ExpireStore(uid int) robotcap.ActionResult {
 		if robots, err := r.manager.repo().SelectRobots(robotcap.CommandRequest{UIDs: []int{uid}}); err == nil && len(robots) > 0 {
 			info = robots[0]
 		}
-		r.manager.restoreAutoNormalPosition(info, rc, "store_expired")
-		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: robotcap.ActionStateStoreExpired}
+		_, recovered := r.manager.restoreAutoNormalOnline(info, rc, "store_expired")
+		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: recovered, State: robotcap.ActionStateStoreExpired}
 	})
 }
 

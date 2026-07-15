@@ -23,7 +23,10 @@ type RobotManager struct {
 	locks                           *lockhub.Hub
 	startedAt                       time.Time
 	autoMu                          lockhub.Locker
+	sessionMu                       lockhub.Locker
 	rand                            *rand.Rand
+	sessionLastLogout               map[int]time.Time
+	sessionReloginDelay             time.Duration
 	autoStoreBusy                   map[int]bool
 	autoStoreItemPending            int
 	autoStoreDisjointPending        int
@@ -70,14 +73,16 @@ func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Run
 		doll = noopRuntime{}
 	}
 	return &RobotManager{
-		database:           database,
-		cfg:                cfg,
-		doll:               doll,
-		worldShout:         noopWorldShout{},
-		locks:              lockhub.New(),
-		startedAt:          time.Now(),
-		rand:               rand.New(rand.NewSource(time.Now().UnixNano())),
-		cleanupPendingUIDs: make(map[int]time.Time),
+		database:            database,
+		cfg:                 cfg,
+		doll:                doll,
+		worldShout:          noopWorldShout{},
+		locks:               lockhub.New(),
+		startedAt:           time.Now(),
+		rand:                rand.New(rand.NewSource(time.Now().UnixNano())),
+		cleanupPendingUIDs:  make(map[int]time.Time),
+		sessionLastLogout:   make(map[int]time.Time),
+		sessionReloginDelay: 15 * time.Second,
 	}
 }
 

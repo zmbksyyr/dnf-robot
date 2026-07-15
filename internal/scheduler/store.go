@@ -111,6 +111,19 @@ func (m *RobotManager) restoreAutoNormalPosition(info robotcap.Info, rc robotcon
 	return m.storeMaintenance().RestoreAutoNormalPosition(info, rc, reason)
 }
 
+func (m *RobotManager) restoreAutoNormalOnline(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, bool) {
+	normal := m.restoreAutoNormalPosition(info, rc, reason)
+	result, err := m.sessionService().Online(robotcap.CommandRequest{UIDs: []int{normal.UID}}, false, true, rc)
+	recovered := err == nil && result.Confirmed == 1
+	if !recovered {
+		robotLogf("[AutoStore] uid=%d restore_normal_online_failed reason=%s confirmed=%d failed=%d err=%v\n",
+			normal.UID, reason, result.Confirmed, result.Failed, err)
+		return normal, false
+	}
+	robotLogf("[AutoStore] uid=%d restore_normal_online_ok reason=%s\n", normal.UID, reason)
+	return normal, true
+}
+
 func (m *RobotManager) finishStoreState(uid, cid int, reason string) {
 	if m == nil || uid <= 0 {
 		return
