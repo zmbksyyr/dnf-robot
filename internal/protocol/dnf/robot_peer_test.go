@@ -342,16 +342,18 @@ func TestPartyPeerUpdateResetsOnlyChangedSlotTransport(t *testing.T) {
 	vo.partyTQOSSeq[1][1] = 5
 	vo.partyTQOSCodecKnown[0][1] = true
 	vo.partyTQOSCodecKnown[1][1] = true
+	vo.partyRobotProbeSent[0] = true
+	vo.partyRobotProbeSent[1] = true
 
 	vo.setPartyPeersUnsafe([]partyIPPeer{
 		{uniqueID: 1, slot: 0, slotKnown: true},
 		{uniqueID: 2, slot: 1, slotKnown: true},
 	})
-	if vo.partyTQOSSeq[0][1] != 7 || !vo.partyTQOSCodecKnown[0][1] {
-		t.Fatalf("unchanged leader transport was reset: seq=%d codec=%t", vo.partyTQOSSeq[0][1], vo.partyTQOSCodecKnown[0][1])
+	if vo.partyTQOSSeq[0][1] != 7 || !vo.partyTQOSCodecKnown[0][1] || !vo.partyRobotProbeSent[0] {
+		t.Fatalf("unchanged leader transport was reset: seq=%d codec=%t probe=%t", vo.partyTQOSSeq[0][1], vo.partyTQOSCodecKnown[0][1], vo.partyRobotProbeSent[0])
 	}
-	if vo.partyTQOSSeq[1][1] != 0 || vo.partyTQOSCodecKnown[1][1] {
-		t.Fatalf("new peer transport was not reset: seq=%d codec=%t", vo.partyTQOSSeq[1][1], vo.partyTQOSCodecKnown[1][1])
+	if vo.partyTQOSSeq[1][1] != 0 || vo.partyTQOSCodecKnown[1][1] || vo.partyRobotProbeSent[1] {
+		t.Fatalf("new peer transport was not reset: seq=%d codec=%t probe=%t", vo.partyTQOSSeq[1][1], vo.partyTQOSCodecKnown[1][1], vo.partyRobotProbeSent[1])
 	}
 
 	vo.setPartyPeersUnsafe([]partyIPPeer{
@@ -360,6 +362,59 @@ func TestPartyPeerUpdateResetsOnlyChangedSlotTransport(t *testing.T) {
 	})
 	if vo.partyTQOSSeq[0][1] != 0 || vo.partyTQOSCodecKnown[0][1] {
 		t.Fatalf("replaced leader transport was not reset: seq=%d codec=%t", vo.partyTQOSSeq[0][1], vo.partyTQOSCodecKnown[0][1])
+	}
+}
+
+func TestPartyRobotPeersNegotiateOverDynamicUDP(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+
+	vo := &RobotVo{partyUDPConn: sender}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 1, accID: 17000001, slot: 1, slotKnown: true}
+	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
+	vo.startPartyRobotPeerNegotiationUnsafe()
+
+	if err := receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	n, _, err := receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, ok := parsePartyTQOSPacket(buf[:n], 1)
+	if !ok || packet.senderSlot != 1 || packet.state != 3 || packet.sequence != 0 {
+		t.Fatalf("probe = %+v ok=%v raw=%x", packet, ok, buf[:n])
+	}
+	if !vo.partyRobotProbeSent[2] || vo.partyTQOSSeq[2][1] != 1 {
+		t.Fatalf("probe state = sent:%t seq:%d", vo.partyRobotProbeSent[2], vo.partyTQOSSeq[2][1])
+	}
+}
+
+func TestPartyUDPPortFallsBackWhenRequestedPortIsBusy(t *testing.T) {
+	busy, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	requested := busy.LocalAddr().(*net.UDPAddr)
+	vo := &RobotVo{UID: 17000001}
+	if !vo.startPartyUDPUnsafe(&net.TCPAddr{IP: requested.IP, Port: requested.Port}) {
+		t.Fatal("fallback UDP listen failed")
+	}
+	defer vo.closePartyUDPUnsafe()
+	actual := vo.partyUDPConn.LocalAddr().(*net.UDPAddr)
+	if actual.Port == requested.Port || actual.Port == 0 {
+		t.Fatalf("fallback port = %d, requested %d", actual.Port, requested.Port)
 	}
 }
 

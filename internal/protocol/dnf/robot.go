@@ -186,6 +186,7 @@ type RobotVo struct {
 	partyTQOSReliableSeq [4][3]uint32
 	partyTQOSCodecs      [4][3]partyTQOSCodec
 	partyTQOSCodecKnown  [4][3]bool
+	partyRobotProbeSent  [4]bool
 	partyDungeonTraceAt  time.Time
 	partyMoveNotBefore   time.Time
 
@@ -709,6 +710,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 				r.partySelfPeer = self
 				r.setPartyPeersUnsafe(peers)
 				r.followCachedPartyLeaderTownPositionUnsafe()
+				r.startPartyRobotPeerNegotiationUnsafe()
 			}
 		}
 		return
@@ -1217,11 +1219,15 @@ func (r *RobotVo) sendNATInfoUnsafe() bool {
 	if !ok {
 		return false
 	}
-	body, ok := buildNATInfoPayload(addr.IP, uint16(addr.Port))
-	if !ok {
+	if !r.startPartyUDPUnsafe(addr) {
 		return false
 	}
-	if !r.startPartyUDPUnsafe(addr) {
+	udpAddr, ok := r.partyUDPConn.LocalAddr().(*net.UDPAddr)
+	if !ok || udpAddr.Port <= 0 || udpAddr.Port > 0xffff {
+		return false
+	}
+	body, ok := buildNATInfoPayload(udpAddr.IP, uint16(udpAddr.Port))
+	if !ok {
 		return false
 	}
 	pkt, err := buildSendPacket(2, uint16(r.PacketID), body, r.Cipher)
@@ -1390,8 +1396,14 @@ func (r *RobotVo) startPartyUDPUnsafe(addr *net.TCPAddr) bool {
 	udpAddr := &net.UDPAddr{IP: addr.IP, Port: addr.Port}
 	conn, err := net.ListenUDP("udp4", udpAddr)
 	if err != nil {
-		fmt.Printf("[PARTY_UDP_LISTEN_ERROR] uid=%d ip=%s port=%d err=%v\n", r.UID, addr.IP.String(), addr.Port, err)
-		return false
+		fallback := &net.UDPAddr{IP: addr.IP}
+		conn, err = net.ListenUDP("udp4", fallback)
+		if err != nil {
+			fmt.Printf("[PARTY_UDP_LISTEN_ERROR] uid=%d ip=%s port=%d err=%v\n", r.UID, addr.IP.String(), addr.Port, err)
+			return false
+		}
+		actual := conn.LocalAddr().(*net.UDPAddr)
+		fmt.Printf("[PARTY_UDP_PORT_FALLBACK] uid=%d requested=%d actual=%d\n", r.UID, addr.Port, actual.Port)
 	}
 	r.partyUDPConn = conn
 	go r.partyUDPLoop(conn, r.UID)
@@ -1566,6 +1578,36 @@ func (r *RobotVo) nextPartyTQOSSequenceUnsafe(peerSlot, route byte, reliable boo
 	sequence := r.partyTQOSSeq[peerSlot][route]
 	r.partyTQOSSeq[peerSlot][route]++
 	return sequence, true
+}
+
+func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
+	if r.partyUDPConn == nil || !r.partySelfPeer.slotKnown || !isPartyRobotAccount(r.partySelfPeer.accID) {
+		return
+	}
+	for _, peer := range r.partyPeers {
+		if !peer.slotKnown || peer.slot >= 4 || r.partyRobotProbeSent[peer.slot] || !isPartyRobotAccount(peer.accID) {
+			continue
+		}
+		if r.partySelfPeer.accID >= peer.accID || peer.outerIP == nil || peer.port == 0 {
+			continue
+		}
+		sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, false)
+		if !ok {
+			continue
+		}
+		payload := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, 0, 3, 1, partyTQOSCodec{key: 0x7e})
+		remote := &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}
+		if _, err := r.partyUDPConn.WriteToUDP(payload, remote); err != nil {
+			fmt.Printf("[PARTY_ROBOT_PROBE_ERROR] uid=%d peer=%d remote=%s err=%v\n", r.UID, peer.accID, remote.String(), err)
+			continue
+		}
+		r.partyRobotProbeSent[peer.slot] = true
+		fmt.Printf("[PARTY_ROBOT_PROBE] uid=%d peer=%d slot=%d sequence=%d remote=%s\n", r.UID, peer.accID, peer.slot, sequence, remote.String())
+	}
+}
+
+func isPartyRobotAccount(accID uint32) bool {
+	return accID >= 17000000 && accID < 18000000
 }
 
 func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {
@@ -1954,6 +1996,7 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyTQOSReliableSeq = [4][3]uint32{}
 	r.partyTQOSCodecs = [4][3]partyTQOSCodec{}
 	r.partyTQOSCodecKnown = [4][3]bool{}
+	r.partyRobotProbeSent = [4]bool{}
 }
 
 func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
@@ -1964,6 +2007,7 @@ func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
 	r.partyTQOSReliableSeq[slot] = [3]uint32{}
 	r.partyTQOSCodecs[slot] = [3]partyTQOSCodec{}
 	r.partyTQOSCodecKnown[slot] = [3]bool{}
+	r.partyRobotProbeSent[slot] = false
 }
 
 func partyPeerUniqueIDForSlot(peers [4]partyIPPeer, slot byte) uint16 {
