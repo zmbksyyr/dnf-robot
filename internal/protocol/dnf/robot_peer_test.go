@@ -424,6 +424,7 @@ func TestPartyUDPLoopRetriesRobotPeerProbe(t *testing.T) {
 	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
 	go vo.partyUDPLoop(sender, vo.UID)
+	go vo.partyUDPProbeLoop(sender)
 	defer func() {
 		vo.mu.Lock()
 		vo.State = StateStop

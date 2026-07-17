@@ -1420,6 +1420,7 @@ func (r *RobotVo) startPartyUDPUnsafe(addr *net.TCPAddr) bool {
 	}
 	r.partyUDPConn = conn
 	go r.partyUDPLoop(conn, r.UID)
+	go r.partyUDPProbeLoop(conn)
 	return true
 }
 
@@ -1461,6 +1462,22 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32) {
 				writePartyUDPReply(conn, ack, remote, uid)
 			}
 		}
+	}
+}
+
+func (r *RobotVo) partyUDPProbeLoop(conn *net.UDPConn) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		r.mu.Lock()
+		if r.State == StateStop || r.partyUDPConn != conn {
+			r.mu.Unlock()
+			return
+		}
+		if r.partyActiveUnsafe() {
+			r.startPartyRobotPeerNegotiationUnsafe()
+		}
+		r.mu.Unlock()
 	}
 }
 
