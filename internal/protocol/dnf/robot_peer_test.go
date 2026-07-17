@@ -164,6 +164,54 @@ func TestPartyPeerLifecycle(t *testing.T) {
 	}
 }
 
+func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 7, slot: 0, slotKnown: true}
+	vo.townEntityPositions = map[uint16]townEntityPosition{7: {uniqueID: 7}}
+	vo.partyFollowNotBefore = time.Now().Add(time.Minute)
+	vo.partyActionNotBefore = time.Now().Add(time.Minute)
+
+	if partyInfoClearsParty(mustPartyHex(t, "0100220000486b01a86b01")) {
+		t.Fatal("active party info was treated as clear")
+	}
+	if !partyInfoClearsParty(mustPartyHex(t, "0100220002ffffff486b01ffffffffffff00010000005887dd13")) {
+		t.Fatal("clear party info was not recognized")
+	}
+	vo.clearPartyUnsafe()
+	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyFollowNotBefore.IsZero() || !vo.partyActionNotBefore.IsZero() {
+		t.Fatalf("party state remained after clear: peers=%+v positions=%+v", vo.partyPeers, vo.townEntityPositions)
+	}
+}
+
+func TestRobotBuildsDelayedDungeonFollowAndAction(t *testing.T) {
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, slot: 1, slotKnown: true}
+	leader := partyIPPeer{uniqueID: 0x9692, slot: 0, slotKnown: true}
+	vo.partyPeers[0] = leader
+
+	position := mustPartyHex(t, "028703000034000000015100970cfec701070034ede5df0001070034ede5df1102a97492965e0800000d000000ffffffffffffffff0000000000000000")
+	replies := vo.buildPartyTQOSRepliesUnsafe(position, 1, leader)
+	want := mustPartyHex(t, "020000000034000100015100bc9521ba010700f29a59e300010700f29a59e31102a974ab1f5e0800000d000000ffffffffffffffff0000000000000000")
+	if len(replies) != 1 || !bytes.Equal(replies[0], want) {
+		t.Fatalf("position replies = %x, want %x", replies, want)
+	}
+	if got := vo.buildPartyTQOSRepliesUnsafe(position, 1, leader); len(got) != 0 {
+		t.Fatalf("position was repeated before randomized delay: %x", got)
+	}
+
+	vo.partyActionNotBefore = time.Time{}
+	action := []byte{0x02, 0x44, 0x00, 0xa7, 0xeb, 0x50, 0x2b, 0xec, 0xe8, 0x7e, 0x7e, 0x7e, 0x7e}
+	frame := buildPartyReliableRecordPacket(7, 0, 0, action)
+	replies = vo.buildPartyTQOSRepliesUnsafe(frame, 1, leader)
+	if len(replies) != 2 || replies[0][0] != 0x00 || replies[1][0] != 0x01 || !bytes.Contains(replies[1], action) {
+		t.Fatalf("action replies = %x", replies)
+	}
+	if got := vo.buildPartyTQOSRepliesUnsafe(frame, 1, leader); len(got) != 1 || got[0][0] != 0x00 {
+		t.Fatalf("action was repeated before randomized delay: %x", got)
+	}
+}
+
 func TestParsePartyTQOSCapturedPackets(t *testing.T) {
 	tests := []struct {
 		packet             string

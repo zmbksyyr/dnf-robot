@@ -2,11 +2,14 @@ package dnf
 
 import (
 	"bytes"
+	"compress/zlib"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"math/bits"
+	"math/rand"
 	"net"
 	"robot/internal/foundation/lockhub"
 	sqlpkg "robot/internal/foundation/sql"
@@ -183,6 +186,8 @@ type RobotVo struct {
 	partyTQOSReliableSeq uint32
 	partyTQOSCodecs      [4][3]partyTQOSCodec
 	partyTQOSCodecKnown  [4][3]bool
+	partyFollowNotBefore time.Time
+	partyActionNotBefore time.Time
 
 	GMName [5][100]byte
 
@@ -686,6 +691,13 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			if area, ok := parseTownEntityArea(decData); ok {
 				r.followPartyLeaderTownAreaUnsafe(area)
 			}
+		}
+		return
+	}
+
+	if r.State == StateRun && packetFlag == 0 && packetType == 9 && len(pInBuf) > 15 {
+		if decData, err := inflatePartyInfo(pInBuf[15:]); err == nil && partyInfoClearsParty(decData) {
+			r.clearPartyUnsafe()
 		}
 		return
 	}
@@ -1494,6 +1506,19 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			sequence := binary.LittleEndian.Uint32(frame[1:5])
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
 		}
+		if route == 1 && r.shouldFollowPartyPeerUnsafe(peer) {
+			if body, ok := buildPartyDungeonFollowBody(frame, peer.uniqueID, r.partySelfPeer.uniqueID); ok && r.partyFollowDueUnsafe() {
+				sequence := r.partyTQOSSeq
+				r.partyTQOSSeq++
+				replies = append(replies, buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, frame[8], body))
+				continue
+			}
+			if action, ok := buildPartyDungeonActionRecord(frame); ok && r.partyActionDueUnsafe() {
+				sequence := r.partyTQOSReliableSeq
+				r.partyTQOSReliableSeq++
+				replies = append(replies, buildPartyReliableRecordPacket(sequence, r.partySelfPeer.slot, frame[8], action))
+			}
+		}
 		var preferred *partyTQOSCodec
 		if peer.slot < 4 && route < 3 && r.partyTQOSCodecKnown[peer.slot][route] {
 			codec := r.partyTQOSCodecs[peer.slot][route]
@@ -1521,6 +1546,35 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 	}
 	return replies
+}
+
+func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {
+	return r.partySelfPeer.slotKnown && r.partySelfPeer.slot != 0 && peer.slotKnown && peer.slot == 0 && peer.uniqueID != 0
+}
+
+func (r *RobotVo) partyFollowDueUnsafe() bool {
+	now := time.Now()
+	if now.Before(r.partyFollowNotBefore) {
+		return false
+	}
+	r.partyFollowNotBefore = now.Add(randomPartyDelay(350*time.Millisecond, 1200*time.Millisecond))
+	return true
+}
+
+func (r *RobotVo) partyActionDueUnsafe() bool {
+	now := time.Now()
+	if now.Before(r.partyActionNotBefore) {
+		return false
+	}
+	r.partyActionNotBefore = now.Add(randomPartyDelay(1800*time.Millisecond, 5*time.Second))
+	return true
+}
+
+func randomPartyDelay(minimum, maximum time.Duration) time.Duration {
+	if maximum <= minimum {
+		return minimum
+	}
+	return minimum + time.Duration(rand.Int63n(int64(maximum-minimum)+1))
 }
 
 func (r *RobotVo) partyPeerForUDPUnsafe(remote *net.UDPAddr, senderSlot *byte) (partyIPPeer, bool) {
@@ -1782,6 +1836,8 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
+	r.partyFollowNotBefore = time.Time{}
+	r.partyActionNotBefore = time.Time{}
 	r.resetPartyTQOSTransportUnsafe()
 }
 
@@ -2588,7 +2644,31 @@ func parsePartyIPInfoSnapshot(packet []byte, selfAccID uint32) (partyIPPeer, []p
 	return self, peers, true
 }
 
+func inflatePartyInfo(data []byte) ([]byte, error) {
+	zr, err := zlib.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer zr.Close()
+	return io.ReadAll(zr)
+}
+
+func partyInfoClearsParty(data []byte) bool {
+	if len(data) < 5 || data[0] != 1 {
+		return false
+	}
+	return data[4] == 2 || data[4] == 3
+}
+
 const partyTQOSBodySize = 10
+const partyDungeonPositionCommand = 0x0051
+const partyDungeonPositionBodySize = 52
+const partyDungeonPositionUniqueIDOffset = 26
+const partyDungeonPositionInnerPayloadOffset = 22
+const partyDungeonActionCommand = 0x0044
+const partyDungeonActionBodySize = 13
+
+var partyDungeonPositionInnerChecksumOffsets = [...]int{10, 18}
 
 var partyTQOSCRCTable = crc32.MakeTable(0x4db89129)
 
@@ -2629,6 +2709,82 @@ func splitPartyTransportFrames(payload []byte) ([][]byte, bool) {
 		payload = payload[frameSize:]
 	}
 	return frames, len(frames) > 0
+}
+
+func buildPartyDungeonFollowBody(frame []byte, sourceUniqueID, targetUniqueID uint16) ([]byte, bool) {
+	if len(frame) != 9+partyDungeonPositionBodySize || frame[0] != 0x02 || sourceUniqueID == 0 || targetUniqueID == 0 || sourceUniqueID == targetUniqueID {
+		return nil, false
+	}
+	if int(binary.LittleEndian.Uint16(frame[5:7])) != partyDungeonPositionBodySize {
+		return nil, false
+	}
+	body := frame[9:]
+	if body[0] != 1 || binary.LittleEndian.Uint16(body[1:3]) != partyDungeonPositionCommand {
+		return nil, false
+	}
+	checksum := partyPayloadChecksum(body[7:])
+	if !bytes.Equal(body[3:7], checksum[:]) || binary.LittleEndian.Uint16(body[partyDungeonPositionUniqueIDOffset:]) != sourceUniqueID {
+		return nil, false
+	}
+	innerChecksum := partyPayloadChecksum(body[partyDungeonPositionInnerPayloadOffset:])
+	for _, offset := range partyDungeonPositionInnerChecksumOffsets {
+		if !bytes.Equal(body[offset:offset+len(innerChecksum)], innerChecksum[:]) {
+			return nil, false
+		}
+	}
+
+	followBody := append([]byte(nil), body...)
+	binary.LittleEndian.PutUint16(followBody[partyDungeonPositionUniqueIDOffset:], targetUniqueID)
+	innerChecksum = partyPayloadChecksum(followBody[partyDungeonPositionInnerPayloadOffset:])
+	for _, offset := range partyDungeonPositionInnerChecksumOffsets {
+		copy(followBody[offset:offset+len(innerChecksum)], innerChecksum[:])
+	}
+	checksum = partyPayloadChecksum(followBody[7:])
+	copy(followBody[3:7], checksum[:])
+	return followBody, true
+}
+
+func buildPartyDungeonActionRecord(frame []byte) ([]byte, bool) {
+	if len(frame) < 11 || frame[0] != 0x01 || int(binary.LittleEndian.Uint16(frame[5:7])) != len(frame)-9 {
+		return nil, false
+	}
+	body := frame[9:]
+	for len(body) >= 2 {
+		size := int(binary.LittleEndian.Uint16(body[:2]))
+		body = body[2:]
+		if size <= 0 || size > len(body) {
+			return nil, false
+		}
+		record := body[:size]
+		body = body[size:]
+		if len(record) == partyDungeonActionBodySize && record[0] == 0x02 && binary.LittleEndian.Uint16(record[1:3]) == partyDungeonActionCommand {
+			return append([]byte(nil), record...), true
+		}
+	}
+	return nil, false
+}
+
+func buildPartyReliableRecordPacket(sequence uint32, senderSlot, flags byte, record []byte) []byte {
+	payload := make([]byte, 11+len(record))
+	payload[0] = 0x01
+	binary.LittleEndian.PutUint32(payload[1:5], sequence)
+	binary.LittleEndian.PutUint16(payload[5:7], uint16(2+len(record)))
+	payload[7] = senderSlot
+	payload[8] = flags
+	binary.LittleEndian.PutUint16(payload[9:11], uint16(len(record)))
+	copy(payload[11:], record)
+	return payload
+}
+
+func buildPartyUnreliablePacket(sequence uint32, senderSlot, flags byte, body []byte) []byte {
+	payload := make([]byte, 9+len(body))
+	payload[0] = 0x02
+	binary.LittleEndian.PutUint32(payload[1:5], sequence)
+	binary.LittleEndian.PutUint16(payload[5:7], uint16(len(body)))
+	payload[7] = senderSlot
+	payload[8] = flags
+	copy(payload[9:], body)
+	return payload
 }
 
 func parsePartyTQOSPacket(payload []byte, expectedRoute byte) (partyTQOSPacket, bool) {
