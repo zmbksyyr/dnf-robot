@@ -182,8 +182,8 @@ type RobotVo struct {
 	partyUDPConn         *net.UDPConn
 	partyRelayConn       net.Conn
 	partyRelayAt         time.Time
-	partyTQOSSeq         uint32
-	partyTQOSReliableSeq uint32
+	partyTQOSSeq         [4][3]uint32
+	partyTQOSReliableSeq [4][3]uint32
 	partyTQOSCodecs      [4][3]partyTQOSCodec
 	partyTQOSCodecKnown  [4][3]bool
 	partyDungeonTraceAt  time.Time
@@ -1510,15 +1510,19 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
 			if route == 1 {
 				if frame[0] == 0x02 && partyDungeonFrameContainsCommand(frame, 0x0004) && r.partyMoveDueUnsafe() {
-					sequence := r.partyTQOSSeq
-					r.partyTQOSSeq++
+					sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, false)
+					if !ok {
+						continue
+					}
 					replies = append(replies, buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, frame[8], append([]byte(nil), frame[9:]...)))
 					foundationlog.Robotf("[PARTY_DUNGEON_MOVE] uid=%d reliable=false records=1 sequence=%d\n", r.UID, sequence)
 					continue
 				}
 				if records := partyDungeonCommandRecords(frame, 0x0004); len(records) > 0 && r.partyMoveDueUnsafe() {
-					sequence := r.partyTQOSReliableSeq
-					r.partyTQOSReliableSeq++
+					sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, true)
+					if !ok {
+						continue
+					}
 					replies = append(replies, buildPartyReliableRecordBatchPacket(sequence, r.partySelfPeer.slot, frame[8], records))
 					foundationlog.Robotf("[PARTY_DUNGEON_MOVE] uid=%d reliable=true records=%d sequence=%d\n", r.UID, len(records), sequence)
 				}
@@ -1539,18 +1543,29 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		nextState, hasNextState := nextPartyTQOSState(request.state)
 		if hasNextState {
-			sequence := r.partyTQOSSeq
-			if nextState == 2 {
-				sequence = r.partyTQOSReliableSeq
-				r.partyTQOSReliableSeq++
-			} else {
-				r.partyTQOSSeq++
+			sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, nextState == 2)
+			if !ok {
+				continue
 			}
 			reply := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, request.flags, nextState, route, request.codec)
 			replies = append(replies, reply)
 		}
 	}
 	return replies
+}
+
+func (r *RobotVo) nextPartyTQOSSequenceUnsafe(peerSlot, route byte, reliable bool) (uint32, bool) {
+	if peerSlot >= byte(len(r.partyTQOSSeq)) || route >= byte(len(r.partyTQOSSeq[0])) {
+		return 0, false
+	}
+	if reliable {
+		sequence := r.partyTQOSReliableSeq[peerSlot][route]
+		r.partyTQOSReliableSeq[peerSlot][route]++
+		return sequence, true
+	}
+	sequence := r.partyTQOSSeq[peerSlot][route]
+	r.partyTQOSSeq[peerSlot][route]++
+	return sequence, true
 }
 
 func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {
@@ -1893,6 +1908,13 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 		}
 	}
 	r.rememberPartyPeersUnsafe(peers)
+	for slot := byte(0); slot < 4; slot++ {
+		before := partyPeerUniqueIDForSlot(previous, slot)
+		after := partyPeerUniqueIDForSlot(r.partyPeers, slot)
+		if before != after && (before != 0 || after != 0) {
+			r.resetPartyTQOSPeerUnsafe(slot)
+		}
+	}
 	if !r.partyActiveUnsafe() {
 		r.partySelfPeer = partyIPPeer{}
 		r.resetPartyTQOSTransportUnsafe()
@@ -1928,10 +1950,29 @@ func (r *RobotVo) clearPartyUnsafe() {
 }
 
 func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
-	r.partyTQOSSeq = 0
-	r.partyTQOSReliableSeq = 0
+	r.partyTQOSSeq = [4][3]uint32{}
+	r.partyTQOSReliableSeq = [4][3]uint32{}
 	r.partyTQOSCodecs = [4][3]partyTQOSCodec{}
 	r.partyTQOSCodecKnown = [4][3]bool{}
+}
+
+func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
+	if slot >= byte(len(r.partyTQOSSeq)) {
+		return
+	}
+	r.partyTQOSSeq[slot] = [3]uint32{}
+	r.partyTQOSReliableSeq[slot] = [3]uint32{}
+	r.partyTQOSCodecs[slot] = [3]partyTQOSCodec{}
+	r.partyTQOSCodecKnown[slot] = [3]bool{}
+}
+
+func partyPeerUniqueIDForSlot(peers [4]partyIPPeer, slot byte) uint16 {
+	for _, peer := range peers {
+		if peer.slotKnown && peer.slot == slot {
+			return peer.uniqueID
+		}
+	}
+	return 0
 }
 
 func mergePartyPeer(old, next partyIPPeer) partyIPPeer {

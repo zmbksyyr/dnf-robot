@@ -295,8 +295,71 @@ func TestRobotPartyTQOSStateMachine(t *testing.T) {
 	if len(ack) != 1 || hex.EncodeToString(ack[0]) != "0001080000000000" {
 		t.Fatalf("reliable ack = %x", ack)
 	}
-	if vo.partyTQOSSeq != 2 || vo.partyTQOSReliableSeq != 1 {
-		t.Fatalf("sequences = %d/%d, want 2/1", vo.partyTQOSSeq, vo.partyTQOSReliableSeq)
+	if vo.partyTQOSSeq[0][1] != 2 || vo.partyTQOSReliableSeq[0][1] != 1 {
+		t.Fatalf("sequences = %d/%d, want 2/1", vo.partyTQOSSeq[0][1], vo.partyTQOSReliableSeq[0][1])
+	}
+}
+
+func TestRobotPartyTQOSSequencesAreIsolatedByPeerAndRoute(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{slot: 2, slotKnown: true}
+	leader := partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true}
+	robotPeer := partyIPPeer{uniqueID: 2, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = leader
+	vo.partyPeers[1] = robotPeer
+
+	leaderRoute1 := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(10, leader.slot, 0, 3, 1, codec), 1, leader)
+	robotRoute1 := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(20, robotPeer.slot, 0, 3, 1, codec), 1, robotPeer)
+	leaderRoute2 := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(30, leader.slot, 0, 3, 2, codec), 2, leader)
+	for name, replies := range map[string][][]byte{
+		"leader route1": leaderRoute1,
+		"robot route1":  robotRoute1,
+		"leader route2": leaderRoute2,
+	} {
+		if len(replies) != 1 {
+			t.Fatalf("%s replies = %x", name, replies)
+		}
+		if sequence := binary.LittleEndian.Uint32(replies[0][1:5]); sequence != 0 {
+			t.Fatalf("%s sequence = %d, want 0", name, sequence)
+		}
+	}
+
+	leaderRoute1 = vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(11, leader.slot, 0, 3, 1, codec), 1, leader)
+	if len(leaderRoute1) != 1 || binary.LittleEndian.Uint32(leaderRoute1[0][1:5]) != 1 {
+		t.Fatalf("leader route1 second replies = %x", leaderRoute1)
+	}
+	if vo.partyTQOSSeq[0][1] != 2 || vo.partyTQOSSeq[1][1] != 1 || vo.partyTQOSSeq[0][2] != 1 {
+		t.Fatalf("isolated sequences = %+v", vo.partyTQOSSeq)
+	}
+}
+
+func TestPartyPeerUpdateResetsOnlyChangedSlotTransport(t *testing.T) {
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 2, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true}
+	vo.partyTQOSSeq[0][1] = 7
+	vo.partyTQOSSeq[1][1] = 5
+	vo.partyTQOSCodecKnown[0][1] = true
+	vo.partyTQOSCodecKnown[1][1] = true
+
+	vo.setPartyPeersUnsafe([]partyIPPeer{
+		{uniqueID: 1, slot: 0, slotKnown: true},
+		{uniqueID: 2, slot: 1, slotKnown: true},
+	})
+	if vo.partyTQOSSeq[0][1] != 7 || !vo.partyTQOSCodecKnown[0][1] {
+		t.Fatalf("unchanged leader transport was reset: seq=%d codec=%t", vo.partyTQOSSeq[0][1], vo.partyTQOSCodecKnown[0][1])
+	}
+	if vo.partyTQOSSeq[1][1] != 0 || vo.partyTQOSCodecKnown[1][1] {
+		t.Fatalf("new peer transport was not reset: seq=%d codec=%t", vo.partyTQOSSeq[1][1], vo.partyTQOSCodecKnown[1][1])
+	}
+
+	vo.setPartyPeersUnsafe([]partyIPPeer{
+		{uniqueID: 3, slot: 0, slotKnown: true},
+		{uniqueID: 2, slot: 1, slotKnown: true},
+	})
+	if vo.partyTQOSSeq[0][1] != 0 || vo.partyTQOSCodecKnown[0][1] {
+		t.Fatalf("replaced leader transport was not reset: seq=%d codec=%t", vo.partyTQOSSeq[0][1], vo.partyTQOSCodecKnown[0][1])
 	}
 }
 
