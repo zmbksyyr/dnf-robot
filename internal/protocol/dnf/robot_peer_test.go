@@ -219,7 +219,7 @@ func TestRobotRewritesCapturedDungeonPosition(t *testing.T) {
 	}
 }
 
-func TestRobotFlushesOnlyDelayedDungeonInputRecords(t *testing.T) {
+func TestRobotFlushesOnlyDelayedDungeonMovementRecords(t *testing.T) {
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
@@ -233,15 +233,16 @@ func TestRobotFlushesOnlyDelayedDungeonInputRecords(t *testing.T) {
 
 	input1 := mustPartyHex(t, "02270001136ff17e7e7e7e")
 	input2 := mustPartyHex(t, "02270001783cf97e7e7e7e")
+	motion := mustPartyHex(t, "00280001000000")
 	skill := mustPartyHex(t, "024400a7eb502bece87e7e7e7e")
-	frame := buildPartyReliableRecordBatchPacket(9, 0, 5, [][]byte{input1, skill, input2})
+	frame := buildPartyReliableRecordBatchPacket(9, 0, 5, [][]byte{input1, skill, motion, input2})
 	leaderAddr := receiver.LocalAddr().(*net.UDPAddr)
 	vo := &RobotVo{UID: 17000001, partyUDPConn: sender}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, accID: 17000001, slot: 1, slotKnown: true}
 	leader := partyIPPeer{uniqueID: 0x9692, accID: 18000000, slot: 0, slotKnown: true, outerIP: leaderAddr.IP, port: uint16(leaderAddr.Port)}
 	vo.partyPeers[0] = leader
 	vo.schedulePartyDungeonInputUnsafe(frame, leader)
-	if len(vo.partyDungeonInputs) != 2 || vo.partyDungeonInputAt.IsZero() {
+	if len(vo.partyDungeonInputs) != 3 || vo.partyDungeonInputAt.IsZero() {
 		t.Fatalf("scheduled inputs=%x at=%s", vo.partyDungeonInputs, vo.partyDungeonInputAt)
 	}
 	vo.partyDungeonInputAt = time.Now().Add(-time.Millisecond)
@@ -262,8 +263,13 @@ func TestRobotFlushesOnlyDelayedDungeonInputRecords(t *testing.T) {
 	if got[0] != 0x01 || got[7] != 1 || got[8] != 5 || binary.LittleEndian.Uint32(got[1:5]) != 0 {
 		t.Fatalf("input frame = %x", got)
 	}
+	want := buildPartyReliableRecordBatchPacket(0, 1, 5, [][]byte{input1, motion, input2})
+	if !bytes.Equal(got, want) {
+		t.Fatalf("movement frame=%x want=%x", got, want)
+	}
 	records := partyDungeonRecords(got, 0x0027, 11)
-	if len(records) != 2 || !bytes.Equal(records[0], input1) || !bytes.Equal(records[1], input2) || partyDungeonFrameContainsCommand(got, 0x0044) {
+	motions := partyDungeonRecords(got, 0x0028, 7)
+	if len(records) != 2 || !bytes.Equal(records[0], input1) || !bytes.Equal(records[1], input2) || len(motions) != 1 || !bytes.Equal(motions[0], motion) || partyDungeonFrameContainsCommand(got, 0x0044) {
 		t.Fatalf("input records = %x frame=%x", records, got)
 	}
 	if vo.partyTQOSReliableSeq[0][1] != 1 {

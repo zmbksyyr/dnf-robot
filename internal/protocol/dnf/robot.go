@@ -1707,7 +1707,7 @@ func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer pa
 }
 
 func (r *RobotVo) schedulePartyDungeonInputUnsafe(frame []byte, peer partyIPPeer) {
-	inputs := partyDungeonRecords(frame, 0x0027, 11)
+	inputs := partyDungeonMovementRecords(frame)
 	if len(inputs) == 0 {
 		return
 	}
@@ -1768,6 +1768,30 @@ func partyDungeonRecords(frame []byte, target uint16, exactSize int) [][]byte {
 		record := body[:size]
 		if size >= 3 && (exactSize <= 0 || size == exactSize) && binary.LittleEndian.Uint16(record[1:3]) == target {
 			records = append(records, append([]byte(nil), record...))
+		}
+		body = body[size:]
+	}
+	return records
+}
+
+func partyDungeonMovementRecords(frame []byte) [][]byte {
+	if len(frame) < 11 || frame[0] != 0x01 {
+		return nil
+	}
+	records := make([][]byte, 0, 8)
+	body := frame[9:]
+	for len(body) >= 2 {
+		size := int(binary.LittleEndian.Uint16(body[:2]))
+		body = body[2:]
+		if size <= 0 || size > len(body) {
+			return nil
+		}
+		record := body[:size]
+		if size >= 3 {
+			command := binary.LittleEndian.Uint16(record[1:3])
+			if (command == 0x0027 && size == 11) || (command == 0x0028 && size == 7) {
+				records = append(records, append([]byte(nil), record...))
+			}
 		}
 		body = body[size:]
 	}
