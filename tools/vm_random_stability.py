@@ -21,11 +21,13 @@ from __future__ import print_function
 import argparse
 import csv
 import datetime
+import glob
 import io
 import json
 import os
 import random
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -151,6 +153,30 @@ SAMPLE_FIELDS = [
     "event",
 ]
 
+CONFIG_BACKUP_EXCLUDES = (
+    "log_robot*",
+    "market_log.jsonl*",
+    "market_*_service.log*",
+    "*.rotate.tmp",
+    "*.trim.tmp",
+)
+
+STABILITY_OUTPUT_GLOB = "/root/robot_stability_*"
+STABILITY_OUTPUT_KEEP = 5
+CONFIG_FAULT_BACKUP_GLOBS = (
+    "/root/config.vm_random_backup_*",
+    "/root/config/*.vm_random_backup_*",
+    "/dp2/Script.pvf.vm_random_backup_*",
+    "/home/neople/game/Script.pvf.vm_random_backup_*",
+    "/home/neople/auction/iteminfo.dat.vm_random_backup_*",
+    "/home/neople/point/iteminfo.dat.vm_random_backup_*",
+)
+CONFIG_FAULT_BACKUP_KEEP = 5
+CONFIG_FAULT_BACKUP_NAME_RE = re.compile(r"^(?:config\.vm_random_backup_|.+\.vm_random_backup_)\d+$")
+CONFIG_FAULT_BACKUP_TEMP_RE = re.compile(r"^config\.vm_random_backup_\d+\.(?:tar\.)?tmp\.\d+$")
+STABILITY_OUTPUT_NAME_RE = re.compile(r"^robot_stability_\d{8}-\d{6}$")
+DEFAULT_ARTIFACT_MAX_MB = 512
+
 
 def now_text():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -185,8 +211,65 @@ def shell_quote(value):
     return "'" + safe_text(value).replace("'", "'\\''") + "'"
 
 
+def filtered_config_backup_script(source, destination):
+    exclude_patterns = []
+    for pattern in CONFIG_BACKUP_EXCLUDES:
+        exclude_patterns.append(pattern)
+        exclude_patterns.append("*/" + pattern)
+    exclude_args = " ".join("--exclude=%s" % shell_quote(pattern) for pattern in exclude_patterns)
+    return """
+SOURCE=%(source)s
+DESTINATION=%(destination)s
+TMP="${DESTINATION}.tmp.$$"
+ARCHIVE="${DESTINATION}.tar.tmp.$$"
+rm -rf -- "$TMP"
+rm -f -- "$ARCHIVE"
+if [ ! -d "$SOURCE" ]; then
+  echo CONFIG_BACKUP_FAILED source_missing
+  exit 1
+fi
+if ! (cd "$SOURCE" && tar %(exclude_args)s -cf "$ARCHIVE" .); then
+  rm -rf -- "$TMP"
+  rm -f -- "$ARCHIVE"
+  echo CONFIG_BACKUP_FAILED archive
+  exit 1
+fi
+mkdir -p "$TMP"
+if ! tar -xf "$ARCHIVE" -C "$TMP" || [ ! -s "$TMP/config.ini" ]; then
+  rm -rf -- "$TMP"
+  rm -f -- "$ARCHIVE"
+  echo CONFIG_BACKUP_FAILED verify
+  exit 1
+fi
+rm -rf -- "$DESTINATION"
+mv "$TMP" "$DESTINATION"
+rm -f -- "$ARCHIVE"
+echo CONFIG_BACKUP_OK
+""" % {
+        "source": shell_quote(source),
+        "destination": shell_quote(destination),
+        "exclude_args": exclude_args,
+    }
+
+
 def sanitize_name(value):
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", safe_text(value)).strip("_") or "snapshot"
+
+
+def backup_source_key(path):
+    marker = ".vm_random_backup_"
+    name = os.path.basename(path)
+    index = name.rfind(marker)
+    if index < 0:
+        return path
+    return os.path.join(os.path.dirname(path), name[:index])
+
+
+def path_size(path):
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
 
 
 def to_int(value, default=0):
@@ -269,6 +352,8 @@ class StabilityRun(object):
         self.time_limit_sec = parse_time_limit(args.time_limit)
         self.deadline_at = self.started + self.time_limit_sec if self.time_limit_sec > 0 else 0
         self.total_sec = max(self.time_limit_sec or 3600, 600)
+        self.artifact_max_bytes = max(0, args.artifact_max_mb) * 1024 * 1024
+        self.artifact_limit_reported = False
         self.baseline_dir = os.path.join(self.out_dir, "baseline")
         self.snapshot_dir = os.path.join(self.out_dir, "snapshots")
         if not os.path.isdir(self.snapshot_dir):
@@ -290,7 +375,12 @@ class StabilityRun(object):
         random.seed(seed)
         self.args.seed = seed
         self.log("start out_dir=%s args=%s seed=%s min_rounds=%s time_limit_sec=%s" % (self.out_dir, vars(self.args), seed, self.args.rounds, self.time_limit_sec))
-        self.prepare_baseline()
+        self.cleanup_stale_artifacts()
+        if not self.prepare_baseline():
+            self.log("run aborted: baseline config backup failed")
+            self.events.close()
+            self.samples_file.close()
+            return
         self.ensure_auto()
         next_target = time.time() + random.randint(self.args.target_min_interval, self.args.target_max_interval)
         next_cleanup = time.time() + random.randint(self.args.cleanup_min_interval, self.args.cleanup_max_interval)
@@ -303,6 +393,9 @@ class StabilityRun(object):
         stop_reason = ""
         try:
             while True:
+                if self.artifact_budget_exceeded():
+                    stop_reason = "artifact_budget_reached"
+                    break
                 round_no += 1
                 round_scenarios = list(scenarios)
                 random.shuffle(round_scenarios)
@@ -331,6 +424,10 @@ class StabilityRun(object):
                         next_invariant = now + self.args.sample_interval
                     self.run_event(event, round_no)
                     self.write_report()
+                    if self.artifact_budget_exceeded():
+                        stop_reason = "artifact_budget_reached"
+                        self.log("scenario stop after scene round=%s event=%s reason=%s" % (round_no, event["name"], stop_reason))
+                        raise StopIteration
                     if self.should_stop_after_scene(round_no):
                         stop_reason = self.stop_reason(round_no)
                         self.log("scenario stop after scene round=%s event=%s reason=%s" % (round_no, event["name"], stop_reason))
@@ -369,9 +466,11 @@ class StabilityRun(object):
             if not stop_reason:
                 stop_reason = self.stop_reason(round_no)
             self.log("run finishing rounds=%s stop_reason=%s" % (round_no, stop_reason))
-            self.collect_logs("before_final_recover")
+            if not self.artifact_budget_exceeded():
+                self.collect_logs("before_final_recover")
             self.final_recover_environment()
-            self.collect_logs("final")
+            if not self.artifact_budget_exceeded():
+                self.collect_logs("final")
             self.write_report()
             self.write_summary()
             self.events.close()
@@ -679,15 +778,25 @@ class StabilityRun(object):
         if not os.path.isdir(self.baseline_dir):
             os.makedirs(self.baseline_dir)
         self.log("prepare_baseline begin dir=%s" % self.baseline_dir)
-        self.shell("cp -af /root/config %s/root_config 2>/dev/null || true" % shell_quote(self.baseline_dir), 120)
+        backup_output = self.shell(filtered_config_backup_script("/root/config", os.path.join(self.baseline_dir, "root_config")), 120)
+        if "CONFIG_BACKUP_OK" not in safe_text(backup_output):
+            self.log("prepare_baseline config_backup_failed output=%s" % safe_text(backup_output)[:1000])
+            return False
         self.shell("mkdir -p %s/home_neople_auction %s/home_neople_point; cp -af /home/neople/auction/iteminfo.dat %s/home_neople_auction/iteminfo.dat 2>/dev/null || true; cp -af /home/neople/point/iteminfo.dat %s/home_neople_point/iteminfo.dat 2>/dev/null || true" % (shell_quote(self.baseline_dir), shell_quote(self.baseline_dir), shell_quote(self.baseline_dir), shell_quote(self.baseline_dir)), 60)
         self.backup_market_database("baseline")
         restore_path = os.path.join(self.baseline_dir, "restore_baseline.sh")
         restore = """#!/bin/sh
 set -e
 BASE=%s
-rm -rf /root/config
-cp -af "$BASE/root_config" /root/config 2>/dev/null || mkdir -p /root/config
+mkdir -p /root/config
+find /root/config -mindepth 1 -maxdepth 1 \
+  ! -name 'log_robot*' \
+  ! -name 'market_log.jsonl*' \
+  ! -name 'market_*_service.log*' \
+  ! -name '*.rotate.tmp' \
+  ! -name '*.trim.tmp' \
+  -exec rm -rf -- {} +
+cp -af "$BASE/root_config/." /root/config/
 cp -af "$BASE/home_neople_auction/iteminfo.dat" /home/neople/auction/iteminfo.dat 2>/dev/null || true
 cp -af "$BASE/home_neople_point/iteminfo.dat" /home/neople/point/iteminfo.dat 2>/dev/null || true
 if [ -s "$BASE/market_robot_stock.sql" ]; then mysql -ugame -puu5!^%%jg < "$BASE/market_robot_stock.sql"; fi
@@ -700,7 +809,9 @@ echo RESTORED
             os.chmod(restore_path, 0o755)
         except Exception as exc:
             self.log("prepare_baseline restore_script_error err=%r" % (exc,))
+            return False
         self.log("prepare_baseline done restore=%s" % restore_path)
+        return True
 
     def final_recover_environment(self):
         self.log("final_recover_environment begin")
@@ -709,7 +820,7 @@ echo RESTORED
             self.shell("sh %s" % shell_quote(restore_path), 180)
         else:
             self.log("final_recover_environment missing restore script=%s" % restore_path)
-        self.shell("cd /root && (./run >/tmp/vm_random_final_run.log 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
         self.robot_restart_without_target("final_recover_robot")
         if not self.wait_robot_api("final_recover_api", 90, 5):
             self.record_failure("final_recover_api_timeout", "robot API was not ready after final recovery")
@@ -719,7 +830,7 @@ echo RESTORED
             self.log("final_recover_market first attempt failed; clear system stock and retry")
             self.safe_call("marketClearSystemStock", {})
             self.stop_market_services()
-            self.shell("cd /root && (./run >/tmp/vm_random_final_market_retry.log 2>&1 || true); sleep 20; ss -lntp | grep -E ':(30603|30803)' || true; pgrep -af 'df_auction_r|df_point_r' || true", 240)
+            self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(30603|30803)' || true; pgrep -af 'df_auction_r|df_point_r' || true", 240)
             self.market_enable_auto(max_concurrent=8)
             if not self.wait_market_services("final_recover_market_retry", 180, 10):
                 self.record_failure("final_recover_market_timeout", "market services were not ready after final recovery retry")
@@ -760,7 +871,7 @@ echo RESTORED
         if api_ok and scheduler_ok and game_ok and market_ok:
             return True
         self.log("ensure_baseline_ready recover event=%s api=%s scheduler=%s game=%s market=%s" % (event, api_ok, scheduler_ok, game_ok, market_ok))
-        self.shell("cd /root && (./run >/tmp/vm_random_baseline_run.log 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
         if not api_ok:
             self.robot_restart_without_target("%s_robot_restart" % event)
         api_ok = self.wait_robot_api("%s_api_retry" % event, timeout_sec, 5)
@@ -1195,14 +1306,14 @@ echo RESTORED
         self.market_enable_auto(max_concurrent=8)
         self.wait_market_auto_running("market_startup_race_auto_before", 120, 10)
         self.sample_with_event("market_startup_race_before")
-        self.shell("cd /root && (./stop >/tmp/vm_random_stop_market_race.log 2>&1 || true); sleep 12; ss -lntp | grep -E ':(10011|30303)' || true", 180)
+        self.shell("cd /root && (./stop >/dev/null 2>&1 || true); sleep 12; ss -lntp | grep -E ':(10011|30303)' || true", 180)
         self.robot_restart_without_target("market_startup_race_robot_restart_game_down")
         res = self.safe_call("marketStatus", {})
         self.log("market_startup_iteminfo_race status_game_down=%s" % json_text(res, 1600))
         res = self.safe_call("marketSyncItemInfo", {})
         self.log("market_startup_iteminfo_race sync_iteminfo_game_down result=%s" % json_text(res, 2400))
         self.sample_with_event("market_startup_race_after_iteminfo")
-        self.shell("cd /root && (./run >/tmp/vm_random_run_market_race.log 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true", 240)
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true", 240)
         self.wait_robot_api("market_startup_race_api", 90, 5)
         self.wait_market_services("market_startup_race_services", 240, 10)
         if not self.wait_market_auto_running("market_startup_race_auto", 180, 10):
@@ -1325,7 +1436,7 @@ echo RESTORED
         self.wait_market_services("market_kill_recover", 180, 10)
 
     def stop_market_services(self):
-        script = "for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -TERM $p || true; done; sleep 8; for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -KILL $p || true; done; ss -lntp | grep -E ':(30603|30803)' || true; pgrep -af 'df_auction_r|df_point_r' || true"
+        script = "for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -TERM $p || true; done; sleep 8; for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -KILL $p || true; done; pkill -TERM -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true; sleep 1; pkill -KILL -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true; ss -lntp | grep -E ':(30603|30803)' || true; pgrep -af 'df_auction_r|df_point_r' || true"
         self.shell(script, 40)
 
     def market_fault_missing_iteminfo(self):
@@ -1504,39 +1615,194 @@ echo RESTORED
     def config_dir_fault(self):
         self.log("config_dir_fault begin")
         backup = "/root/config.vm_random_backup_%s" % int(time.time() * 1000)
+        backup_output = self.shell(filtered_config_backup_script("/root/config", backup), 120)
+        if "CONFIG_BACKUP_OK" not in safe_text(backup_output):
+            self.log("config_dir_fault skipped: config backup failed output=%s" % safe_text(backup_output)[:1000])
+            return
+        backup_ready = True
+        self.stop_market_services()
         try:
             script = """
-pids=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
+pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
+pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
 sleep 5
-left=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
+left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
-cp -af /root/config %s 2>/dev/null || true
+pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
+pkill -KILL -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
 mkdir -p /root/config
-find /root/config -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+find /root/config -mindepth 1 -maxdepth 1 \
+  ! -name 'log_robot*' \
+  ! -name 'market_log.jsonl*' \
+  ! -name 'market_*_service.log*' \
+  ! -name '*.rotate.tmp' \
+  ! -name '*.trim.tmp' \
+  -exec rm -rf -- {} + 2>/dev/null || true
 printf '{broken config dir' > /root/config/market_config.json
-""" % shell_quote(backup)
+"""
             self.shell(script, 120)
             self.sample_with_event("config_dir_fault_broken")
             self.robot_restart_without_target("config_dir_fault_restart")
             self.burst_sample("config_dir_fault", self.scaled_seconds(20, 60), 10)
         finally:
-            script = """
-pids=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
+            if backup_ready:
+                script = """
+pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
+pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
 sleep 5
-left=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
+left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
+pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
+pkill -KILL -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
 mkdir -p /root/config
-find /root/config -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+find /root/config -mindepth 1 -maxdepth 1 \
+  ! -name 'log_robot*' \
+  ! -name 'market_log.jsonl*' \
+  ! -name 'market_*_service.log*' \
+  ! -name '*.rotate.tmp' \
+  ! -name '*.trim.tmp' \
+  -exec rm -rf -- {} + 2>/dev/null || true
 if [ -d %s ]; then
-  cp -af %s/. /root/config/ 2>/dev/null || true
-  rm -rf %s
+  if cp -af %s/. /root/config/; then
+    rm -rf %s
+    echo CONFIG_RESTORE_OK
+  else
+    echo CONFIG_RESTORE_FAILED
+    exit 1
+  fi
+else
+  echo CONFIG_RESTORE_FAILED
+  exit 1
 fi
 """ % (shell_quote(backup), shell_quote(backup), shell_quote(backup))
-            self.shell(script, 120)
-            self.robot_restart_without_target("config_dir_fault_restore")
-            self.market_enable_auto(max_concurrent=8)
+                restore_output = self.shell(script, 120)
+                if "CONFIG_RESTORE_OK" in safe_text(restore_output):
+                    self.robot_restart_without_target("config_dir_fault_restore")
+                    self.market_enable_auto(max_concurrent=8)
+                else:
+                    self.record_failure("config_dir_fault_restore", "config restore failed; backup retained at %s" % backup)
+
+    def cleanup_stale_artifacts(self):
+        config_backups = []
+        seen_backups = set()
+        now = time.time()
+        for pattern in CONFIG_FAULT_BACKUP_GLOBS:
+            for path in glob.glob(pattern):
+                absolute = os.path.abspath(path)
+                if absolute in seen_backups or os.path.islink(absolute):
+                    continue
+                try:
+                    modified = os.path.getmtime(absolute)
+                except OSError:
+                    continue
+                name = os.path.basename(absolute)
+                if CONFIG_FAULT_BACKUP_TEMP_RE.match(name):
+                    if now - modified >= 3600:
+                        try:
+                            if os.path.isdir(absolute):
+                                shutil.rmtree(absolute)
+                            else:
+                                os.remove(absolute)
+                        except OSError as exc:
+                            self.log("cleanup_stale_artifacts temp_remove_failed path=%s err=%r" % (absolute, exc))
+                    continue
+                if not CONFIG_FAULT_BACKUP_NAME_RE.match(name):
+                    continue
+                seen_backups.add(absolute)
+                config_backups.append((modified, absolute))
+        config_backups.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        grouped_backups = {}
+        for modified, path in config_backups:
+            grouped_backups.setdefault(backup_source_key(path), []).append((modified, path))
+        protected_backups = set()
+        for entries in grouped_backups.values():
+            protected_backups.update(path for _, path in entries[:CONFIG_FAULT_BACKUP_KEEP])
+            largest = max(entries, key=lambda item: path_size(item[1]))
+            protected_backups.add(largest[1])
+        removed_config_backups = []
+        for _, path in config_backups:
+            if path in protected_backups:
+                continue
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+                removed_config_backups.append(path)
+            except OSError as exc:
+                self.log("cleanup_stale_artifacts backup_remove_failed path=%s err=%r" % (path, exc))
+
+        current = os.path.realpath(os.path.abspath(self.out_dir))
+        candidates = []
+        for path in glob.glob(STABILITY_OUTPUT_GLOB):
+            absolute = os.path.abspath(path)
+            if os.path.dirname(absolute) != "/root":
+                continue
+            if not STABILITY_OUTPUT_NAME_RE.match(os.path.basename(absolute)):
+                continue
+            if os.path.islink(absolute) or not os.path.isdir(absolute):
+                continue
+            try:
+                modified = os.path.getmtime(absolute)
+            except OSError:
+                continue
+            candidates.append((modified, absolute))
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+        protected = []
+        for _, path in candidates:
+            real_path = os.path.realpath(path)
+            if current == real_path or current.startswith(real_path + os.sep):
+                protected.append(path)
+                break
+        for _, path in candidates:
+            if path in protected:
+                continue
+            if len(protected) >= STABILITY_OUTPUT_KEEP:
+                break
+            protected.append(path)
+        protected = set(protected)
+
+        removed = []
+        for _, path in candidates:
+            if path in protected:
+                continue
+            try:
+                shutil.rmtree(path)
+                removed.append(path)
+            except OSError as exc:
+                self.log("cleanup_stale_artifacts remove_failed path=%s err=%r" % (path, exc))
+        self.log("cleanup_stale_artifacts config_backups_retained=%s config_backups_removed=%s outputs_retained=%s outputs_removed=%s" % (
+            len(protected_backups),
+            len(removed_config_backups),
+            len(protected),
+            len(removed),
+        ))
+
+    def artifact_budget_exceeded(self):
+        if self.artifact_max_bytes <= 0:
+            return False
+        total = 0
+        for root, dirs, files in os.walk(self.out_dir):
+            dirs[:] = [name for name in dirs if not os.path.islink(os.path.join(root, name))]
+            for name in files:
+                path = os.path.join(root, name)
+                if os.path.islink(path):
+                    continue
+                try:
+                    total += os.path.getsize(path)
+                except OSError:
+                    continue
+                if total > self.artifact_max_bytes:
+                    if not self.artifact_limit_reported:
+                        self.artifact_limit_reported = True
+                        self.log("artifact budget reached bytes=%s limit=%s" % (total, self.artifact_max_bytes))
+                    return True
+        return False
 
     def web_api_fault(self):
         self.log("web_api_fault begin")
@@ -1551,7 +1817,7 @@ fi
     def port_conflict_fault(self):
         self.log("port_conflict_fault begin")
         self.stop_market_services()
-        cmd = "cat >/tmp/vm_random_port_conflict.py <<'PY'\nimport socket,time\ns=[]\nfor p in (30603,30803):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(90)\nPY\nnohup python /tmp/vm_random_port_conflict.py >/tmp/vm_random_port_conflict.log 2>&1 &"
+        cmd = "cat >/tmp/vm_random_port_conflict.py <<'PY'\nimport socket,time\ns=[]\nfor p in (30603,30803):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(90)\nPY\nnohup python /tmp/vm_random_port_conflict.py >/dev/null 2>&1 &"
         self.shell(cmd, 5)
         self.sample_with_event("port_conflict_bound")
         self.market_enable_auto(max_concurrent=4)
@@ -1794,26 +2060,35 @@ fi
             res = self.safe_call("robotsShoutWorld", {"uids": uids})
             self.log("monitor_fault world_shout_down uids=%s result=%s" % (uids, json_text(res, 1600)))
         self.log("monitor_fault restore /root/run")
-        self.shell("cd /root && (./run >/tmp/vm_random_run_monitor.log 2>&1 || true); sleep 20; ss -lntp | grep ':30303' || true; pgrep -af 'df_monitor_r|df_game_r' || true", 180)
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep ':30303' || true; pgrep -af 'df_monitor_r|df_game_r' || true", 180)
         self.sample_with_event("monitor_fault_restore")
         self.burst_sample("monitor_fault_recover", 60, 5)
 
     def game_port_fault(self):
         self.log("game_port_fault stop /root/stop")
         self.sample_with_event("game_port_fault_stop")
-        self.shell("cd /root && (./stop >/tmp/vm_random_stop_game.log 2>&1 || true); sleep 15; ss -lntp | grep ':10011' || true; pgrep -af 'df_game_r' || true", 180)
+        self.shell("cd /root && (./stop >/dev/null 2>&1 || true); sleep 15; ss -lntp | grep ':10011' || true; pgrep -af 'df_game_r' || true", 180)
         self.sample_with_event("game_port_down")
         time.sleep(self.scaled_seconds(45, 120))
         self.log("game_port_fault restore /root/run")
-        self.shell("cd /root && (./run >/tmp/vm_random_run_game.log 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303)' || true; pgrep -af 'df_game_r|df_monitor_r' || true", 240)
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303)' || true; pgrep -af 'df_game_r|df_monitor_r' || true", 240)
         self.sample_with_event("game_port_fault_restore")
         self.burst_sample("game_port_fault_recover", self.scaled_seconds(60, 120), 10)
 
     def backup_file(self, path):
         backup = "%s.vm_random_backup_%s" % (path, int(time.time() * 1000))
-        script = "[ -e '%s' ] && cp -af '%s' '%s' && echo '%s' || true" % (path, path, backup, backup)
+        script = """
+if [ -e %(path)s ]; then
+  if mv -f %(path)s %(backup)s && : > %(path)s; then
+    echo BACKUP_OK
+  else
+    [ ! -e %(path)s ] && mv -f %(backup)s %(path)s 2>/dev/null || true
+    echo BACKUP_FAILED
+  fi
+fi
+""" % {"path": shell_quote(path), "backup": shell_quote(backup)}
         out = self.shell(script, 20)
-        if backup in out:
+        if "BACKUP_OK" in [line.strip() for line in safe_text(out).splitlines()]:
             self.log("backup_file path=%s backup=%s" % (path, backup))
             return backup
         self.log("backup_file missing path=%s" % path)
@@ -1823,7 +2098,9 @@ fi
         if not backup:
             self.log("restore_file skipped path=%s backup_empty" % path)
             return
-        script = "[ -e '%s' ] && cp -af '%s' '%s' && rm -f '%s' && echo RESTORED || echo MISSING_BACKUP" % (backup, backup, path, backup)
+        script = "[ -e %s ] && rm -f %s && mv -f %s %s && echo RESTORED || echo MISSING_BACKUP" % (
+            shell_quote(backup), shell_quote(path), shell_quote(backup), shell_quote(path)
+        )
         out = self.shell(script, 20)
         self.log("restore_file path=%s backup=%s output=%s" % (path, backup, out[:400]))
 
@@ -1862,12 +2139,16 @@ ls -l "$OUT" %s
         self.log("robot_restart_without_target begin label=%s" % label)
         self.sample_with_event(label + "_stop")
         script = r"""
-pids=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
+pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
+pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
 sleep 8
-left=$(ps -eo pid,args | awk '$2=="/root/robot" || $2=="./robot" {print $1}')
+left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
-nohup /root/robot > /root/robot_stdout.log 2>&1 &
+pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
+pkill -KILL -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
+nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/robot_stdout.log' >/dev/null 2>/root/robot_start_error.log &
 sleep 12
 pgrep -af '/root/robot|df_game_r|df_monitor_r|df_auction_r|df_point_r' || true
 ss -lntp | grep -E ':(8111|8112|10011|30303|30603|30803)' || true
@@ -2433,6 +2714,7 @@ def parse_args():
     parser.add_argument("--cleanup-logout-wait", type=int, default=15, help=argparse.SUPPRESS)
     parser.add_argument("--status-count", type=int, default=1000, help=argparse.SUPPRESS)
     parser.add_argument("--log-tail-lines", type=int, default=2000, help=argparse.SUPPRESS)
+    parser.add_argument("--artifact-max-mb", type=int, default=DEFAULT_ARTIFACT_MAX_MB, help=argparse.SUPPRESS)
     parser.add_argument("--no-cleanup", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--allow-online-cleanup", dest="allow_online_cleanup", action="store_true", default=True, help=argparse.SUPPRESS)
     parser.add_argument("--no-allow-online-cleanup", dest="allow_online_cleanup", action="store_false", help=argparse.SUPPRESS)

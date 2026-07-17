@@ -14,6 +14,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const robotStartCommand = "nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/robot_stdout.log' >/dev/null 2>/root/robot_start_error.log &"
+
 type DeployWindow struct {
 	*walk.MainWindow
 	deployBtn  *walk.PushButton
@@ -134,32 +136,31 @@ func (dw *DeployWindow) doRestart() error {
 
 	dw.killRemoteRobot(client)
 
-	if err := runCmdBg(client, "nohup /root/robot >/root/robot_stdout.log 2>&1 &"); err != nil {
+	if err := runCmdBg(client, robotStartCommand); err != nil {
 		return fmt.Errorf("启动 robot 失败: %v", err)
 	}
 
 	time.Sleep(2 * time.Second)
 
-	robotPid, _ := runCmdOutput(client, "pgrep -f '/root/robot' | head -1 || true")
-	robotPid = strings.TrimSpace(robotPid)
-	if robotPid == "" {
-		return fmt.Errorf("新 robot 进程未运行，请检查 /root/robot_stdout.log")
+	robotPid, err := verifyRemoteRobot(client)
+	if err != nil {
+		return err
 	}
 	dw.appendLog(fmt.Sprintf("robot 已启动 (pid: %s)", robotPid))
 	return nil
 }
 
 func (dw *DeployWindow) killRemoteRobot(client *ssh.Client) {
-	runCmd(client, "pkill -9 robot 2>/dev/null; pkill -9 -f '/root/robot' 2>/dev/null; killall -q -9 robot 2>/dev/null; true")
+	runCmd(client, "pkill -TERM -f '^/root/robot$' 2>/dev/null; pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null; pkill -TERM -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null; true")
 	time.Sleep(2 * time.Second)
 
-	check, _ := runCmdOutput(client, "ps -C robot -o pid= 2>/dev/null | tr -d ' '; true")
+	check, _ := runCmdOutput(client, "pgrep -f '^/root/robot$|^/root/robot --web-admin|^/root/robot --bounded-log-sink /root/robot_stdout.log' || true")
 	check = strings.TrimSpace(check)
 	if check != "" {
 		dw.appendLog(fmt.Sprintf("仍有 robot 残留 PID: %s，逐个强杀 ...", check))
 		runCmd(client, fmt.Sprintf("kill -9 %s 2>/dev/null; true", strings.ReplaceAll(check, "\n", " ")))
 		time.Sleep(2 * time.Second)
-		check2, _ := runCmdOutput(client, "ps -C robot -o pid= 2>/dev/null | tr -d ' '; true")
+		check2, _ := runCmdOutput(client, "pgrep -f '^/root/robot$|^/root/robot --web-admin|^/root/robot --bounded-log-sink /root/robot_stdout.log' || true")
 		check2 = strings.TrimSpace(check2)
 		if check2 != "" {
 			dw.appendLog(fmt.Sprintf("警告: robot 残留 PID %s，继续", check2))
@@ -226,20 +227,43 @@ func (dw *DeployWindow) doDeploy() error {
 	}
 	dw.appendLog("替换 robot 完成")
 
-	if err := runCmdBg(client, "nohup /root/robot >/root/robot_stdout.log 2>&1 &"); err != nil {
+	if err := runCmdBg(client, robotStartCommand); err != nil {
 		return fmt.Errorf("启动 robot 失败: %v", err)
 	}
 
 	time.Sleep(2 * time.Second)
 
-	robotPid, _ := runCmdOutput(client, "pgrep -f '/root/robot' | head -1 || true")
-	robotPid = strings.TrimSpace(robotPid)
-	if robotPid == "" {
-		return fmt.Errorf("新 robot 进程未运行，请检查 /root/robot_stdout.log")
+	robotPid, err := verifyRemoteRobot(client)
+	if err != nil {
+		return err
 	}
 	dw.appendLog(fmt.Sprintf("新 robot 已启动 (pid: %s)", robotPid))
 
 	return nil
+}
+
+func verifyRemoteRobot(client *ssh.Client) (string, error) {
+	lastReason := ""
+	for attempt := 0; attempt < 180; attempt++ {
+		robotPID, _ := runCmdOutput(client, "pgrep -f '^/root/robot$' | head -1 || true")
+		robotPID = strings.TrimSpace(robotPID)
+		if robotPID == "" {
+			lastReason = "主进程未运行"
+		} else {
+			sinkPID, _ := runCmdOutput(client, "pgrep -f '^/root/robot --bounded-log-sink /root/robot_stdout.log( |$)' | head -1 || true")
+			if strings.TrimSpace(sinkPID) == "" {
+				lastReason = "stdout 日志进程未运行"
+			} else {
+				ports, _ := runCmdOutput(client, "ss -ltnH 2>/dev/null | awk '{print $4}' || true")
+				if strings.Contains(ports, ":8111") && strings.Contains(ports, ":8112") {
+					return robotPID, nil
+				}
+				lastReason = "端口 8111/8112 未就绪"
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	return "", fmt.Errorf("robot 启动校验失败: %s，请检查 /root/robot_start_error.log", lastReason)
 }
 
 func (dw *DeployWindow) runGame() {
@@ -266,7 +290,7 @@ func (dw *DeployWindow) runGame() {
 				return
 			}
 			dw.runBtn.SetEnabled(true)
-							dw.runBtn.SetText("启动 /root/run")
+			dw.runBtn.SetText("启动 /root/run")
 		})
 
 		client, err := sshConnectWithRetry(dw.hostEdit.Text(), dw.userEdit.Text(), dw.passEdit.Text(), 2)

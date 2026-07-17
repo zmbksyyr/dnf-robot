@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"robot/internal/foundation/lockhub"
+	"robot/internal/foundation/logfile"
 	"time"
 )
 
@@ -50,6 +51,9 @@ func ConfigureLogRotation(maxSizeMB, backups int) {
 }
 
 func LogInit(path string) error {
+	if err := logfile.Prepare(path, logMaxSize, logBackups); err != nil {
+		return err
+	}
 	var err error
 	logFile, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -126,17 +130,7 @@ func rotateLogIfNeededLocked() {
 		return
 	}
 	_ = logFile.Close()
-	_ = os.Remove(fmt.Sprintf("%s.%d", logName, logBackups))
-	for i := logBackups - 1; i >= 1; i-- {
-		src := fmt.Sprintf("%s.%d", logName, i)
-		dst := fmt.Sprintf("%s.%d", logName, i+1)
-		if _, err := os.Stat(src); err == nil {
-			_ = os.Remove(dst)
-			_ = os.Rename(src, dst)
-		}
-	}
-	_ = os.Remove(fmt.Sprintf("%s.1", logName))
-	if err := os.Rename(logName, fmt.Sprintf("%s.1", logName)); err != nil && !os.IsNotExist(err) {
+	if err := logfile.Rotate(logName, logBackups); err != nil {
 		fmt.Printf("[Log] rotate failed path=%s err=%v\n", logName, err)
 	}
 	var openErr error

@@ -12,8 +12,9 @@ func SetRobotSink(sink Sink) {
 
 func Robotf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Print(msg)
 	if robotSink != nil {
 		robotSink(msg)
+		return
 	}
+	fmt.Print(msg)
 }

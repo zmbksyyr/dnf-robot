@@ -36,11 +36,22 @@ Read this before any VM, deploy, or debug task.
 - robot config: `/root/config/robot_config.ini`
 - main log: `/root/config/log_robot`
 - web/start log: `/root/robot_stdout.log`
+- startup error log: `/root/robot_start_error.log` (truncated on each start)
 - market log: `/root/config/market_log.jsonl`
 - start game services: `/root/run`
 - stop game services: `/root/stop`
 - game dir: `/home/neople/game`
 - df_game_r: `/home/neople/game/df_game_r`
+
+## Robot Start
+
+Use the bounded stdout sink so `robot_stdout.log` follows the configured log limits:
+
+```sh
+nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/robot_stdout.log' >/dev/null 2>/root/robot_start_error.log &
+```
+
+Do not start with a direct `> /root/robot_stdout.log` redirect; that bypasses rotation.
 
 ## Database
 

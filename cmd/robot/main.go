@@ -35,6 +35,13 @@ func main() {
 	robotAddr := flag.String("robot-addr", "", "robot TCP address for web admin")
 	webAddr := flag.String("web-addr", "", "web admin listen address")
 	flag.Parse()
+	if boundedLogSinkRequested() {
+		if err := runBoundedLogSink(os.Stdin); err != nil {
+			fmt.Fprintf(os.Stderr, "bounded log sink failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *webAdminMode {
 		runWebAdmin(*robotAddr, *webAddr)
@@ -58,7 +65,6 @@ func main() {
 		fmt.Printf("create config dir error: %v\n", err)
 		os.Exit(1)
 	}
-
 	dnf.ConfigureLogRotation(cfg.LogMaxSizeMB, cfg.LogMaxBackups)
 	if err := dnf.LogInit(filepath.Join(cfg.ConfigDir, "log_robot")); err != nil {
 		fmt.Printf("init log error: %v\n", err)
@@ -213,7 +219,5 @@ func initRSA(cfg *config.SysConfig) {
 }
 
 func logRobotActionf(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Print(msg)
-	dnf.LogString(dnf.LogLevelIndispensable, msg)
+	foundationlog.Robotf(format, args...)
 }

@@ -10,11 +10,16 @@ import (
 	"path/filepath"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/lockhub"
+	"robot/internal/foundation/logfile"
 	"strings"
 	"time"
 )
 
-const defaultAuctionEquipmentEndurance = 10
+const (
+	defaultAuctionEquipmentEndurance = 10
+	defaultMarketLogMaxSizeMB        = 100
+	defaultMarketLogBackups          = 5
+)
 
 // ---- app.go ----
 type App struct {
@@ -30,6 +35,7 @@ type App struct {
 	stateMu   lockhub.Locker
 	jobMu     lockhub.Locker
 	autoMu    lockhub.Locker
+	logMu     lockhub.Locker
 	autoRun   bool
 	autoStop  bool
 	lastJob   *JobSummary
@@ -52,6 +58,8 @@ type App struct {
 	specialAddInfo      int32
 	policy              map[string]MarketPolicyStatus
 	lastServiceRestart  map[string]time.Time
+	logMaxBytes         int64
+	logBackups          int
 }
 
 type auctionRejectedState struct {
@@ -168,6 +176,14 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	if executors == nil {
 		executors = unsupportedActionExecutorFactory{}
 	}
+	logMaxSizeMB := sys.LogMaxSizeMB
+	if logMaxSizeMB <= 0 {
+		logMaxSizeMB = defaultMarketLogMaxSizeMB
+	}
+	logBackups := sys.LogMaxBackups
+	if logBackups <= 0 {
+		logBackups = defaultMarketLogBackups
+	}
 	cfg, path, err := LoadConfig(sys.ConfigDir)
 	if err != nil {
 		return nil, err
@@ -183,6 +199,8 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		services:           map[string]MarketServiceStatus{},
 		policy:             map[string]MarketPolicyStatus{},
 		lastServiceRestart: map[string]time.Time{},
+		logMaxBytes:        int64(logMaxSizeMB) * 1024 * 1024,
+		logBackups:         logBackups,
 		rand:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		stopAuto:           make(chan struct{}),
 		autoDone:           make(chan struct{}),
@@ -197,6 +215,7 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		app.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusSuccess, Message: strings.Join(tables, ",")})
 	}
 	app.refreshMarketServiceStatuses()
+	app.ensureRunningMarketServiceLogSinks()
 	return app, nil
 }
 
@@ -1390,16 +1409,26 @@ func (a *App) appendLog(event LogEvent) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
 	data, err := json.Marshal(event)
 	if err != nil {
 		return
 	}
-	_, _ = f.Write(append(data, '\n'))
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
+	maxBytes, backups := a.logLimits()
+	_ = logfile.Append(path, append(data, '\n'), maxBytes, backups)
+}
+
+func (a *App) logLimits() (int64, int) {
+	maxBytes := a.logMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = int64(defaultMarketLogMaxSizeMB) * 1024 * 1024
+	}
+	backups := a.logBackups
+	if backups <= 0 {
+		backups = defaultMarketLogBackups
+	}
+	return maxBytes, backups
 }
 
 // ---- executor.go ----
