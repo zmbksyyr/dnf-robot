@@ -18,8 +18,6 @@ var (
 	scriptReferenceRE = regexp.MustCompile(`(?i)["'](character/[^"']+\.nut)["']`)
 	symbolRE          = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Z][A-Z0-9_]*)\s*(?:<-|=)\s*(-?\d+)\s*;?`)
 	datasSignatureRE  = regexp.MustCompile(`(?is)function\s+\w+\s*\([^)]*\bdatas\b[^)]*\)`)
-	executableSkillRE = regexp.MustCompile(`(?is)function\s+checkExecutableSkill_\w+\s*\([^)]*\)`)
-	functionStartRE   = regexp.MustCompile(`(?is)function\s+\w+\s*\(`)
 	stateHandlerRE    = regexp.MustCompile(`(?is)function\s+on(?:After)?SetState_\w+\s*\(`)
 )
 
@@ -140,17 +138,5 @@ func skillStateScriptUsesEmptyData(script string) bool {
 		return false
 	}
 	body := strings.ToLower(datasSignatureRE.ReplaceAllString(script, ""))
-	return skillExecutableSetsState(script) && stateHandlerRE.MatchString(script) && !strings.Contains(body, "datas") && !strings.Contains(body, "sq_getvectordata")
-}
-
-func skillExecutableSetsState(script string) bool {
-	match := executableSkillRE.FindStringIndex(script)
-	if match == nil {
-		return false
-	}
-	body := script[match[1]:]
-	if next := functionStartRE.FindStringIndex(body); next != nil {
-		body = body[:next[0]]
-	}
-	return strings.Contains(strings.ToLower(body), "sq_addsetstatepacket")
+	return stateHandlerRE.MatchString(script) && !strings.Contains(body, "datas") && !strings.Contains(body, "sq_getvectordata")
 }

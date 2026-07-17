@@ -36,7 +36,7 @@ IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/data/data
 	}
 }
 
-func TestExtractSkillStateCatalogRejectsPassiveAndReactiveScripts(t *testing.T) {
+func TestExtractSkillStateCatalogRejectsScriptsWithoutStateHandler(t *testing.T) {
 	archive := &pvfArchive{files: map[string]*pvfFile{
 		"sqr/character/new_swordman_load_state.nut": {
 			Name: "sqr/character/new_swordman_load_state.nut",
