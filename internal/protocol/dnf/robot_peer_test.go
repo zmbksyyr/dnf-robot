@@ -219,52 +219,6 @@ func TestRobotRewritesCapturedDungeonPosition(t *testing.T) {
 	}
 }
 
-func TestRobotFlushesDelayedDungeonPositionToLeader(t *testing.T) {
-	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer receiver.Close()
-	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sender.Close()
-
-	position := mustPartyHex(t, "028703000034000000015100970cfec701070034ede5df0001070034ede5df1102a97492965e0800000d000000ffffffffffffffff0000000000000000")
-	leaderAddr := receiver.LocalAddr().(*net.UDPAddr)
-	vo := &RobotVo{UID: 17000001, partyUDPConn: sender}
-	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, accID: 17000001, slot: 1, slotKnown: true}
-	leader := partyIPPeer{uniqueID: 0x9692, accID: 18000000, slot: 0, slotKnown: true, outerIP: leaderAddr.IP, port: uint16(leaderAddr.Port)}
-	vo.partyPeers[0] = leader
-	vo.schedulePartyDungeonFollowUnsafe(position, leader)
-	if len(vo.partyDungeonFollow) == 0 || vo.partyDungeonFollowAt.IsZero() {
-		t.Fatal("captured position was not scheduled")
-	}
-	vo.partyDungeonFollowAt = time.Now().Add(-time.Millisecond)
-	vo.flushPartyDungeonFollowUnsafe(sender)
-	if len(vo.partyDungeonFollow) != 0 || !vo.partyDungeonFollowAt.IsZero() {
-		t.Fatal("flushed position remained pending")
-	}
-
-	if err := receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	buf := make([]byte, 128)
-	n, _, err := receiver.ReadFromUDP(buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	frame := buf[:n]
-	if frame[0] != 0x02 || frame[7] != 1 || binary.LittleEndian.Uint32(frame[1:5]) != 0 {
-		t.Fatalf("follow frame = %x", frame)
-	}
-	want := mustPartyHex(t, "015100bc9521ba010700f29a59e300010700f29a59e31102a974ab1f5e0800000d000000ffffffffffffffff0000000000000000")
-	if !bytes.Equal(frame[9:], want) || vo.partyTQOSSeq[0][1] != 1 {
-		t.Fatalf("follow body=%x sequence=%d, want body=%x sequence=1", frame[9:], vo.partyTQOSSeq[0][1], want)
-	}
-}
-
 func TestPartyDungeonFrameRecords(t *testing.T) {
 	position := mustPartyHex(t, "028703000034000000015100970cfec701070034ede5df0001070034ede5df1102a97492965e0800000d000000ffffffffffffffff0000000000000000")
 	if got := partyDungeonFrameRecords(position); got != "0x0051/52" {
@@ -284,6 +238,23 @@ func TestPartyDungeonFrameRecords(t *testing.T) {
 	}
 	if !partyDungeonFrameContainsCommand(frame, 0x0044) || partyDungeonFrameContainsCommand(frame, 0x0051) {
 		t.Fatalf("reliable command detection failed")
+	}
+	if got, ok := partyDungeonRecord(frame, 0x0044); !ok || !bytes.Equal(got, reliable) {
+		t.Fatalf("reliable record = %x ok=%t", got, ok)
+	}
+	if _, ok := partyDungeonRecord(position, 0x0051); ok {
+		t.Fatal("standalone unreliable body was treated as a reliable record")
+	}
+
+	lowest := &RobotVo{}
+	lowest.partySelfPeer = partyIPPeer{accID: 17000001}
+	lowest.partyPeers[0] = partyIPPeer{accID: 17000002}
+	if !lowest.isLowestPartyRobotAccountUnsafe() {
+		t.Fatal("lowest robot account was not selected for input trace")
+	}
+	lowest.partyPeers[1] = partyIPPeer{accID: 17000000}
+	if lowest.isLowestPartyRobotAccountUnsafe() {
+		t.Fatal("higher robot account was selected for input trace")
 	}
 }
 
