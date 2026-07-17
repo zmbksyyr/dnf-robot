@@ -189,7 +189,6 @@ type RobotVo struct {
 	partyRobotProbeSent  [4]bool
 	partyRobotPeerReady  [4]bool
 	partyDungeonTraceAt  time.Time
-	partyMoveNotBefore   time.Time
 
 	GMName [5][100]byte
 
@@ -708,6 +707,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
 		if err == nil {
 			if self, peers, ok := parsePartyIPInfoSnapshot(decData, uint32(r.UID)); ok {
+				tracePartyIPInfo(r.UID, self, peers)
 				r.partySelfPeer = self
 				r.setPartyPeersUnsafe(peers)
 				r.ensurePartyRelayUnsafe()
@@ -1531,25 +1531,6 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
 			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
-			if route == 1 {
-				if frame[0] == 0x02 && partyDungeonFrameContainsCommand(frame, 0x0004) && r.partyMoveDueUnsafe() {
-					sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, false)
-					if !ok {
-						continue
-					}
-					replies = append(replies, buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, frame[8], append([]byte(nil), frame[9:]...)))
-					foundationlog.Robotf("[PARTY_DUNGEON_MOVE] uid=%d reliable=false records=1 sequence=%d\n", r.UID, sequence)
-					continue
-				}
-				if records := partyDungeonCommandRecords(frame, 0x0004); len(records) > 0 && r.partyMoveDueUnsafe() {
-					sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, true)
-					if !ok {
-						continue
-					}
-					replies = append(replies, buildPartyReliableRecordBatchPacket(sequence, r.partySelfPeer.slot, frame[8], records))
-					foundationlog.Robotf("[PARTY_DUNGEON_MOVE] uid=%d reliable=true records=%d sequence=%d\n", r.UID, len(records), sequence)
-				}
-			}
 		}
 		var preferred *partyTQOSCodec
 		if peer.slot < 4 && route < 3 && r.partyTQOSCodecKnown[peer.slot][route] {
@@ -1674,15 +1655,6 @@ func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer pa
 	foundationlog.Robotf("[PARTY_DUNGEON_FRAME] uid=%d route=%d peer_slot=%d peer_unique_id=%d type=%d body=%d records=%s follow=%t\n", r.UID, route, peer.slot, peer.uniqueID, frame[0], bodySize, partyDungeonFrameRecords(frame), follow)
 }
 
-func (r *RobotVo) partyMoveDueUnsafe() bool {
-	now := time.Now()
-	if now.Before(r.partyMoveNotBefore) {
-		return false
-	}
-	r.partyMoveNotBefore = now.Add(350 * time.Millisecond)
-	return true
-}
-
 func partyDungeonFrameContainsCommand(frame []byte, target uint16) bool {
 	if len(frame) < 12 {
 		return false
@@ -1706,27 +1678,6 @@ func partyDungeonFrameContainsCommand(frame []byte, target uint16) bool {
 		body = body[size:]
 	}
 	return false
-}
-
-func partyDungeonCommandRecords(frame []byte, target uint16) [][]byte {
-	if len(frame) < 11 || frame[0] != 0x01 || int(binary.LittleEndian.Uint16(frame[5:7])) != len(frame)-9 {
-		return nil
-	}
-	body := frame[9:]
-	records := make([][]byte, 0, 2)
-	for len(body) >= 2 {
-		size := int(binary.LittleEndian.Uint16(body[:2]))
-		body = body[2:]
-		if size <= 0 || size > len(body) {
-			return nil
-		}
-		record := body[:size]
-		body = body[size:]
-		if size >= 3 && binary.LittleEndian.Uint16(record[1:3]) == target {
-			records = append(records, append([]byte(nil), record...))
-		}
-	}
-	return records
 }
 
 func partyDungeonFrameRecords(frame []byte) string {
@@ -2033,7 +1984,6 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyDungeonTraceAt = time.Time{}
-	r.partyMoveNotBefore = time.Time{}
 	r.closePartyRelayUnsafe()
 	r.resetPartyTQOSTransportUnsafe()
 }
@@ -2865,6 +2815,18 @@ func parsePartyIPInfoSnapshot(packet []byte, selfAccID uint32) (partyIPPeer, []p
 	return self, peers, true
 }
 
+func tracePartyIPInfo(uid uint32, self partyIPPeer, peers []partyIPPeer) {
+	peerText := ""
+	for _, peer := range peers {
+		if peerText != "" {
+			peerText += ","
+		}
+		peerText += fmt.Sprintf("slot%d:acc%d:uid%d:port%d", peer.slot, peer.accID, peer.uniqueID, peer.port)
+	}
+	fmt.Printf("[PARTY_IPINFO] uid=%d self_slot=%d self_acc=%d self_unique=%d self_port=%d peers=%s\n",
+		uid, self.slot, self.accID, self.uniqueID, self.port, peerText)
+}
+
 func inflatePartyInfo(data []byte) ([]byte, error) {
 	zr, err := zlib.NewReader(bytes.NewReader(data))
 	if err != nil {
@@ -2971,27 +2933,6 @@ func buildPartyUnreliablePacket(sequence uint32, senderSlot, flags byte, body []
 	payload[7] = senderSlot
 	payload[8] = flags
 	copy(payload[9:], body)
-	return payload
-}
-
-func buildPartyReliableRecordBatchPacket(sequence uint32, senderSlot, flags byte, records [][]byte) []byte {
-	bodySize := 0
-	for _, record := range records {
-		bodySize += 2 + len(record)
-	}
-	payload := make([]byte, 9+bodySize)
-	payload[0] = 0x01
-	binary.LittleEndian.PutUint32(payload[1:5], sequence)
-	binary.LittleEndian.PutUint16(payload[5:7], uint16(bodySize))
-	payload[7] = senderSlot
-	payload[8] = flags
-	offset := 9
-	for _, record := range records {
-		binary.LittleEndian.PutUint16(payload[offset:offset+2], uint16(len(record)))
-		offset += 2
-		copy(payload[offset:], record)
-		offset += len(record)
-	}
 	return payload
 }
 

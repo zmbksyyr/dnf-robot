@@ -170,7 +170,6 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 7, slot: 0, slotKnown: true}
 	vo.townEntityPositions = map[uint16]townEntityPosition{7: {uniqueID: 7}}
 	vo.partyDungeonTraceAt = time.Now().Add(time.Minute)
-	vo.partyMoveNotBefore = time.Now().Add(time.Minute)
 
 	if partyInfoClearsParty(mustPartyHex(t, "0100220000486b01a86b01")) {
 		t.Fatal("active party info was treated as clear")
@@ -179,7 +178,7 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 		t.Fatal("clear party info was not recognized")
 	}
 	vo.clearPartyUnsafe()
-	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyDungeonTraceAt.IsZero() || !vo.partyMoveNotBefore.IsZero() {
+	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyDungeonTraceAt.IsZero() {
 		t.Fatalf("party state remained after clear: peers=%+v positions=%+v", vo.partyPeers, vo.townEntityPositions)
 	}
 }
@@ -205,26 +204,6 @@ func TestCheckUserStateClosesOnlyIdlePartyRelay(t *testing.T) {
 	}
 	if active.partyRelayConn != activeRobot {
 		t.Fatal("active party relay was closed")
-	}
-}
-
-func TestRobotMirrorsOnlyDungeonCommand4(t *testing.T) {
-	vo := &RobotVo{}
-	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, slot: 1, slotKnown: true}
-	leader := partyIPPeer{uniqueID: 0x9692, slot: 0, slotKnown: true}
-	vo.partyPeers[0] = leader
-	move := []byte{0x01, 0x04, 0x00, 1, 2, 3, 4, 5, 6}
-	skill := []byte{0x02, 0x44, 0x00, 7, 8, 9, 10}
-	frame := buildPartyReliableRecordBatchPacket(7, 0, 0, [][]byte{move, skill})
-	replies := vo.buildPartyTQOSRepliesUnsafe(frame, 1, leader)
-	if len(replies) != 2 || replies[0][0] != 0x00 || replies[1][0] != 0x01 {
-		t.Fatalf("replies = %x", replies)
-	}
-	if !bytes.Contains(replies[1], move) || bytes.Contains(replies[1], skill) {
-		t.Fatalf("mirrored records = %x", replies[1])
-	}
-	if got := partyDungeonCommandRecords(frame, 0x0004); len(got) != 1 || !bytes.Equal(got[0], move) {
-		t.Fatalf("command4 records = %x", got)
 	}
 }
 
