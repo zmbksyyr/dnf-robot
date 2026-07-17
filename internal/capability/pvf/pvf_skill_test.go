@@ -10,6 +10,7 @@ func TestExtractSkillStateCatalogKeepsOnlyEmptyDataStates(t *testing.T) {
 IRDSQRCharacter.pushScriptFiles("character/atmage/header.nut");
 IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/safe/safe.nut", "safe", STATE_SAFE, SKILL_SAFE);
 IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/data/data.nut", "data", 22, 3);
+IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/native/native.nut", "native", 23, 4);
 `),
 		},
 		"sqr/character/atmage/header.nut": {
@@ -24,15 +25,23 @@ IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/data/data
 			Name: "sqr/character/atmage/data/data.nut",
 			Data: []byte("function onAfterSetState_data(obj, state, datas, reset) { return obj.sq_GetVectorData(datas, 0); }"),
 		},
+		"sqr/character/atmage/native/native.nut": {
+			Name: "sqr/character/atmage/native/native.nut",
+			Data: []byte("function onSetState_native(obj, state, datas, reset) { SetState_native(obj, state, datas, reset); }\nfunction SetState_native(obj, state, values, reset) { obj.setCurrentAnimation(2); }"),
+		},
 	}}
 
 	got := extractSkillStateCatalog(archive)
-	if len(got) != 1 {
-		t.Fatalf("catalog size = %d, want 1: %+v", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("catalog size = %d, want 2: %+v", len(got), got)
 	}
 	want := SkillState{Job: 8, SkillIndex: 1, State: 20, ScriptPath: "sqr/character/atmage/safe/safe.nut"}
 	if got[0] != want {
 		t.Fatalf("catalog entry = %+v, want %+v", got[0], want)
+	}
+	want = SkillState{Job: 8, SkillIndex: 4, State: 23, ScriptPath: "sqr/character/atmage/native/native.nut"}
+	if got[1] != want {
+		t.Fatalf("catalog entry = %+v, want %+v", got[1], want)
 	}
 }
 

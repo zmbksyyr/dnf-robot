@@ -17,7 +17,6 @@ var (
 	pushStateRE       = regexp.MustCompile(`(?is)IRDSQRCharacter\.pushState\s*\(\s*([^,]+),\s*["']([^"']+)["']\s*,\s*["'][^"']*["']\s*,\s*([^,]+),\s*([^\)]+)\)`)
 	scriptReferenceRE = regexp.MustCompile(`(?i)["'](character/[^"']+\.nut)["']`)
 	symbolRE          = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Z][A-Z0-9_]*)\s*(?:<-|=)\s*(-?\d+)\s*;?`)
-	datasSignatureRE  = regexp.MustCompile(`(?is)function\s+\w+\s*\([^)]*\bdatas\b[^)]*\)`)
 	stateHandlerRE    = regexp.MustCompile(`(?is)function\s+on(?:After)?SetState_\w+\s*\(`)
 )
 
@@ -137,6 +136,6 @@ func skillStateScriptUsesEmptyData(script string) bool {
 	if strings.TrimSpace(script) == "" {
 		return false
 	}
-	body := strings.ToLower(datasSignatureRE.ReplaceAllString(script, ""))
-	return stateHandlerRE.MatchString(script) && !strings.Contains(body, "datas") && !strings.Contains(body, "sq_getvectordata")
+	body := strings.ToLower(script)
+	return stateHandlerRE.MatchString(script) && !strings.Contains(body, "sq_getvectordata")
 }
