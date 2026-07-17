@@ -556,6 +556,38 @@ func TestRobotPartyTQOSUsesCachedCodec(t *testing.T) {
 	}
 }
 
+func TestPartyDungeonRecordSamplingIsBoundedToLowestRobotAccount(t *testing.T) {
+	record := make([]byte, 29)
+	binary.LittleEndian.PutUint16(record[1:3], 0x0051)
+	frame := make([]byte, 11+len(record))
+	frame[0] = 0x01
+	binary.LittleEndian.PutUint16(frame[5:7], uint16(2+len(record)))
+	binary.LittleEndian.PutUint16(frame[9:11], uint16(len(record)))
+	copy(frame[11:], record)
+
+	lowest := &RobotVo{UID: 17000001}
+	lowest.partySelfPeer = partyIPPeer{accID: 17000001}
+	lowest.partyPeers[0] = partyIPPeer{accID: 18000000}
+	lowest.partyPeers[1] = partyIPPeer{accID: 17000002}
+	lowest.tracePartyDungeonRecordSamplesUnsafe(frame)
+	key := uint32(0x0051)<<16 | uint32(len(record))
+	if !lowest.partyDungeonSamples[key] || len(lowest.partyDungeonSamples) != 1 {
+		t.Fatalf("samples = %+v", lowest.partyDungeonSamples)
+	}
+	lowest.tracePartyDungeonRecordSamplesUnsafe(frame)
+	if len(lowest.partyDungeonSamples) != 1 {
+		t.Fatalf("duplicate sample was recorded: %+v", lowest.partyDungeonSamples)
+	}
+
+	higher := &RobotVo{UID: 17000002}
+	higher.partySelfPeer = partyIPPeer{accID: 17000002}
+	higher.partyPeers[0] = partyIPPeer{accID: 17000001}
+	higher.tracePartyDungeonRecordSamplesUnsafe(frame)
+	if len(higher.partyDungeonSamples) != 0 {
+		t.Fatalf("higher account sampled duplicate leader traffic: %+v", higher.partyDungeonSamples)
+	}
+}
+
 func TestShouldReplyPartyUDP(t *testing.T) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {

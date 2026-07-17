@@ -191,6 +191,7 @@ type RobotVo struct {
 	partyRobotPeerReady  [4]bool
 	partyUDPDiagAt       time.Time
 	partyDungeonTraceAt  time.Time
+	partyDungeonSamples  map[uint32]bool
 
 	GMName [5][100]byte
 
@@ -417,6 +418,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyRelayAt = time.Time{}
+	r.partyDungeonSamples = nil
 	r.resetPartyTQOSTransportUnsafe()
 	r.closePartyUDPUnsafe()
 	r.closePartyRelayUnsafe()
@@ -1555,6 +1557,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
+			r.tracePartyDungeonRecordSamplesUnsafe(frame)
 			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
 		}
 		var preferred *partyTQOSCodec
@@ -1694,6 +1697,52 @@ func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer pa
 		_, follow = buildPartyDungeonFollowBody(frame, peer.uniqueID, r.partySelfPeer.uniqueID)
 	}
 	foundationlog.Robotf("[PARTY_DUNGEON_FRAME] uid=%d route=%d peer_slot=%d peer_unique_id=%d type=%d body=%d records=%s follow=%t\n", r.UID, route, peer.slot, peer.uniqueID, frame[0], bodySize, partyDungeonFrameRecords(frame), follow)
+}
+
+func (r *RobotVo) tracePartyDungeonRecordSamplesUnsafe(frame []byte) {
+	if len(frame) < 9 || !isPartyRobotAccount(r.partySelfPeer.accID) {
+		return
+	}
+	for _, peer := range r.partyPeers {
+		if isPartyRobotAccount(peer.accID) && peer.accID < r.partySelfPeer.accID {
+			return
+		}
+	}
+	traceRecord := func(record []byte) {
+		if len(record) < 3 {
+			return
+		}
+		command := binary.LittleEndian.Uint16(record[1:3])
+		if command != 0x0004 && command != 0x0051 {
+			return
+		}
+		key := uint32(command)<<16 | uint32(len(record))
+		if r.partyDungeonSamples == nil {
+			r.partyDungeonSamples = make(map[uint32]bool)
+		}
+		if r.partyDungeonSamples[key] {
+			return
+		}
+		r.partyDungeonSamples[key] = true
+		foundationlog.Robotf("[PARTY_DUNGEON_RECORD] uid=%d command=0x%04x size=%d data=%x\n", r.UID, command, len(record), record)
+	}
+	if frame[0] == 0x02 {
+		traceRecord(frame[9:])
+		return
+	}
+	if frame[0] != 0x01 {
+		return
+	}
+	body := frame[9:]
+	for len(body) >= 2 {
+		size := int(binary.LittleEndian.Uint16(body[:2]))
+		body = body[2:]
+		if size <= 0 || size > len(body) {
+			return
+		}
+		traceRecord(body[:size])
+		body = body[size:]
+	}
 }
 
 func partyDungeonFrameContainsCommand(frame []byte, target uint16) bool {
@@ -2025,6 +2074,7 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyDungeonTraceAt = time.Time{}
+	r.partyDungeonSamples = nil
 	r.closePartyRelayUnsafe()
 	r.resetPartyTQOSTransportUnsafe()
 }
