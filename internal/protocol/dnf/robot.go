@@ -700,11 +700,6 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 
 	if r.State == StateRun && packetFlag == 0 && packetType == 9 && len(pInBuf) > 15 {
 		if decData, err := inflatePartyInfo(pInBuf[15:]); err == nil && partyInfoClearsParty(decData) {
-			traceSize := len(decData)
-			if traceSize > 64 {
-				traceSize = 64
-			}
-			fmt.Printf("[PARTY_STATE_CLEAR] uid=%d source=type9 size=%d data=%x\n", r.UID, len(decData), decData[:traceSize])
 			r.clearPartyUnsafe()
 		}
 		return
@@ -729,12 +724,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
 		if err == nil && len(decData) >= 2 {
 			uniqueID := binary.LittleEndian.Uint16(decData[:2])
-			traceSize := len(decData)
-			if traceSize > 32 {
-				traceSize = 32
-			}
-			fmt.Printf("[PARTY_STATE_REMOVE] uid=%d source=type6 target=%d self=%d size=%d data=%x\n", r.UID, uniqueID, r.partySelfPeer.uniqueID, len(decData), decData[:traceSize])
-			r.removePartyPeerUnsafe(uniqueID)
+			delete(r.townEntityPositions, uniqueID)
 		}
 		return
 	}
@@ -2891,10 +2881,10 @@ func inflatePartyInfo(data []byte) ([]byte, error) {
 }
 
 func partyInfoClearsParty(data []byte) bool {
-	if len(data) < 5 || data[0] != 1 {
+	if len(data) < 8 || data[0] != 1 || (data[4] != 2 && data[4] != 3) {
 		return false
 	}
-	return data[4] == 2 || data[4] == 3
+	return data[5] == 0xff && data[6] == 0xff && data[7] == 0xff
 }
 
 const partyTQOSBodySize = 10

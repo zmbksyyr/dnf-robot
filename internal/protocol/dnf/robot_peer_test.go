@@ -174,6 +174,9 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	if partyInfoClearsParty(mustPartyHex(t, "0100220000486b01a86b01")) {
 		t.Fatal("active party info was treated as clear")
 	}
+	if partyInfoClearsParty(mustPartyHex(t, "010014000296b00165b3018bb301ffffff0000000000b73c2e43")) {
+		t.Fatal("active three-member party info was treated as clear")
+	}
 	if !partyInfoClearsParty(mustPartyHex(t, "0100220002ffffff486b01ffffffffffff00010000005887dd13")) {
 		t.Fatal("clear party info was not recognized")
 	}

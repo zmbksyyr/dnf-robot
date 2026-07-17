@@ -144,7 +144,7 @@ func TestRobotIgnoresStaleCachedLeaderPosition(t *testing.T) {
 	}
 }
 
-func TestPartyLeaveNotificationClearsState(t *testing.T) {
+func TestTownEntityRemovalPreservesPartyState(t *testing.T) {
 	cipher := crypt.NewDNFCipher()
 	if err := cipher.Initialize(make([]byte, 334)); err != nil {
 		t.Fatal(err)
@@ -163,8 +163,12 @@ func TestPartyLeaveNotificationClearsState(t *testing.T) {
 	vo := &RobotVo{State: StateRun, Cipher: cipher}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 1, slot: 1, slotKnown: true}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x9692, slot: 0, slotKnown: true}
+	vo.townEntityPositions = map[uint16]townEntityPosition{0x9692: {uniqueID: 0x9692}}
 	vo.parsePacket(packet)
-	if vo.partyActiveUnsafe() || vo.partySelfPeer.uniqueID != 0 {
-		t.Fatalf("party state remained after leave: self=%+v peers=%+v", vo.partySelfPeer, vo.partyPeers)
+	if !vo.partyActiveUnsafe() || vo.partySelfPeer.uniqueID != 1 || vo.partyPeers[0].uniqueID != 0x9692 {
+		t.Fatalf("entity removal cleared party state: self=%+v peers=%+v", vo.partySelfPeer, vo.partyPeers)
+	}
+	if _, ok := vo.townEntityPositions[0x9692]; ok {
+		t.Fatal("removed town entity position remained cached")
 	}
 }
