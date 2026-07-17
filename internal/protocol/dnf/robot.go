@@ -1584,7 +1584,7 @@ func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 		if !peer.slotKnown || peer.slot >= 4 || r.partyRobotProbeSent[peer.slot] || !isPartyRobotAccount(peer.accID) {
 			continue
 		}
-		if r.partySelfPeer.accID >= peer.accID || peer.outerIP == nil || peer.port == 0 {
+		if r.partySelfPeer.accID == peer.accID || peer.outerIP == nil || peer.port == 0 {
 			continue
 		}
 		r.partyRobotProbeSent[peer.slot] = true

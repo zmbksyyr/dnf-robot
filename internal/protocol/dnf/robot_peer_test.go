@@ -408,6 +408,38 @@ func TestPartyRobotPeersNegotiateOverDynamicUDP(t *testing.T) {
 	}
 }
 
+func TestPartyRobotPeerNegotiationDoesNotDependOnAccountOrder(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+
+	vo := &RobotVo{partyUDPConn: sender}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true}
+	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, accID: 17000001, slot: 1, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
+	vo.startPartyRobotPeerNegotiationUnsafe()
+
+	if err := receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	n, _, err := receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, ok := parsePartyTQOSPacket(buf[:n], 1)
+	if !ok || packet.senderSlot != 2 || packet.state != 3 {
+		t.Fatalf("higher-account probe = %+v ok=%v raw=%x", packet, ok, buf[:n])
+	}
+}
+
 func TestPartyUDPPortFallsBackWhenRequestedPortIsBusy(t *testing.T) {
 	busy, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
