@@ -69,6 +69,14 @@ func main() {
 	})
 	defer dnf.LogClose()
 	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("ROBOT_CONFIG path=%s config_dir=%s\n", configPath, cfg.ConfigDir))
+	route0Sink, err := dnf.StartPartyRoute0Sink()
+	if err != nil {
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ROUTE0_SINK_FAILED addr=0.0.0.0:5063 err=%v\n", err))
+		dnf.PrintfRed("party route0 sink failed: %v\n", err)
+		os.Exit(1)
+	}
+	defer route0Sink.Close()
+	dnf.LogString(dnf.LogLevelIndispensable, "PARTY_ROUTE0_SINK_READY addr=0.0.0.0:5063\n")
 
 	if err := runtimeinit.Init(cfg); err != nil {
 		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("ROBOT_RUNTIME_INIT_FAILED err=%v\n", err))
