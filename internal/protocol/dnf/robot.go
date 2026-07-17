@@ -710,6 +710,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			if self, peers, ok := parsePartyIPInfoSnapshot(decData, uint32(r.UID)); ok {
 				r.partySelfPeer = self
 				r.setPartyPeersUnsafe(peers)
+				r.ensurePartyRelayUnsafe()
 				r.followCachedPartyLeaderTownPositionUnsafe()
 				r.startPartyRobotPeerNegotiationUnsafe()
 			}
@@ -980,6 +981,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 							r.UID, uniqueID, binary.LittleEndian.Uint32(data[3:7]))
 						r.resetPartyTQOSTransportUnsafe()
 						r.setPartyPendingUnsafe(uniqueID)
+						r.ensurePartyRelayUnsafe()
 					}
 				}
 				if typ == peerRequestTrade {
@@ -1242,8 +1244,16 @@ func (r *RobotVo) sendNATInfoUnsafe() bool {
 		return false
 	}
 	r.natInfoSent = true
-	r.startPartyRelayUnsafe(addr.IP)
 	return true
+}
+
+func (r *RobotVo) ensurePartyRelayUnsafe() {
+	if r.partyRelayConn != nil || r.Conn == nil || !r.partyActiveUnsafe() {
+		return
+	}
+	if addr, ok := r.Conn.LocalAddr().(*net.TCPAddr); ok {
+		r.startPartyRelayUnsafe(addr.IP)
+	}
 }
 
 func (r *RobotVo) startPartyRelayUnsafe(ip net.IP) {
@@ -2024,6 +2034,7 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyDungeonTraceAt = time.Time{}
 	r.partyMoveNotBefore = time.Time{}
+	r.closePartyRelayUnsafe()
 	r.resetPartyTQOSTransportUnsafe()
 }
 
@@ -2359,10 +2370,11 @@ func (r *RobotVo) CheckUserState() bool {
 		r.State = StateStop
 		return false
 	}
-	if r.natInfoSent && r.partyRelayConn == nil && r.Conn != nil {
-		if addr, ok := r.Conn.LocalAddr().(*net.TCPAddr); ok {
-			r.startPartyRelayUnsafe(addr.IP)
-		}
+	partyActive := r.partyActiveUnsafe()
+	if partyActive {
+		r.ensurePartyRelayUnsafe()
+	} else if r.partyRelayConn != nil {
+		r.closePartyRelayUnsafe()
 	}
 	return true
 }

@@ -184,6 +184,30 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	}
 }
 
+func TestCheckUserStateClosesOnlyIdlePartyRelay(t *testing.T) {
+	idleRobot, idlePeer := net.Pipe()
+	defer idlePeer.Close()
+	idle := &RobotVo{State: StateRun, partyRelayConn: idleRobot}
+	if !idle.CheckUserState() {
+		t.Fatal("idle running robot was stopped")
+	}
+	if idle.partyRelayConn != nil {
+		t.Fatal("idle party relay remained connected")
+	}
+
+	activeRobot, activePeer := net.Pipe()
+	defer activeRobot.Close()
+	defer activePeer.Close()
+	active := &RobotVo{State: StateRun, partyRelayConn: activeRobot}
+	active.partyPeers[0] = partyIPPeer{uniqueID: 1}
+	if !active.CheckUserState() {
+		t.Fatal("grouped running robot was stopped")
+	}
+	if active.partyRelayConn != activeRobot {
+		t.Fatal("active party relay was closed")
+	}
+}
+
 func TestRobotMirrorsOnlyDungeonCommand4(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, slot: 1, slotKnown: true}
