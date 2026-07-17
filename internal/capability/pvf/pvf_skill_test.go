@@ -18,7 +18,7 @@ IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/data/data
 		},
 		"sqr/character/atmage/safe/safe.nut": {
 			Name: "sqr/character/atmage/safe/safe.nut",
-			Data: []byte("function onAfterSetState_safe(obj, state, datas, reset) { obj.setCurrentAnimation(1); }"),
+			Data: []byte("function checkExecutableSkill_safe(obj) { obj.sq_AddSetStatePacket(STATE_SAFE, 0, false); }\nfunction onAfterSetState_safe(obj, state, datas, reset) { obj.setCurrentAnimation(1); }"),
 		},
 		"sqr/character/atmage/data/data.nut": {
 			Name: "sqr/character/atmage/data/data.nut",
@@ -33,6 +33,30 @@ IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/data/data
 	want := SkillState{Job: 8, SkillIndex: 1, State: 20, ScriptPath: "sqr/character/atmage/safe/safe.nut"}
 	if got[0] != want {
 		t.Fatalf("catalog entry = %+v, want %+v", got[0], want)
+	}
+}
+
+func TestExtractSkillStateCatalogRejectsPassiveAndReactiveScripts(t *testing.T) {
+	archive := &pvfArchive{files: map[string]*pvfFile{
+		"sqr/character/new_swordman_load_state.nut": {
+			Name: "sqr/character/new_swordman_load_state.nut",
+			Data: []byte(`
+IRDSQRCharacter.pushState(0, "character/swordman/passive.nut", "passive", 13, 18);
+IRDSQRCharacter.pushState(0, "character/swordman/reactive.nut", "reactive", 32, 58);
+`),
+		},
+		"sqr/character/swordman/passive.nut": {
+			Name: "sqr/character/swordman/passive.nut",
+			Data: []byte("function checkExecutableSkill_passive(obj) { obj.appendage(); }"),
+		},
+		"sqr/character/swordman/reactive.nut": {
+			Name: "sqr/character/swordman/reactive.nut",
+			Data: []byte("function onAttack_reactive(obj) { obj.sq_AddSetStatePacket(32, 0, false); }"),
+		},
+	}}
+
+	if got := extractSkillStateCatalog(archive); len(got) != 0 {
+		t.Fatalf("unsafe skills entered catalog: %+v", got)
 	}
 }
 
