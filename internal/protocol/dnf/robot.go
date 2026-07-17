@@ -1823,16 +1823,20 @@ func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
 	if db == nil {
 		db = GetDBPool()
 	}
-	if db == nil || r.UID == 0 || r.CID <= 0 {
+	if db == nil || r.UID == 0 {
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_ERROR] uid=%d cid=%d db_ready=%t\n", r.UID, r.CID, db != nil)
 		return false
 	}
+	var cid int
 	var job int
 	var raw []byte
-	err := db.QueryRow("SELECT c.job,UNCOMPRESS(s.skill_slot) FROM taiwan_cain.charac_info c JOIN taiwan_cain_2nd.skill s ON s.charac_no=c.charac_no WHERE c.m_id=? AND c.charac_no=? AND c.delete_flag=0 LIMIT 1", r.UID, r.CID).Scan(&job, &raw)
+	err := db.QueryRow("SELECT c.charac_no,c.job,UNCOMPRESS(s.skill_slot) FROM taiwan_cain.charac_info c JOIN taiwan_cain_2nd.skill s ON s.charac_no=c.charac_no WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", r.UID, r.CID, r.CID).Scan(&cid, &job, &raw)
 	if err != nil {
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_ERROR] uid=%d cid=%d err=%v\n", r.UID, r.CID, err)
 		return false
+	}
+	if r.CID == 0 {
+		r.CID = cid
 	}
 	r.partySkillLoaded = true
 	learned := parsePartyLearnedSkills(raw)
