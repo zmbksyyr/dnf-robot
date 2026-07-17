@@ -231,17 +231,22 @@ func TestRobotMirrorsDungeonInputBatchWithoutSkills(t *testing.T) {
 	vo.partyPeers[0] = leader
 	records := [][]byte{
 		{0x02, 0x27, 0x00, 0x01, 0xa0, 0x43, 0x52, 0x7e, 0x7e, 0x7e, 0x7e},
+		{0x00, 0x28, 0x00, 0x18, 0x00, 0x00, 0x00},
 		{0x02, 0x27, 0x00, 0x01, 0xa1, 0x43, 0x52, 0x7e, 0x7e, 0x7e, 0x7e},
+		{0x02, 0x44, 0x00, 0xa7, 0xeb, 0x50, 0x2b, 0xec, 0xe8, 0x7e, 0x7e, 0x7e, 0x7e},
 	}
 	frame := buildPartyReliableRecordBatchPacket(7, 0, 0, records)
 	got := vo.buildPartyTQOSRepliesUnsafe(frame, 1, leader)
 	if len(got) != 2 || got[0][0] != 0x00 || got[1][0] != 0x01 {
 		t.Fatalf("replies = %x", got)
 	}
-	if !bytes.Contains(got[1], records[0]) || !bytes.Contains(got[1], records[1]) {
+	if !bytes.Contains(got[1], records[0]) || !bytes.Contains(got[1], records[1]) || !bytes.Contains(got[1], records[2]) {
 		t.Fatalf("input records were not mirrored: %x", got[1])
 	}
-	if got := partyDungeonInputRecords(frame); len(got) != 2 {
+	if bytes.Contains(got[1], records[3]) {
+		t.Fatalf("skill record was mirrored: %x", got[1])
+	}
+	if got := partyDungeonInputRecords(frame); len(got) != 3 {
 		t.Fatalf("input records = %d", len(got))
 	}
 }

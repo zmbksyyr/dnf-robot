@@ -2756,6 +2756,8 @@ const partyDungeonPositionUniqueIDOffset = 26
 const partyDungeonPositionInnerPayloadOffset = 22
 const partyDungeonInputCommand = 0x0027
 const partyDungeonInputBodySize = 11
+const partyDungeonMotionCommand = 0x0028
+const partyDungeonMotionBodySize = 7
 
 var partyDungeonPositionInnerChecksumOffsets = [...]int{10, 18}
 
@@ -2847,7 +2849,13 @@ func partyDungeonInputRecords(frame []byte) [][]byte {
 		}
 		record := body[:size]
 		body = body[size:]
-		if size == partyDungeonInputBodySize && record[0] == 0x02 && binary.LittleEndian.Uint16(record[1:3]) == partyDungeonInputCommand {
+		command := uint16(0)
+		if size >= 3 {
+			command = binary.LittleEndian.Uint16(record[1:3])
+		}
+		isInput := size == partyDungeonInputBodySize && record[0] == 0x02 && command == partyDungeonInputCommand
+		isMotion := size == partyDungeonMotionBodySize && record[0] == 0x00 && command == partyDungeonMotionCommand
+		if isInput || isMotion {
 			records = append(records, append([]byte(nil), record...))
 		}
 	}
