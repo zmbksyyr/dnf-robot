@@ -23,7 +23,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -35,7 +34,7 @@ type Server struct {
 	webAddr       string
 	tokenMu       lockhub.RWLocker
 	tokens        map[string]time.Time
-	partyCompatMu sync.Mutex
+	partyCompatMu lockhub.Locker
 }
 
 type callRequest struct {
