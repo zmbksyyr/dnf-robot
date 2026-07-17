@@ -121,7 +121,7 @@ func (c *DNFCipher) DecryptAnti(data []byte) ([]byte, error) {
 		CRC32:      binary.BigEndian.Uint32(data[13:17]),
 	}
 
-	packetSize := SwapUint16(pHeader.PacketSize)
+	packetSize := pHeader.PacketSize
 	if int(packetSize)-17 <= 0 {
 		return nil, ErrInvalidBlockSize
 	}
@@ -132,11 +132,11 @@ func (c *DNFCipher) DecryptAnti(data []byte) ([]byte, error) {
 	antiDataBuf := make([]byte, antiDataSize+4096)
 	copy(antiDataBuf, data[17:])
 
-	protocolType := SwapUint16(pHeader.ProtocolType)
-	nType := SwapUint32(pBody.CryptoType)
-	dwKeySeed := SwapUint32(pBody.KeySeed)
+	protocolType := pHeader.ProtocolType
+	nType := pBody.CryptoType
+	dwKeySeed := pBody.KeySeed
 
-	if protocolType != 17 || nType != 19 {
+	if protocolType != 17 || (nType != 18 && nType != 19) {
 		return nil, ErrInvalidBlockSize
 	}
 
