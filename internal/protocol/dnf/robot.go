@@ -189,6 +189,7 @@ type RobotVo struct {
 	partyRobotProbeAt    [4]time.Time
 	partyRobotProbeCount [4]uint8
 	partyRobotPeerReady  [4]bool
+	partyUDPDiagAt       time.Time
 	partyDungeonTraceAt  time.Time
 
 	GMName [5][100]byte
@@ -1432,17 +1433,20 @@ func (r *RobotVo) closePartyUDPUnsafe() {
 func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32) {
 	buf := make([]byte, 4096)
 	for {
+		r.mu.Lock()
+		stopped := r.State == StateStop || r.partyUDPConn != conn
+		if !stopped && r.partyActiveUnsafe() {
+			r.startPartyRobotPeerNegotiationUnsafe()
+		}
+		r.mu.Unlock()
+		if stopped {
+			_ = conn.Close()
+			return
+		}
 		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		n, remote, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				r.mu.Lock()
-				stopped := r.State == StateStop || r.partyUDPConn != conn
-				r.mu.Unlock()
-				if stopped {
-					_ = conn.Close()
-					return
-				}
 				continue
 			}
 			return
@@ -1491,8 +1495,10 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 	}
 	peer, ok := r.partyPeerForUDPUnsafe(remote, senderSlot)
 	if !ok {
+		r.tracePartyUDPUnsafe("DROP_PEER", remote, senderSlot, 0, 0)
 		return nil
 	}
+	r.tracePartyUDPUnsafe("RECV", remote, senderSlot, peer.accID, len(payload))
 	if len(payload) == 8 && payload[0] == 0x00 {
 		return nil
 	}
@@ -1561,6 +1567,38 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 	}
 	return replies
+}
+
+func (r *RobotVo) tracePartyUDPUnsafe(reason string, remote *net.UDPAddr, senderSlot *byte, peer uint32, size int) {
+	if !isPartyRobotAccount(peer) && reason != "DROP_PEER" {
+		return
+	}
+	if reason == "DROP_PEER" {
+		if !isPartyRobotAccount(r.partySelfPeer.accID) || remote == nil || remote.IP == nil {
+			return
+		}
+		localIP := r.partySelfPeer.outerIP
+		if localIP == nil {
+			localIP = r.partySelfPeer.innerIP
+		}
+		if localIP == nil || !localIP.Equal(remote.IP) {
+			return
+		}
+	}
+	now := time.Now()
+	if now.Before(r.partyUDPDiagAt) {
+		return
+	}
+	r.partyUDPDiagAt = now.Add(1500 * time.Millisecond)
+	slot := -1
+	if senderSlot != nil {
+		slot = int(*senderSlot)
+	}
+	remoteText := "<nil>"
+	if remote != nil {
+		remoteText = remote.String()
+	}
+	fmt.Printf("[PARTY_ROBOT_UDP_%s] uid=%d peer=%d sender_slot=%d size=%d remote=%s\n", reason, r.UID, peer, slot, size, remoteText)
 }
 
 func (r *RobotVo) nextPartyTQOSSequenceUnsafe(peerSlot, route byte, reliable bool) (uint32, bool) {
