@@ -655,6 +655,17 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		}
 	}
 
+	if r.State == StateRun && packetFlag == 0 && dInSize >= 15 && (packetType == 28 || packetType == 29) {
+		pkt, err := buildSendPacket(40, uint16(r.PacketID), buildFinishLoadingPayload(0, 0), r.Cipher)
+		r.PacketID++
+		if err != nil {
+			fmt.Printf("[DUNGEON_FINISH_LOADING_BUILD_ERROR] uid=%d source_type=%d err=%v\n", r.UID, packetType, err)
+		} else if !r.sendRaw(pkt) {
+			fmt.Printf("[DUNGEON_FINISH_LOADING_SEND_ERROR] uid=%d source_type=%d\n", r.UID, packetType)
+		}
+		return
+	}
+
 	if r.State == StateRun && packetFlag == 0 && packetType == 11 {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
 		if err == nil {
@@ -2602,6 +2613,13 @@ func buildPartyRelayPacket(typ uint16, src, dst uint32, payload []byte) []byte {
 	binary.LittleEndian.PutUint32(body[4:8], src)
 	binary.LittleEndian.PutUint32(body[8:12], dst)
 	copy(body[12:], payload)
+	return body
+}
+
+func buildFinishLoadingPayload(inventoryChecksum, skillChecksum uint32) []byte {
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint32(body[:4], inventoryChecksum)
+	binary.LittleEndian.PutUint32(body[4:], skillChecksum)
 	return body
 }
 
