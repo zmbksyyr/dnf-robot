@@ -23,17 +23,19 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 // ---- webadmin.go ----
 type Server struct {
-	cfg       *config.SysConfig
-	robotAddr string
-	webAddr   string
-	tokenMu   lockhub.RWLocker
-	tokens    map[string]time.Time
+	cfg           *config.SysConfig
+	robotAddr     string
+	webAddr       string
+	tokenMu       lockhub.RWLocker
+	tokens        map[string]time.Time
+	partyCompatMu sync.Mutex
 }
 
 type callRequest struct {
@@ -66,6 +68,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/max-user", s.requireAuth(s.handleMaxUser))
 	mux.HandleFunc("/api/server-script", s.requireAuth(s.handleServerScript))
 	mux.HandleFunc("/api/monitor-service", s.requireAuth(s.handleMonitorService))
+	mux.HandleFunc("/api/party-compat", s.requireAuth(s.handlePartyCompat))
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
 	server := &http.Server{
 		Addr:              s.webAddr,
