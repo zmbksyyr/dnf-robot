@@ -210,12 +210,96 @@ func TestCheckUserStateClosesOnlyIdlePartyRelay(t *testing.T) {
 	}
 }
 
-func TestRobotRewritesCapturedDungeonPosition(t *testing.T) {
-	position := mustPartyHex(t, "028703000034000000015100970cfec701070034ede5df0001070034ede5df1102a97492965e0800000d000000ffffffffffffffff0000000000000000")
-	body, ok := buildPartyDungeonFollowBody(position, 0x9692, 0x1fab)
-	want := mustPartyHex(t, "015100bc9521ba010700f29a59e300010700f29a59e31102a974ab1f5e0800000d000000ffffffffffffffff0000000000000000")
-	if !ok || !bytes.Equal(body, want) {
-		t.Fatalf("position body = %x ok=%t, want %x", body, ok, want)
+func TestRobotRewritesCapturedDungeonEnvelopeIdentity(t *testing.T) {
+	tests := []string{
+		"015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000",
+		"0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff",
+	}
+	for _, captured := range tests {
+		body := mustPartyHex(t, captured)
+		follow, command, ok := rewritePartyDungeonBody(body, 0xf4a1, 0xee9f)
+		if !ok || command != partyDungeonEnvelopeCommand {
+			t.Fatalf("rewrite envelope command=%x ok=%t body=%x", command, ok, follow)
+		}
+		if bytes.Contains(follow[partyDungeonEnvelopePayloadOffset:], []byte{0xa1, 0xf4}) || !bytes.Contains(follow[partyDungeonEnvelopePayloadOffset:], []byte{0x9f, 0xee}) {
+			t.Fatalf("envelope identity was not rewritten: %x", follow)
+		}
+		innerChecksum := partyPayloadChecksum(follow[partyDungeonEnvelopePayloadOffset:])
+		for _, offset := range partyDungeonEnvelopeChecksumOffsets {
+			if !bytes.Equal(follow[offset:offset+4], innerChecksum[:]) {
+				t.Fatalf("inner checksum at %d = %x, want %x", offset, follow[offset:offset+4], innerChecksum)
+			}
+		}
+		checksum := partyPayloadChecksum(follow[7:])
+		if !bytes.Equal(follow[3:7], checksum[:]) {
+			t.Fatalf("outer checksum = %x, want %x", follow[3:7], checksum)
+		}
+	}
+}
+
+func TestRobotRewritesCapturedDungeonStateIdentity(t *testing.T) {
+	body := mustPartyHex(t, "0104007db257987fff7edf8a6f7fdf8a7c7e7e143b1f34876a3a7efefbbd")
+	follow, command, ok := rewritePartyDungeonBody(body, 0xf4a1, 0xee9f)
+	if !ok || command != partyDungeonStateCommand {
+		t.Fatalf("rewrite state command=%x ok=%t body=%x", command, ok, follow)
+	}
+	plain := append([]byte(nil), follow[7:]...)
+	for i := range plain {
+		plain[i] ^= 0x7e
+	}
+	if bytes.Contains(plain, []byte{0xa1, 0xf4}) || bytes.Count(plain, []byte{0x9f, 0xee}) != 2 {
+		t.Fatalf("state identity was not rewritten: %x", plain)
+	}
+	checksum := partyPayloadChecksum(plain)
+	if !bytes.Equal(follow[3:7], checksum[:]) {
+		t.Fatalf("state checksum = %x, want %x", follow[3:7], checksum)
+	}
+}
+
+func TestRobotBuildsDungeonFollowWithOwnSlotAndPeerSequence(t *testing.T) {
+	body := mustPartyHex(t, "0104007db257987fff7edf8a6f7fdf8a7c7e7e143b1f34876a3a7efefbbd")
+	frame := buildPartyUnreliablePacket(91, 0, 7, body)
+	vo := &RobotVo{partySelfPeer: partyIPPeer{slot: 2, slotKnown: true, uniqueID: 0xee9f}}
+	peer := partyIPPeer{slot: 0, slotKnown: true, uniqueID: 0xf4a1}
+
+	follow, ok := vo.buildPartyDungeonFollowFrameUnsafe(frame, peer)
+	if !ok || follow[0] != 0x02 || binary.LittleEndian.Uint32(follow[1:5]) != 0 || follow[7] != 2 || follow[8] != 7 {
+		t.Fatalf("follow frame = %x ok=%t", follow, ok)
+	}
+	if vo.partyTQOSSeq[0][1] != 1 {
+		t.Fatalf("leader route sequence = %d, want 1", vo.partyTQOSSeq[0][1])
+	}
+	plain := append([]byte(nil), follow[16:]...)
+	for i := range plain {
+		plain[i] ^= 0x7e
+	}
+	if bytes.Count(plain, []byte{0x9f, 0xee}) != 2 {
+		t.Fatalf("follow state identity = %x", plain)
+	}
+}
+
+func TestRobotDoesNotRewriteMultiEntityDungeonState(t *testing.T) {
+	body := mustPartyHex(t, "0104006e4210937cff7edf8a6f7fdf8a7c7e7e143b1f4e30c43d7e7efabd6f7c1e7d6f7fdf8a7c7e7e14271cbcedb43d")
+	if follow, _, ok := rewritePartyDungeonBody(body, 0xf4a1, 0xee9f); ok || follow != nil {
+		t.Fatalf("multi-entity state was rewritten: %x", follow)
+	}
+}
+
+func TestRobotBuildsReliableDungeonEnvelope(t *testing.T) {
+	record := mustPartyHex(t, "0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff")
+	frame := buildPartyReliablePacket(42, 0, 3, [][]byte{record})
+	vo := &RobotVo{partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0xee9f}}
+	peer := partyIPPeer{slot: 0, slotKnown: true, uniqueID: 0xf4a1}
+
+	follow, ok := vo.buildPartyDungeonFollowFrameUnsafe(frame, peer)
+	if !ok || follow[0] != 0x01 || binary.LittleEndian.Uint32(follow[1:5]) != 0 || follow[7] != 1 || follow[8] != 3 {
+		t.Fatalf("reliable follow frame = %x ok=%t", follow, ok)
+	}
+	if vo.partyTQOSReliableSeq[0][1] != 1 || binary.LittleEndian.Uint16(follow[9:11]) != uint16(len(record)) {
+		t.Fatalf("reliable state sequence=%d frame=%x", vo.partyTQOSReliableSeq[0][1], follow)
+	}
+	if bytes.Contains(follow[11+partyDungeonEnvelopePayloadOffset:], []byte{0xa1, 0xf4}) || !bytes.Contains(follow[11+partyDungeonEnvelopePayloadOffset:], []byte{0x9f, 0xee}) {
+		t.Fatalf("reliable envelope identity was not rewritten: %x", follow)
 	}
 }
 
