@@ -53,6 +53,8 @@ nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/robot_stdou
 
 Do not start with a direct `> /root/robot_stdout.log` redirect; that bypasses rotation.
 
+The external security service uses `/home/neople/secsvr/zergsvr/cfg/framework.xml` (GBK). Keep `log_div_type_` and `bill_div_type_` at `101` (size based), with `max_*_file_size_ = 104857600` and `max_*_file_num_ = 5`; `205` is daily splitting and does not enforce the size limit.
+
 ## Database
 
 - host: `127.0.0.1`
