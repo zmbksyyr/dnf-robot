@@ -224,6 +224,28 @@ func TestPartyDungeonFrameRecords(t *testing.T) {
 	}
 }
 
+func TestRobotMirrorsDungeonInputBatchWithoutSkills(t *testing.T) {
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, slot: 1, slotKnown: true}
+	leader := partyIPPeer{uniqueID: 0x9692, slot: 0, slotKnown: true}
+	vo.partyPeers[0] = leader
+	records := [][]byte{
+		{0x02, 0x27, 0x00, 0x01, 0xa0, 0x43, 0x52, 0x7e, 0x7e, 0x7e, 0x7e},
+		{0x02, 0x27, 0x00, 0x01, 0xa1, 0x43, 0x52, 0x7e, 0x7e, 0x7e, 0x7e},
+	}
+	frame := buildPartyReliableRecordBatchPacket(7, 0, 0, records)
+	got := vo.buildPartyTQOSRepliesUnsafe(frame, 1, leader)
+	if len(got) != 2 || got[0][0] != 0x00 || got[1][0] != 0x01 {
+		t.Fatalf("replies = %x", got)
+	}
+	if !bytes.Contains(got[1], records[0]) || !bytes.Contains(got[1], records[1]) {
+		t.Fatalf("input records were not mirrored: %x", got[1])
+	}
+	if got := partyDungeonInputRecords(frame); len(got) != 2 {
+		t.Fatalf("input records = %d", len(got))
+	}
+}
+
 func TestParsePartyTQOSCapturedPackets(t *testing.T) {
 	tests := []struct {
 		packet             string
