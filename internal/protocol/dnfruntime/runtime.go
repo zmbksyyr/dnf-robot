@@ -111,6 +111,7 @@ func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 			DisjointDirectAck:    snap.DisjointDirectAck,
 			DisjointActive:       snap.DisjointActive,
 			LastDisjointError:    snap.LastDisjointError,
+			PartyActive:          snap.PartyActive,
 			Village:              int(snap.Village),
 			Area:                 int(snap.Area),
 			X:                    int(snap.X),
@@ -118,6 +119,17 @@ func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 		})
 	}
 	return out
+}
+
+func (rs *RobotSvc) PartyActive(uid int) bool {
+	if rs.table == nil || uid <= 0 {
+		return false
+	}
+	vo := rs.table.GetTask().Find(uid)
+	if vo == nil {
+		return false
+	}
+	return vo.Snapshot().PartyActive
 }
 
 func uptimeSeconds(now, start uint32) int {
@@ -139,7 +151,7 @@ func (rs *RobotSvc) StartPrivateStore(uid int, title string) bool {
 		return false
 	}
 	snap := vo.Snapshot()
-	if robotStateName(int(snap.State)) != "running" {
+	if robotStateName(int(snap.State)) != "running" || snap.PartyActive {
 		return false
 	}
 	vo.PreparePrivateStoreState(title)
@@ -150,15 +162,18 @@ func (rs *RobotSvc) StartPrivateStore(uid int, title string) bool {
 			}
 		}()
 		time.Sleep(time.Duration(uid%7) * 450 * time.Millisecond)
+		if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
+			return
+		}
 		vo.CreatePrivateStore()
 		waitStoreCreated(vo, 5*time.Second)
-		if snap := vo.Snapshot(); !snap.StoreCreated && robotStateName(int(snap.State)) == "running" {
+		if snap := vo.Snapshot(); !snap.PartyActive && !snap.StoreCreated && robotStateName(int(snap.State)) == "running" {
 			time.Sleep(1200 * time.Millisecond)
 			vo.CreatePrivateStore()
 			waitStoreCreated(vo, 5*time.Second)
 		}
 		time.Sleep(1200 * time.Millisecond)
-		if snap := vo.Snapshot(); robotStateName(int(snap.State)) != "running" {
+		if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
 			return
 		}
 		vo.GetCompleteDisplay(0)
@@ -181,7 +196,7 @@ func (rs *RobotSvc) StartDisjointStore(uid int, cost uint32) bool {
 	if vo == nil {
 		return false
 	}
-	if snap := vo.Snapshot(); robotStateName(int(snap.State)) != "running" {
+	if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
 		return false
 	}
 	return vo.OpenDisjointStore(cost)
@@ -219,7 +234,7 @@ func (rs *RobotSvc) SetArea(uid int, village, area int, x, y int) bool {
 	if vo == nil {
 		return false
 	}
-	if snap := vo.Snapshot(); robotStateName(int(snap.State)) != "running" {
+	if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
 		return false
 	}
 	vo.SetArea(uint8(village), uint8(area), uint16(x), uint16(y))
@@ -234,7 +249,7 @@ func (rs *RobotSvc) SetAreaFrom(uid int, village, area int, x, y int, fromVillag
 	if vo == nil {
 		return false
 	}
-	if snap := vo.Snapshot(); robotStateName(int(snap.State)) != "running" {
+	if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
 		return false
 	}
 	vo.SetAreaFrom(uint8(village), uint8(area), uint16(x), uint16(y), uint16(fromVillage), uint16(fromArea))
@@ -256,7 +271,7 @@ func waitStoreCreated(vo *dnf.RobotVo, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		snap := vo.Snapshot()
-		if snap.StoreCreated || snap.StoreCreateRejected || robotStateName(int(snap.State)) != "running" {
+		if snap.PartyActive || snap.StoreCreated || snap.StoreCreateRejected || robotStateName(int(snap.State)) != "running" {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -267,7 +282,7 @@ func waitStoreDisplay(vo *dnf.RobotVo, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		snap := vo.Snapshot()
-		if snap.StoreDisplayAck || robotStateName(int(snap.State)) != "running" {
+		if snap.PartyActive || snap.StoreDisplayAck || robotStateName(int(snap.State)) != "running" {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -545,6 +560,13 @@ func (d *DollService) RuntimeStatus() []shared.RuntimeStatus {
 		return svc.RuntimeStatus()
 	}
 	return nil
+}
+
+func (d *DollService) PartyActive(uid int) bool {
+	if svc, ok := robotSvc.(*RobotSvc); ok {
+		return svc.PartyActive(uid)
+	}
+	return false
 }
 
 func (d *DollService) StartPrivateStore(uid int, title string) bool {

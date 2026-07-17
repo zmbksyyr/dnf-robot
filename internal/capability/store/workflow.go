@@ -202,6 +202,12 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 			env.AddAutoStore(1, 0, 0)
 			return AutoAttemptSuccess
 		} else if reason != "" {
+			if reason == StoreReasonCancelled {
+				points.Release(info.UID, pos)
+				points.Flush()
+				env.FinishStoreState(info.UID, info.CID, reason)
+				return AutoAttemptCancelled
+			}
 			points.Report(info.UID, pos, try, false, reason)
 			if !RetryStoreReasonWithNewPoint(reason) {
 				finalReason = reason
@@ -300,6 +306,9 @@ func (w Workflow) startAndWaitDisplay(info robotcap.Info, rc robotconfig.Runtime
 	if ok, reason := w.waitDisplay(info.UID, rc, shouldStop); ok {
 		return true, ""
 	} else if reason != "" {
+		if reason == StoreReasonCancelled {
+			return false, reason
+		}
 		_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
 		env.FinishStoreState(info.UID, info.CID, reason)
 		return false, reason

@@ -221,6 +221,7 @@ type ShoutRuntime interface {
 
 type StatusRuntime interface {
 	RuntimeStatus() []robotcap.RuntimeStatus
+	PartyActive(uid int) bool
 }
 
 type StoreRuntime interface {
@@ -437,6 +438,8 @@ func (noopRuntime) MsgOnLine(clientID string, keyData string) (string, error) {
 func (noopRuntime) RuntimeStatus() []robotcap.RuntimeStatus {
 	return nil
 }
+
+func (noopRuntime) PartyActive(int) bool { return false }
 
 func (noopRuntime) StartPrivateStore(uid int, title string) bool {
 	return false

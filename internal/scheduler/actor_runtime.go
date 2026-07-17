@@ -35,6 +35,10 @@ func (r *RobotRuntime) Status(uid int) (robotcap.RuntimeStatus, bool) {
 	return st, ok
 }
 
+func (r *RobotRuntime) PartyActive(uid int) bool {
+	return r.manager.doll.PartyActive(uid)
+}
+
 func (r *RobotRuntime) IsActive(uid int) bool {
 	st, ok := r.Status(uid)
 	if !ok {
@@ -105,7 +109,7 @@ func (r *RobotRuntime) Store(uid int) robotcap.ActionResult {
 func (r *RobotRuntime) AutoMove(uid int) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
-		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
+		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 || st.PartyActive || r.PartyActive(uid) {
 			return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOffline}
 		}
 		rc := r.Config()
@@ -125,7 +129,7 @@ func (r *RobotRuntime) AutoMove(uid int) robotcap.ActionResult {
 func (r *RobotRuntime) AutoShout(uid int, world bool, msg string) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
-		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
+		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 || st.PartyActive || r.PartyActive(uid) {
 			r.manager.addAutoShoutChannel(world, 0, 1)
 			return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOffline}
 		}
@@ -142,7 +146,7 @@ func (r *RobotRuntime) AutoShout(uid int, world bool, msg string) robotcap.Actio
 func (r *RobotRuntime) AutoStore(uid int, shouldStop func() bool) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		st, ok := r.Status(uid)
-		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
+		if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 || st.PartyActive || r.PartyActive(uid) {
 			return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOffline}
 		}
 		if shouldStop != nil && shouldStop() {
@@ -210,6 +214,13 @@ func (r *RobotRuntime) autoDisjointStore(uid int, st robotcap.RuntimeStatus, sho
 			robotLogf("[DISJOINT_SUCCESS_POINT] uid=%d point=%s village=%d area=%d x=%d y=%d try=%d\n", uid, pos.PointID, pos.Village, pos.Area, pos.X, pos.Y, try)
 			return robotcap.ActionResult{UID: uid, CID: info.CID, OK: true, State: robotcap.ActionStateStore}
 		}
+		if reason == "cancelled" {
+			points.Release(uid, pos)
+			points.Flush()
+			r.manager.finishStoreState(uid, info.CID, reason)
+			robotruntime.ResetDisjointStore(r.manager.doll, uid)
+			return robotcap.ActionResult{UID: uid, CID: info.CID, OK: false, State: robotcap.ActionStateCancelled}
+		}
 		if reason == "" {
 			reason = "disjoint_failed"
 		}
@@ -224,6 +235,9 @@ func (r *RobotRuntime) autoDisjointStore(uid int, st robotcap.RuntimeStatus, sho
 }
 
 func (r *RobotRuntime) tryDisjointPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, shouldStop func() bool) (bool, string) {
+	if shouldStop != nil && shouldStop() {
+		return false, "cancelled"
+	}
 	_, _ = r.manager.sessionService().Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
 	logoutDelay := time.Duration(rc.ReconnectDelayMS) * time.Millisecond
 	if logoutDelay < 15*time.Second {

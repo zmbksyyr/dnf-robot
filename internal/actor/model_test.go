@@ -84,6 +84,7 @@ func TestStopPriority(t *testing.T) {
 		1: {UID: 1, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0},
 		2: {UID: 2, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0, RobotType: 2, StoreDisplayAck: true},
 		3: {UID: 3, StateName: robotcap.RuntimeStateLogin, DisconnectReason: 0},
+		4: {UID: 4, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0, PartyActive: true},
 	}
 	tests := []struct {
 		uid  int
@@ -94,6 +95,7 @@ func TestStopPriority(t *testing.T) {
 		{uid: 3, want: 1},
 		{uid: 2, want: 2},
 		{uid: 1, want: 3},
+		{uid: 4, want: 4},
 	}
 	for _, tt := range tests {
 		if got := StopPriority(tt.uid, status); got != tt.want {

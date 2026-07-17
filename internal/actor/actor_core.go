@@ -56,6 +56,7 @@ func NewActor(slotID int, mode Mode, runtime RobotRuntime) *Actor {
 type RobotRuntime interface {
 	Config() robotconfig.RuntimeConfig
 	Status(uid int) (robotcap.RuntimeStatus, bool)
+	PartyActive(uid int) bool
 	IsActive(uid int) bool
 	FinishStoreState(uid, cid int, reason string)
 	AddAutoOnline(success, failed int)
@@ -186,6 +187,9 @@ func StopPriority(uid int, status map[int]robotcap.RuntimeStatus) int {
 	st, ok := status[uid]
 	if !ok || st.DisconnectReason != 0 || st.StateName == robotcap.RuntimeStateInit || st.StateName == robotcap.RuntimeStateLogin {
 		return 1
+	}
+	if st.PartyActive {
+		return 4
 	}
 	if st.RobotType == 2 || st.RobotType == 3 || st.StoreDisplayAck {
 		return 2

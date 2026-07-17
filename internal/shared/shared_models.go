@@ -117,6 +117,7 @@ type RuntimeStatus struct {
 	DisjointDirectAck    bool
 	DisjointActive       bool
 	LastDisjointError    byte
+	PartyActive          bool
 	Village              int
 	Area                 int
 	X                    int

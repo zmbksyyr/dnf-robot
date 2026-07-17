@@ -38,15 +38,17 @@ func TestSortActorsForStopByPolicy(t *testing.T) {
 		testRobotActor(2, actormodel.ModeAuto, 17000002),
 		testRobotActor(3, actormodel.ModeAuto, 17000003),
 		testRobotActor(4, actormodel.ModeAuto, 0),
+		testRobotActor(5, actormodel.ModeAuto, 17000004),
 	}
 	status := map[int]robotcap.RuntimeStatus{
 		17000001: {UID: 17000001, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0},
 		17000002: {UID: 17000002, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0, RobotType: 2, StoreDisplayAck: true},
 		17000003: {UID: 17000003, StateName: robotcap.RuntimeStateLogin, DisconnectReason: 0},
+		17000004: {UID: 17000004, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0, PartyActive: true},
 	}
 	sortActorsForStopByPolicy(actors, status)
-	got := []int{actors[0].UIDValue(), actors[1].UIDValue(), actors[2].UIDValue(), actors[3].UIDValue()}
-	assertIntSlice(t, got, []int{0, 17000003, 17000002, 17000001})
+	got := []int{actors[0].UIDValue(), actors[1].UIDValue(), actors[2].UIDValue(), actors[3].UIDValue(), actors[4].UIDValue()}
+	assertIntSlice(t, got, []int{0, 17000003, 17000002, 17000001, 17000004})
 }
 
 func TestBeginAdaptiveStoreTypeBalancesPlannedStores(t *testing.T) {

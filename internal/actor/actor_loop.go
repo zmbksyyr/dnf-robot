@@ -200,6 +200,13 @@ func (a *Actor) handleCommand(cmd Command) robotcap.ActionResult {
 	case CommandLogout:
 		return a.logoutCurrentUID()
 	}
+	switch cmd {
+	case CommandMove, CommandShoutLocal, CommandShoutWorld, CommandStore:
+		st, _ := a.runtime.Status(uid)
+		if st.PartyActive || a.runtime.PartyActive(uid) {
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateCancelled, Message: "party active"}
+		}
+	}
 	a.setBusy(true, "command")
 	defer a.setBusy(false, "")
 	switch cmd {
@@ -289,6 +296,10 @@ func (a *Actor) tick(now time.Time) {
 	}
 	a.markOnlineHealthy()
 	a.setState(StateRunning)
+	if st.PartyActive || a.runtime.PartyActive(uid) {
+		a.clearAutoActionSchedule()
+		return
+	}
 	isStore := st.RobotType == 2 || st.RobotType == 3
 	if isStore && a.storeUntilMissing() {
 		rc := a.runtime.Config()
@@ -327,7 +338,7 @@ func (a *Actor) tick(now time.Time) {
 			var res robotcap.ActionResult
 			a.runBusy("store", func() {
 				defer a.clearOnlineAttempt()
-				res = a.runtime.AutoStore(uid, a.releaseRequestedValue)
+				res = a.runtime.AutoStore(uid, a.shouldStopAutoStore)
 			})
 			if res.OK {
 				a.setStoreUntil(time.Now().Add(time.Duration(rc.AutoStoreDurationSec) * time.Second))
@@ -352,6 +363,21 @@ func (a *Actor) tick(now time.Time) {
 
 func (a *Actor) randomShoutMessage() string {
 	return a.runtime.RandomShoutMessage(a.randIntn)
+}
+
+func (a *Actor) shouldStopAutoStore() bool {
+	if a.releaseRequestedValue() {
+		return true
+	}
+	uid := a.uidValue()
+	if uid <= 0 {
+		return true
+	}
+	if a.runtime.PartyActive(uid) {
+		return true
+	}
+	st, ok := a.runtime.Status(uid)
+	return ok && st.PartyActive
 }
 
 func (a *Actor) ensureOnline(now time.Time) {
@@ -441,6 +467,15 @@ func (a *Actor) clearAutoSchedule() {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
 	a.clearAutoScheduleLocked()
+}
+
+func (a *Actor) clearAutoActionSchedule() {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	a.nextMove = time.Time{}
+	a.nextLocalShout = time.Time{}
+	a.nextWorldShout = time.Time{}
+	a.nextStore = time.Time{}
 }
 
 func (a *Actor) clearAutoScheduleLocked() {

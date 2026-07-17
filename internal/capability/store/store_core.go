@@ -327,6 +327,22 @@ func (c *PointCoordinator) Report(uid int, pos Position, try int, ok bool, reaso
 	}
 }
 
+func (c *PointCoordinator) Release(uid int, pos Position) {
+	if pos.PointID == "" {
+		return
+	}
+	c.pointMu.Lock()
+	defer c.pointMu.Unlock()
+	if claim, ok := c.pointClaims[pos.PointID]; ok && (uid <= 0 || claim.UID == uid) {
+		delete(c.pointClaims, pos.PointID)
+	}
+	if pos.Region != "" {
+		if claim, ok := c.regionClaims[pos.Region]; ok && (uid <= 0 || claim.UID == uid) {
+			delete(c.regionClaims, pos.Region)
+		}
+	}
+}
+
 func pointPenaltyReason(reason string) bool {
 	switch reason {
 	case StoreReasonErr011:
