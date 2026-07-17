@@ -304,8 +304,8 @@ func TestRobotPartyTQOSSequencesAreIsolatedByPeerAndRoute(t *testing.T) {
 	codec := partyTQOSCodec{key: 0x7e}
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{slot: 2, slotKnown: true}
-	leader := partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true}
-	robotPeer := partyIPPeer{uniqueID: 2, slot: 1, slotKnown: true}
+	leader := partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true}
+	robotPeer := partyIPPeer{uniqueID: 2, accID: 17000002, slot: 1, slotKnown: true}
 	vo.partyPeers[0] = leader
 	vo.partyPeers[1] = robotPeer
 
@@ -331,6 +331,9 @@ func TestRobotPartyTQOSSequencesAreIsolatedByPeerAndRoute(t *testing.T) {
 	}
 	if vo.partyTQOSSeq[0][1] != 2 || vo.partyTQOSSeq[1][1] != 1 || vo.partyTQOSSeq[0][2] != 1 {
 		t.Fatalf("isolated sequences = %+v", vo.partyTQOSSeq)
+	}
+	if !vo.partyRobotPeerReady[1] {
+		t.Fatal("robot peer TQOS was not marked ready")
 	}
 }
 
@@ -381,7 +384,9 @@ func TestPartyRobotPeersNegotiateOverDynamicUDP(t *testing.T) {
 	vo.partySelfPeer = partyIPPeer{uniqueID: 1, accID: 17000001, slot: 1, slotKnown: true}
 	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
-	vo.startPartyRobotPeerNegotiationUnsafe()
+	if !vo.sendPartyRobotPeerProbeUnsafe(vo.partyPeers[0], 1) {
+		t.Fatal("robot peer probe was not sent")
+	}
 
 	if err := receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -395,8 +400,8 @@ func TestPartyRobotPeersNegotiateOverDynamicUDP(t *testing.T) {
 	if !ok || packet.senderSlot != 1 || packet.state != 3 || packet.sequence != 0 {
 		t.Fatalf("probe = %+v ok=%v raw=%x", packet, ok, buf[:n])
 	}
-	if !vo.partyRobotProbeSent[2] || vo.partyTQOSSeq[2][1] != 1 {
-		t.Fatalf("probe state = sent:%t seq:%d", vo.partyRobotProbeSent[2], vo.partyTQOSSeq[2][1])
+	if vo.partyTQOSSeq[2][1] != 1 {
+		t.Fatalf("probe sequence = %d", vo.partyTQOSSeq[2][1])
 	}
 }
 
