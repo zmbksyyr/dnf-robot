@@ -9,7 +9,6 @@ import (
 	"hash/crc32"
 	"io"
 	"math/bits"
-	"math/rand"
 	"net"
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
@@ -187,10 +186,9 @@ type RobotVo struct {
 	partyTQOSReliableSeq uint32
 	partyTQOSCodecs      [4][3]partyTQOSCodec
 	partyTQOSCodecKnown  [4][3]bool
-	partyFollowNotBefore time.Time
 	partyDungeonTraceAt  time.Time
 	partyPositionTraceAt time.Time
-	partyInputNotBefore  time.Time
+	partyCommand4TraceAt time.Time
 
 	GMName [5][100]byte
 
@@ -1511,20 +1509,6 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
 			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
-			if route == 1 {
-				if inputs := partyDungeonInputRecords(frame); len(inputs) > 0 && r.partyInputDueUnsafe() {
-					sequence := r.partyTQOSReliableSeq
-					r.partyTQOSReliableSeq++
-					replies = append(replies, buildPartyReliableRecordBatchPacket(sequence, r.partySelfPeer.slot, frame[8], inputs))
-					foundationlog.Robotf("[PARTY_DUNGEON_INPUT] uid=%d records=%d sequence=%d\n", r.UID, len(inputs), sequence)
-				}
-				if body, ok := buildPartyDungeonFollowBody(frame, peer.uniqueID, r.partySelfPeer.uniqueID); ok && r.partyFollowDueUnsafe() {
-					sequence := r.partyTQOSSeq
-					r.partyTQOSSeq++
-					replies = append(replies, buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, frame[8], body))
-					continue
-				}
-			}
 		}
 		var preferred *partyTQOSCodec
 		if peer.slot < 4 && route < 3 && r.partyTQOSCodecKnown[peer.slot][route] {
@@ -1564,6 +1548,10 @@ func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer pa
 	if now.After(r.partyPositionTraceAt) && partyDungeonFrameContainsCommand(frame, partyDungeonPositionCommand) {
 		r.partyPositionTraceAt = now.Add(time.Second)
 		foundationlog.Robotf("[PARTY_DUNGEON_POSITION_RAW] uid=%d route=%d peer_slot=%d peer_unique_id=%d data=%x\n", r.UID, route, peer.slot, peer.uniqueID, frame)
+	}
+	if now.After(r.partyCommand4TraceAt) && partyDungeonFrameContainsCommand(frame, 0x0004) {
+		r.partyCommand4TraceAt = now.Add(time.Second)
+		foundationlog.Robotf("[PARTY_DUNGEON_COMMAND4_RAW] uid=%d route=%d peer_slot=%d peer_unique_id=%d data=%x\n", r.UID, route, peer.slot, peer.uniqueID, frame)
 	}
 	if now.Before(r.partyDungeonTraceAt) || len(frame) < 9 {
 		return
@@ -1637,31 +1625,6 @@ func partyDungeonFrameRecords(frame []byte) string {
 		return "empty"
 	}
 	return records
-}
-
-func (r *RobotVo) partyFollowDueUnsafe() bool {
-	now := time.Now()
-	if now.Before(r.partyFollowNotBefore) {
-		return false
-	}
-	r.partyFollowNotBefore = now.Add(randomPartyDelay(350*time.Millisecond, 1200*time.Millisecond))
-	return true
-}
-
-func (r *RobotVo) partyInputDueUnsafe() bool {
-	now := time.Now()
-	if now.Before(r.partyInputNotBefore) {
-		return false
-	}
-	r.partyInputNotBefore = now.Add(randomPartyDelay(250*time.Millisecond, 900*time.Millisecond))
-	return true
-}
-
-func randomPartyDelay(minimum, maximum time.Duration) time.Duration {
-	if maximum <= minimum {
-		return minimum
-	}
-	return minimum + time.Duration(rand.Int63n(int64(maximum-minimum)+1))
 }
 
 func (r *RobotVo) partyPeerForUDPUnsafe(remote *net.UDPAddr, senderSlot *byte) (partyIPPeer, bool) {
@@ -1923,10 +1886,9 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
-	r.partyFollowNotBefore = time.Time{}
 	r.partyDungeonTraceAt = time.Time{}
 	r.partyPositionTraceAt = time.Time{}
-	r.partyInputNotBefore = time.Time{}
+	r.partyCommand4TraceAt = time.Time{}
 	r.resetPartyTQOSTransportUnsafe()
 }
 
@@ -2754,10 +2716,6 @@ const partyDungeonPositionCommand = 0x0051
 const partyDungeonPositionBodySize = 52
 const partyDungeonPositionUniqueIDOffset = 26
 const partyDungeonPositionInnerPayloadOffset = 22
-const partyDungeonInputCommand = 0x0027
-const partyDungeonInputBodySize = 11
-const partyDungeonMotionCommand = 0x0028
-const partyDungeonMotionBodySize = 7
 
 var partyDungeonPositionInnerChecksumOffsets = [...]int{10, 18}
 
@@ -2833,54 +2791,6 @@ func buildPartyDungeonFollowBody(frame []byte, sourceUniqueID, targetUniqueID ui
 	checksum = partyPayloadChecksum(followBody[7:])
 	copy(followBody[3:7], checksum[:])
 	return followBody, true
-}
-
-func partyDungeonInputRecords(frame []byte) [][]byte {
-	if len(frame) < 11 || frame[0] != 0x01 || int(binary.LittleEndian.Uint16(frame[5:7])) != len(frame)-9 {
-		return nil
-	}
-	body := frame[9:]
-	records := make([][]byte, 0, 8)
-	for len(body) >= 2 {
-		size := int(binary.LittleEndian.Uint16(body[:2]))
-		body = body[2:]
-		if size <= 0 || size > len(body) {
-			return nil
-		}
-		record := body[:size]
-		body = body[size:]
-		command := uint16(0)
-		if size >= 3 {
-			command = binary.LittleEndian.Uint16(record[1:3])
-		}
-		isInput := size == partyDungeonInputBodySize && record[0] == 0x02 && command == partyDungeonInputCommand
-		isMotion := size == partyDungeonMotionBodySize && record[0] == 0x00 && command == partyDungeonMotionCommand
-		if isInput || isMotion {
-			records = append(records, append([]byte(nil), record...))
-		}
-	}
-	return records
-}
-
-func buildPartyReliableRecordBatchPacket(sequence uint32, senderSlot, flags byte, records [][]byte) []byte {
-	bodySize := 0
-	for _, record := range records {
-		bodySize += 2 + len(record)
-	}
-	payload := make([]byte, 9+bodySize)
-	payload[0] = 0x01
-	binary.LittleEndian.PutUint32(payload[1:5], sequence)
-	binary.LittleEndian.PutUint16(payload[5:7], uint16(bodySize))
-	payload[7] = senderSlot
-	payload[8] = flags
-	offset := 9
-	for _, record := range records {
-		binary.LittleEndian.PutUint16(payload[offset:offset+2], uint16(len(record)))
-		offset += 2
-		copy(payload[offset:], record)
-		offset += len(record)
-	}
-	return payload
 }
 
 func buildPartyUnreliablePacket(sequence uint32, senderSlot, flags byte, body []byte) []byte {

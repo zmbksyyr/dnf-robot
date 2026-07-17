@@ -169,9 +169,9 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 7, slot: 0, slotKnown: true}
 	vo.townEntityPositions = map[uint16]townEntityPosition{7: {uniqueID: 7}}
-	vo.partyFollowNotBefore = time.Now().Add(time.Minute)
 	vo.partyDungeonTraceAt = time.Now().Add(time.Minute)
 	vo.partyPositionTraceAt = time.Now().Add(time.Minute)
+	vo.partyCommand4TraceAt = time.Now().Add(time.Minute)
 
 	if partyInfoClearsParty(mustPartyHex(t, "0100220000486b01a86b01")) {
 		t.Fatal("active party info was treated as clear")
@@ -180,25 +180,17 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 		t.Fatal("clear party info was not recognized")
 	}
 	vo.clearPartyUnsafe()
-	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyFollowNotBefore.IsZero() || !vo.partyDungeonTraceAt.IsZero() || !vo.partyPositionTraceAt.IsZero() {
+	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyDungeonTraceAt.IsZero() || !vo.partyPositionTraceAt.IsZero() || !vo.partyCommand4TraceAt.IsZero() {
 		t.Fatalf("party state remained after clear: peers=%+v positions=%+v", vo.partyPeers, vo.townEntityPositions)
 	}
 }
 
-func TestRobotBuildsDelayedDungeonFollow(t *testing.T) {
-	vo := &RobotVo{}
-	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, slot: 1, slotKnown: true}
-	leader := partyIPPeer{uniqueID: 0x9692, slot: 0, slotKnown: true}
-	vo.partyPeers[0] = leader
-
+func TestRobotRewritesCapturedDungeonPosition(t *testing.T) {
 	position := mustPartyHex(t, "028703000034000000015100970cfec701070034ede5df0001070034ede5df1102a97492965e0800000d000000ffffffffffffffff0000000000000000")
-	replies := vo.buildPartyTQOSRepliesUnsafe(position, 1, leader)
-	want := mustPartyHex(t, "020000000034000100015100bc9521ba010700f29a59e300010700f29a59e31102a974ab1f5e0800000d000000ffffffffffffffff0000000000000000")
-	if len(replies) != 1 || !bytes.Equal(replies[0], want) {
-		t.Fatalf("position replies = %x, want %x", replies, want)
-	}
-	if got := vo.buildPartyTQOSRepliesUnsafe(position, 1, leader); len(got) != 0 {
-		t.Fatalf("position was repeated before randomized delay: %x", got)
+	body, ok := buildPartyDungeonFollowBody(position, 0x9692, 0x1fab)
+	want := mustPartyHex(t, "015100bc9521ba010700f29a59e300010700f29a59e31102a974ab1f5e0800000d000000ffffffffffffffff0000000000000000")
+	if !ok || !bytes.Equal(body, want) {
+		t.Fatalf("position body = %x ok=%t, want %x", body, ok, want)
 	}
 }
 
@@ -221,33 +213,6 @@ func TestPartyDungeonFrameRecords(t *testing.T) {
 	}
 	if !partyDungeonFrameContainsCommand(frame, 0x0044) || partyDungeonFrameContainsCommand(frame, 0x0051) {
 		t.Fatalf("reliable command detection failed")
-	}
-}
-
-func TestRobotMirrorsDungeonInputBatchWithoutSkills(t *testing.T) {
-	vo := &RobotVo{}
-	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, slot: 1, slotKnown: true}
-	leader := partyIPPeer{uniqueID: 0x9692, slot: 0, slotKnown: true}
-	vo.partyPeers[0] = leader
-	records := [][]byte{
-		{0x02, 0x27, 0x00, 0x01, 0xa0, 0x43, 0x52, 0x7e, 0x7e, 0x7e, 0x7e},
-		{0x00, 0x28, 0x00, 0x18, 0x00, 0x00, 0x00},
-		{0x02, 0x27, 0x00, 0x01, 0xa1, 0x43, 0x52, 0x7e, 0x7e, 0x7e, 0x7e},
-		{0x02, 0x44, 0x00, 0xa7, 0xeb, 0x50, 0x2b, 0xec, 0xe8, 0x7e, 0x7e, 0x7e, 0x7e},
-	}
-	frame := buildPartyReliableRecordBatchPacket(7, 0, 0, records)
-	got := vo.buildPartyTQOSRepliesUnsafe(frame, 1, leader)
-	if len(got) != 2 || got[0][0] != 0x00 || got[1][0] != 0x01 {
-		t.Fatalf("replies = %x", got)
-	}
-	if !bytes.Contains(got[1], records[0]) || !bytes.Contains(got[1], records[1]) || !bytes.Contains(got[1], records[2]) {
-		t.Fatalf("input records were not mirrored: %x", got[1])
-	}
-	if bytes.Contains(got[1], records[3]) {
-		t.Fatalf("skill record was mirrored: %x", got[1])
-	}
-	if got := partyDungeonInputRecords(frame); len(got) != 3 {
-		t.Fatalf("input records = %d", len(got))
 	}
 }
 
