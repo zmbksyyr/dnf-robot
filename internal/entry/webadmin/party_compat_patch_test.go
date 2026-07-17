@@ -8,7 +8,7 @@ import (
 )
 
 func testPartyCompatLayout() partyCompatLayout {
-	return partyCompatLayout{site: 64, cave: 128, rawSend: 320, resumeSite: 74}
+	return partyCompatLayout{site: 64, cave: 128, rawSend: 320, resumeSite: 74, getPacket: 256}
 }
 
 func TestPartyCompatDefaultRangeCoversFirstThousandRobotAccounts(t *testing.T) {
@@ -47,9 +47,9 @@ func TestBuildPartyCompatCaveUsesCUserArgumentAndRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCave, _ := hex.DecodeString("8b45088b80ac0407003d406603010f820b0000003d80a812010f82e00db5ff807dd3000f84d60db5ffe9120bb5ff")
-	if !bytes.Equal(cave, wantCave) {
-		t.Fatalf("cave = %x, want %x", cave, wantCave)
+	wantPrefix, _ := hex.DecodeString("8b45088b80ac0407003d406603010f82540000003d80a812010f8349000000c7442404000000008b450c890424e8ec4073ff0fb740016683f8060f82280000006683f80b0f862d0000006683f8160f82140000006683f81f0f8619000000663d99000f840f000000807dd3000f848d0db5ffe9c90ab5ffe9830db5ff")
+	if len(cave) != len(partyCompatZeroCave) || !bytes.Equal(cave[:len(wantPrefix)], wantPrefix) || !allZero(cave[len(wantPrefix):]) {
+		t.Fatalf("cave = %x, want prefix %x and zero padding", cave, wantPrefix)
 	}
 	start, end, ok := parsePartyCompatCave(layout, cave)
 	if !ok || start != 17000000 || end != 18000000 {

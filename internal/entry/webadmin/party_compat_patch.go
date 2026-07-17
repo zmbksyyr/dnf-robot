@@ -26,11 +26,12 @@ var defaultPartyCompatLayout = partyCompatLayout{
 	cave:       0x08af75e4,
 	rawSend:    0x086483e3,
 	resumeSite: 0x08648124,
+	getPacket:  0x0822b702,
 }
 
 var (
 	partyCompatOriginalSite = []byte{0x80, 0x7d, 0xd3, 0x00, 0x0f, 0x84, 0xbf, 0x02, 0x00, 0x00}
-	partyCompatZeroCave     = make([]byte, 46)
+	partyCompatZeroCave     = make([]byte, 128)
 )
 
 type partyCompatLayout struct {
@@ -38,6 +39,7 @@ type partyCompatLayout struct {
 	cave       int64
 	rawSend    int64
 	resumeSite int64
+	getPacket  int64
 }
 
 type partyCompatConfig struct {
@@ -400,13 +402,29 @@ func buildPartyCompatCave(layout partyCompatLayout, start, end uint32) ([]byte, 
 	}
 	result := []byte{0x8b, 0x45, 0x08, 0x8b, 0x80, 0xac, 0x04, 0x07, 0x00, 0x3d}
 	result = binary.LittleEndian.AppendUint32(result, start)
-	result = append(result, 0x0f, 0x82, 0x0b, 0x00, 0x00, 0x00, 0x3d)
+	accountLowBranch := len(result)
+	result = append(result, 0x0f, 0x82, 0, 0, 0, 0, 0x3d)
 	result = binary.LittleEndian.AppendUint32(result, end)
+	accountHighBranch := len(result)
+	result = append(result, 0x0f, 0x83, 0, 0, 0, 0)
+	result = append(result, 0xc7, 0x44, 0x24, 0x04, 0, 0, 0, 0, 0x8b, 0x45, 0x0c, 0x89, 0x04, 0x24)
 	var err error
-	result, err = appendRelativeBranch(result, layout.cave, []byte{0x0f, 0x82}, layout.rawSend)
+	result, err = appendRelativeBranch(result, layout.cave, []byte{0xe8}, layout.getPacket)
 	if err != nil {
 		return nil, err
 	}
+	result = append(result, 0x0f, 0xb7, 0x40, 0x01, 0x66, 0x83, 0xf8, 0x06)
+	belowPartyBranch := len(result)
+	result = append(result, 0x0f, 0x82, 0, 0, 0, 0, 0x66, 0x83, 0xf8, 0x0b)
+	partyRangeBranch := len(result)
+	result = append(result, 0x0f, 0x86, 0, 0, 0, 0, 0x66, 0x83, 0xf8, 0x16)
+	belowDungeonBranch := len(result)
+	result = append(result, 0x0f, 0x82, 0, 0, 0, 0, 0x66, 0x83, 0xf8, 0x1f)
+	dungeonRangeBranch := len(result)
+	result = append(result, 0x0f, 0x86, 0, 0, 0, 0, 0x66, 0x3d, 0x99, 0x00)
+	realtimeBranch := len(result)
+	result = append(result, 0x0f, 0x84, 0, 0, 0, 0)
+	fallbackOffset := len(result)
 	result = append(result, 0x80, 0x7d, 0xd3, 0x00)
 	result, err = appendRelativeBranch(result, layout.cave, []byte{0x0f, 0x84}, layout.rawSend)
 	if err != nil {
@@ -416,10 +434,28 @@ func buildPartyCompatCave(layout partyCompatLayout, start, end uint32) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	if len(result) != len(partyCompatZeroCave) {
-		return nil, fmt.Errorf("party compatibility cave size is %d, want %d", len(result), len(partyCompatZeroCave))
+	rawOffset := len(result)
+	result, err = appendRelativeBranch(result, layout.cave, []byte{0xe9}, layout.rawSend)
+	if err != nil {
+		return nil, err
 	}
+	for _, branch := range []int{accountLowBranch, accountHighBranch, belowPartyBranch, belowDungeonBranch} {
+		patchInternalRelativeBranch(result, layout.cave, branch, fallbackOffset)
+	}
+	for _, branch := range []int{partyRangeBranch, dungeonRangeBranch, realtimeBranch} {
+		patchInternalRelativeBranch(result, layout.cave, branch, rawOffset)
+	}
+	if len(result) > len(partyCompatZeroCave) {
+		return nil, fmt.Errorf("party compatibility cave size is %d, max %d", len(result), len(partyCompatZeroCave))
+	}
+	result = append(result, make([]byte, len(partyCompatZeroCave)-len(result))...)
 	return result, nil
+}
+
+func patchInternalRelativeBranch(code []byte, base int64, branchOffset, targetOffset int) {
+	next := base + int64(branchOffset+6)
+	target := base + int64(targetOffset)
+	binary.LittleEndian.PutUint32(code[branchOffset+2:branchOffset+6], uint32(int32(target-next)))
 }
 
 func appendRelativeBranch(dst []byte, base int64, opcode []byte, target int64) ([]byte, error) {
