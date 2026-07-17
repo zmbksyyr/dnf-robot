@@ -189,6 +189,7 @@ type RobotVo struct {
 	partyTQOSCodecKnown  [4][3]bool
 	partyFollowNotBefore time.Time
 	partyDungeonTraceAt  time.Time
+	partyPositionTraceAt time.Time
 
 	GMName [5][100]byte
 
@@ -1553,6 +1554,10 @@ func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {
 
 func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer partyIPPeer) {
 	now := time.Now()
+	if now.After(r.partyPositionTraceAt) && partyDungeonFrameContainsCommand(frame, partyDungeonPositionCommand) {
+		r.partyPositionTraceAt = now.Add(time.Second)
+		foundationlog.Robotf("[PARTY_DUNGEON_POSITION_RAW] uid=%d route=%d peer_slot=%d peer_unique_id=%d data=%x\n", r.UID, route, peer.slot, peer.uniqueID, frame)
+	}
 	if now.Before(r.partyDungeonTraceAt) || len(frame) < 9 {
 		return
 	}
@@ -1563,6 +1568,31 @@ func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer pa
 		_, follow = buildPartyDungeonFollowBody(frame, peer.uniqueID, r.partySelfPeer.uniqueID)
 	}
 	foundationlog.Robotf("[PARTY_DUNGEON_FRAME] uid=%d route=%d peer_slot=%d peer_unique_id=%d type=%d body=%d records=%s follow=%t\n", r.UID, route, peer.slot, peer.uniqueID, frame[0], bodySize, partyDungeonFrameRecords(frame), follow)
+}
+
+func partyDungeonFrameContainsCommand(frame []byte, target uint16) bool {
+	if len(frame) < 12 {
+		return false
+	}
+	if frame[0] == 0x02 {
+		return binary.LittleEndian.Uint16(frame[10:12]) == target
+	}
+	if frame[0] != 0x01 {
+		return false
+	}
+	body := frame[9:]
+	for len(body) >= 2 {
+		size := int(binary.LittleEndian.Uint16(body[:2]))
+		body = body[2:]
+		if size <= 0 || size > len(body) {
+			return false
+		}
+		if size >= 3 && binary.LittleEndian.Uint16(body[1:3]) == target {
+			return true
+		}
+		body = body[size:]
+	}
+	return false
 }
 
 func partyDungeonFrameRecords(frame []byte) string {
@@ -1879,6 +1909,7 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyFollowNotBefore = time.Time{}
 	r.partyDungeonTraceAt = time.Time{}
+	r.partyPositionTraceAt = time.Time{}
 	r.resetPartyTQOSTransportUnsafe()
 }
 

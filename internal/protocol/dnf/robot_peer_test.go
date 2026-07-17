@@ -171,6 +171,7 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo.townEntityPositions = map[uint16]townEntityPosition{7: {uniqueID: 7}}
 	vo.partyFollowNotBefore = time.Now().Add(time.Minute)
 	vo.partyDungeonTraceAt = time.Now().Add(time.Minute)
+	vo.partyPositionTraceAt = time.Now().Add(time.Minute)
 
 	if partyInfoClearsParty(mustPartyHex(t, "0100220000486b01a86b01")) {
 		t.Fatal("active party info was treated as clear")
@@ -179,7 +180,7 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 		t.Fatal("clear party info was not recognized")
 	}
 	vo.clearPartyUnsafe()
-	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyFollowNotBefore.IsZero() || !vo.partyDungeonTraceAt.IsZero() {
+	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyFollowNotBefore.IsZero() || !vo.partyDungeonTraceAt.IsZero() || !vo.partyPositionTraceAt.IsZero() {
 		t.Fatalf("party state remained after clear: peers=%+v positions=%+v", vo.partyPeers, vo.townEntityPositions)
 	}
 }
@@ -206,6 +207,9 @@ func TestPartyDungeonFrameRecords(t *testing.T) {
 	if got := partyDungeonFrameRecords(position); got != "0x0051/52" {
 		t.Fatalf("position records = %q", got)
 	}
+	if !partyDungeonFrameContainsCommand(position, 0x0051) || partyDungeonFrameContainsCommand(position, 0x0027) {
+		t.Fatalf("position command detection failed")
+	}
 	reliable := []byte{0x02, 0x44, 0x00, 0xa7, 0xeb, 0x50, 0x2b, 0xec, 0xe8, 0x7e, 0x7e, 0x7e, 0x7e}
 	frame := make([]byte, 11+len(reliable))
 	frame[0] = 0x01
@@ -214,6 +218,9 @@ func TestPartyDungeonFrameRecords(t *testing.T) {
 	copy(frame[11:], reliable)
 	if got := partyDungeonFrameRecords(frame); got != "0x0044/13" {
 		t.Fatalf("reliable records = %q", got)
+	}
+	if !partyDungeonFrameContainsCommand(frame, 0x0044) || partyDungeonFrameContainsCommand(frame, 0x0051) {
+		t.Fatalf("reliable command detection failed")
 	}
 }
 
