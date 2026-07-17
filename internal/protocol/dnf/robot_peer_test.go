@@ -170,7 +170,7 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 7, slot: 0, slotKnown: true}
 	vo.townEntityPositions = map[uint16]townEntityPosition{7: {uniqueID: 7}}
 	vo.partyFollowNotBefore = time.Now().Add(time.Minute)
-	vo.partyActionNotBefore = time.Now().Add(time.Minute)
+	vo.partyDungeonTraceAt = time.Now().Add(time.Minute)
 
 	if partyInfoClearsParty(mustPartyHex(t, "0100220000486b01a86b01")) {
 		t.Fatal("active party info was treated as clear")
@@ -179,12 +179,12 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 		t.Fatal("clear party info was not recognized")
 	}
 	vo.clearPartyUnsafe()
-	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyFollowNotBefore.IsZero() || !vo.partyActionNotBefore.IsZero() {
+	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyFollowNotBefore.IsZero() || !vo.partyDungeonTraceAt.IsZero() {
 		t.Fatalf("party state remained after clear: peers=%+v positions=%+v", vo.partyPeers, vo.townEntityPositions)
 	}
 }
 
-func TestRobotBuildsDelayedDungeonFollowAndAction(t *testing.T) {
+func TestRobotBuildsDelayedDungeonFollow(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, slot: 1, slotKnown: true}
 	leader := partyIPPeer{uniqueID: 0x9692, slot: 0, slotKnown: true}
@@ -199,16 +199,21 @@ func TestRobotBuildsDelayedDungeonFollowAndAction(t *testing.T) {
 	if got := vo.buildPartyTQOSRepliesUnsafe(position, 1, leader); len(got) != 0 {
 		t.Fatalf("position was repeated before randomized delay: %x", got)
 	}
+}
 
-	vo.partyActionNotBefore = time.Time{}
-	action := []byte{0x02, 0x44, 0x00, 0xa7, 0xeb, 0x50, 0x2b, 0xec, 0xe8, 0x7e, 0x7e, 0x7e, 0x7e}
-	frame := buildPartyReliableRecordPacket(7, 0, 0, action)
-	replies = vo.buildPartyTQOSRepliesUnsafe(frame, 1, leader)
-	if len(replies) != 2 || replies[0][0] != 0x00 || replies[1][0] != 0x01 || !bytes.Contains(replies[1], action) {
-		t.Fatalf("action replies = %x", replies)
+func TestPartyDungeonFrameRecords(t *testing.T) {
+	position := mustPartyHex(t, "028703000034000000015100970cfec701070034ede5df0001070034ede5df1102a97492965e0800000d000000ffffffffffffffff0000000000000000")
+	if got := partyDungeonFrameRecords(position); got != "0x0051/52" {
+		t.Fatalf("position records = %q", got)
 	}
-	if got := vo.buildPartyTQOSRepliesUnsafe(frame, 1, leader); len(got) != 1 || got[0][0] != 0x00 {
-		t.Fatalf("action was repeated before randomized delay: %x", got)
+	reliable := []byte{0x02, 0x44, 0x00, 0xa7, 0xeb, 0x50, 0x2b, 0xec, 0xe8, 0x7e, 0x7e, 0x7e, 0x7e}
+	frame := make([]byte, 11+len(reliable))
+	frame[0] = 0x01
+	binary.LittleEndian.PutUint16(frame[5:7], uint16(2+len(reliable)))
+	binary.LittleEndian.PutUint16(frame[9:11], uint16(len(reliable)))
+	copy(frame[11:], reliable)
+	if got := partyDungeonFrameRecords(frame); got != "0x0044/13" {
+		t.Fatalf("reliable records = %q", got)
 	}
 }
 

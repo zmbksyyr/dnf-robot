@@ -11,6 +11,12 @@ func testPartyCompatLayout() partyCompatLayout {
 	return partyCompatLayout{site: 64, cave: 128, rawSend: 320, resumeSite: 74}
 }
 
+func TestPartyCompatDefaultRangeCoversFirstThousandRobotAccounts(t *testing.T) {
+	if defaultPartyCompatAccountStart != 17000000 || defaultPartyCompatAccountEnd != 17001000 {
+		t.Fatalf("default range = %d..%d", defaultPartyCompatAccountStart, defaultPartyCompatAccountEnd)
+	}
+}
+
 func newPartyCompatMemory(t *testing.T, layout partyCompatLayout) *os.File {
 	t.Helper()
 	file, err := os.CreateTemp(t.TempDir(), "party-compat-mem")

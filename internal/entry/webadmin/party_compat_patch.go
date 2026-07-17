@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultPartyCompatAccountStart uint32 = 17000000
-	defaultPartyCompatAccountEnd   uint32 = 18000000
+	defaultPartyCompatAccountEnd   uint32 = 17001000
 )
 
 var defaultPartyCompatLayout = partyCompatLayout{

@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net"
 	"robot/internal/foundation/lockhub"
+	foundationlog "robot/internal/foundation/log"
 	sqlpkg "robot/internal/foundation/sql"
 	"robot/internal/protocol/dnf/crypt"
 	"strconv"
@@ -187,7 +188,7 @@ type RobotVo struct {
 	partyTQOSCodecs      [4][3]partyTQOSCodec
 	partyTQOSCodecKnown  [4][3]bool
 	partyFollowNotBefore time.Time
-	partyActionNotBefore time.Time
+	partyDungeonTraceAt  time.Time
 
 	GMName [5][100]byte
 
@@ -1506,17 +1507,15 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			sequence := binary.LittleEndian.Uint32(frame[1:5])
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
 		}
-		if route == 1 && r.shouldFollowPartyPeerUnsafe(peer) {
-			if body, ok := buildPartyDungeonFollowBody(frame, peer.uniqueID, r.partySelfPeer.uniqueID); ok && r.partyFollowDueUnsafe() {
-				sequence := r.partyTQOSSeq
-				r.partyTQOSSeq++
-				replies = append(replies, buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, frame[8], body))
-				continue
-			}
-			if action, ok := buildPartyDungeonActionRecord(frame); ok && r.partyActionDueUnsafe() {
-				sequence := r.partyTQOSReliableSeq
-				r.partyTQOSReliableSeq++
-				replies = append(replies, buildPartyReliableRecordPacket(sequence, r.partySelfPeer.slot, frame[8], action))
+		if r.shouldFollowPartyPeerUnsafe(peer) {
+			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
+			if route == 1 {
+				if body, ok := buildPartyDungeonFollowBody(frame, peer.uniqueID, r.partySelfPeer.uniqueID); ok && r.partyFollowDueUnsafe() {
+					sequence := r.partyTQOSSeq
+					r.partyTQOSSeq++
+					replies = append(replies, buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, frame[8], body))
+					continue
+				}
 			}
 		}
 		var preferred *partyTQOSCodec
@@ -1552,21 +1551,63 @@ func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {
 	return r.partySelfPeer.slotKnown && r.partySelfPeer.slot != 0 && peer.slotKnown && peer.slot == 0 && peer.uniqueID != 0
 }
 
+func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer partyIPPeer) {
+	now := time.Now()
+	if now.Before(r.partyDungeonTraceAt) || len(frame) < 9 {
+		return
+	}
+	r.partyDungeonTraceAt = now.Add(2 * time.Second)
+	bodySize := binary.LittleEndian.Uint16(frame[5:7])
+	follow := false
+	if frame[0] == 0x02 {
+		_, follow = buildPartyDungeonFollowBody(frame, peer.uniqueID, r.partySelfPeer.uniqueID)
+	}
+	foundationlog.Robotf("[PARTY_DUNGEON_FRAME] uid=%d route=%d peer_slot=%d peer_unique_id=%d type=%d body=%d records=%s follow=%t\n", r.UID, route, peer.slot, peer.uniqueID, frame[0], bodySize, partyDungeonFrameRecords(frame), follow)
+}
+
+func partyDungeonFrameRecords(frame []byte) string {
+	if len(frame) < 9 {
+		return "invalid"
+	}
+	if frame[0] == 0x02 {
+		if len(frame) < 12 {
+			return "short"
+		}
+		return fmt.Sprintf("0x%04x/%d", binary.LittleEndian.Uint16(frame[10:12]), len(frame)-9)
+	}
+	if frame[0] != 0x01 {
+		return "control"
+	}
+	body := frame[9:]
+	records := ""
+	for count := 0; len(body) >= 2 && count < 8; count++ {
+		size := int(binary.LittleEndian.Uint16(body[:2]))
+		body = body[2:]
+		if size <= 0 || size > len(body) {
+			return records + "invalid"
+		}
+		command := uint16(0)
+		if size >= 3 {
+			command = binary.LittleEndian.Uint16(body[1:3])
+		}
+		if records != "" {
+			records += ","
+		}
+		records += fmt.Sprintf("0x%04x/%d", command, size)
+		body = body[size:]
+	}
+	if records == "" {
+		return "empty"
+	}
+	return records
+}
+
 func (r *RobotVo) partyFollowDueUnsafe() bool {
 	now := time.Now()
 	if now.Before(r.partyFollowNotBefore) {
 		return false
 	}
 	r.partyFollowNotBefore = now.Add(randomPartyDelay(350*time.Millisecond, 1200*time.Millisecond))
-	return true
-}
-
-func (r *RobotVo) partyActionDueUnsafe() bool {
-	now := time.Now()
-	if now.Before(r.partyActionNotBefore) {
-		return false
-	}
-	r.partyActionNotBefore = now.Add(randomPartyDelay(1800*time.Millisecond, 5*time.Second))
 	return true
 }
 
@@ -1837,7 +1878,7 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyFollowNotBefore = time.Time{}
-	r.partyActionNotBefore = time.Time{}
+	r.partyDungeonTraceAt = time.Time{}
 	r.resetPartyTQOSTransportUnsafe()
 }
 
@@ -2665,8 +2706,6 @@ const partyDungeonPositionCommand = 0x0051
 const partyDungeonPositionBodySize = 52
 const partyDungeonPositionUniqueIDOffset = 26
 const partyDungeonPositionInnerPayloadOffset = 22
-const partyDungeonActionCommand = 0x0044
-const partyDungeonActionBodySize = 13
 
 var partyDungeonPositionInnerChecksumOffsets = [...]int{10, 18}
 
@@ -2742,38 +2781,6 @@ func buildPartyDungeonFollowBody(frame []byte, sourceUniqueID, targetUniqueID ui
 	checksum = partyPayloadChecksum(followBody[7:])
 	copy(followBody[3:7], checksum[:])
 	return followBody, true
-}
-
-func buildPartyDungeonActionRecord(frame []byte) ([]byte, bool) {
-	if len(frame) < 11 || frame[0] != 0x01 || int(binary.LittleEndian.Uint16(frame[5:7])) != len(frame)-9 {
-		return nil, false
-	}
-	body := frame[9:]
-	for len(body) >= 2 {
-		size := int(binary.LittleEndian.Uint16(body[:2]))
-		body = body[2:]
-		if size <= 0 || size > len(body) {
-			return nil, false
-		}
-		record := body[:size]
-		body = body[size:]
-		if len(record) == partyDungeonActionBodySize && record[0] == 0x02 && binary.LittleEndian.Uint16(record[1:3]) == partyDungeonActionCommand {
-			return append([]byte(nil), record...), true
-		}
-	}
-	return nil, false
-}
-
-func buildPartyReliableRecordPacket(sequence uint32, senderSlot, flags byte, record []byte) []byte {
-	payload := make([]byte, 11+len(record))
-	payload[0] = 0x01
-	binary.LittleEndian.PutUint32(payload[1:5], sequence)
-	binary.LittleEndian.PutUint16(payload[5:7], uint16(2+len(record)))
-	payload[7] = senderSlot
-	payload[8] = flags
-	binary.LittleEndian.PutUint16(payload[9:11], uint16(len(record)))
-	copy(payload[11:], record)
-	return payload
 }
 
 func buildPartyUnreliablePacket(sequence uint32, senderSlot, flags byte, body []byte) []byte {
