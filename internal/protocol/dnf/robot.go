@@ -175,6 +175,7 @@ type RobotVo struct {
 	partyPeers           [4]partyIPPeer
 	partyPendingPeer     uint16
 	partyPendingUntil    time.Time
+	townEntityPositions  map[uint16]townEntityPosition
 	partyUDPConn         *net.UDPConn
 	partyRelayConn       net.Conn
 	partyRelayAt         time.Time
@@ -233,6 +234,7 @@ type RobotSnapshot struct {
 	DisjointDirectAck    bool
 	DisjointActive       bool
 	LastDisjointError    byte
+	PartyActive          bool
 	Village              uint8
 	Area                 uint8
 	X                    uint16
@@ -314,6 +316,7 @@ func (r *RobotVo) Snapshot() RobotSnapshot {
 		DisjointDirectAck:    r.DisjointDirectAck,
 		DisjointActive:       r.DisjointActive,
 		LastDisjointError:    r.LastDisjointError,
+		PartyActive:          r.partyActiveUnsafe(),
 		Village:              r.CurVillage,
 		Area:                 r.CurArea,
 		X:                    r.CurX,
@@ -404,6 +407,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.partySelfPeer = partyIPPeer{}
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
+	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyRelayAt = time.Time{}
 	r.resetPartyTQOSTransportUnsafe()
 	r.closePartyUDPUnsafe()
@@ -666,12 +670,33 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		return
 	}
 
+	if r.State == StateRun && packetFlag == 0 && packetType == 22 {
+		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		if err == nil {
+			if position, ok := r.rememberTownEntityUnsafe(decData); ok {
+				r.followPartyLeaderTownPositionUnsafe(position)
+			}
+		}
+		return
+	}
+
+	if r.State == StateRun && packetFlag == 0 && packetType == 23 {
+		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		if err == nil {
+			if area, ok := parseTownEntityArea(decData); ok {
+				r.followPartyLeaderTownAreaUnsafe(area)
+			}
+		}
+		return
+	}
+
 	if r.State == StateRun && packetFlag == 0 && packetType == 11 {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
 		if err == nil {
 			if self, peers, ok := parsePartyIPInfoSnapshot(decData, uint32(r.UID)); ok {
 				r.partySelfPeer = self
 				r.setPartyPeersUnsafe(peers)
+				r.followCachedPartyLeaderTownPositionUnsafe()
 			}
 		}
 		return
@@ -1528,6 +1553,135 @@ func (r *RobotVo) partyPeerForAccountUnsafe(accID uint32) (partyIPPeer, bool) {
 	return partyIPPeer{}, false
 }
 
+const partyTownPositionMaxAge = 15 * time.Second
+
+type townEntityPosition struct {
+	uniqueID uint16
+	x        uint16
+	y        uint16
+	moveType byte
+	speed    uint16
+	seenAt   time.Time
+}
+
+type townEntityArea struct {
+	uniqueID uint16
+	village  uint8
+	area     uint8
+	x        uint16
+	y        uint16
+}
+
+func parseTownEntityPosition(data []byte) (townEntityPosition, bool) {
+	if len(data) < 9 {
+		return townEntityPosition{}, false
+	}
+	uniqueID := binary.LittleEndian.Uint16(data[:2])
+	if uniqueID == 0 {
+		return townEntityPosition{}, false
+	}
+	return townEntityPosition{
+		uniqueID: uniqueID,
+		x:        binary.LittleEndian.Uint16(data[2:4]),
+		y:        binary.LittleEndian.Uint16(data[4:6]),
+		moveType: data[6],
+		speed:    binary.LittleEndian.Uint16(data[7:9]),
+		seenAt:   time.Now(),
+	}, true
+}
+
+func parseTownEntityArea(data []byte) (townEntityArea, bool) {
+	if len(data) < 8 {
+		return townEntityArea{}, false
+	}
+	uniqueID := binary.LittleEndian.Uint16(data[:2])
+	if uniqueID == 0 {
+		return townEntityArea{}, false
+	}
+	return townEntityArea{
+		uniqueID: uniqueID,
+		village:  data[2],
+		area:     data[3],
+		x:        binary.LittleEndian.Uint16(data[4:6]),
+		y:        binary.LittleEndian.Uint16(data[6:8]),
+	}, true
+}
+
+func (r *RobotVo) rememberTownEntityUnsafe(data []byte) (townEntityPosition, bool) {
+	position, ok := parseTownEntityPosition(data)
+	if !ok {
+		return townEntityPosition{}, false
+	}
+	if r.townEntityPositions == nil {
+		r.townEntityPositions = make(map[uint16]townEntityPosition)
+	}
+	r.townEntityPositions[position.uniqueID] = position
+	if len(r.townEntityPositions) > 512 {
+		cutoff := position.seenAt.Add(-partyTownPositionMaxAge)
+		for uniqueID, cached := range r.townEntityPositions {
+			if cached.seenAt.Before(cutoff) {
+				delete(r.townEntityPositions, uniqueID)
+			}
+		}
+	}
+	return position, true
+}
+
+func (r *RobotVo) partyLeaderUniqueIDUnsafe() (uint16, bool) {
+	if !r.partySelfPeer.slotKnown || r.partySelfPeer.slot == 0 {
+		return 0, false
+	}
+	for _, peer := range r.partyPeers {
+		if peer.slotKnown && peer.slot == 0 && peer.uniqueID != 0 {
+			return peer.uniqueID, true
+		}
+	}
+	return 0, false
+}
+
+func (r *RobotVo) followCachedPartyLeaderTownPositionUnsafe() bool {
+	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
+	if !ok {
+		return false
+	}
+	position, ok := r.townEntityPositions[leaderID]
+	if !ok || position.seenAt.IsZero() || time.Since(position.seenAt) > partyTownPositionMaxAge {
+		return false
+	}
+	return r.followPartyLeaderTownPositionUnsafe(position)
+}
+
+func (r *RobotVo) followPartyLeaderTownAreaUnsafe(area townEntityArea) bool {
+	if r.State != StateRun {
+		return false
+	}
+	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
+	if !ok || area.uniqueID != leaderID || (r.CurVillage == area.village && r.CurArea == area.area) {
+		return false
+	}
+	r.setAreaFromLocked(area.village, area.area, area.x, area.y, uint16(r.CurVillage), uint16(r.CurArea))
+	return r.CurVillage == area.village && r.CurArea == area.area
+}
+
+func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPosition) bool {
+	if r.State != StateRun || position.uniqueID == 0 {
+		return false
+	}
+	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
+	if !ok || position.uniqueID != leaderID || (r.CurX == position.x && r.CurY == position.y) {
+		return false
+	}
+	moveType := position.moveType
+	if moveType == 0 {
+		moveType = 5
+	}
+	speed := position.speed
+	if speed == 0 {
+		speed = 100
+	}
+	return r.setPositionUnsafe(position.x, position.y, moveType, speed)
+}
+
 const partyPendingTimeout = 15 * time.Second
 
 func (r *RobotVo) partyActiveUnsafe() bool {
@@ -1627,6 +1781,7 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.partySelfPeer = partyIPPeer{}
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
+	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.resetPartyTQOSTransportUnsafe()
 }
 
@@ -1671,7 +1826,7 @@ func (r *RobotVo) SendPublicMessage(msgType int, msg []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyActiveUnsafe() {
 		return
 	}
 
@@ -1734,7 +1889,7 @@ func (r *RobotVo) SetArea(village, area uint8, x, y uint16) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyActiveUnsafe() {
 		return
 	}
 
@@ -1745,7 +1900,7 @@ func (r *RobotVo) SetAreaFrom(village, area uint8, x, y uint16, fromVillage, fro
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyActiveUnsafe() {
 		return
 	}
 
@@ -1753,6 +1908,7 @@ func (r *RobotVo) SetAreaFrom(village, area uint8, x, y uint16, fromVillage, fro
 }
 
 func (r *RobotVo) setAreaFromLocked(village, area uint8, x, y uint16, fromVillage, fromArea uint16) {
+	areaChanged := r.CurVillage != village || r.CurArea != area
 	setArea := r.setArea
 	setArea[0] = village
 	setArea[1] = area
@@ -1766,6 +1922,9 @@ func (r *RobotVo) setAreaFromLocked(village, area uint8, x, y uint16, fromVillag
 	r.PacketID++
 	if err == nil {
 		if r.SendMsg(pkt) {
+			if areaChanged {
+				r.townEntityPositions = make(map[uint16]townEntityPosition)
+			}
 			r.CurVillage = village
 			r.CurArea = area
 			r.CurX = x
@@ -1778,7 +1937,7 @@ func (r *RobotVo) SetPosition(x, y uint16, typ uint8, speed uint16) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyActiveUnsafe() {
 		return
 	}
 	r.setPositionUnsafe(x, y, typ, speed)
@@ -1812,7 +1971,7 @@ func (r *RobotVo) OpenDisjointStore(cost uint32) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyActiveUnsafe() {
 		return false
 	}
 
@@ -1841,7 +2000,7 @@ func (r *RobotVo) CreatePrivateStore() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyActiveUnsafe() {
 		return
 	}
 	r.StoreCreateRejected = false
@@ -1868,7 +2027,7 @@ func (r *RobotVo) CompleteDisplay(title string, storeInfo []StoreInfo) {
 }
 
 func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) {
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyActiveUnsafe() {
 		return
 	}
 	if r.StoreDisplaySent {
@@ -2036,7 +2195,7 @@ func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyActiveUnsafe() {
 		return false
 	}
 	if !r.StoreCreated {
@@ -2057,6 +2216,9 @@ func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.partyActiveUnsafe() {
+		return false
+	}
 	if !r.StoreCreated {
 		return false
 	}
