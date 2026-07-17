@@ -1776,11 +1776,15 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 	r.partyDungeonFlags = frame[8]
 	if r.partySkillNextAt.IsZero() {
 		r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_SCHEDULE] uid=%d due_in=%s type=%d records=%s\n", r.UID, r.partySkillNextAt.Sub(now), frame[0], partyDungeonFrameRecords(frame))
 	}
 }
 
 func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time) {
 	if conn == nil || r.partyDungeonLastAt.IsZero() || now.Sub(r.partyDungeonLastAt) > 3*time.Second {
+		if !r.partySkillNextAt.IsZero() {
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_EXPIRED] uid=%d idle=%s due_in=%s\n", r.UID, now.Sub(r.partyDungeonLastAt), r.partySkillNextAt.Sub(now))
+		}
 		r.partySkillNextAt = time.Time{}
 		return
 	}
@@ -1788,6 +1792,7 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		return
 	}
 	r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_DUE] uid=%d idle=%s\n", r.UID, now.Sub(r.partyDungeonLastAt))
 	if !r.loadPartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
 		return
 	}

@@ -448,6 +448,34 @@ func TestPartyDungeonFrameRecords(t *testing.T) {
 	}
 }
 
+func TestRememberPartyDungeonActivityFromReliableBatch(t *testing.T) {
+	record := make([]byte, 11)
+	record[0] = 0x02
+	binary.LittleEndian.PutUint16(record[1:3], 0x0027)
+	frame := make([]byte, 9+8*(2+len(record)))
+	frame[0] = 0x01
+	frame[7] = 0
+	frame[8] = 5
+	binary.LittleEndian.PutUint16(frame[5:7], uint16(len(frame)-9))
+	offset := 9
+	for range 8 {
+		binary.LittleEndian.PutUint16(frame[offset:offset+2], uint16(len(record)))
+		copy(frame[offset+2:], record)
+		offset += 2 + len(record)
+	}
+
+	now := time.Unix(200, 0)
+	peer := partyIPPeer{slot: 0, slotKnown: true, uniqueID: 0x1234}
+	vo := &RobotVo{
+		UID:           17000149,
+		partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0x5678},
+	}
+	vo.rememberPartyDungeonActivityUnsafe(frame, 1, peer, now)
+	if vo.partyDungeonLastAt != now || vo.partyDungeonFlags != 5 || vo.partySkillNextAt.IsZero() {
+		t.Fatalf("dungeon activity not scheduled: last=%s flags=%d next=%s", vo.partyDungeonLastAt, vo.partyDungeonFlags, vo.partySkillNextAt)
+	}
+}
+
 func TestParsePartyTQOSCapturedPackets(t *testing.T) {
 	tests := []struct {
 		packet             string
