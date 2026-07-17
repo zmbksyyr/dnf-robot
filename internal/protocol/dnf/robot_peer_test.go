@@ -259,12 +259,12 @@ func TestRobotRewritesCapturedDungeonStateIdentity(t *testing.T) {
 func TestRobotBuildsDungeonFollowWithOwnSlotAndPeerSequence(t *testing.T) {
 	body := mustPartyHex(t, "0104007db257987fff7edf8a6f7fdf8a7c7e7e143b1f34876a3a7efefbbd")
 	frame := buildPartyUnreliablePacket(91, 0, 7, body)
-	vo := &RobotVo{partySelfPeer: partyIPPeer{slot: 2, slotKnown: true, uniqueID: 0xee9f}}
+	vo := &RobotVo{UID: 17000002, partySelfPeer: partyIPPeer{slot: 2, slotKnown: true, uniqueID: 0xee9f}}
 	peer := partyIPPeer{slot: 0, slotKnown: true, uniqueID: 0xf4a1}
 
-	follow, ok := vo.buildPartyDungeonFollowFrameUnsafe(frame, peer)
-	if !ok || follow[0] != 0x02 || binary.LittleEndian.Uint32(follow[1:5]) != 0 || follow[7] != 2 || follow[8] != 7 {
-		t.Fatalf("follow frame = %x ok=%t", follow, ok)
+	follow := flushQueuedDungeonFollow(t, vo, frame, peer)
+	if follow[0] != 0x02 || binary.LittleEndian.Uint32(follow[1:5]) != 0 || follow[7] != 2 || follow[8] != 7 {
+		t.Fatalf("follow frame = %x", follow)
 	}
 	if vo.partyTQOSSeq[0][1] != 1 {
 		t.Fatalf("leader route sequence = %d, want 1", vo.partyTQOSSeq[0][1])
@@ -288,12 +288,12 @@ func TestRobotDoesNotRewriteMultiEntityDungeonState(t *testing.T) {
 func TestRobotBuildsReliableDungeonEnvelope(t *testing.T) {
 	record := mustPartyHex(t, "0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff")
 	frame := buildPartyReliablePacket(42, 0, 3, [][]byte{record})
-	vo := &RobotVo{partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0xee9f}}
+	vo := &RobotVo{UID: 17000003, partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0xee9f}}
 	peer := partyIPPeer{slot: 0, slotKnown: true, uniqueID: 0xf4a1}
 
-	follow, ok := vo.buildPartyDungeonFollowFrameUnsafe(frame, peer)
-	if !ok || follow[0] != 0x01 || binary.LittleEndian.Uint32(follow[1:5]) != 0 || follow[7] != 1 || follow[8] != 3 {
-		t.Fatalf("reliable follow frame = %x ok=%t", follow, ok)
+	follow := flushQueuedDungeonFollow(t, vo, frame, peer)
+	if follow[0] != 0x01 || binary.LittleEndian.Uint32(follow[1:5]) != 0 || follow[7] != 1 || follow[8] != 3 {
+		t.Fatalf("reliable follow frame = %x", follow)
 	}
 	if vo.partyTQOSReliableSeq[0][1] != 1 || binary.LittleEndian.Uint16(follow[9:11]) != uint16(len(record)) {
 		t.Fatalf("reliable state sequence=%d frame=%x", vo.partyTQOSReliableSeq[0][1], follow)
@@ -301,6 +301,48 @@ func TestRobotBuildsReliableDungeonEnvelope(t *testing.T) {
 	if bytes.Contains(follow[11+partyDungeonEnvelopePayloadOffset:], []byte{0xa1, 0xf4}) || !bytes.Contains(follow[11+partyDungeonEnvelopePayloadOffset:], []byte{0x9f, 0xee}) {
 		t.Fatalf("reliable envelope identity was not rewritten: %x", follow)
 	}
+}
+
+func TestRobotPeerResetDropsOnlyItsDelayedDungeonFrames(t *testing.T) {
+	vo := &RobotVo{partyDungeonFollow: []partyDungeonFollowPending{{peerSlot: 0}, {peerSlot: 2}, {peerSlot: 0}}}
+	vo.resetPartyTQOSPeerUnsafe(0)
+	if len(vo.partyDungeonFollow) != 1 || vo.partyDungeonFollow[0].peerSlot != 2 {
+		t.Fatalf("delayed frames after reset = %+v", vo.partyDungeonFollow)
+	}
+}
+
+func flushQueuedDungeonFollow(t *testing.T, vo *RobotVo, frame []byte, peer partyIPPeer) []byte {
+	t.Helper()
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	remote := receiver.LocalAddr().(*net.UDPAddr)
+	peer.outerIP = append(net.IP(nil), remote.IP...)
+	peer.port = uint16(remote.Port)
+	vo.partyPeers[peer.slot] = peer
+	now := time.Unix(100, 0)
+	if !vo.queuePartyDungeonFollowUnsafe(frame, peer, now) {
+		t.Fatal("follow frame was not queued")
+	}
+	vo.flushPartyDungeonFollowUnsafe(sender, now.Add(vo.partyDungeonFollowDelayUnsafe()-time.Millisecond))
+	if len(vo.partyDungeonFollow) != 1 {
+		t.Fatalf("queue flushed early: %d", len(vo.partyDungeonFollow))
+	}
+	vo.flushPartyDungeonFollowUnsafe(sender, now.Add(vo.partyDungeonFollowDelayUnsafe()))
+	buf := make([]byte, 4096)
+	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
+	n, _, err := receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append([]byte(nil), buf[:n]...)
 }
 
 func TestPartyDungeonFrameRecords(t *testing.T) {

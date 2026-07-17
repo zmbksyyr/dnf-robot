@@ -191,6 +191,7 @@ type RobotVo struct {
 	partyRobotPeerReady  [4]bool
 	partyUDPDiagAt       time.Time
 	partyDungeonTraceAt  time.Time
+	partyDungeonFollow   []partyDungeonFollowPending
 
 	GMName [5][100]byte
 
@@ -1467,18 +1468,31 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32) {
 }
 
 func (r *RobotVo) partyUDPProbeLoop(conn *net.UDPConn) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		r.mu.Lock()
-		if r.State == StateStop || r.partyUDPConn != conn {
+	probeTicker := time.NewTicker(time.Second)
+	followTicker := time.NewTicker(100 * time.Millisecond)
+	defer probeTicker.Stop()
+	defer followTicker.Stop()
+	for {
+		select {
+		case <-probeTicker.C:
+			r.mu.Lock()
+			if r.State == StateStop || r.partyUDPConn != conn {
+				r.mu.Unlock()
+				return
+			}
+			if r.partyActiveUnsafe() {
+				r.startPartyRobotPeerNegotiationUnsafe()
+			}
 			r.mu.Unlock()
-			return
+		case <-followTicker.C:
+			r.mu.Lock()
+			if r.State == StateStop || r.partyUDPConn != conn {
+				r.mu.Unlock()
+				return
+			}
+			r.flushPartyDungeonFollowUnsafe(conn, time.Now())
+			r.mu.Unlock()
 		}
-		if r.partyActiveUnsafe() {
-			r.startPartyRobotPeerNegotiationUnsafe()
-		}
-		r.mu.Unlock()
 	}
 }
 
@@ -1557,9 +1571,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		if r.shouldFollowPartyPeerUnsafe(peer) {
 			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
 			if route == 1 {
-				if follow, ok := r.buildPartyDungeonFollowFrameUnsafe(frame, peer); ok {
-					replies = append(replies, follow)
-				}
+				r.queuePartyDungeonFollowUnsafe(frame, peer, time.Now())
 			}
 		}
 		var preferred *partyTQOSCodec
@@ -1701,38 +1713,77 @@ func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer pa
 	foundationlog.Robotf("[PARTY_DUNGEON_FRAME] uid=%d route=%d peer_slot=%d peer_unique_id=%d type=%d body=%d records=%s follow=%t\n", r.UID, route, peer.slot, peer.uniqueID, frame[0], bodySize, partyDungeonFrameRecords(frame), follow)
 }
 
-func (r *RobotVo) buildPartyDungeonFollowFrameUnsafe(frame []byte, peer partyIPPeer) ([]byte, bool) {
+func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, now time.Time) bool {
 	if len(frame) < 9 || !peer.slotKnown || peer.slot >= 4 {
-		return nil, false
+		return false
 	}
 	bodySize := int(binary.LittleEndian.Uint16(frame[5:7]))
 	if len(frame) != 9+bodySize {
-		return nil, false
+		return false
+	}
+	pending := partyDungeonFollowPending{
+		due:      now.Add(r.partyDungeonFollowDelayUnsafe()),
+		peerSlot: peer.slot,
+		flags:    frame[8],
 	}
 	switch frame[0] {
 	case 0x02:
 		body, _, ok := rewritePartyDungeonBody(frame[9:], peer.uniqueID, r.partySelfPeer.uniqueID)
 		if !ok {
-			return nil, false
+			return false
 		}
-		sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, false)
-		if !ok {
-			return nil, false
-		}
-		return buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, frame[8], body), true
+		pending.body = body
 	case 0x01:
 		records := rewritePartyDungeonRecords(frame[9:], peer.uniqueID, r.partySelfPeer.uniqueID)
 		if len(records) == 0 {
-			return nil, false
+			return false
 		}
-		sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, true)
-		if !ok {
-			return nil, false
-		}
-		return buildPartyReliablePacket(sequence, r.partySelfPeer.slot, frame[8], records), true
+		pending.reliable = true
+		pending.records = records
 	default:
-		return nil, false
+		return false
 	}
+	if len(r.partyDungeonFollow) >= 2048 {
+		r.partyDungeonFollow = nil
+		return false
+	}
+	r.partyDungeonFollow = append(r.partyDungeonFollow, pending)
+	return true
+}
+
+func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
+	return time.Duration(2000+int(r.UID%2001)) * time.Millisecond
+}
+
+func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time) {
+	for len(r.partyDungeonFollow) > 0 && !now.Before(r.partyDungeonFollow[0].due) {
+		pending := r.partyDungeonFollow[0]
+		r.partyDungeonFollow = r.partyDungeonFollow[1:]
+		peer := r.partyPeerForSlotUnsafe(pending.peerSlot)
+		if peer.uniqueID == 0 || peer.outerIP == nil || peer.port == 0 {
+			continue
+		}
+		sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, pending.reliable)
+		if !ok {
+			continue
+		}
+		var payload []byte
+		if pending.reliable {
+			payload = buildPartyReliablePacket(sequence, r.partySelfPeer.slot, pending.flags, pending.records)
+		} else {
+			payload = buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, pending.flags, pending.body)
+		}
+		writePartyUDPReply(conn, payload, &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}, r.UID)
+	}
+}
+
+func (r *RobotVo) partyPeerForSlotUnsafe(slot byte) partyIPPeer {
+	for _, peer := range r.partyPeers {
+		if peer.slotKnown && peer.slot == slot {
+			return peer
+		}
+	}
+	return partyIPPeer{}
 }
 
 func partyDungeonFrameContainsCommand(frame []byte, target uint16) bool {
@@ -2076,6 +2127,7 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyRobotProbeAt = [4]time.Time{}
 	r.partyRobotProbeCount = [4]uint8{}
 	r.partyRobotPeerReady = [4]bool{}
+	r.partyDungeonFollow = nil
 }
 
 func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
@@ -2089,6 +2141,15 @@ func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
 	r.partyRobotProbeAt[slot] = time.Time{}
 	r.partyRobotProbeCount[slot] = 0
 	r.partyRobotPeerReady[slot] = false
+	if len(r.partyDungeonFollow) > 0 {
+		kept := r.partyDungeonFollow[:0]
+		for _, pending := range r.partyDungeonFollow {
+			if pending.peerSlot != slot {
+				kept = append(kept, pending)
+			}
+		}
+		r.partyDungeonFollow = kept
+	}
 }
 
 func partyPeerUniqueIDForSlot(peers [4]partyIPPeer, slot byte) uint16 {
@@ -2825,6 +2886,15 @@ type partyIPPeer struct {
 	port      uint16
 	natType   byte
 	mtu       uint32
+}
+
+type partyDungeonFollowPending struct {
+	due      time.Time
+	peerSlot byte
+	flags    byte
+	reliable bool
+	body     []byte
+	records  [][]byte
 }
 
 func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
