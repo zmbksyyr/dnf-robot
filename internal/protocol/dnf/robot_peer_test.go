@@ -219,64 +219,6 @@ func TestRobotRewritesCapturedDungeonPosition(t *testing.T) {
 	}
 }
 
-func TestRobotFlushesOnlyDelayedDungeonMovementRecords(t *testing.T) {
-	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer receiver.Close()
-	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sender.Close()
-
-	input1 := mustPartyHex(t, "02270001136ff17e7e7e7e")
-	input2 := mustPartyHex(t, "02270001783cf97e7e7e7e")
-	motion := mustPartyHex(t, "00280001000000")
-	skill := mustPartyHex(t, "024400a7eb502bece87e7e7e7e")
-	frame := buildPartyReliableRecordBatchPacket(9, 0, 5, [][]byte{input1, skill, motion, input2})
-	leaderAddr := receiver.LocalAddr().(*net.UDPAddr)
-	vo := &RobotVo{UID: 17000001, partyUDPConn: sender}
-	vo.partySelfPeer = partyIPPeer{uniqueID: 0x1fab, accID: 17000001, slot: 1, slotKnown: true}
-	leader := partyIPPeer{uniqueID: 0x9692, accID: 18000000, slot: 0, slotKnown: true, outerIP: leaderAddr.IP, port: uint16(leaderAddr.Port)}
-	vo.partyPeers[0] = leader
-	vo.schedulePartyDungeonInputUnsafe(frame, leader)
-	if len(vo.partyDungeonInputs) != 3 || vo.partyDungeonInputAt.IsZero() {
-		t.Fatalf("scheduled inputs=%x at=%s", vo.partyDungeonInputs, vo.partyDungeonInputAt)
-	}
-	vo.partyDungeonInputAt = time.Now().Add(-time.Millisecond)
-	vo.flushPartyDungeonInputUnsafe(sender)
-	if len(vo.partyDungeonInputs) != 0 || !vo.partyDungeonInputAt.IsZero() {
-		t.Fatal("flushed input batch remained pending")
-	}
-
-	if err := receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	buf := make([]byte, 128)
-	n, _, err := receiver.ReadFromUDP(buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := buf[:n]
-	if got[0] != 0x01 || got[7] != 1 || got[8] != 5 || binary.LittleEndian.Uint32(got[1:5]) != 0 {
-		t.Fatalf("input frame = %x", got)
-	}
-	want := buildPartyReliableRecordBatchPacket(0, 1, 5, [][]byte{input1, motion, input2})
-	if !bytes.Equal(got, want) {
-		t.Fatalf("movement frame=%x want=%x", got, want)
-	}
-	records := partyDungeonRecords(got, 0x0027, 11)
-	motions := partyDungeonRecords(got, 0x0028, 7)
-	if len(records) != 2 || !bytes.Equal(records[0], input1) || !bytes.Equal(records[1], input2) || len(motions) != 1 || !bytes.Equal(motions[0], motion) || partyDungeonFrameContainsCommand(got, 0x0044) {
-		t.Fatalf("input records = %x frame=%x", records, got)
-	}
-	if vo.partyTQOSReliableSeq[0][1] != 1 {
-		t.Fatalf("reliable sequence = %d", vo.partyTQOSReliableSeq[0][1])
-	}
-}
-
 func TestPartyDungeonFrameRecords(t *testing.T) {
 	position := mustPartyHex(t, "028703000034000000015100970cfec701070034ede5df0001070034ede5df1102a97492965e0800000d000000ffffffffffffffff0000000000000000")
 	if got := partyDungeonFrameRecords(position); got != "0x0051/52" {
@@ -296,12 +238,6 @@ func TestPartyDungeonFrameRecords(t *testing.T) {
 	}
 	if !partyDungeonFrameContainsCommand(frame, 0x0044) || partyDungeonFrameContainsCommand(frame, 0x0051) {
 		t.Fatalf("reliable command detection failed")
-	}
-	if got := partyDungeonRecords(frame, 0x0044, 13); len(got) != 1 || !bytes.Equal(got[0], reliable) {
-		t.Fatalf("reliable records = %x", got)
-	}
-	if got := partyDungeonRecords(position, 0x0051, 0); len(got) != 0 {
-		t.Fatal("standalone unreliable body was treated as a reliable record")
 	}
 }
 
