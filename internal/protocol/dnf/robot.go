@@ -186,7 +186,8 @@ type RobotVo struct {
 	partyTQOSReliableSeq [4][3]uint32
 	partyTQOSCodecs      [4][3]partyTQOSCodec
 	partyTQOSCodecKnown  [4][3]bool
-	partyRobotProbeSent  [4]bool
+	partyRobotProbeAt    [4]time.Time
+	partyRobotProbeCount [4]uint8
 	partyRobotPeerReady  [4]bool
 	partyDungeonTraceAt  time.Time
 
@@ -1581,36 +1582,20 @@ func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 		return
 	}
 	for _, peer := range r.partyPeers {
-		if !peer.slotKnown || peer.slot >= 4 || r.partyRobotProbeSent[peer.slot] || !isPartyRobotAccount(peer.accID) {
+		if !peer.slotKnown || peer.slot >= 4 || r.partyRobotPeerReady[peer.slot] || r.partyRobotProbeCount[peer.slot] >= 4 || !isPartyRobotAccount(peer.accID) {
 			continue
 		}
 		if r.partySelfPeer.accID == peer.accID || peer.outerIP == nil || peer.port == 0 {
 			continue
 		}
-		r.partyRobotProbeSent[peer.slot] = true
-		peerUniqueID := peer.uniqueID
-		peerSlot := peer.slot
-		r.sendPartyRobotPeerProbeUnsafe(peer, 1)
-		for attempt := 2; attempt <= 4; attempt++ {
-			attemptNumber := attempt
-			delay := time.Duration(attemptNumber-1) * 750 * time.Millisecond
-			time.AfterFunc(delay, func() {
-				r.retryPartyRobotPeerProbe(peerSlot, peerUniqueID, attemptNumber)
-			})
+		now := time.Now()
+		if !r.partyRobotProbeAt[peer.slot].IsZero() && now.Sub(r.partyRobotProbeAt[peer.slot]) < 750*time.Millisecond {
+			continue
 		}
-	}
-}
-
-func (r *RobotVo) retryPartyRobotPeerProbe(peerSlot byte, peerUniqueID uint16, attempt int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.State == StateStop || peerSlot >= 4 || r.partyRobotPeerReady[peerSlot] {
-		return
-	}
-	for _, peer := range r.partyPeers {
-		if peer.slotKnown && peer.slot == peerSlot && peer.uniqueID == peerUniqueID {
-			r.sendPartyRobotPeerProbeUnsafe(peer, attempt)
-			return
+		attempt := int(r.partyRobotProbeCount[peer.slot]) + 1
+		if r.sendPartyRobotPeerProbeUnsafe(peer, attempt) {
+			r.partyRobotProbeAt[peer.slot] = now
+			r.partyRobotProbeCount[peer.slot]++
 		}
 	}
 }
@@ -1993,7 +1978,8 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyTQOSReliableSeq = [4][3]uint32{}
 	r.partyTQOSCodecs = [4][3]partyTQOSCodec{}
 	r.partyTQOSCodecKnown = [4][3]bool{}
-	r.partyRobotProbeSent = [4]bool{}
+	r.partyRobotProbeAt = [4]time.Time{}
+	r.partyRobotProbeCount = [4]uint8{}
 	r.partyRobotPeerReady = [4]bool{}
 }
 
@@ -2005,7 +1991,8 @@ func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
 	r.partyTQOSReliableSeq[slot] = [3]uint32{}
 	r.partyTQOSCodecs[slot] = [3]partyTQOSCodec{}
 	r.partyTQOSCodecKnown[slot] = [3]bool{}
-	r.partyRobotProbeSent[slot] = false
+	r.partyRobotProbeAt[slot] = time.Time{}
+	r.partyRobotProbeCount[slot] = 0
 	r.partyRobotPeerReady[slot] = false
 }
 
@@ -2323,6 +2310,7 @@ func (r *RobotVo) CheckUserState() bool {
 	partyActive := r.partyActiveUnsafe()
 	if partyActive {
 		r.ensurePartyRelayUnsafe()
+		r.startPartyRobotPeerNegotiationUnsafe()
 	} else if r.partyRelayConn != nil {
 		r.closePartyRelayUnsafe()
 	}

@@ -348,18 +348,18 @@ func TestPartyPeerUpdateResetsOnlyChangedSlotTransport(t *testing.T) {
 	vo.partyTQOSSeq[1][1] = 5
 	vo.partyTQOSCodecKnown[0][1] = true
 	vo.partyTQOSCodecKnown[1][1] = true
-	vo.partyRobotProbeSent[0] = true
-	vo.partyRobotProbeSent[1] = true
+	vo.partyRobotProbeCount[0] = 1
+	vo.partyRobotProbeCount[1] = 1
 
 	vo.setPartyPeersUnsafe([]partyIPPeer{
 		{uniqueID: 1, slot: 0, slotKnown: true},
 		{uniqueID: 2, slot: 1, slotKnown: true},
 	})
-	if vo.partyTQOSSeq[0][1] != 7 || !vo.partyTQOSCodecKnown[0][1] || !vo.partyRobotProbeSent[0] {
-		t.Fatalf("unchanged leader transport was reset: seq=%d codec=%t probe=%t", vo.partyTQOSSeq[0][1], vo.partyTQOSCodecKnown[0][1], vo.partyRobotProbeSent[0])
+	if vo.partyTQOSSeq[0][1] != 7 || !vo.partyTQOSCodecKnown[0][1] || vo.partyRobotProbeCount[0] != 1 {
+		t.Fatalf("unchanged leader transport was reset: seq=%d codec=%t probe=%d", vo.partyTQOSSeq[0][1], vo.partyTQOSCodecKnown[0][1], vo.partyRobotProbeCount[0])
 	}
-	if vo.partyTQOSSeq[1][1] != 0 || vo.partyTQOSCodecKnown[1][1] || vo.partyRobotProbeSent[1] {
-		t.Fatalf("new peer transport was not reset: seq=%d codec=%t probe=%t", vo.partyTQOSSeq[1][1], vo.partyTQOSCodecKnown[1][1], vo.partyRobotProbeSent[1])
+	if vo.partyTQOSSeq[1][1] != 0 || vo.partyTQOSCodecKnown[1][1] || vo.partyRobotProbeCount[1] != 0 {
+		t.Fatalf("new peer transport was not reset: seq=%d codec=%t probe=%d", vo.partyTQOSSeq[1][1], vo.partyTQOSCodecKnown[1][1], vo.partyRobotProbeCount[1])
 	}
 
 	vo.setPartyPeersUnsafe([]partyIPPeer{
