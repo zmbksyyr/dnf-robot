@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math/bits"
+	"math/rand"
 	"net"
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
@@ -191,6 +192,10 @@ type RobotVo struct {
 	partyRobotPeerReady  [4]bool
 	partyUDPDiagAt       time.Time
 	partyDungeonTraceAt  time.Time
+	partyDungeonInputAt  time.Time
+	partyDungeonInputs   [][]byte
+	partyDungeonFlags    byte
+	partyDungeonLeader   uint16
 
 	GMName [5][100]byte
 
@@ -417,6 +422,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyRelayAt = time.Time{}
+	r.clearPartyDungeonInputUnsafe()
 	r.resetPartyTQOSTransportUnsafe()
 	r.closePartyUDPUnsafe()
 	r.closePartyRelayUnsafe()
@@ -1477,6 +1483,7 @@ func (r *RobotVo) partyUDPProbeLoop(conn *net.UDPConn) {
 		}
 		if r.partyActiveUnsafe() {
 			r.startPartyRobotPeerNegotiationUnsafe()
+			r.flushPartyDungeonInputUnsafe(conn)
 		}
 		r.mu.Unlock()
 	}
@@ -1556,6 +1563,9 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
 			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
+			if route == 1 {
+				r.schedulePartyDungeonInputUnsafe(frame, peer)
+			}
 		}
 		var preferred *partyTQOSCodec
 		if peer.slot < 4 && route < 3 && r.partyTQOSCodecKnown[peer.slot][route] {
@@ -1694,43 +1704,74 @@ func (r *RobotVo) tracePartyDungeonFrameUnsafe(frame []byte, route byte, peer pa
 		_, follow = buildPartyDungeonFollowBody(frame, peer.uniqueID, r.partySelfPeer.uniqueID)
 	}
 	foundationlog.Robotf("[PARTY_DUNGEON_FRAME] uid=%d route=%d peer_slot=%d peer_unique_id=%d type=%d body=%d records=%s follow=%t\n", r.UID, route, peer.slot, peer.uniqueID, frame[0], bodySize, partyDungeonFrameRecords(frame), follow)
-	if r.isLowestPartyRobotAccountUnsafe() {
-		if input, ok := partyDungeonRecord(frame, 0x0027); ok {
-			foundationlog.Robotf("[PARTY_DUNGEON_INPUT] uid=%d data=%x\n", r.UID, input)
-		}
-	}
 }
 
-func (r *RobotVo) isLowestPartyRobotAccountUnsafe() bool {
-	if !isPartyRobotAccount(r.partySelfPeer.accID) {
-		return false
+func (r *RobotVo) schedulePartyDungeonInputUnsafe(frame []byte, peer partyIPPeer) {
+	inputs := partyDungeonRecords(frame, 0x0027, 11)
+	if len(inputs) == 0 {
+		return
 	}
+	if len(r.partyDungeonInputs) == 0 {
+		r.partyDungeonInputAt = time.Now().Add(500*time.Millisecond + time.Duration(rand.Int63n(int64(time.Second))))
+	}
+	r.partyDungeonInputs = inputs
+	r.partyDungeonFlags = frame[8]
+	r.partyDungeonLeader = peer.uniqueID
+}
+
+func (r *RobotVo) flushPartyDungeonInputUnsafe(conn *net.UDPConn) {
+	if conn == nil || len(r.partyDungeonInputs) == 0 || time.Now().Before(r.partyDungeonInputAt) {
+		return
+	}
+	inputs := r.partyDungeonInputs
+	flags := r.partyDungeonFlags
+	leaderID := r.partyDungeonLeader
+	r.clearPartyDungeonInputUnsafe()
 	for _, peer := range r.partyPeers {
-		if isPartyRobotAccount(peer.accID) && peer.accID < r.partySelfPeer.accID {
-			return false
+		if peer.uniqueID != leaderID || !peer.slotKnown || peer.slot != 0 || peer.outerIP == nil || peer.port == 0 {
+			continue
 		}
+		sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, true)
+		if !ok {
+			return
+		}
+		payload := buildPartyReliableRecordBatchPacket(sequence, r.partySelfPeer.slot, flags, inputs)
+		remote := &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}
+		if _, err := conn.WriteToUDP(payload, remote); err != nil {
+			foundationlog.Robotf("[PARTY_DUNGEON_INPUT_ERROR] uid=%d sequence=%d remote=%s err=%v\n", r.UID, sequence, remote.String(), err)
+			return
+		}
+		foundationlog.Robotf("[PARTY_DUNGEON_INPUT] uid=%d records=%d sequence=%d remote=%s\n", r.UID, len(inputs), sequence, remote.String())
+		return
 	}
-	return true
 }
 
-func partyDungeonRecord(frame []byte, target uint16) ([]byte, bool) {
+func (r *RobotVo) clearPartyDungeonInputUnsafe() {
+	r.partyDungeonInputAt = time.Time{}
+	r.partyDungeonInputs = nil
+	r.partyDungeonFlags = 0
+	r.partyDungeonLeader = 0
+}
+
+func partyDungeonRecords(frame []byte, target uint16, exactSize int) [][]byte {
 	if len(frame) < 11 || frame[0] != 0x01 {
-		return nil, false
+		return nil
 	}
+	records := make([][]byte, 0, 4)
 	body := frame[9:]
 	for len(body) >= 2 {
 		size := int(binary.LittleEndian.Uint16(body[:2]))
 		body = body[2:]
 		if size <= 0 || size > len(body) {
-			return nil, false
+			return nil
 		}
 		record := body[:size]
-		if size >= 3 && binary.LittleEndian.Uint16(record[1:3]) == target {
-			return record, true
+		if size >= 3 && (exactSize <= 0 || size == exactSize) && binary.LittleEndian.Uint16(record[1:3]) == target {
+			records = append(records, append([]byte(nil), record...))
 		}
 		body = body[size:]
 	}
-	return nil, false
+	return records
 }
 
 func partyDungeonFrameContainsCommand(frame []byte, target uint16) bool {
@@ -2062,6 +2103,7 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyDungeonTraceAt = time.Time{}
+	r.clearPartyDungeonInputUnsafe()
 	r.closePartyRelayUnsafe()
 	r.resetPartyTQOSTransportUnsafe()
 }
@@ -3004,6 +3046,27 @@ func buildPartyDungeonFollowBody(frame []byte, sourceUniqueID, targetUniqueID ui
 	checksum = partyPayloadChecksum(followBody[7:])
 	copy(followBody[3:7], checksum[:])
 	return followBody, true
+}
+
+func buildPartyReliableRecordBatchPacket(sequence uint32, senderSlot, flags byte, records [][]byte) []byte {
+	bodySize := 0
+	for _, record := range records {
+		bodySize += 2 + len(record)
+	}
+	payload := make([]byte, 9+bodySize)
+	payload[0] = 0x01
+	binary.LittleEndian.PutUint32(payload[1:5], sequence)
+	binary.LittleEndian.PutUint16(payload[5:7], uint16(bodySize))
+	payload[7] = senderSlot
+	payload[8] = flags
+	offset := 9
+	for _, record := range records {
+		binary.LittleEndian.PutUint16(payload[offset:offset+2], uint16(len(record)))
+		offset += 2
+		copy(payload[offset:], record)
+		offset += len(record)
+	}
+	return payload
 }
 
 func buildPartyUnreliablePacket(sequence uint32, senderSlot, flags byte, body []byte) []byte {
