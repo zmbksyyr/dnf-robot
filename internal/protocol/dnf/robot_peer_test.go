@@ -311,6 +311,87 @@ func TestRobotPeerResetDropsOnlyItsDelayedDungeonFrames(t *testing.T) {
 	}
 }
 
+func TestParsePartyLearnedSkillsUsesIndexLevelPairs(t *testing.T) {
+	learned := parsePartyLearnedSkills([]byte{1, 22, 3, 28, 0, 0, 16, 0, 1, 30})
+	if len(learned) != 2 || learned[1] != 30 || learned[3] != 28 {
+		t.Fatalf("learned skills = %+v", learned)
+	}
+}
+
+func TestBuildPartySkillStateBody(t *testing.T) {
+	body := buildPartySkillStateBody(0x2f3e, 0x16, 0xe708)
+	if len(body) != partySkillStateBodySize || body[0] != 2 || binary.LittleEndian.Uint16(body[1:3]) != partyDungeonEnvelopeCommand {
+		t.Fatalf("skill body header = %x", body)
+	}
+	payload := body[partyDungeonEnvelopePayloadOffset:]
+	wantPayload := mustPartyHex(t, "11013e2f16000008e7")
+	if !bytes.Equal(payload, wantPayload) {
+		t.Fatalf("skill payload = %x, want %x", payload, wantPayload)
+	}
+	inner := partyPayloadChecksum(payload)
+	for _, offset := range partyDungeonEnvelopeChecksumOffsets {
+		if !bytes.Equal(body[offset:offset+4], inner[:]) {
+			t.Fatalf("inner checksum at %d = %x, want %x", offset, body[offset:offset+4], inner)
+		}
+	}
+	outer := partyPayloadChecksum(body[7:])
+	if !bytes.Equal(body[3:7], outer[:]) {
+		t.Fatalf("outer checksum = %x, want %x", body[3:7], outer)
+	}
+}
+
+func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	remote := receiver.LocalAddr().(*net.UDPAddr)
+	now := time.Unix(200, 0)
+	vo := &RobotVo{
+		UID:                  17000001,
+		partySelfPeer:        partyIPPeer{uniqueID: 0x2f3e, slot: 2, slotKnown: true},
+		partyDungeonLastAt:   now,
+		partyDungeonFlags:    5,
+		partySkillNextAt:     now.Add(-time.Millisecond),
+		partySkillLoaded:     true,
+		partySkillJob:        8,
+		partySkillCandidates: []partySkillCandidate{{skillIndex: 1, state: 20}},
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+	vo.flushPartyDungeonSkillUnsafe(sender, now)
+
+	buf := make([]byte, 4096)
+	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
+	n, _, err := receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := buf[:n]
+	if packet[0] != 1 || binary.LittleEndian.Uint32(packet[1:5]) != 0 || packet[7] != 2 || packet[8] != 5 {
+		t.Fatalf("skill transport = %x", packet)
+	}
+	if vo.partyTQOSReliableSeq[0][1] != 1 || binary.LittleEndian.Uint16(packet[9:11]) != partySkillStateBodySize {
+		t.Fatalf("skill sequence=%d packet=%x", vo.partyTQOSReliableSeq[0][1], packet)
+	}
+	body := packet[11:]
+	if binary.LittleEndian.Uint16(body[partyDungeonEnvelopePayloadOffset+2:]) != 0x2f3e || body[partyDungeonEnvelopePayloadOffset+4] != 20 {
+		t.Fatalf("skill state identity = %x", body)
+	}
+	if vo.partySkillNextAt.Sub(now) < 4*time.Second || vo.partySkillNextAt.Sub(now) > 9*time.Second {
+		t.Fatalf("next skill delay = %s", vo.partySkillNextAt.Sub(now))
+	}
+	vo.resetPartyTQOSTransportUnsafe()
+	if !vo.partyDungeonLastAt.IsZero() || !vo.partySkillNextAt.IsZero() {
+		t.Fatalf("dungeon skill state survived reset: last=%s next=%s", vo.partyDungeonLastAt, vo.partySkillNextAt)
+	}
+}
+
 func flushQueuedDungeonFollow(t *testing.T, vo *RobotVo, frame []byte, peer partyIPPeer) []byte {
 	t.Helper()
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})

@@ -32,6 +32,8 @@ const pvfExportVersion = 1
 
 const pvfItemInfoExportName = "pvf_iteminfo.dat"
 
+const pvfSkillStateExportName = "pvf_skill_state_catalog.json"
+
 type pvfFile struct {
 	Name string
 	Data []byte
@@ -57,7 +59,9 @@ func EnsureExports(dfGameR, configDir string) error {
 	}
 	manifestPath := filepath.Join(configDir, "pvf_manifest.json")
 	if pvfExportsCurrent(manifestPath, manifest, configDir) {
-		return nil
+		if err := loadSkillStateCatalog(filepath.Join(configDir, pvfSkillStateExportName)); err == nil {
+			return nil
+		}
 	}
 
 	archive, err := openPVF(pvfPath)
@@ -75,6 +79,11 @@ func EnsureExports(dfGameR, configDir string) error {
 	if err := WriteJSON(filepath.Join(configDir, "pvf_map_catalog.json"), maps); err != nil {
 		return err
 	}
+	skillStates := extractSkillStateCatalog(archive)
+	if err := WriteJSON(filepath.Join(configDir, pvfSkillStateExportName), skillStates); err != nil {
+		return err
+	}
+	setSkillStateCatalog(skillStates)
 	if err := writePVFItemInfoExports(configDir, archive, equipment, stackable); err != nil {
 		return err
 	}
@@ -97,7 +106,7 @@ func buildPVFManifest(path string, stat os.FileInfo) (pvfManifest, error) {
 }
 
 func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) bool {
-	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json", pvfItemInfoExportName} {
+	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json", pvfSkillStateExportName, pvfItemInfoExportName} {
 		path := filepath.Join(configDir, name)
 		stat, err := os.Stat(path)
 		if err != nil || stat.Size() <= 5 {

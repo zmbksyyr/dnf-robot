@@ -14,6 +14,7 @@ import (
 	foundationlog "robot/internal/foundation/log"
 	sqlpkg "robot/internal/foundation/sql"
 	"robot/internal/protocol/dnf/crypt"
+	"robot/internal/shared"
 	"strconv"
 	"time"
 )
@@ -192,6 +193,12 @@ type RobotVo struct {
 	partyUDPDiagAt       time.Time
 	partyDungeonTraceAt  time.Time
 	partyDungeonFollow   []partyDungeonFollowPending
+	partyDungeonLastAt   time.Time
+	partyDungeonFlags    byte
+	partySkillNextAt     time.Time
+	partySkillLoaded     bool
+	partySkillJob        int
+	partySkillCandidates []partySkillCandidate
 
 	GMName [5][100]byte
 
@@ -419,6 +426,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.partyRelayAt = time.Time{}
 	r.resetPartyTQOSTransportUnsafe()
+	r.resetPartySkillProfileUnsafe()
 	r.closePartyUDPUnsafe()
 	r.closePartyRelayUnsafe()
 	r.recvSize = 0
@@ -1491,6 +1499,7 @@ func (r *RobotVo) partyUDPProbeLoop(conn *net.UDPConn) {
 				return
 			}
 			r.flushPartyDungeonFollowUnsafe(conn, time.Now())
+			r.flushPartyDungeonSkillUnsafe(conn, time.Now())
 			r.mu.Unlock()
 		}
 	}
@@ -1569,6 +1578,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
+			r.rememberPartyDungeonActivityUnsafe(frame, route, peer, time.Now())
 			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
 			if route == 1 {
 				r.queuePartyDungeonFollowUnsafe(frame, peer, time.Now())
@@ -1753,6 +1763,86 @@ func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, 
 
 func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
 	return time.Duration(2000+int(r.UID%2001)) * time.Millisecond
+}
+
+func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, peer partyIPPeer, now time.Time) {
+	if route != 1 || !r.shouldFollowPartyPeerUnsafe(peer) || len(frame) < 9 {
+		return
+	}
+	if !partyDungeonFrameContainsCommand(frame, 0x0004) && !partyDungeonFrameContainsCommand(frame, 0x0027) && !partyDungeonFrameContainsCommand(frame, 0x0051) {
+		return
+	}
+	r.partyDungeonLastAt = now
+	r.partyDungeonFlags = frame[8]
+	if r.partySkillNextAt.IsZero() {
+		r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+	}
+}
+
+func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time) {
+	if conn == nil || r.partyDungeonLastAt.IsZero() || now.Sub(r.partyDungeonLastAt) > 3*time.Second {
+		r.partySkillNextAt = time.Time{}
+		return
+	}
+	if r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
+		return
+	}
+	r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+	if !r.loadPartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
+		return
+	}
+	peer := r.partyPeerForSlotUnsafe(0)
+	if peer.uniqueID == 0 || peer.outerIP == nil || peer.port == 0 {
+		return
+	}
+	candidate := r.partySkillCandidates[partySkillChoice(r.UID, now, len(r.partySkillCandidates))]
+	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, candidate.state, partySkillToken(r.UID, now))
+	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, true)
+	if !ok {
+		return
+	}
+	payload := buildPartyReliablePacket(sequence, r.partySelfPeer.slot, r.partyDungeonFlags, [][]byte{body})
+	remote := &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}
+	if _, err := conn.WriteToUDP(payload, remote); err != nil {
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_ERROR] uid=%d job=%d skill=%d state=%d remote=%s err=%v\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, remote.String(), err)
+		return
+	}
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d sequence=%d remote=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, sequence, remote.String())
+}
+
+func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
+	if r.partySkillLoaded {
+		return true
+	}
+	if r.DB == nil || r.UID == 0 || r.CID <= 0 {
+		return false
+	}
+	var job int
+	var raw []byte
+	err := r.DB.QueryRow("SELECT c.job,UNCOMPRESS(s.skill_slot) FROM taiwan_cain.charac_info c JOIN taiwan_cain_2nd.skill s ON s.charac_no=c.charac_no WHERE c.m_id=? AND c.charac_no=? AND c.delete_flag=0 LIMIT 1", r.UID, r.CID).Scan(&job, &raw)
+	if err != nil {
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_ERROR] uid=%d cid=%d err=%v\n", r.UID, r.CID, err)
+		return false
+	}
+	r.partySkillLoaded = true
+	learned := parsePartyLearnedSkills(raw)
+	states := shared.SkillStatesForJob(job)
+	r.partySkillJob = job
+	r.partySkillCandidates = r.partySkillCandidates[:0]
+	for _, entry := range states {
+		if entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 || learned[byte(entry.SkillIndex)] == 0 {
+			continue
+		}
+		r.partySkillCandidates = append(r.partySkillCandidates, partySkillCandidate{skillIndex: byte(entry.SkillIndex), state: byte(entry.State)})
+	}
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d learned=%d candidates=%d\n", r.UID, r.CID, job, len(learned), len(r.partySkillCandidates))
+	return true
+}
+
+func (r *RobotVo) resetPartySkillProfileUnsafe() {
+	r.partySkillLoaded = false
+	r.partySkillJob = 0
+	r.partySkillCandidates = nil
 }
 
 func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time) {
@@ -2128,6 +2218,9 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyRobotProbeCount = [4]uint8{}
 	r.partyRobotPeerReady = [4]bool{}
 	r.partyDungeonFollow = nil
+	r.partyDungeonLastAt = time.Time{}
+	r.partyDungeonFlags = 0
+	r.partySkillNextAt = time.Time{}
 }
 
 func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
@@ -2897,6 +2990,11 @@ type partyDungeonFollowPending struct {
 	records  [][]byte
 }
 
+type partySkillCandidate struct {
+	skillIndex byte
+	state      byte
+}
+
 func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
 	if len(packet) < 1 {
 		return nil, false
@@ -3002,7 +3100,67 @@ const partyDungeonEnvelopeCommand = 0x0051
 const partyDungeonEnvelopeMinBodySize = 26
 const partyDungeonEnvelopePayloadOffset = 22
 
+const partySkillStateBodySize = 31
+
 var partyDungeonEnvelopeChecksumOffsets = [...]int{10, 18}
+
+func parsePartyLearnedSkills(raw []byte) map[byte]byte {
+	learned := make(map[byte]byte)
+	for i := 0; i+1 < len(raw); i += 2 {
+		if raw[i] != 0 && raw[i+1] != 0 {
+			learned[raw[i]] = raw[i+1]
+		}
+	}
+	return learned
+}
+
+func buildPartySkillStateBody(uniqueID uint16, state byte, token uint16) []byte {
+	body := make([]byte, partySkillStateBodySize)
+	body[0] = 0x02
+	binary.LittleEndian.PutUint16(body[1:3], partyDungeonEnvelopeCommand)
+	body[7] = 0x02
+	body[8] = 0x05
+	body[14] = 0x00
+	body[15] = 0x02
+	body[16] = 0x05
+	payload := body[partyDungeonEnvelopePayloadOffset:]
+	payload[0] = 0x11
+	payload[1] = 0x01
+	binary.LittleEndian.PutUint16(payload[2:4], uniqueID)
+	payload[4] = state
+	binary.LittleEndian.PutUint16(payload[5:7], 0)
+	binary.LittleEndian.PutUint16(payload[7:9], token)
+	innerChecksum := partyPayloadChecksum(payload)
+	for _, offset := range partyDungeonEnvelopeChecksumOffsets {
+		copy(body[offset:offset+len(innerChecksum)], innerChecksum[:])
+	}
+	outerChecksum := partyPayloadChecksum(body[7:])
+	copy(body[3:7], outerChecksum[:])
+	return body
+}
+
+func partySkillDelay(uid uint32, now time.Time) time.Duration {
+	return time.Duration(4+partySkillChoice(uid, now, 6)) * time.Second
+}
+
+func partySkillChoice(uid uint32, now time.Time, count int) int {
+	if count <= 1 {
+		return 0
+	}
+	value := uint64(now.UnixNano()) ^ uint64(uid)*0x9e3779b97f4a7c15
+	value ^= value >> 30
+	value *= 0xbf58476d1ce4e5b9
+	value ^= value >> 27
+	return int(value % uint64(count))
+}
+
+func partySkillToken(uid uint32, now time.Time) uint16 {
+	value := uint64(now.UnixNano()) ^ uint64(uid)<<32
+	value ^= value >> 33
+	value *= 0xff51afd7ed558ccd
+	value ^= value >> 33
+	return uint16(value)
+}
 
 var partyTQOSCRCTable = crc32.MakeTable(0x4db89129)
 
