@@ -24,6 +24,15 @@ import (
 )
 
 // ---- robot.go ----
+var partyRelayPort = 7200
+
+func ConfigurePartyRelayPort(port int) {
+	if port <= 0 || port > 65535 {
+		port = 7200
+	}
+	partyRelayPort = port
+}
+
 type ClientState int
 
 const (
@@ -1286,9 +1295,10 @@ func (r *RobotVo) startPartyRelayUnsafe(ip net.IP) {
 		return
 	}
 	r.partyRelayAt = now
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, "7200"), 3*time.Second)
+	relayAddr := net.JoinHostPort(host, strconv.Itoa(partyRelayPort))
+	conn, err := net.DialTimeout("tcp", relayAddr, 3*time.Second)
 	if err != nil {
-		fmt.Printf("[PARTY_RELAY_CONNECT_ERROR] uid=%d addr=%s err=%v\n", r.UID, net.JoinHostPort(host, "7200"), err)
+		fmt.Printf("[PARTY_RELAY_CONNECT_ERROR] uid=%d addr=%s err=%v\n", r.UID, relayAddr, err)
 		return
 	}
 	auth := buildPartyRelayPacket(0, r.UID, 0, nil)

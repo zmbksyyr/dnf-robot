@@ -5,8 +5,6 @@ import (
 	"sync"
 )
 
-const partyRoute0Port = 5063
-
 // PartyRoute0Sink prevents the fixed client route from being assigned to a
 // single robot. Per-robot party traffic uses the advertised dynamic UDP port.
 type PartyRoute0Sink struct {
@@ -15,8 +13,11 @@ type PartyRoute0Sink struct {
 	closeErr  error
 }
 
-func StartPartyRoute0Sink() (*PartyRoute0Sink, error) {
-	return startPartyRoute0Sink(&net.UDPAddr{IP: net.IPv4zero, Port: partyRoute0Port})
+func StartPartyRoute0Sink(port int) (*PartyRoute0Sink, error) {
+	if port <= 0 || port > 65535 {
+		port = 5063
+	}
+	return startPartyRoute0Sink(&net.UDPAddr{IP: net.IPv4zero, Port: port})
 }
 
 func startPartyRoute0Sink(addr *net.UDPAddr) (*PartyRoute0Sink, error) {

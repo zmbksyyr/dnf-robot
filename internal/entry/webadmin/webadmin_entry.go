@@ -69,6 +69,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/max-user", s.requireAuth(s.handleMaxUser))
 	mux.HandleFunc("/api/server-script", s.requireAuth(s.handleServerScript))
 	mux.HandleFunc("/api/monitor-service", s.requireAuth(s.handleMonitorService))
+	mux.HandleFunc("/api/relay-service", s.requireAuth(s.handleRelayService))
 	mux.HandleFunc("/api/party-compat", s.requireAuth(s.handlePartyCompat))
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
 	server := &http.Server{
@@ -381,7 +382,15 @@ func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMonitorService(w http.ResponseWriter, _ *http.Request) {
-	const addr = "127.0.0.1:30303"
+	s.handleLocalTCPService(w, s.cfg.MonitorPort)
+}
+
+func (s *Server) handleRelayService(w http.ResponseWriter, _ *http.Request) {
+	s.handleLocalTCPService(w, s.cfg.RelayPort)
+}
+
+func (s *Server) handleLocalTCPService(w http.ResponseWriter, port int) {
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "addr": addr, "state": "closed", "error": err.Error()})

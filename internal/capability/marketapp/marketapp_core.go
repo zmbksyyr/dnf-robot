@@ -188,6 +188,14 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	if err != nil {
 		return nil, err
 	}
+	cfg.AuctionHost = "127.0.0.1"
+	if sys.AuctionPort > 0 {
+		cfg.AuctionPort = sys.AuctionPort
+	}
+	cfg.CeraHost = "127.0.0.1"
+	if sys.PointPort > 0 {
+		cfg.CeraPort = sys.PointPort
+	}
 	app := &App{
 		repository:         SQLRepository{db: db},
 		cfg:                cfg,

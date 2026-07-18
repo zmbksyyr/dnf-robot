@@ -75,14 +75,15 @@ func main() {
 	})
 	defer dnf.LogClose()
 	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("ROBOT_CONFIG path=%s config_dir=%s\n", configPath, cfg.ConfigDir))
-	route0Sink, err := dnf.StartPartyRoute0Sink()
+	dnf.ConfigurePartyRelayPort(cfg.RelayPort)
+	route0Sink, err := dnf.StartPartyRoute0Sink(cfg.PartyRoute0Port)
 	if err != nil {
-		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ROUTE0_SINK_FAILED addr=0.0.0.0:5063 err=%v\n", err))
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ROUTE0_SINK_FAILED addr=0.0.0.0:%d err=%v\n", cfg.PartyRoute0Port, err))
 		dnf.PrintfRed("party route0 sink failed: %v\n", err)
 		os.Exit(1)
 	}
 	defer route0Sink.Close()
-	dnf.LogString(dnf.LogLevelIndispensable, "PARTY_ROUTE0_SINK_READY addr=0.0.0.0:5063\n")
+	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ROUTE0_SINK_READY addr=0.0.0.0:%d\n", cfg.PartyRoute0Port))
 
 	if err := runtimeinit.Init(cfg); err != nil {
 		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("ROBOT_RUNTIME_INIT_FAILED err=%v\n", err))
@@ -116,7 +117,7 @@ func main() {
 	dnfruntime.SetRobotService(robotSvc)
 	dollSvc := dnfruntime.NewDollService()
 	manager := scheduler.NewRobotManager(schedulerrepo.NewSQLRepository(db), cfg, dollSvc)
-	manager.SetWorldShout(monitor.Client{})
+	manager.SetWorldShout(monitor.Client{Address: fmt.Sprintf("127.0.0.1:%d", cfg.MonitorPort)})
 	manager.StartAutoActions()
 	marketApp, err = marketapp.New(db, cfg, auctionapp.NewFactory())
 	if err != nil {

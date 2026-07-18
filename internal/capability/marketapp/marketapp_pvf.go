@@ -284,7 +284,7 @@ func (a *App) auctionServiceLoadedItemInfo(path string) error {
 	if err != nil {
 		return err
 	}
-	auction, ok := marketServiceSpecByName(marketServiceNameAuction)
+	auction, ok := a.marketServiceSpecByName(marketServiceNameAuction)
 	if !ok {
 		return fmt.Errorf("auction service spec not found")
 	}

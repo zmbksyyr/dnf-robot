@@ -263,11 +263,11 @@ func (a *App) ensureMarketServices(markets []string) map[string]bool {
 		}
 	}
 	if len(markets) == 0 {
-		for _, service := range marketServiceSpecs() {
+		for _, service := range a.marketServiceSpecs() {
 			needed[service.name] = true
 		}
 	}
-	for _, service := range marketServiceSpecs() {
+	for _, service := range a.marketServiceSpecs() {
 		if needed[service.name] {
 			ready[service.name] = a.ensureMarketService(service)
 		}
@@ -279,7 +279,7 @@ func (a *App) ensureRunningMarketServiceLogSinks() {
 	if runtime.GOOS != "linux" {
 		return
 	}
-	for _, service := range marketServiceSpecs() {
+	for _, service := range a.marketServiceSpecs() {
 		if tcpReady(service.addr, 500*time.Millisecond) {
 			a.ensureMarketService(service)
 		}
@@ -447,7 +447,7 @@ func (a *App) recoverAuctionRegistItemFailure(logPath string) bool {
 }
 
 func (a *App) refreshMarketServiceStatuses() {
-	for _, service := range marketServiceSpecs() {
+	for _, service := range a.marketServiceSpecs() {
 		a.refreshMarketServiceStatus(service)
 	}
 }
@@ -521,15 +521,23 @@ type marketServiceSpec struct {
 	args []string
 }
 
-func marketServiceSpecs() []marketServiceSpec {
+func (a *App) marketServiceSpecs() []marketServiceSpec {
+	auctionPort := a.cfg.AuctionPort
+	if auctionPort <= 0 {
+		auctionPort = 30803
+	}
+	pointPort := a.cfg.CeraPort
+	if pointPort <= 0 {
+		pointPort = 30603
+	}
 	return []marketServiceSpec{
-		{name: marketServiceNameAuction, addr: "127.0.0.1:30803", dir: "/home/neople/auction", bin: "./df_auction_r", args: []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"}},
-		{name: marketServiceNamePoint, addr: "127.0.0.1:30603", dir: "/home/neople/point", bin: "./df_point_r", args: []string{"./cfg/point_cain.cfg", "start", "df_point_r"}},
+		{name: marketServiceNameAuction, addr: fmt.Sprintf("127.0.0.1:%d", auctionPort), dir: "/home/neople/auction", bin: "./df_auction_r", args: []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"}},
+		{name: marketServiceNamePoint, addr: fmt.Sprintf("127.0.0.1:%d", pointPort), dir: "/home/neople/point", bin: "./df_point_r", args: []string{"./cfg/point_cain.cfg", "start", "df_point_r"}},
 	}
 }
 
-func marketServiceSpecByName(name string) (marketServiceSpec, bool) {
-	for _, service := range marketServiceSpecs() {
+func (a *App) marketServiceSpecByName(name string) (marketServiceSpec, bool) {
+	for _, service := range a.marketServiceSpecs() {
 		if service.name == name {
 			return service, true
 		}
@@ -542,7 +550,7 @@ func (a *App) restartMarketServicesAfterItemInfo() error {
 		a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusSkipped, Message: "market service restart is linux only"})
 		return nil
 	}
-	for _, service := range marketServiceSpecs() {
+	for _, service := range a.marketServiceSpecs() {
 		if err := a.restartMarketServiceAfterItemInfo(service); err != nil {
 			return err
 		}
@@ -1376,7 +1384,7 @@ func (a *App) restartMarketService(name, reason string) {
 		a.restarter(name, reason)
 		return
 	}
-	service, ok := marketServiceSpecByName(name)
+	service, ok := a.marketServiceSpecByName(name)
 	if !ok {
 		return
 	}

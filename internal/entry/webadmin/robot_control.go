@@ -27,17 +27,21 @@ func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.gameEndpointPayload(cfg, ""))
 	case http.MethodPost:
 		var req struct {
-			GamePort int `json:"game_port"`
+			GamePort    int `json:"game_port"`
+			MonitorPort int `json:"monitor_port"`
+			AuctionPort int `json:"auction_port"`
+			PointPort   int `json:"point_port"`
+			RelayPort   int `json:"relay_port"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		if req.GamePort <= 0 || req.GamePort > 65535 {
-			writeJSON(w, map[string]interface{}{"ok": false, "error": "game_port must be between 1 and 65535"})
+		if err := validateExternalPorts(req.GamePort, req.MonitorPort, req.AuctionPort, req.PointPort, req.RelayPort); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		cfg, err := s.writeGamePort(req.GamePort)
+		cfg, err := s.writeExternalPorts(req.GamePort, req.MonitorPort, req.AuctionPort, req.PointPort, req.RelayPort)
 		if err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
@@ -72,17 +76,24 @@ func (s *Server) handleRestartRobot(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) gameEndpointPayload(cfg *config.SysConfig, message string) map[string]interface{} {
 	connectIP := ""
-	gamePort := 0
 	addr := ""
+	ports := map[string]int{}
 	if cfg != nil {
 		connectIP = cfg.RobotConnectIP
-		gamePort = cfg.RobotGamePort
-		addr = net.JoinHostPort(connectIP, strconv.Itoa(gamePort))
+		addr = net.JoinHostPort(connectIP, strconv.Itoa(cfg.RobotGamePort))
+		ports = map[string]int{
+			"game":    cfg.RobotGamePort,
+			"monitor": cfg.MonitorPort,
+			"auction": cfg.AuctionPort,
+			"point":   cfg.PointPort,
+			"relay":   cfg.RelayPort,
+		}
 	}
 	out := map[string]interface{}{
 		"ok":          true,
 		"connect_ip":  connectIP,
-		"game_port":   gamePort,
+		"game_port":   ports["game"],
+		"ports":       ports,
 		"addr":        addr,
 		"config_path": s.configPath(),
 	}
@@ -101,14 +112,18 @@ func (s *Server) loadDiskConfig() (*config.SysConfig, error) {
 	return cfg, nil
 }
 
-func (s *Server) writeGamePort(port int) (*config.SysConfig, error) {
+func (s *Server) writeExternalPorts(game, monitor, auction, point, relay int) (*config.SysConfig, error) {
 	path := s.configPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	text := robotconfig.UpdateINIText(string(data), map[string]string{
-		"Robot.RobotGamePort": strconv.Itoa(port),
+		"Ports.Game":    strconv.Itoa(game),
+		"Ports.Monitor": strconv.Itoa(monitor),
+		"Ports.Auction": strconv.Itoa(auction),
+		"Ports.Point":   strconv.Itoa(point),
+		"Ports.Relay":   strconv.Itoa(relay),
 	})
 	if _, err := config.LoadFromString(text); err != nil {
 		return nil, err
@@ -122,8 +137,21 @@ func (s *Server) writeGamePort(port int) (*config.SysConfig, error) {
 	}
 	cfg.ConfigDir = s.cfg.ConfigDir
 	s.cfg.RobotGamePort = cfg.RobotGamePort
+	s.cfg.MonitorPort = cfg.MonitorPort
+	s.cfg.AuctionPort = cfg.AuctionPort
+	s.cfg.PointPort = cfg.PointPort
+	s.cfg.RelayPort = cfg.RelayPort
 	s.cfg.RobotConnectIP = cfg.RobotConnectIP
 	return cfg, nil
+}
+
+func validateExternalPorts(ports ...int) error {
+	for _, port := range ports {
+		if port <= 0 || port > 65535 {
+			return fmt.Errorf("ports must be between 1 and 65535")
+		}
+	}
+	return nil
 }
 
 func (s *Server) configPath() string {

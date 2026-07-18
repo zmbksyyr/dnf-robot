@@ -26,6 +26,11 @@ type SysConfig struct {
 	RobotInnerIP         string
 	RobotConnectIP       string
 	RobotGamePort        int
+	MonitorPort          int
+	AuctionPort          int
+	PointPort            int
+	RelayPort            int
+	PartyRoute0Port      int
 	DBInitSize           int
 	DBMaxSize            int
 	DBConnectionTimeout  int
@@ -58,8 +63,17 @@ func LoadConfig(path string) (*SysConfig, error) {
 
 	cfg := &SysConfig{}
 
+	// [Ports] section
+	cfg.RobotPort = validPort(ini.GetInt("Ports", "RobotAPI", 8111), 8111)
+	cfg.WebPort = validPort(ini.GetInt("Ports", "Web", 8112), 8112)
+	cfg.RobotGamePort = validPort(ini.GetInt("Ports", "Game", 10011), 10011)
+	cfg.MonitorPort = validPort(ini.GetInt("Ports", "Monitor", 30303), 30303)
+	cfg.AuctionPort = validPort(ini.GetInt("Ports", "Auction", 30803), 30803)
+	cfg.PointPort = validPort(ini.GetInt("Ports", "Point", 30603), 30603)
+	cfg.RelayPort = validPort(ini.GetInt("Ports", "Relay", 7200), 7200)
+	cfg.PartyRoute0Port = validPort(ini.GetInt("Ports", "PartyRoute0", 5063), 5063)
+
 	// [Robot] section
-	cfg.RobotPort = ini.GetInt("Robot", "robotPort", 8111)
 	cfg.DFGameR = ini.GetString("Robot", "DfGameR", "/home/neople/game/df_game_r")
 	cfg.ConfigDir = ini.GetString("Robot", "ConfigDir", "./config")
 	cfg.RobotInnerIP = ini.GetString("Robot", "RobotInnerIp", "")
@@ -67,13 +81,8 @@ func LoadConfig(path string) (*SysConfig, error) {
 		cfg.RobotInnerIP = "10.0.0.1"
 	}
 	cfg.RobotConnectIP = ini.GetString("Robot", "RobotConnectIp", "")
-	cfg.RobotGamePort = ini.GetInt("Robot", "RobotGamePort", 10011)
 
 	// [Web] section
-	cfg.WebPort = ini.GetInt("Web", "WebPort", 8112)
-	if cfg.WebPort <= 0 {
-		cfg.WebPort = 8112
-	}
 	cfg.WebPassword = ini.GetString("Web", "WebPassword", "twadmin")
 
 	// [db] section
@@ -121,6 +130,13 @@ func LoadConfig(path string) (*SysConfig, error) {
 	return cfg, nil
 }
 
+func validPort(port, fallback int) int {
+	if port <= 0 || port > 65535 {
+		return fallback
+	}
+	return port
+}
+
 func getLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
@@ -148,9 +164,17 @@ func generateDefaultConfig(path string) error {
 
 	_, err = f.WriteString(strings.Join([]string{
 		"# robot main config. Restart robot after editing.",
+		"[Ports]",
+		"RobotAPI = 8111",
+		"Web = 8112",
+		"Game = 10011",
+		"Monitor = 30303",
+		"Auction = 30803",
+		"Point = 30603",
+		"Relay = 7200",
+		"PartyRoute0 = 5063",
+		"",
 		"[Robot]",
-		"# robot TCP API port for Web/CLI commands.",
-		"robotPort = 8111",
 		"# df_game_r path, used for runtime self-check and PVF export.",
 		"DfGameR = /home/neople/game/df_game_r",
 		"# Runtime config directory for robot_config.ini, templates, PVF exports, and logs.",
@@ -159,12 +183,8 @@ func generateDefaultConfig(path string) error {
 		"RobotInnerIp = 10.0.0.1",
 		"# IP used for game-port checks and robot game connection; leave empty to auto-detect local IP.",
 		"RobotConnectIp = ",
-		"# Game channel port used by robot connections.",
-		"RobotGamePort = 10011",
 		"",
 		"[Web]",
-		"# Web admin page port.",
-		"WebPort = 8112",
 		"# Web login password.",
 		"WebPassword = twadmin",
 		"",
