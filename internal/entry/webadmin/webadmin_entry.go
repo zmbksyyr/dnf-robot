@@ -79,6 +79,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/monitor-service", s.requireAuth(s.handleMonitorService))
 	mux.HandleFunc("/api/relay-service", s.requireAuth(s.handleRelayService))
 	mux.HandleFunc("/api/party-compat", s.requireAuth(s.handlePartyCompat))
+	mux.HandleFunc("/api/diagnostics", s.requireAuth(s.handleDiagnostics))
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
 	server := &http.Server{
 		Addr:              s.webAddr,
