@@ -169,6 +169,7 @@ func startRobotRestartHelper(exe, configDir string) error {
 		return fmt.Errorf("empty executable path")
 	}
 	logPath := filepath.Join(configDir, "robot_stdout.log")
+	errPath := filepath.Join(configDir, "robot_start_error.log")
 	workDir := filepath.Dir(exe)
 	script := fmt.Sprintf(`(
 sleep 1
@@ -189,8 +190,8 @@ for d in /proc/[0-9]*; do
   fi
 done
 cd %s || exit 1
-nohup "$exe" >%s 2>&1 < /dev/null &
-	) >/dev/null 2>&1 &`, shellQuote(exe), shellQuote(workDir), shellQuote(logPath))
+nohup sh -c '"$1" 2>&1 | "$1" --bounded-log-sink "$2"' sh "$exe" %s >/dev/null 2>%s < /dev/null &
+	) >/dev/null 2>&1 &`, shellQuote(exe), shellQuote(workDir), shellQuote(logPath), shellQuote(errPath))
 	cmd := exec.Command("/bin/sh", "-c", script)
 	if err := cmd.Start(); err != nil {
 		return err

@@ -58,6 +58,10 @@ KEYWORDS = [
     "market_service",
     "iteminfo",
     "RegistItem",
+    "PARTY_",
+    "PARTY_RELAY",
+    "PARTY_DUNGEON",
+    "PARTY_DUNGEON_SKILL",
     "cannot assign requested address",
     "too many open files",
     "connection reset",
@@ -98,12 +102,20 @@ SAMPLE_FIELDS = [
     "tcp_close_wait",
     "tcp_8111_estab",
     "tcp_10011_estab",
+    "tcp_7200_estab",
     "tcp_30603_estab",
     "tcp_30803_estab",
     "fd_robot",
     "port_10011",
+    "port_30303",
+    "port_7200",
     "port_30603",
     "port_30803",
+    "party_log_hits",
+    "party_error_hits",
+    "party_relay_error_hits",
+    "party_skill_hits",
+    "party_skill_error_hits",
     "market_auto",
     "market_last_status",
     "market_last_error",
@@ -338,7 +350,6 @@ class StabilityRun(object):
         self.out_dir = args.out_dir or ("/root/robot_stability_%s" % stamp)
         if not os.path.isdir(self.out_dir):
             os.makedirs(self.out_dir)
-        self.api = RobotAPI(args.robot_host, args.robot_port, args.api_timeout)
         self.events = io.open(os.path.join(self.out_dir, "events.log"), "a", encoding="utf-8", buffering=1)
         if sys.version_info[0] < 3:
             self.samples_file = open(os.path.join(self.out_dir, "samples.csv"), "ab")
@@ -364,6 +375,56 @@ class StabilityRun(object):
         self.market_zero_since = 0
         self.market_zero_last_seen = 0
         self.last_invariant_failure = {}
+        self.ports = self.read_ports()
+        self.api = RobotAPI(args.robot_host, self.port("RobotAPI"), args.api_timeout)
+
+    def read_ports(self):
+        ports = {
+            "RobotAPI": int(self.args.robot_port or 8111),
+            "Web": 8112,
+            "Game": 10011,
+            "Monitor": 30303,
+            "Auction": 30803,
+            "Point": 30603,
+            "Relay": 7200,
+            "PartyRoute0": 5063,
+        }
+        path = "/root/config/config.ini"
+        try:
+            section = ""
+            for line in io.open(path, "r", encoding="utf-8"):
+                text = safe_text(line).strip()
+                if not text or text.startswith("#") or text.startswith(";"):
+                    continue
+                if text.startswith("[") and "]" in text:
+                    section = text[1:text.index("]")].strip()
+                    continue
+                if section != "Ports" or "=" not in text:
+                    continue
+                key, value = text.split("=", 1)
+                key = key.strip()
+                if key in ports:
+                    port = int(value.strip())
+                    if port > 0 and port <= 65535:
+                        ports[key] = port
+        except Exception as exc:
+            self.log("read_ports fallback path=%s err=%r ports=%s" % (path, exc, ports))
+        self.args.robot_port = ports.get("RobotAPI", self.args.robot_port)
+        return ports
+
+    def port(self, name):
+        return int(self.ports.get(name) or 0)
+
+    def port_text(self, name):
+        return str(self.port(name))
+
+    def port_regex(self, names):
+        values = []
+        for name in names:
+            port = self.port(name)
+            if port > 0:
+                values.append(str(port))
+        return "|".join(values)
 
     def log(self, message):
         line = u"[%s] %s" % (now_text(), safe_text(message))
@@ -560,7 +621,7 @@ class StabilityRun(object):
         ports = self.port_snapshot()
         ok = bool(isinstance(api, dict) and api.get("ok"))
         scheduler_ok = not (sched.get("mode") == "maintenance" and sched.get("operation_active"))
-        game_ok = bool(ports.get("10011"))
+        game_ok = bool(ports.get(self.port_text("Game")))
         market_ok = self.market_services_ready(market)
         scaling_ok = ok and game_ok and market_ok and self.scaling_recovery_ok(event, sched)
         if scaling_ok:
@@ -598,7 +659,7 @@ class StabilityRun(object):
         enabled = self.market_auto_enabled(status)
         running = bool(status.get("auto_running"))
         services_ready = self.market_services_ready(status)
-        game_ready = bool(ports.get("10011"))
+        game_ready = bool(ports.get(self.port_text("Game")))
         now = time.time()
         if enabled and game_ready and services_ready and not running:
             if not self.market_auto_stopped_since:
@@ -655,7 +716,7 @@ class StabilityRun(object):
             "time": now_text(),
             "api": self.api_snapshot(),
             "ports": self.port_snapshot(),
-            "processes": self.shell("pgrep -af '/root/robot|df_game_r|df_monitor_r|df_auction_r|df_point_r|mysqld' || true", 20, log_output=False)[:4000],
+            "processes": self.shell("pgrep -af '/root/robot|df_game_r|df_monitor_r|df_auction_r|df_point_r|df_relay_r|mysqld' || true", 20, log_output=False)[:4000],
             "files": self.file_snapshot(),
             "db": self.db_snapshot(),
             "tcp": self.shell("ss -ant | awk 'NR>1 {c[$1]++} END {for (k in c) print k,c[k]}'", 20, log_output=False)[:2000],
@@ -670,14 +731,7 @@ class StabilityRun(object):
 
     def port_snapshot(self):
         out = self.shell("ss -ltn", 20, log_output=False)
-        return {
-            "8111": int(":8111" in out),
-            "8112": int(":8112" in out),
-            "10011": int(":10011" in out),
-            "30303": int(":30303" in out),
-            "30603": int(":30603" in out),
-            "30803": int(":30803" in out),
-        }
+        return dict((str(port), int((":" + str(port)) in out)) for port in self.ports.values() if int(port or 0) > 0)
 
     def file_snapshot(self):
         paths = [
@@ -820,7 +874,9 @@ echo RESTORED
             self.shell("sh %s" % shell_quote(restore_path), 180)
         else:
             self.log("final_recover_environment missing restore script=%s" % restore_path)
-        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
+        core_ports = self.port_regex(("Game", "Monitor", "Point", "Auction"))
+        market_ports = self.port_regex(("Point", "Auction"))
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(%s)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true" % core_ports, 240)
         self.robot_restart_without_target("final_recover_robot")
         if not self.wait_robot_api("final_recover_api", 90, 5):
             self.record_failure("final_recover_api_timeout", "robot API was not ready after final recovery")
@@ -830,7 +886,7 @@ echo RESTORED
             self.log("final_recover_market first attempt failed; clear system stock and retry")
             self.safe_call("marketClearSystemStock", {})
             self.stop_market_services()
-            self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(30603|30803)' || true; pgrep -af 'df_auction_r|df_point_r' || true", 240)
+            self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(%s)' || true; pgrep -af 'df_auction_r|df_point_r' || true" % market_ports, 240)
             self.market_enable_auto(max_concurrent=8)
             if not self.wait_market_services("final_recover_market_retry", 180, 10):
                 self.record_failure("final_recover_market_timeout", "market services were not ready after final recovery retry")
@@ -856,7 +912,7 @@ echo RESTORED
         last = {}
         while time.time() < deadline:
             last = self.port_snapshot()
-            if last.get("10011"):
+            if last.get(self.port_text("Game")):
                 self.log("wait_game_port ready event=%s ports=%s" % (event, last))
                 return True
             time.sleep(interval_sec)
@@ -871,7 +927,8 @@ echo RESTORED
         if api_ok and scheduler_ok and game_ok and market_ok:
             return True
         self.log("ensure_baseline_ready recover event=%s api=%s scheduler=%s game=%s market=%s" % (event, api_ok, scheduler_ok, game_ok, market_ok))
-        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true", 240)
+        core_ports = self.port_regex(("Game", "Monitor", "Point", "Auction"))
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep -E ':(%s)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r' || true" % core_ports, 240)
         if not api_ok:
             self.robot_restart_without_target("%s_robot_restart" % event)
         api_ok = self.wait_robot_api("%s_api_retry" % event, timeout_sec, 5)
@@ -906,6 +963,9 @@ echo RESTORED
             {"name": "smoke_actions", "fn": self.smoke_actions},
             {"name": "robot_action_storm", "fn": self.robot_action_storm},
             {"name": "announcement_check", "fn": self.announcement_check},
+            {"name": "party_relay_health", "fn": self.party_relay_health},
+            {"name": "party_observer_smoke", "fn": self.party_observer_smoke},
+            {"name": "party_skill_observer", "fn": self.party_skill_observer},
             {"name": "market_fault", "fn": self.market_fault},
             {"name": "market_operation_storm", "fn": self.market_operation_storm},
             {"name": "robot_manual_mode_drill", "fn": self.robot_manual_mode_drill},
@@ -1067,6 +1127,97 @@ echo RESTORED
             raise RuntimeError("systemAnnouncement failed: %s" % json_text(res, 1000))
         self.sample_with_event("announcement_check")
         self.burst_sample("announcement_recover", self.scaled_seconds(30, 90), 10)
+
+    def party_relay_health(self):
+        relay_port = self.port("Relay")
+        self.log("party_relay_health begin relay_port=%s" % relay_port)
+        if relay_port <= 0:
+            raise RuntimeError("relay port is not configured")
+        err = ""
+        sock = None
+        try:
+            sock = socket.create_connection(("127.0.0.1", relay_port), 3)
+        except Exception as exc:
+            err = repr(exc)
+        finally:
+            try:
+                if sock:
+                    sock.close()
+            except Exception:
+                pass
+        if err:
+            raise RuntimeError("relay port not ready: %s" % err)
+        self.sample_with_event("party_relay_health")
+        self.log("party_relay_health done")
+
+    def party_observer_smoke(self):
+        self.log("party_observer_smoke begin")
+        before = self.party_log_counts()
+        self.log("party_observer_smoke before=%s" % json_text(before, 1000))
+        self.set_target(max(20, min(self.args.target_max, 80)))
+        self.burst_sample("party_observer_window", self.scaled_seconds(45, 120), 5)
+        after = self.party_log_counts()
+        self.log("party_observer_smoke after=%s" % json_text(after, 1000))
+        if after.get("party_total", 0) <= before.get("party_total", 0):
+            self.log("party_observer_smoke skipped reason=no_party_activity")
+            return
+        relay_errors = after.get("relay_errors", 0) - before.get("relay_errors", 0)
+        udp_errors = after.get("udp_errors", 0) - before.get("udp_errors", 0)
+        if relay_errors > 0:
+            self.record_failure("party_relay_errors", "party relay errors increased by %s during observer smoke" % relay_errors)
+        if udp_errors > 5:
+            self.record_failure("party_udp_errors", "party udp errors increased by %s during observer smoke" % udp_errors)
+        self.sample_with_event("party_observer_smoke_done")
+
+    def party_skill_observer(self):
+        self.log("party_skill_observer begin")
+        before = self.party_log_counts()
+        if before.get("skill_profiles", 0) <= 0:
+            self.log("party_skill_observer note=no_skill_profile_logs_yet")
+        self.burst_sample("party_skill_window", self.scaled_seconds(60, 150), 5)
+        after = self.party_log_counts()
+        self.log("party_skill_observer after=%s" % json_text(after, 1000))
+        skill_events = after.get("skill_casts", 0) - before.get("skill_casts", 0)
+        skill_errors = after.get("skill_errors", 0) - before.get("skill_errors", 0)
+        skill_due = after.get("skill_due", 0) - before.get("skill_due", 0)
+        if skill_due > 0 and skill_events <= 0 and skill_errors <= 0:
+            self.record_failure("party_skill_due_without_send", "skill due logs increased by %s but no skill send or error log followed" % skill_due)
+        if skill_errors > 0:
+            self.record_failure("party_skill_errors", "party skill errors increased by %s" % skill_errors)
+        if skill_events <= 0 and after.get("dungeon_frames", 0) <= before.get("dungeon_frames", 0):
+            self.log("party_skill_observer skipped reason=no_dungeon_or_skill_activity")
+        self.sample_with_event("party_skill_observer_done")
+
+    def party_log_counts(self):
+        patterns = {
+            "party_total": r"\[PARTY_",
+            "relay_errors": r"PARTY_RELAY_.*ERROR|PARTY_RELAY_BAD_PACKET",
+            "udp_errors": r"PARTY_UDP_.*ERROR|PARTY_ROBOT_PROBE_ERROR",
+            "dungeon_frames": r"PARTY_DUNGEON_FRAME",
+            "skill_profiles": r"PARTY_DUNGEON_SKILL_PROFILE",
+            "skill_due": r"PARTY_DUNGEON_SKILL_DUE",
+            "skill_casts": r"PARTY_DUNGEON_SKILL\]",
+            "skill_errors": r"PARTY_DUNGEON_SKILL_.*ERROR|PARTY_DUNGEON_SKILL_CATALOG_ERROR",
+        }
+        text = self.robot_log_tail()
+        return dict((name, len(re.findall(pattern, text))) for name, pattern in patterns.items())
+
+    def robot_log_tail(self, max_bytes=1024 * 1024):
+        path = "/root/config/log_robot"
+        try:
+            fh = open(path, "rb")
+            try:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                if size > max_bytes:
+                    fh.seek(-max_bytes, os.SEEK_END)
+                else:
+                    fh.seek(0, os.SEEK_SET)
+                return safe_text(fh.read())
+            finally:
+                fh.close()
+        except Exception:
+            return u""
 
     def market_fault(self):
         self.log("market_fault begin")
@@ -1306,14 +1457,16 @@ echo RESTORED
         self.market_enable_auto(max_concurrent=8)
         self.wait_market_auto_running("market_startup_race_auto_before", 120, 10)
         self.sample_with_event("market_startup_race_before")
-        self.shell("cd /root && (./stop >/dev/null 2>&1 || true); sleep 12; ss -lntp | grep -E ':(10011|30303)' || true", 180)
+        game_ports = self.port_regex(("Game", "Monitor"))
+        core_ports = self.port_regex(("Game", "Monitor", "Point", "Auction"))
+        self.shell("cd /root && (./stop >/dev/null 2>&1 || true); sleep 12; ss -lntp | grep -E ':(%s)' || true" % game_ports, 180)
         self.robot_restart_without_target("market_startup_race_robot_restart_game_down")
         res = self.safe_call("marketStatus", {})
         self.log("market_startup_iteminfo_race status_game_down=%s" % json_text(res, 1600))
         res = self.safe_call("marketSyncItemInfo", {})
         self.log("market_startup_iteminfo_race sync_iteminfo_game_down result=%s" % json_text(res, 2400))
         self.sample_with_event("market_startup_race_after_iteminfo")
-        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303|30603|30803)' || true", 240)
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 30; ss -lntp | grep -E ':(%s)' || true" % core_ports, 240)
         self.wait_robot_api("market_startup_race_api", 90, 5)
         self.wait_market_services("market_startup_race_services", 240, 10)
         if not self.wait_market_auto_running("market_startup_race_auto", 180, 10):
@@ -1436,7 +1589,8 @@ echo RESTORED
         self.wait_market_services("market_kill_recover", 180, 10)
 
     def stop_market_services(self):
-        script = "for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -TERM $p || true; done; sleep 8; for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -KILL $p || true; done; pkill -TERM -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true; sleep 1; pkill -KILL -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true; ss -lntp | grep -E ':(30603|30803)' || true; pgrep -af 'df_auction_r|df_point_r' || true"
+        market_ports = self.port_regex(("Point", "Auction"))
+        script = "for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -TERM $p || true; done; sleep 8; for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -KILL $p || true; done; pkill -TERM -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true; sleep 1; pkill -KILL -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true; ss -lntp | grep -E ':(%s)' || true; pgrep -af 'df_auction_r|df_point_r' || true" % market_ports
         self.shell(script, 40)
 
     def market_fault_missing_iteminfo(self):
@@ -1807,7 +1961,8 @@ fi
     def web_api_fault(self):
         self.log("web_api_fault begin")
         self.sample_with_event("web_api_fault_before")
-        self.shell("pkill -TERM -f '/root/robot --web-admin' || true; sleep 5; pgrep -af '/root/robot' || true; ss -lntp | grep -E ':(8111|8112)' || true", 30)
+        api_ports = self.port_regex(("RobotAPI", "Web"))
+        self.shell("pkill -TERM -f '/root/robot --web-admin' || true; sleep 5; pgrep -af '/root/robot' || true; ss -lntp | grep -E ':(%s)' || true" % api_ports, 30)
         for command in ("systemStatus", "autoStatus", "marketStatus", "databaseStatus"):
             res = self.safe_call(command, {})
             self.log("web_api_fault api command=%s result=%s" % (command, json_text(res, 1200)))
@@ -1817,7 +1972,15 @@ fi
     def port_conflict_fault(self):
         self.log("port_conflict_fault begin")
         self.stop_market_services()
-        cmd = "cat >/tmp/vm_random_port_conflict.py <<'PY'\nimport socket,time\ns=[]\nfor p in (30603,30803):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(90)\nPY\nnohup python /tmp/vm_random_port_conflict.py >/dev/null 2>&1 &"
+        conflict_ports = sorted(set([self.port("Point"), self.port("Auction")]))
+        conflict_ports = [p for p in conflict_ports if p > 0]
+        if not conflict_ports:
+            self.log("port_conflict_fault skipped no point/auction ports")
+            return
+        tuple_text = ",".join(str(p) for p in conflict_ports)
+        if len(conflict_ports) == 1:
+            tuple_text += ","
+        cmd = "cat >/tmp/vm_random_port_conflict.py <<'PY'\nimport socket,time\ns=[]\nfor p in (%s):\n    x=socket.socket(); x.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); x.bind(('0.0.0.0', p)); x.listen(1); s.append(x)\ntime.sleep(90)\nPY\nnohup python /tmp/vm_random_port_conflict.py >/dev/null 2>&1 &" % tuple_text
         self.shell(cmd, 5)
         self.sample_with_event("port_conflict_bound")
         self.market_enable_auto(max_concurrent=4)
@@ -2052,7 +2215,8 @@ fi
     def monitor_fault(self):
         self.log("monitor_fault stop df_monitor_r")
         self.sample_with_event("monitor_fault_stop")
-        self.shell("pkill -TERM -f './df_monitor_r mnt_cain start' || true; sleep 8; ss -lntp | grep ':30303' || true", 30)
+        monitor_port = self.port_text("Monitor")
+        self.shell("pkill -TERM -f './df_monitor_r mnt_cain start' || true; sleep 8; ss -lntp | grep ':%s' || true" % monitor_port, 30)
         status = self.safe_call("robotsStatus", {"count": 20})
         rows = (((status or {}).get("result") or {}).get("robots") or [])
         uids = [int(r.get("uid") or 0) for r in rows if int(r.get("uid") or 0) > 0][:1]
@@ -2060,18 +2224,20 @@ fi
             res = self.safe_call("robotsShoutWorld", {"uids": uids})
             self.log("monitor_fault world_shout_down uids=%s result=%s" % (uids, json_text(res, 1600)))
         self.log("monitor_fault restore /root/run")
-        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep ':30303' || true; pgrep -af 'df_monitor_r|df_game_r' || true", 180)
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 20; ss -lntp | grep ':%s' || true; pgrep -af 'df_monitor_r|df_game_r' || true" % monitor_port, 180)
         self.sample_with_event("monitor_fault_restore")
         self.burst_sample("monitor_fault_recover", 60, 5)
 
     def game_port_fault(self):
         self.log("game_port_fault stop /root/stop")
         self.sample_with_event("game_port_fault_stop")
-        self.shell("cd /root && (./stop >/dev/null 2>&1 || true); sleep 15; ss -lntp | grep ':10011' || true; pgrep -af 'df_game_r' || true", 180)
+        game_port = self.port_text("Game")
+        game_ports = self.port_regex(("Game", "Monitor"))
+        self.shell("cd /root && (./stop >/dev/null 2>&1 || true); sleep 15; ss -lntp | grep ':%s' || true; pgrep -af 'df_game_r' || true" % game_port, 180)
         self.sample_with_event("game_port_down")
         time.sleep(self.scaled_seconds(45, 120))
         self.log("game_port_fault restore /root/run")
-        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 30; ss -lntp | grep -E ':(10011|30303)' || true; pgrep -af 'df_game_r|df_monitor_r' || true", 240)
+        self.shell("cd /root && (./run >/dev/null 2>&1 || true); sleep 30; ss -lntp | grep -E ':(%s)' || true; pgrep -af 'df_game_r|df_monitor_r' || true" % game_ports, 240)
         self.sample_with_event("game_port_fault_restore")
         self.burst_sample("game_port_fault_recover", self.scaled_seconds(60, 120), 10)
 
@@ -2138,6 +2304,7 @@ ls -l "$OUT" %s
     def robot_restart_without_target(self, label):
         self.log("robot_restart_without_target begin label=%s" % label)
         self.sample_with_event(label + "_stop")
+        hot_ports = self.port_regex(("RobotAPI", "Web", "Game", "Monitor", "Point", "Auction", "Relay", "PartyRoute0"))
         script = r"""
 pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
@@ -2150,9 +2317,9 @@ pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
 pkill -KILL -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
 nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/robot_stdout.log' >/dev/null 2>/root/robot_start_error.log &
 sleep 12
-pgrep -af '/root/robot|df_game_r|df_monitor_r|df_auction_r|df_point_r' || true
-ss -lntp | grep -E ':(8111|8112|10011|30303|30603|30803)' || true
-"""
+pgrep -af '/root/robot|df_game_r|df_monitor_r|df_auction_r|df_point_r|df_relay_r' || true
+ss -lntp | grep -E ':(%s)' || true
+""" % hot_ports
         self.shell(script, 120)
         self.sample_with_event(label + "_started")
 
@@ -2417,6 +2584,7 @@ echo "KEYS_RESTORED"
         self.fill_market_row(row)
         self.fill_tcp_row(row)
         self.fill_port_row(row)
+        self.fill_party_row(row)
         row["fd_robot"] = self.robot_fd_count()
         load1, load5, load15 = self.load_average()
         row["load1"], row["load5"], row["load15"] = load1, load5, load15
@@ -2505,23 +2673,28 @@ echo "KEYS_RESTORED"
             if not isinstance(out, str):
                 out = out.decode("utf-8", "replace")
             states = {}
-            port_counts = {"8111": 0, "10011": 0, "30603": 0, "30803": 0}
+            port_fields = {
+                "tcp_8111_estab": self.port("RobotAPI"),
+                "tcp_10011_estab": self.port("Game"),
+                "tcp_7200_estab": self.port("Relay"),
+                "tcp_30603_estab": self.port("Point"),
+                "tcp_30803_estab": self.port("Auction"),
+            }
+            port_counts = dict((key, 0) for key in port_fields)
             for line in out.splitlines()[1:]:
                 parts = line.split()
                 if not parts:
                     continue
                 state = parts[0]
                 states[state] = states.get(state, 0) + 1
-                for port in port_counts:
-                    if (":" + port) in line and state == "ESTAB":
-                        port_counts[port] += 1
+                for field, port in port_fields.items():
+                    if port > 0 and (":" + str(port)) in line and state == "ESTAB":
+                        port_counts[field] += 1
             row["tcp_estab"] = states.get("ESTAB", 0)
             row["tcp_time_wait"] = states.get("TIME-WAIT", 0)
             row["tcp_close_wait"] = states.get("CLOSE-WAIT", 0)
-            row["tcp_8111_estab"] = port_counts["8111"]
-            row["tcp_10011_estab"] = port_counts["10011"]
-            row["tcp_30603_estab"] = port_counts["30603"]
-            row["tcp_30803_estab"] = port_counts["30803"]
+            for field, count in port_counts.items():
+                row[field] = count
         except Exception as exc:
             if not row.get("api_error"):
                 row["api_error"] = "tcp:%r" % (exc,)
@@ -2531,11 +2704,25 @@ echo "KEYS_RESTORED"
             out = subprocess.check_output("ss -ltn", shell=True)
             if not isinstance(out, str):
                 out = out.decode("utf-8", "replace")
-            row["port_10011"] = int(":10011" in out)
-            row["port_30603"] = int(":30603" in out)
-            row["port_30803"] = int(":30803" in out)
+            row["port_10011"] = int((":" + self.port_text("Game")) in out)
+            row["port_30303"] = int((":" + self.port_text("Monitor")) in out)
+            row["port_7200"] = int((":" + self.port_text("Relay")) in out)
+            row["port_30603"] = int((":" + self.port_text("Point")) in out)
+            row["port_30803"] = int((":" + self.port_text("Auction")) in out)
         except Exception:
             pass
+
+    def fill_party_row(self, row):
+        try:
+            counts = self.party_log_counts()
+            row["party_log_hits"] = counts.get("party_total", "")
+            row["party_error_hits"] = self.sum_ints(counts.get("relay_errors"), counts.get("udp_errors"), counts.get("skill_errors"))
+            row["party_relay_error_hits"] = counts.get("relay_errors", "")
+            row["party_skill_hits"] = counts.get("skill_casts", "")
+            row["party_skill_error_hits"] = counts.get("skill_errors", "")
+        except Exception as exc:
+            if not row.get("api_error"):
+                row["api_error"] = "party:%r" % (exc,)
 
     def robot_fd_count(self):
         try:
@@ -2551,6 +2738,7 @@ echo "KEYS_RESTORED"
 
     def collect_logs(self, label):
         path = os.path.join(self.out_dir, "collected_logs.log")
+        hot_ports = self.port_regex(("RobotAPI", "Web", "Game", "Monitor", "Point", "Auction", "Relay", "PartyRoute0")) or "8111|8112|10011|30303|30603|30803|7200|5063"
         command = """
 echo '===== %s %s uptime ====='
 date
@@ -2560,9 +2748,9 @@ ps -eo pid,ppid,pcpu,pmem,nlwp,comm,args --sort=-pcpu | head -n 25
 echo '===== tcp states ====='
 ss -ant | awk 'NR>1 {c[$1]++} END {for (k in c) print k,c[k]}'
 echo '===== tcp hot ports ====='
-ss -ant | grep -E ':(8111|8112|10011|30603|30803)' | head -n 120 || true
+ss -ant | grep -E ':(%s)' | head -n 120 || true
 echo '===== fds ====='
-for p in $(pgrep -f '^/root/robot$|^./robot$|df_game_r|df_auction_r|df_point_r' 2>/dev/null); do echo "$p $(ps -p $p -o comm=) fds=$(ls /proc/$p/fd 2>/dev/null | wc -l)"; done
+for p in $(pgrep -f '^/root/robot$|^./robot$|df_game_r|df_auction_r|df_point_r|df_relay_r' 2>/dev/null); do echo "$p $(ps -p $p -o comm=) fds=$(ls /proc/$p/fd 2>/dev/null | wc -l)"; done
 echo '===== robot log filtered ====='
 tail -n %s /root/config/log_robot 2>/dev/null | grep -a -E '%s' | tail -n 200 || true
 echo '===== market log filtered ====='
@@ -2579,6 +2767,7 @@ tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth 
 """ % (
             label,
             now_text(),
+            hot_ports,
             self.args.log_tail_lines,
             "|".join(re.escape(k) for k in KEYWORDS),
             self.args.log_tail_lines,
