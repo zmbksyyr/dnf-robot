@@ -6,6 +6,8 @@ type SkillState struct {
 	Job          int    `json:"job"`
 	SkillIndex   int    `json:"skill_index"`
 	State        int    `json:"state"`
+	Level        int    `json:"level,omitempty"`
+	Name         string `json:"name,omitempty"`
 	ScriptPath   string `json:"script_path"`
 	StateData    []byte `json:"state_data,omitempty"`
 	Verified     bool   `json:"verified,omitempty"`

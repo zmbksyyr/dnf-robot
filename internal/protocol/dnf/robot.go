@@ -202,9 +202,7 @@ type RobotVo struct {
 	partySkillNextAt     time.Time
 	partySkillRecoverAt  time.Time
 	partySkillLoaded     bool
-	partySkillExperiment bool
 	partySkillJob        int
-	partySkillCursor     int
 	partySkillCandidates []partySkillCandidate
 
 	GMName [5][100]byte
@@ -1816,18 +1814,13 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	candidate := r.nextPartySkillCandidateUnsafe(now)
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
 		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d data=%x risk=%d experiment=%t path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.stateData, candidate.risk, r.partySkillExperiment, candidate.path, r.partySkillRecoverAt.Sub(now))
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d level=%d name=%s data=%x risk=%d learned=%t path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.level, candidate.name, candidate.stateData, candidate.risk, candidate.learned, candidate.path, r.partySkillRecoverAt.Sub(now))
 	}
 }
 
 func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) partySkillCandidate {
 	if len(r.partySkillCandidates) == 0 {
 		return partySkillCandidate{}
-	}
-	if r.partySkillExperiment {
-		candidate := r.partySkillCandidates[r.partySkillCursor%len(r.partySkillCandidates)]
-		r.partySkillCursor++
-		return candidate
 	}
 	return r.partySkillCandidates[partySkillChoice(r.UID, now, len(r.partySkillCandidates))]
 }
@@ -1876,46 +1869,19 @@ func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
 		r.CID = cid
 	}
 	r.partySkillLoaded = true
-	exp := loadPartySkillExperimentConfig()
 	learned := parsePartyLearnedSkills(raw)
-	states := shared.SkillStatesForJob(job)
+	whitelist, whitelistLoaded := loadPartySkillCatalogStatesForJob(job)
+	pvfStates := shared.SkillStatesForJob(job)
 	r.partySkillJob = job
-	r.partySkillExperiment = exp.Enabled
-	r.partySkillCandidates = r.partySkillCandidates[:0]
-	for _, entry := range states {
-		if entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 || learned[byte(entry.SkillIndex)] == 0 {
-			continue
-		}
-		allowed := entry.Verified
-		if !allowed && exp.Enabled && entry.Experimental && entry.Risk > 0 && entry.Risk <= exp.MaxRisk {
-			allowed = true
-		}
-		if !allowed {
-			continue
-		}
-		r.partySkillCandidates = append(r.partySkillCandidates, partySkillCandidate{skillIndex: byte(entry.SkillIndex), state: byte(entry.State), stateData: append([]byte(nil), entry.StateData...), risk: entry.Risk, path: entry.ScriptPath})
-	}
-	sort.Slice(r.partySkillCandidates, func(i, j int) bool {
-		if r.partySkillCandidates[i].risk != r.partySkillCandidates[j].risk {
-			return r.partySkillCandidates[i].risk < r.partySkillCandidates[j].risk
-		}
-		if r.partySkillCandidates[i].skillIndex != r.partySkillCandidates[j].skillIndex {
-			return r.partySkillCandidates[i].skillIndex < r.partySkillCandidates[j].skillIndex
-		}
-		return r.partySkillCandidates[i].state < r.partySkillCandidates[j].state
-	})
-	if exp.Enabled && exp.MaxCandidates > 0 && len(r.partySkillCandidates) > exp.MaxCandidates {
-		r.partySkillCandidates = r.partySkillCandidates[:exp.MaxCandidates]
-	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d learned=%d candidates=%d experiment=%t max_risk=%d max_candidates=%d\n", r.UID, r.CID, job, len(learned), len(r.partySkillCandidates), exp.Enabled, exp.MaxRisk, exp.MaxCandidates)
+	var stats partySkillCandidateStats
+	r.partySkillCandidates, stats = partySkillCandidatesFromCatalog(job, learned, whitelist, pvfStates)
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d learned=%d whitelist_loaded=%t whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_unlearned=%d skipped_missing_pvf=%d\n", r.UID, r.CID, job, len(learned), whitelistLoaded, len(whitelist), len(pvfStates), stats.PVFMatched, len(r.partySkillCandidates), stats.SkippedUnlearned, stats.SkippedMissingPVF)
 	return true
 }
 
 func (r *RobotVo) resetPartySkillProfileUnsafe() {
 	r.partySkillLoaded = false
-	r.partySkillExperiment = false
 	r.partySkillJob = 0
-	r.partySkillCursor = 0
 	r.partySkillCandidates = nil
 }
 
@@ -3068,37 +3034,140 @@ type partyDungeonFollowPending struct {
 type partySkillCandidate struct {
 	skillIndex byte
 	state      byte
+	level      int
+	name       string
 	stateData  []byte
 	risk       int
 	path       string
+	learned    bool
 }
 
-type partySkillExperimentConfig struct {
-	Enabled       bool `json:"enabled"`
-	MaxRisk       int  `json:"max_risk"`
-	MaxCandidates int  `json:"max_candidates"`
+type partySkillCatalogConfig struct {
+	MaxSkillLevel int                      `json:"max_skill_level"`
+	Skills        []partySkillCatalogEntry `json:"skills"`
 }
 
-func loadPartySkillExperimentConfig() partySkillExperimentConfig {
-	path := os.Getenv("PARTY_SKILL_EXPERIMENT_CONFIG")
+type partySkillCatalogEntry struct {
+	Disabled   bool   `json:"disabled,omitempty"`
+	Job        int    `json:"job"`
+	SkillIndex int    `json:"skill_index"`
+	State      int    `json:"state"`
+	Level      int    `json:"level"`
+	Name       string `json:"name,omitempty"`
+	ScriptPath string `json:"script_path,omitempty"`
+	StateData  []int  `json:"state_data,omitempty"`
+	Risk       int    `json:"risk,omitempty"`
+}
+
+type partySkillCandidateStats struct {
+	PVFMatched        int
+	SkippedUnlearned  int
+	SkippedMissingPVF int
+}
+
+func partySkillCandidatesFromCatalog(job int, learned map[byte]byte, whitelist []shared.SkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
+	pvfIndex := make(map[[3]int]bool, len(pvfStates))
+	for _, entry := range pvfStates {
+		if entry.Job != job || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
+			continue
+		}
+		pvfIndex[[3]int{entry.Job, entry.SkillIndex, entry.State}] = true
+	}
+	candidates := make([]partySkillCandidate, 0, len(whitelist))
+	stats := partySkillCandidateStats{}
+	for _, entry := range whitelist {
+		if entry.Job != job || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
+			continue
+		}
+		if !pvfIndex[[3]int{entry.Job, entry.SkillIndex, entry.State}] {
+			stats.SkippedMissingPVF++
+			continue
+		}
+		stats.PVFMatched++
+		known := learned[byte(entry.SkillIndex)] != 0
+		if !known {
+			stats.SkippedUnlearned++
+			continue
+		}
+		candidates = append(candidates, partySkillCandidate{
+			skillIndex: byte(entry.SkillIndex),
+			state:      byte(entry.State),
+			level:      entry.Level,
+			name:       entry.Name,
+			stateData:  append([]byte(nil), entry.StateData...),
+			risk:       entry.Risk,
+			path:       entry.ScriptPath,
+			learned:    true,
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].risk != candidates[j].risk {
+			return candidates[i].risk < candidates[j].risk
+		}
+		if candidates[i].skillIndex != candidates[j].skillIndex {
+			return candidates[i].skillIndex < candidates[j].skillIndex
+		}
+		return candidates[i].state < candidates[j].state
+	})
+	return candidates, stats
+}
+
+func loadPartySkillCatalogStatesForJob(job int) ([]shared.SkillState, bool) {
+	path := os.Getenv("PARTY_SKILL_CATALOG_CONFIG")
 	if path == "" {
-		path = filepath.Join("/root/config", "party_skill_experiment.json")
+		path = filepath.Join("/root/config", "party_skill_catalog.json")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return partySkillExperimentConfig{}
+		return nil, false
 	}
-	var cfg partySkillExperimentConfig
-	if err := json.Unmarshal(data, &cfg); err != nil || !cfg.Enabled {
-		return partySkillExperimentConfig{}
+	var cfg partySkillCatalogConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_CATALOG_ERROR] path=%s err=%v\n", path, err)
+		return nil, true
 	}
-	if cfg.MaxRisk <= 0 {
-		cfg.MaxRisk = 2
+	maxLevel := cfg.MaxSkillLevel
+	if maxLevel <= 0 {
+		maxLevel = 70
 	}
-	if cfg.MaxCandidates <= 0 {
-		cfg.MaxCandidates = 5
+	states := make([]shared.SkillState, 0)
+	for _, entry := range cfg.Skills {
+		if entry.Disabled || entry.Job != job || entry.Level <= 0 || entry.Level > maxLevel || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
+			continue
+		}
+		stateData, ok := partySkillStateDataFromInts(entry.StateData)
+		if !ok {
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_CATALOG_SKIP] job=%d skill=%d state=%d reason=bad_state_data\n", entry.Job, entry.SkillIndex, entry.State)
+			continue
+		}
+		states = append(states, shared.SkillState{
+			Job:          entry.Job,
+			SkillIndex:   entry.SkillIndex,
+			State:        entry.State,
+			Level:        entry.Level,
+			Name:         entry.Name,
+			ScriptPath:   entry.ScriptPath,
+			StateData:    stateData,
+			Verified:     true,
+			Experimental: true,
+			Risk:         entry.Risk,
+		})
 	}
-	return cfg
+	return states, true
+}
+
+func partySkillStateDataFromInts(values []int) ([]byte, bool) {
+	if len(values) > 3 {
+		return nil, false
+	}
+	data := make([]byte, 0, len(values)*3)
+	for _, value := range values {
+		if value < 0 || value > 0xffffff {
+			return nil, false
+		}
+		data = append(data, byte(value), byte(value>>8), byte(value>>16))
+	}
+	return data, true
 }
 
 func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {

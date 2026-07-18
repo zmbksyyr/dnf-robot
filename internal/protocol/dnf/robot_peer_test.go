@@ -5,6 +5,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"net"
+	"os"
+	"path/filepath"
+	"robot/internal/shared"
 	"testing"
 	"time"
 )
@@ -351,6 +354,55 @@ func TestBuildPartySkillStateBodyMatchesCapturedShiningCut(t *testing.T) {
 	}
 	if bytes.Equal(body[4:7], []byte{0, 0, 0}) {
 		t.Fatalf("shining cut outer context bytes were zero: %x", body)
+	}
+}
+
+func TestLoadPartySkillCatalogFiltersLevelAndDisabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "party_skill_catalog.json")
+	data := []byte(`{
+  "max_skill_level": 70,
+  "skills": [
+    {"job":6,"skill_index":3,"state":22,"level":5,"name":"ok","state_data":[3],"risk":1},
+    {"job":6,"skill_index":4,"state":23,"level":75,"name":"too_high","state_data":[0],"risk":1},
+    {"job":6,"skill_index":5,"state":24,"level":10,"disabled":true,"state_data":[0],"risk":1},
+    {"job":2,"skill_index":6,"state":25,"level":10,"state_data":[0],"risk":1}
+  ]
+}`)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PARTY_SKILL_CATALOG_CONFIG", path)
+
+	got, ok := loadPartySkillCatalogStatesForJob(6)
+	if !ok {
+		t.Fatal("catalog was not loaded")
+	}
+	if len(got) != 1 || got[0].SkillIndex != 3 || got[0].Level != 5 || got[0].Name != "ok" || !bytes.Equal(got[0].StateData, []byte{3, 0, 0}) {
+		t.Fatalf("filtered catalog = %+v", got)
+	}
+}
+
+func TestPartySkillCandidatesRequireWhitelistPVFAndLearned(t *testing.T) {
+	whitelist := []shared.SkillState{
+		{Job: 6, SkillIndex: 3, State: 22, Level: 5, Name: "ok", StateData: []byte{3, 0, 0}, Risk: 1, ScriptPath: "ok.nut"},
+		{Job: 6, SkillIndex: 4, State: 23, Level: 10, Name: "unlearned", StateData: []byte{0, 0, 0}, Risk: 1},
+		{Job: 6, SkillIndex: 5, State: 24, Level: 10, Name: "missing_pvf", StateData: []byte{0, 0, 0}, Risk: 1},
+		{Job: 2, SkillIndex: 6, State: 25, Level: 10, StateData: []byte{0, 0, 0}, Risk: 1},
+	}
+	pvfStates := []shared.SkillState{
+		{Job: 6, SkillIndex: 3, State: 22},
+		{Job: 6, SkillIndex: 4, State: 23},
+		{Job: 2, SkillIndex: 6, State: 25},
+	}
+	learned := map[byte]byte{3: 1, 5: 1}
+
+	got, stats := partySkillCandidatesFromCatalog(6, learned, whitelist, pvfStates)
+	if len(got) != 1 || got[0].skillIndex != 3 || got[0].state != 22 || !got[0].learned || !bytes.Equal(got[0].stateData, []byte{3, 0, 0}) {
+		t.Fatalf("candidates = %+v", got)
+	}
+	if stats.PVFMatched != 2 || stats.SkippedUnlearned != 1 || stats.SkippedMissingPVF != 1 {
+		t.Fatalf("stats = %+v", stats)
 	}
 }
 
