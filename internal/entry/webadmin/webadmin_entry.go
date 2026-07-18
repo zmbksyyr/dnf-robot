@@ -64,6 +64,8 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/api/call", s.requireAuth(s.handleCall))
 	mux.HandleFunc("/api/game-port", s.requireAuth(s.handleGamePort))
+	mux.HandleFunc("/api/game-endpoint", s.requireAuth(s.handleGameEndpoint))
+	mux.HandleFunc("/api/restart-robot", s.requireAuth(s.handleRestartRobot))
 	mux.HandleFunc("/api/max-user", s.requireAuth(s.handleMaxUser))
 	mux.HandleFunc("/api/server-script", s.requireAuth(s.handleServerScript))
 	mux.HandleFunc("/api/monitor-service", s.requireAuth(s.handleMonitorService))
