@@ -38,13 +38,47 @@ IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/native/na
 	if len(got) != 2 {
 		t.Fatalf("catalog size = %d, want 2: %+v", len(got), got)
 	}
-	want := SkillState{Job: 8, SkillIndex: 1, State: 20, ScriptPath: "sqr/character/atmage/safe/safe.nut"}
+	want := SkillState{Job: 8, SkillIndex: 1, State: 20, ScriptPath: "sqr/character/atmage/safe/safe.nut", StateData: []byte{}, Experimental: true, Risk: 1}
 	if !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("catalog entry = %+v, want %+v", got[0], want)
 	}
 	want = SkillState{Job: 8, SkillIndex: 4, State: 23, ScriptPath: "sqr/character/atmage/native/native.nut"}
 	if !reflect.DeepEqual(got[1], want) {
 		t.Fatalf("catalog entry = %+v, want %+v", got[1], want)
+	}
+}
+
+func TestExtractSkillStateCatalogInfersExperimentalLiteralData(t *testing.T) {
+	archive := &pvfArchive{files: map[string]*pvfFile{
+		"sqr/character/new_mage_load_state.nut": {
+			Name: "sqr/character/new_mage_load_state.nut",
+			Data: []byte(`IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_MAGE, "character/mage/simple/simple.nut", "simple", 44, 7);`),
+		},
+		"sqr/character/mage/simple/simple.nut": {
+			Name: "sqr/character/mage/simple/simple.nut",
+			Data: []byte(`STATE_SIMPLE <- 44;
+SUB_SIMPLE_CAST <- 1;
+function checkExecutableSkill_simple(obj) {
+	obj.sq_IntVectClear();
+	obj.sq_IntVectPush(SUB_SIMPLE_CAST);
+	obj.sq_IntVectPush(2);
+	obj.sq_AddSetStatePacket(STATE_SIMPLE, STATE_PRIORITY_USER, true);
+	return true;
+}
+function onSetState_simple(obj, state, datas, reset) { obj.sq_GetVectorData(datas, 0); }`),
+		},
+	}}
+
+	got := extractSkillStateCatalog(archive)
+	want := []SkillState{{
+		Job: 3, SkillIndex: 7, State: 44,
+		ScriptPath:   "sqr/character/mage/simple/simple.nut",
+		StateData:    []byte{1, 0, 0, 2, 0, 0},
+		Experimental: true,
+		Risk:         1,
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("experimental skill catalog = %+v, want %+v", got, want)
 	}
 }
 

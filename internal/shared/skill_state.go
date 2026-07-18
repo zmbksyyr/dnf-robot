@@ -3,12 +3,14 @@ package shared
 import "sync/atomic"
 
 type SkillState struct {
-	Job        int    `json:"job"`
-	SkillIndex int    `json:"skill_index"`
-	State      int    `json:"state"`
-	ScriptPath string `json:"script_path"`
-	StateData  []byte `json:"state_data,omitempty"`
-	Verified   bool   `json:"verified,omitempty"`
+	Job          int    `json:"job"`
+	SkillIndex   int    `json:"skill_index"`
+	State        int    `json:"state"`
+	ScriptPath   string `json:"script_path"`
+	StateData    []byte `json:"state_data,omitempty"`
+	Verified     bool   `json:"verified,omitempty"`
+	Experimental bool   `json:"experimental,omitempty"`
+	Risk         int    `json:"risk,omitempty"`
 }
 
 var skillStateSnapshot atomic.Value

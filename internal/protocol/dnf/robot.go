@@ -5,16 +5,20 @@ import (
 	"compress/zlib"
 	"database/sql"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"math/bits"
 	"net"
+	"os"
+	"path/filepath"
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	sqlpkg "robot/internal/foundation/sql"
 	"robot/internal/protocol/dnf/crypt"
 	"robot/internal/shared"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -198,7 +202,9 @@ type RobotVo struct {
 	partySkillNextAt     time.Time
 	partySkillRecoverAt  time.Time
 	partySkillLoaded     bool
+	partySkillExperiment bool
 	partySkillJob        int
+	partySkillCursor     int
 	partySkillCandidates []partySkillCandidate
 
 	GMName [5][100]byte
@@ -1807,11 +1813,23 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	if peer.uniqueID == 0 || peer.outerIP == nil || peer.port == 0 {
 		return
 	}
-	candidate := r.partySkillCandidates[partySkillChoice(r.UID, now, len(r.partySkillCandidates))]
+	candidate := r.nextPartySkillCandidateUnsafe(now)
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
 		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d data=%x recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.stateData, r.partySkillRecoverAt.Sub(now))
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d data=%x risk=%d experiment=%t path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.stateData, candidate.risk, r.partySkillExperiment, candidate.path, r.partySkillRecoverAt.Sub(now))
 	}
+}
+
+func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) partySkillCandidate {
+	if len(r.partySkillCandidates) == 0 {
+		return partySkillCandidate{}
+	}
+	if r.partySkillExperiment {
+		candidate := r.partySkillCandidates[r.partySkillCursor%len(r.partySkillCandidates)]
+		r.partySkillCursor++
+		return candidate
+	}
+	return r.partySkillCandidates[partySkillChoice(r.UID, now, len(r.partySkillCandidates))]
 }
 
 func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string) bool {
@@ -1858,23 +1876,46 @@ func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
 		r.CID = cid
 	}
 	r.partySkillLoaded = true
+	exp := loadPartySkillExperimentConfig()
 	learned := parsePartyLearnedSkills(raw)
 	states := shared.SkillStatesForJob(job)
 	r.partySkillJob = job
+	r.partySkillExperiment = exp.Enabled
 	r.partySkillCandidates = r.partySkillCandidates[:0]
 	for _, entry := range states {
-		if !entry.Verified || len(entry.StateData) == 0 || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 || learned[byte(entry.SkillIndex)] == 0 {
+		if entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 || learned[byte(entry.SkillIndex)] == 0 {
 			continue
 		}
-		r.partySkillCandidates = append(r.partySkillCandidates, partySkillCandidate{skillIndex: byte(entry.SkillIndex), state: byte(entry.State), stateData: append([]byte(nil), entry.StateData...)})
+		allowed := entry.Verified
+		if !allowed && exp.Enabled && entry.Experimental && entry.Risk > 0 && entry.Risk <= exp.MaxRisk {
+			allowed = true
+		}
+		if !allowed {
+			continue
+		}
+		r.partySkillCandidates = append(r.partySkillCandidates, partySkillCandidate{skillIndex: byte(entry.SkillIndex), state: byte(entry.State), stateData: append([]byte(nil), entry.StateData...), risk: entry.Risk, path: entry.ScriptPath})
 	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d learned=%d candidates=%d\n", r.UID, r.CID, job, len(learned), len(r.partySkillCandidates))
+	sort.Slice(r.partySkillCandidates, func(i, j int) bool {
+		if r.partySkillCandidates[i].risk != r.partySkillCandidates[j].risk {
+			return r.partySkillCandidates[i].risk < r.partySkillCandidates[j].risk
+		}
+		if r.partySkillCandidates[i].skillIndex != r.partySkillCandidates[j].skillIndex {
+			return r.partySkillCandidates[i].skillIndex < r.partySkillCandidates[j].skillIndex
+		}
+		return r.partySkillCandidates[i].state < r.partySkillCandidates[j].state
+	})
+	if exp.Enabled && exp.MaxCandidates > 0 && len(r.partySkillCandidates) > exp.MaxCandidates {
+		r.partySkillCandidates = r.partySkillCandidates[:exp.MaxCandidates]
+	}
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d learned=%d candidates=%d experiment=%t max_risk=%d max_candidates=%d\n", r.UID, r.CID, job, len(learned), len(r.partySkillCandidates), exp.Enabled, exp.MaxRisk, exp.MaxCandidates)
 	return true
 }
 
 func (r *RobotVo) resetPartySkillProfileUnsafe() {
 	r.partySkillLoaded = false
+	r.partySkillExperiment = false
 	r.partySkillJob = 0
+	r.partySkillCursor = 0
 	r.partySkillCandidates = nil
 }
 
@@ -3028,6 +3069,36 @@ type partySkillCandidate struct {
 	skillIndex byte
 	state      byte
 	stateData  []byte
+	risk       int
+	path       string
+}
+
+type partySkillExperimentConfig struct {
+	Enabled       bool `json:"enabled"`
+	MaxRisk       int  `json:"max_risk"`
+	MaxCandidates int  `json:"max_candidates"`
+}
+
+func loadPartySkillExperimentConfig() partySkillExperimentConfig {
+	path := os.Getenv("PARTY_SKILL_EXPERIMENT_CONFIG")
+	if path == "" {
+		path = filepath.Join("/root/config", "party_skill_experiment.json")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return partySkillExperimentConfig{}
+	}
+	var cfg partySkillExperimentConfig
+	if err := json.Unmarshal(data, &cfg); err != nil || !cfg.Enabled {
+		return partySkillExperimentConfig{}
+	}
+	if cfg.MaxRisk <= 0 {
+		cfg.MaxRisk = 2
+	}
+	if cfg.MaxCandidates <= 0 {
+		cfg.MaxCandidates = 5
+	}
+	return cfg
 }
 
 func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
