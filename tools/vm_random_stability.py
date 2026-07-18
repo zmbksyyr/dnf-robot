@@ -34,6 +34,15 @@ import sys
 import time
 
 try:
+    import cookielib
+    import urllib
+    import urllib2
+except ImportError:
+    import http.cookiejar as cookielib
+    import urllib.parse as urllib
+    import urllib.request as urllib2
+
+try:
     text_type = unicode
 except NameError:
     text_type = str
@@ -376,6 +385,8 @@ class StabilityRun(object):
         self.market_zero_last_seen = 0
         self.last_invariant_failure = {}
         self.ports = self.read_ports()
+        self.web_password = self.read_web_password()
+        self.web_opener = None
         self.api = RobotAPI(args.robot_host, self.port("RobotAPI"), args.api_timeout)
 
     def read_ports(self):
@@ -425,6 +436,64 @@ class StabilityRun(object):
             if port > 0:
                 values.append(str(port))
         return "|".join(values)
+
+    def read_web_password(self):
+        path = "/root/config/config.ini"
+        password = "twadmin"
+        try:
+            section = ""
+            for line in io.open(path, "r", encoding="utf-8"):
+                text = safe_text(line).strip()
+                if not text or text.startswith("#") or text.startswith(";"):
+                    continue
+                if text.startswith("[") and "]" in text:
+                    section = text[1:text.index("]")].strip()
+                    continue
+                if section == "Web" and "=" in text:
+                    key, value = text.split("=", 1)
+                    if key.strip() == "WebPassword" and value.strip():
+                        password = value.strip()
+        except Exception as exc:
+            self.log("read_web_password fallback path=%s err=%r" % (path, exc))
+        return password
+
+    def web_base_url(self):
+        return "http://127.0.0.1:%s" % self.port_text("Web")
+
+    def ensure_web_login(self):
+        if self.web_opener is not None:
+            return self.web_opener
+        jar = cookielib.CookieJar()
+        opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(jar))
+        data = urllib.urlencode({"password": self.web_password}).encode("utf-8")
+        req = urllib2.Request(self.web_base_url() + "/login", data=data)
+        try:
+            opener.open(req, timeout=self.args.api_timeout).read()
+        except Exception as exc:
+            raise RuntimeError("web login failed: %r" % (exc,))
+        self.web_opener = opener
+        return opener
+
+    def web_json(self, path, payload=None):
+        opener = self.ensure_web_login()
+        url = self.web_base_url() + path
+        data = None
+        headers = {}
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = urllib2.Request(url, data=data, headers=headers)
+        try:
+            raw = opener.open(req, timeout=self.args.api_timeout).read()
+        except Exception as exc:
+            self.web_opener = None
+            raise RuntimeError("web request failed path=%s err=%r" % (path, exc))
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        try:
+            return json.loads(raw)
+        except Exception as exc:
+            raise RuntimeError("web json failed path=%s err=%r raw=%s" % (path, exc, raw[:1000]))
 
     def log(self, message):
         line = u"[%s] %s" % (now_text(), safe_text(message))
@@ -964,6 +1033,7 @@ echo RESTORED
             {"name": "robot_action_storm", "fn": self.robot_action_storm},
             {"name": "announcement_check", "fn": self.announcement_check},
             {"name": "party_relay_health", "fn": self.party_relay_health},
+            {"name": "party_compat_supervisor", "fn": self.party_compat_supervisor},
             {"name": "party_observer_smoke", "fn": self.party_observer_smoke},
             {"name": "party_skill_observer", "fn": self.party_skill_observer},
             {"name": "market_fault", "fn": self.market_fault},
@@ -1149,6 +1219,70 @@ echo RESTORED
             raise RuntimeError("relay port not ready: %s" % err)
         self.sample_with_event("party_relay_health")
         self.log("party_relay_health done")
+
+    def party_compat_supervisor(self):
+        self.log("party_compat_supervisor begin")
+        account_start = 17000000
+        account_end = 17001000
+        before = self.web_json("/api/party-compat")
+        self.log("party_compat_supervisor before=%s" % json_text(before, 1400))
+        off = self.web_json("/api/party-compat", {"action": "off", "account_start": account_start, "account_end": account_end})
+        self.log("party_compat_supervisor off=%s" % json_text(off, 1400))
+        time.sleep(3)
+        off_status = self.web_json("/api/party-compat")
+        self.log("party_compat_supervisor off_status=%s" % json_text(off_status, 1400))
+        off_result = off_status.get("result") or {}
+        if off_result.get("desired_enabled"):
+            self.record_failure("party_compat_off_desired", "party compat off did not save desired_enabled=false")
+
+        on = self.web_json("/api/party-compat", {"action": "on", "account_start": account_start, "account_end": account_end})
+        self.log("party_compat_supervisor on=%s" % json_text(on, 1400))
+        if not self.wait_party_compat_desired(True, "party_compat_on", 45, 5):
+            self.record_failure("party_compat_on_desired", "party compat on did not save desired_enabled=true")
+
+        game_ports = self.port_regex(("Game", "Monitor", "Point", "Auction", "Relay"))
+        self.sample_with_event("party_compat_restart_game_before")
+        self.shell("cd /root && (./stop >/dev/null 2>&1 || true); sleep 10; (./run >/dev/null 2>&1 || true); sleep 25; ss -lntp | grep -E ':(%s)' || true; pgrep -af 'df_game_r|df_monitor_r|df_auction_r|df_point_r|df_relay_r' || true" % game_ports, 240)
+        if not self.wait_party_compat_actual_on("party_compat_after_game_restart", 120, 5):
+            self.record_failure("party_compat_supervisor_repatch", "party compat supervisor did not repatch after game restart")
+        self.sample_with_event("party_compat_supervisor_done")
+        self.log("party_compat_supervisor done")
+
+    def wait_party_compat_desired(self, enabled, event, timeout_sec, interval_sec):
+        deadline = time.time() + timeout_sec
+        last = {}
+        while time.time() < deadline:
+            try:
+                status = self.web_json("/api/party-compat")
+            except Exception as exc:
+                self.log("wait_party_compat_desired event=%s err=%r" % (event, exc))
+                time.sleep(interval_sec)
+                continue
+            last = status.get("result") or {}
+            if bool(last.get("desired_enabled")) == bool(enabled):
+                self.log("wait_party_compat_desired ready event=%s status=%s" % (event, json_text(last, 1200)))
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_party_compat_desired timeout event=%s status=%s" % (event, json_text(last, 1400)))
+        return False
+
+    def wait_party_compat_actual_on(self, event, timeout_sec, interval_sec):
+        deadline = time.time() + timeout_sec
+        last = {}
+        while time.time() < deadline:
+            try:
+                status = self.web_json("/api/party-compat")
+            except Exception as exc:
+                self.log("wait_party_compat_actual_on event=%s err=%r" % (event, exc))
+                time.sleep(interval_sec)
+                continue
+            last = status.get("result") or {}
+            if last.get("desired_enabled") and last.get("enabled") and last.get("state") == "on":
+                self.log("wait_party_compat_actual_on ready event=%s status=%s" % (event, json_text(last, 1200)))
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_party_compat_actual_on timeout event=%s status=%s" % (event, json_text(last, 1400)))
+        return False
 
     def party_observer_smoke(self):
         self.log("party_observer_smoke begin")

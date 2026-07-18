@@ -29,12 +29,17 @@ import (
 
 // ---- webadmin.go ----
 type Server struct {
-	cfg           *config.SysConfig
-	robotAddr     string
-	webAddr       string
-	tokenMu       lockhub.RWLocker
-	tokens        map[string]time.Time
-	partyCompatMu lockhub.Locker
+	cfg                     *config.SysConfig
+	robotAddr               string
+	webAddr                 string
+	tokenMu                 lockhub.RWLocker
+	tokens                  map[string]time.Time
+	partyCompatMu           lockhub.Locker
+	partyCompatWake         chan struct{}
+	partyCompatFailures     int
+	partyCompatFirstFailure time.Time
+	partyCompatNextRetry    time.Time
+	partyCompatLastError    string
 }
 
 type callRequest struct {
@@ -50,14 +55,17 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 		webAddr = fmt.Sprintf("0.0.0.0:%d", cfg.WebPort)
 	}
 	return &Server{
-		cfg:       cfg,
-		robotAddr: robotAddr,
-		webAddr:   webAddr,
-		tokens:    make(map[string]time.Time),
+		cfg:             cfg,
+		robotAddr:       robotAddr,
+		webAddr:         webAddr,
+		tokens:          make(map[string]time.Time),
+		partyCompatWake: make(chan struct{}, 1),
 	}
 }
 
 func (s *Server) ListenAndServe() error {
+	stopPartyCompat := s.startPartyCompatSupervisor()
+	defer stopPartyCompat()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/login", s.handleLogin)

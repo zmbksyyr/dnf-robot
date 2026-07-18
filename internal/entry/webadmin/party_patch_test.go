@@ -5,6 +5,9 @@ import (
 	"encoding/hex"
 	"os"
 	"testing"
+	"time"
+
+	"robot/internal/foundation/config"
 )
 
 func testPartyCompatLayout() partyCompatLayout {
@@ -14,6 +17,55 @@ func testPartyCompatLayout() partyCompatLayout {
 func TestPartyCompatDefaultRangeCoversFirstThousandRobotAccounts(t *testing.T) {
 	if defaultPartyCompatAccountStart != 17000000 || defaultPartyCompatAccountEnd != 17001000 {
 		t.Fatalf("default range = %d..%d", defaultPartyCompatAccountStart, defaultPartyCompatAccountEnd)
+	}
+}
+
+func TestPartyCompatConfigDefaultsDesiredOn(t *testing.T) {
+	dir := t.TempDir()
+	s := New(&config.SysConfig{ConfigDir: dir}, "", "")
+	cfg, err := s.loadPartyCompatConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Enabled || cfg.AccountStart != defaultPartyCompatAccountStart || cfg.AccountEnd != defaultPartyCompatAccountEnd {
+		t.Fatalf("default config = %+v", cfg)
+	}
+
+	if err := os.WriteFile(s.partyCompatConfigPath(), []byte(`{"account_start":17000000,"account_end":17001000}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = s.loadPartyCompatConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Enabled {
+		t.Fatalf("legacy config without enabled should default on: %+v", cfg)
+	}
+}
+
+func TestPartyCompatRetryBackoffAndAutoOffThreshold(t *testing.T) {
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, 60 * time.Second, 60 * time.Second}
+	for i, delay := range want {
+		if got := partyCompatRetryDelay(i + 1); got != delay {
+			t.Fatalf("delay[%d] = %s, want %s", i, got, delay)
+		}
+	}
+
+	s := New(&config.SysConfig{ConfigDir: t.TempDir()}, "", "")
+	now := time.Now()
+	s.partyCompatFailures = partyCompatDisableAfterFailures - 1
+	s.partyCompatFirstFailure = now.Add(-partyCompatDisableAfter)
+	if s.partyCompatShouldDisableLocked(now) {
+		t.Fatal("disabled before failure threshold")
+	}
+	s.partyCompatFailures = partyCompatDisableAfterFailures
+	s.partyCompatFirstFailure = now.Add(-partyCompatDisableAfter + time.Second)
+	if s.partyCompatShouldDisableLocked(now) {
+		t.Fatal("disabled before age threshold")
+	}
+	s.partyCompatFirstFailure = now.Add(-partyCompatDisableAfter)
+	if !s.partyCompatShouldDisableLocked(now) {
+		t.Fatal("did not disable after count and age thresholds")
 	}
 }
 
