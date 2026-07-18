@@ -196,6 +196,7 @@ type RobotVo struct {
 	partyDungeonLastAt   time.Time
 	partyDungeonFlags    byte
 	partySkillNextAt     time.Time
+	partySkillRecoverAt  time.Time
 	partySkillLoaded     bool
 	partySkillJob        int
 	partySkillCandidates []partySkillCandidate
@@ -1782,11 +1783,17 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 
 func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time) {
 	if conn == nil || r.partyDungeonLastAt.IsZero() || now.Sub(r.partyDungeonLastAt) > 3*time.Second {
-		if !r.partySkillNextAt.IsZero() {
-			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_EXPIRED] uid=%d idle=%s due_in=%s\n", r.UID, now.Sub(r.partyDungeonLastAt), r.partySkillNextAt.Sub(now))
+		if !r.partySkillNextAt.IsZero() || !r.partySkillRecoverAt.IsZero() {
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_EXPIRED] uid=%d idle=%s due_in=%s recover_in=%s\n", r.UID, now.Sub(r.partyDungeonLastAt), r.partySkillNextAt.Sub(now), r.partySkillRecoverAt.Sub(now))
 		}
 		r.partySkillNextAt = time.Time{}
+		r.partySkillRecoverAt = time.Time{}
 		return
+	}
+	if !r.partySkillRecoverAt.IsZero() && !now.Before(r.partySkillRecoverAt) {
+		if r.sendPartySkillStateUnsafe(conn, now, 0, nil, "RECOVER") {
+			r.partySkillRecoverAt = time.Time{}
+		}
 	}
 	if r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
 		return
@@ -1801,18 +1808,30 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		return
 	}
 	candidate := r.partySkillCandidates[partySkillChoice(r.UID, now, len(r.partySkillCandidates))]
-	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, candidate.state, candidate.stateData, partySkillToken(r.UID, now))
+	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
+		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d data=%x recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.stateData, r.partySkillRecoverAt.Sub(now))
+	}
+}
+
+func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string) bool {
+	peer := r.partyPeerForSlotUnsafe(0)
+	if peer.uniqueID == 0 || peer.outerIP == nil || peer.port == 0 {
+		return false
+	}
+	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
 	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, true)
 	if !ok {
-		return
+		return false
 	}
 	payload := buildPartyReliablePacket(sequence, r.partySelfPeer.slot, r.partyDungeonFlags, [][]byte{body})
 	remote := &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}
 	if _, err := conn.WriteToUDP(payload, remote); err != nil {
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_ERROR] uid=%d job=%d skill=%d state=%d data=%x remote=%s err=%v\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.stateData, remote.String(), err)
-		return
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d state=%d data=%x remote=%s err=%v\n", reason, r.UID, state, stateData, remote.String(), err)
+		return false
 	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d data=%x sequence=%d remote=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.stateData, sequence, remote.String())
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s] uid=%d state=%d data=%x sequence=%d remote=%s\n", reason, r.UID, state, stateData, sequence, remote.String())
+	return true
 }
 
 func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
@@ -2235,6 +2254,7 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
 	r.partySkillNextAt = time.Time{}
+	r.partySkillRecoverAt = time.Time{}
 }
 
 func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
@@ -3116,6 +3136,7 @@ const partyDungeonEnvelopeMinBodySize = 26
 const partyDungeonEnvelopePayloadOffset = 22
 
 const partySkillStateBodyBaseSize = 31
+const partySkillRecoverDelay = 900 * time.Millisecond
 
 var partyDungeonEnvelopeChecksumOffsets = [...]int{10, 18}
 

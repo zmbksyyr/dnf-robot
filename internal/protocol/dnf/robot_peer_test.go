@@ -397,12 +397,31 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	if binary.LittleEndian.Uint16(body[partyDungeonEnvelopePayloadOffset+2:]) != 0x2f3e || body[partyDungeonEnvelopePayloadOffset+4] != 22 || !bytes.Equal(body[partyDungeonEnvelopePayloadOffset+7:partyDungeonEnvelopePayloadOffset+10], []byte{0x03, 0x00, 0x00}) {
 		t.Fatalf("skill state identity = %x", body)
 	}
+	if vo.partySkillRecoverAt.Sub(now) != partySkillRecoverDelay {
+		t.Fatalf("recover delay = %s", vo.partySkillRecoverAt.Sub(now))
+	}
+	vo.flushPartyDungeonSkillUnsafe(sender, now.Add(partySkillRecoverDelay))
+	n, _, err = receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet = buf[:n]
+	if vo.partyTQOSReliableSeq[0][1] != 2 || binary.LittleEndian.Uint16(packet[9:11]) != partySkillStateBodyBaseSize {
+		t.Fatalf("recover sequence=%d packet=%x", vo.partyTQOSReliableSeq[0][1], packet)
+	}
+	body = packet[11:]
+	if binary.LittleEndian.Uint16(body[partyDungeonEnvelopePayloadOffset+2:]) != 0x2f3e || body[partyDungeonEnvelopePayloadOffset+4] != 0 || binary.LittleEndian.Uint16(body[partyDungeonEnvelopePayloadOffset+5:]) != 0 {
+		t.Fatalf("recover state identity = %x", body)
+	}
+	if !vo.partySkillRecoverAt.IsZero() {
+		t.Fatalf("recover timer survived send: %s", vo.partySkillRecoverAt)
+	}
 	if vo.partySkillNextAt.Sub(now) < 4*time.Second || vo.partySkillNextAt.Sub(now) > 9*time.Second {
 		t.Fatalf("next skill delay = %s", vo.partySkillNextAt.Sub(now))
 	}
 	vo.resetPartyTQOSTransportUnsafe()
-	if !vo.partyDungeonLastAt.IsZero() || !vo.partySkillNextAt.IsZero() {
-		t.Fatalf("dungeon skill state survived reset: last=%s next=%s", vo.partyDungeonLastAt, vo.partySkillNextAt)
+	if !vo.partyDungeonLastAt.IsZero() || !vo.partySkillNextAt.IsZero() || !vo.partySkillRecoverAt.IsZero() {
+		t.Fatalf("dungeon skill state survived reset: last=%s next=%s recover=%s", vo.partyDungeonLastAt, vo.partySkillNextAt, vo.partySkillRecoverAt)
 	}
 }
 
