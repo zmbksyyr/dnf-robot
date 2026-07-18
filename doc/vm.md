@@ -35,8 +35,8 @@ Read this before any VM, deploy, or debug task.
 - main config: `/root/config/config.ini`
 - robot config: `/root/config/robot_config.ini`
 - main log: `/root/config/log_robot`
-- web/start log: `/root/robot_stdout.log`
-- startup error log: `/root/robot_start_error.log` (truncated on each start)
+- web/start log: `/root/config/robot_stdout.log`
+- startup error log: `/root/config/robot_start_error.log` (truncated on each start)
 - market log: `/root/config/market_log.jsonl`
 - start game services: `/root/run`
 - stop game services: `/root/stop`
@@ -48,10 +48,11 @@ Read this before any VM, deploy, or debug task.
 Use the bounded stdout sink so `robot_stdout.log` follows the configured log limits:
 
 ```sh
-nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/robot_stdout.log' >/dev/null 2>/root/robot_start_error.log &
+mkdir -p /root/config
+nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/config/robot_stdout.log' >/dev/null 2>/root/config/robot_start_error.log &
 ```
 
-Do not start with a direct `> /root/robot_stdout.log` redirect; that bypasses rotation.
+Do not start with a direct `> /root/config/robot_stdout.log` redirect; that bypasses rotation.
 
 The external security service uses `/home/neople/secsvr/zergsvr/cfg/framework.xml` (GBK). Keep `log_div_type_` and `bill_div_type_` at `101` (size based), with `max_*_file_size_ = 104857600` and `max_*_file_num_ = 5`; `205` is daily splitting and does not enforce the size limit.
 

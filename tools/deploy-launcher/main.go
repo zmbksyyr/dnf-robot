@@ -14,7 +14,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const robotStartCommand = "nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/robot_stdout.log' >/dev/null 2>/root/robot_start_error.log &"
+const robotStartCommand = "mkdir -p /root/config; nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/config/robot_stdout.log' >/dev/null 2>/root/config/robot_start_error.log &"
 
 type DeployWindow struct {
 	*walk.MainWindow
@@ -151,16 +151,16 @@ func (dw *DeployWindow) doRestart() error {
 }
 
 func (dw *DeployWindow) killRemoteRobot(client *ssh.Client) {
-	runCmd(client, "pkill -TERM -f '^/root/robot$' 2>/dev/null; pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null; pkill -TERM -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null; true")
+	runCmd(client, "pkill -TERM -f '^/root/robot$' 2>/dev/null; pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null; pkill -TERM -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null; true")
 	time.Sleep(2 * time.Second)
 
-	check, _ := runCmdOutput(client, "pgrep -f '^/root/robot$|^/root/robot --web-admin|^/root/robot --bounded-log-sink /root/robot_stdout.log' || true")
+	check, _ := runCmdOutput(client, "pgrep -f '^/root/robot$|^/root/robot --web-admin|^/root/robot --bounded-log-sink .*/robot_stdout.log' || true")
 	check = strings.TrimSpace(check)
 	if check != "" {
 		dw.appendLog(fmt.Sprintf("仍有 robot 残留 PID: %s，逐个强杀 ...", check))
 		runCmd(client, fmt.Sprintf("kill -9 %s 2>/dev/null; true", strings.ReplaceAll(check, "\n", " ")))
 		time.Sleep(2 * time.Second)
-		check2, _ := runCmdOutput(client, "pgrep -f '^/root/robot$|^/root/robot --web-admin|^/root/robot --bounded-log-sink /root/robot_stdout.log' || true")
+		check2, _ := runCmdOutput(client, "pgrep -f '^/root/robot$|^/root/robot --web-admin|^/root/robot --bounded-log-sink .*/robot_stdout.log' || true")
 		check2 = strings.TrimSpace(check2)
 		if check2 != "" {
 			dw.appendLog(fmt.Sprintf("警告: robot 残留 PID %s，继续", check2))
@@ -250,7 +250,7 @@ func verifyRemoteRobot(client *ssh.Client) (string, error) {
 		if robotPID == "" {
 			lastReason = "主进程未运行"
 		} else {
-			sinkPID, _ := runCmdOutput(client, "pgrep -f '^/root/robot --bounded-log-sink /root/robot_stdout.log( |$)' | head -1 || true")
+			sinkPID, _ := runCmdOutput(client, "pgrep -f '^/root/robot --bounded-log-sink /root/config/robot_stdout.log( |$)' | head -1 || true")
 			if strings.TrimSpace(sinkPID) == "" {
 				lastReason = "stdout 日志进程未运行"
 			} else {
@@ -263,7 +263,7 @@ func verifyRemoteRobot(client *ssh.Client) (string, error) {
 		}
 		time.Sleep(time.Second)
 	}
-	return "", fmt.Errorf("robot 启动校验失败: %s，请检查 /root/robot_start_error.log", lastReason)
+	return "", fmt.Errorf("robot 启动校验失败: %s，请检查 /root/config/robot_start_error.log", lastReason)
 }
 
 func (dw *DeployWindow) runGame() {

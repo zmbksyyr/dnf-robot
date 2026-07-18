@@ -1780,12 +1780,12 @@ echo RESTORED
 pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -TERM -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
 sleep 5
 left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -KILL -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
+pkill -KILL -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
 mkdir -p /root/config
 find /root/config -mindepth 1 -maxdepth 1 \
   ! -name 'log_robot*' \
@@ -1806,12 +1806,12 @@ printf '{broken config dir' > /root/config/market_config.json
 pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -TERM -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
 sleep 5
 left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -KILL -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
+pkill -KILL -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
 mkdir -p /root/config
 find /root/config -mindepth 1 -maxdepth 1 \
   ! -name 'log_robot*' \
@@ -2309,13 +2309,14 @@ ls -l "$OUT" %s
 pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -TERM -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
 sleep 8
 left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -KILL -f '^/root/robot --bounded-log-sink /root/robot_stdout.log' 2>/dev/null || true
-nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/robot_stdout.log' >/dev/null 2>/root/robot_start_error.log &
+pkill -KILL -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
+mkdir -p /root/config
+nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/config/robot_stdout.log' >/dev/null 2>/root/config/robot_start_error.log &
 sleep 12
 pgrep -af '/root/robot|df_game_r|df_monitor_r|df_auction_r|df_point_r|df_relay_r' || true
 ss -lntp | grep -E ':(%s)' || true
@@ -2480,7 +2481,7 @@ echo "KEYS_RESTORED"
 
     def keyword_hits(self):
         counts = dict((key, 0) for key in KEYWORDS)
-        for path in ("/root/config/log_robot", "/root/robot_stdout.log"):
+        for path in ("/root/config/log_robot", "/root/config/robot_stdout.log"):
             try:
                 out = subprocess.check_output(["tail", "-n", str(self.args.log_tail_lines), path])
             except Exception:
@@ -2763,7 +2764,7 @@ mysql -ugame -puu5!^%%jg -e "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTIN
 echo '===== market files ====='
 ls -l /root/config/market_config.json /root/config/pvf_*catalog.json /root/config/pvf_iteminfo.dat /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat 2>/dev/null || true
 echo '===== web stdout filtered ====='
-tail -n %s /root/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth rejected|web admin exited' | tail -n 120 || true
+tail -n %s /root/config/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth rejected|web admin exited' | tail -n 120 || true
 """ % (
             label,
             now_text(),
