@@ -712,13 +712,14 @@ func skillCatalogCheck(path string, whitelist bool) diagnosticsCheck {
 	if err != nil {
 		return diagnosticsCheck{Name: filepath.Base(path), Status: diagError, Message: err.Error(), Expected: path}
 	}
-	var entries []struct {
-		Job        int   `json:"job"`
-		SkillIndex int   `json:"skill_index"`
-		State      int   `json:"state"`
-		Level      int   `json:"level"`
-		StateData  []int `json:"state_data"`
+	type skillCatalogSummaryEntry struct {
+		Job        int
+		SkillIndex int
+		State      int
+		Level      int
+		StateData  []int
 	}
+	entries := []skillCatalogSummaryEntry{}
 	if whitelist {
 		var cfg struct {
 			MaxSkillLevel int `json:"max_skill_level"`
@@ -734,10 +735,26 @@ func skillCatalogCheck(path string, whitelist bool) diagnosticsCheck {
 			return diagnosticsCheck{Name: filepath.Base(path), Status: diagError, Message: err.Error(), Expected: path}
 		}
 		for _, s := range cfg.Skills {
-			entries = append(entries, s)
+			entries = append(entries, skillCatalogSummaryEntry{Job: s.Job, SkillIndex: s.SkillIndex, State: s.State, Level: s.Level, StateData: s.StateData})
 		}
-	} else if err := json.Unmarshal(data, &entries); err != nil {
-		return diagnosticsCheck{Name: filepath.Base(path), Status: diagError, Message: err.Error(), Expected: path}
+	} else {
+		var pvfEntries []struct {
+			Job        int    `json:"job"`
+			SkillIndex int    `json:"skill_index"`
+			State      int    `json:"state"`
+			Level      int    `json:"level"`
+			StateData  []byte `json:"state_data"`
+		}
+		if err := json.Unmarshal(data, &pvfEntries); err != nil {
+			return diagnosticsCheck{Name: filepath.Base(path), Status: diagError, Message: err.Error(), Expected: path}
+		}
+		for _, s := range pvfEntries {
+			stateData := make([]int, 0, len(s.StateData))
+			for _, b := range s.StateData {
+				stateData = append(stateData, int(b))
+			}
+			entries = append(entries, skillCatalogSummaryEntry{Job: s.Job, SkillIndex: s.SkillIndex, State: s.State, Level: s.Level, StateData: stateData})
+		}
 	}
 	byJob := map[int]int{}
 	over70 := 0

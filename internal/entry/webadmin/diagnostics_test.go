@@ -56,3 +56,15 @@ func TestSkillCatalogCheckReportsWhitelistRisks(t *testing.T) {
 		t.Fatalf("status = %s, want warn", check.Status)
 	}
 }
+
+func TestSkillCatalogCheckAcceptsPVFStateDataBase64(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pvf_skill_state_catalog.json")
+	raw := `[{"job":1,"skill_index":2,"state":3,"level":70,"state_data":"AQID"}]`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+	check := skillCatalogCheck(path, false)
+	if check.Status != diagOK {
+		t.Fatalf("status = %s message=%s, want ok", check.Status, check.Message)
+	}
+}
