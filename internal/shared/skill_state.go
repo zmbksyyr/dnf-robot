@@ -7,6 +7,8 @@ type SkillState struct {
 	SkillIndex int    `json:"skill_index"`
 	State      int    `json:"state"`
 	ScriptPath string `json:"script_path"`
+	StateData  []byte `json:"state_data,omitempty"`
+	Verified   bool   `json:"verified,omitempty"`
 }
 
 var skillStateSnapshot atomic.Value
@@ -16,7 +18,7 @@ func init() {
 }
 
 func SetSkillStates(entries []SkillState) {
-	skillStateSnapshot.Store(append([]SkillState(nil), entries...))
+	skillStateSnapshot.Store(cloneSkillStates(entries))
 }
 
 func SkillStatesForJob(job int) []SkillState {
@@ -24,8 +26,17 @@ func SkillStatesForJob(job int) []SkillState {
 	out := make([]SkillState, 0)
 	for _, entry := range entries {
 		if entry.Job == job {
+			entry.StateData = append([]byte(nil), entry.StateData...)
 			out = append(out, entry)
 		}
+	}
+	return out
+}
+
+func cloneSkillStates(entries []SkillState) []SkillState {
+	out := append([]SkillState(nil), entries...)
+	for i := range out {
+		out[i].StateData = append([]byte(nil), out[i].StateData...)
 	}
 	return out
 }

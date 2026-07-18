@@ -1,6 +1,9 @@
 package pvf
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestExtractSkillStateCatalogKeepsOnlyEmptyDataStates(t *testing.T) {
 	archive := &pvfArchive{files: map[string]*pvfFile{
@@ -36,12 +39,35 @@ IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/native/na
 		t.Fatalf("catalog size = %d, want 2: %+v", len(got), got)
 	}
 	want := SkillState{Job: 8, SkillIndex: 1, State: 20, ScriptPath: "sqr/character/atmage/safe/safe.nut"}
-	if got[0] != want {
+	if !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("catalog entry = %+v, want %+v", got[0], want)
 	}
 	want = SkillState{Job: 8, SkillIndex: 4, State: 23, ScriptPath: "sqr/character/atmage/native/native.nut"}
-	if got[1] != want {
+	if !reflect.DeepEqual(got[1], want) {
 		t.Fatalf("catalog entry = %+v, want %+v", got[1], want)
+	}
+}
+
+func TestExtractSkillStateCatalogIncludesVerifiedShiningCutData(t *testing.T) {
+	archive := &pvfArchive{files: map[string]*pvfFile{
+		"sqr/character/new_thief_load_state.nut": {
+			Name: "sqr/character/new_thief_load_state.nut",
+			Data: []byte(`IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_THIEF, "character/thief/1_rogue/shiningcut/shiningcut.nut", "thief_shiningcut", 22, 3);`),
+		},
+		"sqr/character/thief/1_rogue/shiningcut/shiningcut.nut": {
+			Name: "sqr/character/thief/1_rogue/shiningcut/shiningcut.nut",
+			Data: []byte("function onAfterSetState_thief_shiningcut(obj, state, datas, reset) { return obj.sq_GetVectorData(datas, 0); }"),
+		},
+	}}
+
+	got := extractSkillStateCatalog(archive)
+	want := []SkillState{{
+		Job: 6, SkillIndex: 3, State: 22,
+		ScriptPath: "sqr/character/thief/1_rogue/shiningcut/shiningcut.nut",
+		StateData:  []byte{0x03, 0x00, 0x00}, Verified: true,
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("verified skill catalog = %+v, want %+v", got, want)
 	}
 }
 
@@ -70,14 +96,15 @@ IRDSQRCharacter.pushState(0, "character/swordman/reactive.nut", "reactive", 32, 
 }
 
 func TestSkillStatesForJobReturnsCopy(t *testing.T) {
-	setSkillStateCatalog([]SkillState{{Job: 1, SkillIndex: 2, State: 3}, {Job: 2, SkillIndex: 4, State: 5}})
+	setSkillStateCatalog([]SkillState{{Job: 1, SkillIndex: 2, State: 3, StateData: []byte{1, 2}}, {Job: 2, SkillIndex: 4, State: 5}})
 	got := SkillStatesForJob(1)
 	if len(got) != 1 || got[0].SkillIndex != 2 {
 		t.Fatalf("job catalog = %+v", got)
 	}
 	got[0].SkillIndex = 99
+	got[0].StateData[0] = 99
 	again := SkillStatesForJob(1)
-	if len(again) != 1 || again[0].SkillIndex != 2 {
+	if len(again) != 1 || again[0].SkillIndex != 2 || !reflect.DeepEqual(again[0].StateData, []byte{1, 2}) {
 		t.Fatalf("catalog mutated through returned slice: %+v", again)
 	}
 }

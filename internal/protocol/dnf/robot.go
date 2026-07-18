@@ -1801,7 +1801,7 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		return
 	}
 	candidate := r.partySkillCandidates[partySkillChoice(r.UID, now, len(r.partySkillCandidates))]
-	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, candidate.state, partySkillToken(r.UID, now))
+	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, candidate.state, candidate.stateData, partySkillToken(r.UID, now))
 	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, true)
 	if !ok {
 		return
@@ -1809,10 +1809,10 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	payload := buildPartyReliablePacket(sequence, r.partySelfPeer.slot, r.partyDungeonFlags, [][]byte{body})
 	remote := &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}
 	if _, err := conn.WriteToUDP(payload, remote); err != nil {
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_ERROR] uid=%d job=%d skill=%d state=%d remote=%s err=%v\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, remote.String(), err)
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_ERROR] uid=%d job=%d skill=%d state=%d data=%x remote=%s err=%v\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.stateData, remote.String(), err)
 		return
 	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d sequence=%d remote=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, sequence, remote.String())
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d data=%x sequence=%d remote=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.stateData, sequence, remote.String())
 }
 
 func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
@@ -1844,10 +1844,10 @@ func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
 	r.partySkillJob = job
 	r.partySkillCandidates = r.partySkillCandidates[:0]
 	for _, entry := range states {
-		if entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 || learned[byte(entry.SkillIndex)] == 0 {
+		if !entry.Verified || len(entry.StateData) == 0 || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 || learned[byte(entry.SkillIndex)] == 0 {
 			continue
 		}
-		r.partySkillCandidates = append(r.partySkillCandidates, partySkillCandidate{skillIndex: byte(entry.SkillIndex), state: byte(entry.State)})
+		r.partySkillCandidates = append(r.partySkillCandidates, partySkillCandidate{skillIndex: byte(entry.SkillIndex), state: byte(entry.State), stateData: append([]byte(nil), entry.StateData...)})
 	}
 	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d learned=%d candidates=%d\n", r.UID, r.CID, job, len(learned), len(r.partySkillCandidates))
 	return true
@@ -3007,6 +3007,7 @@ type partyDungeonFollowPending struct {
 type partySkillCandidate struct {
 	skillIndex byte
 	state      byte
+	stateData  []byte
 }
 
 func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
@@ -3114,7 +3115,7 @@ const partyDungeonEnvelopeCommand = 0x0051
 const partyDungeonEnvelopeMinBodySize = 26
 const partyDungeonEnvelopePayloadOffset = 22
 
-const partySkillStateBodySize = 31
+const partySkillStateBodyBaseSize = 31
 
 var partyDungeonEnvelopeChecksumOffsets = [...]int{10, 18}
 
@@ -3128,8 +3129,8 @@ func parsePartyLearnedSkills(raw []byte) map[byte]byte {
 	return learned
 }
 
-func buildPartySkillStateBody(uniqueID uint16, state byte, token uint16) []byte {
-	body := make([]byte, partySkillStateBodySize)
+func buildPartySkillStateBody(uniqueID uint16, state byte, stateData []byte, token uint16) []byte {
+	body := make([]byte, partySkillStateBodyBaseSize+len(stateData))
 	body[0] = 0x02
 	binary.LittleEndian.PutUint16(body[1:3], partyDungeonEnvelopeCommand)
 	body[7] = 0x02
@@ -3142,14 +3143,18 @@ func buildPartySkillStateBody(uniqueID uint16, state byte, token uint16) []byte 
 	payload[1] = 0x01
 	binary.LittleEndian.PutUint16(payload[2:4], uniqueID)
 	payload[4] = state
-	binary.LittleEndian.PutUint16(payload[5:7], 0)
-	binary.LittleEndian.PutUint16(payload[7:9], token)
+	binary.LittleEndian.PutUint16(payload[5:7], uint16(len(stateData)))
+	copy(payload[7:], stateData)
+	binary.LittleEndian.PutUint16(payload[7+len(stateData):9+len(stateData)], token)
 	innerChecksum := partyPayloadChecksum(payload)
 	for _, offset := range partyDungeonEnvelopeChecksumOffsets {
 		copy(body[offset:offset+len(innerChecksum)], innerChecksum[:])
 	}
 	outerChecksum := partyPayloadChecksum(body[7:])
-	copy(body[3:7], outerChecksum[:])
+	body[3] = outerChecksum[0]
+	body[4] = byte(token)
+	body[5] = byte(token >> 8)
+	body[6] = byte(uniqueID>>8) ^ state ^ byte(len(stateData))
 	return body
 }
 

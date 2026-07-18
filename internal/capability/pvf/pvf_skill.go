@@ -73,7 +73,8 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 			skill, skillOK := resolveSkillStateValue(match[4], symbols)
 			path := normalizePVFPath("sqr/" + match[2])
 			script := referenced[path]
-			if !jobOK || !stateOK || !skillOK || job < 0 || skill <= 0 || skill > 255 || state < 0 || state > 255 || !skillStateScriptUsesEmptyData(script) {
+			stateData, verified := verifiedSkillStateData(job, skill, state, path)
+			if !jobOK || !stateOK || !skillOK || job < 0 || skill <= 0 || skill > 255 || state < 0 || state > 255 || (!verified && !skillStateScriptUsesEmptyData(script)) {
 				continue
 			}
 			key := [3]int{job, skill, state}
@@ -81,7 +82,7 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 				continue
 			}
 			seen[key] = true
-			entries = append(entries, SkillState{Job: job, SkillIndex: skill, State: state, ScriptPath: path})
+			entries = append(entries, SkillState{Job: job, SkillIndex: skill, State: state, ScriptPath: path, StateData: stateData, Verified: verified})
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -94,6 +95,13 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 		return entries[i].State < entries[j].State
 	})
 	return entries
+}
+
+func verifiedSkillStateData(job, skill, state int, path string) ([]byte, bool) {
+	if job == 6 && skill == 3 && state == 22 && strings.HasSuffix(path, "/thief/1_rogue/shiningcut/shiningcut.nut") {
+		return []byte{0x03, 0x00, 0x00}, true
+	}
+	return nil, false
 }
 
 func skillStateSymbols(scripts map[string]string) map[string]int {

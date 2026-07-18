@@ -319,8 +319,8 @@ func TestParsePartyLearnedSkillsUsesIndexLevelPairs(t *testing.T) {
 }
 
 func TestBuildPartySkillStateBody(t *testing.T) {
-	body := buildPartySkillStateBody(0x2f3e, 0x16, 0xe708)
-	if len(body) != partySkillStateBodySize || body[0] != 2 || binary.LittleEndian.Uint16(body[1:3]) != partyDungeonEnvelopeCommand {
+	body := buildPartySkillStateBody(0x2f3e, 0x16, nil, 0xe708)
+	if len(body) != partySkillStateBodyBaseSize || body[0] != 2 || binary.LittleEndian.Uint16(body[1:3]) != partyDungeonEnvelopeCommand {
 		t.Fatalf("skill body header = %x", body)
 	}
 	payload := body[partyDungeonEnvelopePayloadOffset:]
@@ -335,8 +335,22 @@ func TestBuildPartySkillStateBody(t *testing.T) {
 		}
 	}
 	outer := partyPayloadChecksum(body[7:])
-	if !bytes.Equal(body[3:7], outer[:]) {
-		t.Fatalf("outer checksum = %x, want %x", body[3:7], outer)
+	if body[3] != outer[0] {
+		t.Fatalf("outer checksum byte = %x, want %x", body[3], outer[0])
+	}
+	if bytes.Equal(body[4:7], []byte{0, 0, 0}) {
+		t.Fatalf("outer context bytes were zero: %x", body)
+	}
+}
+
+func TestBuildPartySkillStateBodyMatchesCapturedShiningCut(t *testing.T) {
+	body := buildPartySkillStateBody(0x2f3e, 0x16, []byte{0x03, 0x00, 0x00}, 0xe708)
+	want := mustPartyHex(t, "0251001b505afc0205000fc901df000205000fc901df11013e2f16030003000008e7")
+	if !bytes.Equal(body[:4], want[:4]) || !bytes.Equal(body[7:], want[7:]) {
+		t.Fatalf("shining cut body = %x, want stable bytes from %x", body, want)
+	}
+	if bytes.Equal(body[4:7], []byte{0, 0, 0}) {
+		t.Fatalf("shining cut outer context bytes were zero: %x", body)
 	}
 }
 
@@ -361,7 +375,7 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 		partySkillNextAt:     now.Add(-time.Millisecond),
 		partySkillLoaded:     true,
 		partySkillJob:        8,
-		partySkillCandidates: []partySkillCandidate{{skillIndex: 1, state: 20}},
+		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{0x03, 0x00, 0x00}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
 	vo.flushPartyDungeonSkillUnsafe(sender, now)
@@ -376,11 +390,11 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	if packet[0] != 1 || binary.LittleEndian.Uint32(packet[1:5]) != 0 || packet[7] != 2 || packet[8] != 5 {
 		t.Fatalf("skill transport = %x", packet)
 	}
-	if vo.partyTQOSReliableSeq[0][1] != 1 || binary.LittleEndian.Uint16(packet[9:11]) != partySkillStateBodySize {
+	if vo.partyTQOSReliableSeq[0][1] != 1 || binary.LittleEndian.Uint16(packet[9:11]) != partySkillStateBodyBaseSize+3 {
 		t.Fatalf("skill sequence=%d packet=%x", vo.partyTQOSReliableSeq[0][1], packet)
 	}
 	body := packet[11:]
-	if binary.LittleEndian.Uint16(body[partyDungeonEnvelopePayloadOffset+2:]) != 0x2f3e || body[partyDungeonEnvelopePayloadOffset+4] != 20 {
+	if binary.LittleEndian.Uint16(body[partyDungeonEnvelopePayloadOffset+2:]) != 0x2f3e || body[partyDungeonEnvelopePayloadOffset+4] != 22 || !bytes.Equal(body[partyDungeonEnvelopePayloadOffset+7:partyDungeonEnvelopePayloadOffset+10], []byte{0x03, 0x00, 0x00}) {
 		t.Fatalf("skill state identity = %x", body)
 	}
 	if vo.partySkillNextAt.Sub(now) < 4*time.Second || vo.partySkillNextAt.Sub(now) > 9*time.Second {
