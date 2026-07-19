@@ -123,6 +123,16 @@ SAMPLE_FIELDS = [
     "party_log_hits",
     "party_error_hits",
     "party_relay_error_hits",
+    "party_tqos_exhausted_hits",
+    "party_route_degraded_hits",
+    "party_route_recovery_hits",
+    "party_route_recovered_hits",
+    "party_relay_connected_hits",
+    "party_probe_cycle_hits",
+    "party_peer_ready_hits",
+    "party_self_id_refresh_hits",
+    "party_udp_recycle_hits",
+    "party_supervisor_panic_hits",
     "party_skill_hits",
     "party_skill_error_hits",
     "market_auto",
@@ -1286,35 +1296,69 @@ echo RESTORED
 
     def party_observer_smoke(self):
         self.log("party_observer_smoke begin")
-        before = self.party_log_counts()
+        before_logs = self.party_log_parts()
+        before = self.party_log_counts(self.join_party_logs(before_logs))
         self.log("party_observer_smoke before=%s" % json_text(before, 1000))
         self.set_target(max(20, min(self.args.target_max, 80)))
         self.burst_sample("party_observer_window", self.scaled_seconds(45, 120), 5)
-        after = self.party_log_counts()
-        self.log("party_observer_smoke after=%s" % json_text(after, 1000))
-        if after.get("party_total", 0) <= before.get("party_total", 0):
+        after_logs = self.party_log_parts()
+        delta_text = self.party_log_delta(before_logs, after_logs)
+        delta = self.party_log_counts(delta_text)
+        unresolved = self.party_unresolved_routes(delta_text)
+        if unresolved:
+            self.log("party_observer_smoke recovery_grace unresolved=%s" % ",".join(unresolved[:20]))
+            self.burst_sample("party_recovery_grace", self.scaled_seconds(20, 60), 5)
+            after_logs = self.party_log_parts()
+            delta_text = self.party_log_delta(before_logs, after_logs)
+            delta = self.party_log_counts(delta_text)
+            unresolved = self.party_unresolved_routes(delta_text)
+        self.log("party_observer_smoke delta=%s unresolved=%s" % (json_text(delta, 1200), ",".join(unresolved[:20])))
+        if delta.get("party_total", 0) <= 0:
             self.log("party_observer_smoke skipped reason=no_party_activity")
             return
-        relay_errors = after.get("relay_errors", 0) - before.get("relay_errors", 0)
-        udp_errors = after.get("udp_errors", 0) - before.get("udp_errors", 0)
-        if relay_errors > 0:
-            self.record_failure("party_relay_errors", "party relay errors increased by %s during observer smoke" % relay_errors)
-        if udp_errors > 5:
-            self.record_failure("party_udp_errors", "party udp errors increased by %s during observer smoke" % udp_errors)
+        relay_errors = delta.get("relay_errors", 0)
+        udp_errors = delta.get("udp_errors", 0)
+        tqos_exhausted = delta.get("tqos_exhausted", 0)
+        route_degraded = delta.get("route_degraded", 0)
+        route_recovery = delta.get("route_recovery", 0)
+        route_recovered = delta.get("route_recovered", 0)
+        relay_connected = delta.get("relay_connected", 0)
+        probe_cycles = delta.get("probe_cycles", 0)
+        peer_ready = delta.get("peer_ready", 0)
+        udp_recycles = delta.get("udp_recycles", 0)
+        supervisor_panics = delta.get("supervisor_panics", 0)
+        recovery_events = route_recovered + peer_ready
+        self.log("party_observer_smoke delta relay_errors=%s udp_errors=%s tqos_exhausted=%s route_degraded=%s route_recovery=%s route_recovered=%s relay_connected=%s probe_cycles=%s peer_ready=%s" % (
+            relay_errors, udp_errors, tqos_exhausted, route_degraded, route_recovery, route_recovered, relay_connected, probe_cycles, peer_ready,
+        ))
+        if relay_errors > 0 and relay_connected <= 0 and recovery_events <= 0:
+            self.record_failure("party_relay_errors_unrecovered", "party relay errors increased by %s without a recovery event" % relay_errors)
+        if udp_errors > 5 and udp_recycles <= 0 and recovery_events <= 0:
+            self.record_failure("party_udp_errors_unrecovered", "party UDP errors increased by %s without a recovery event" % udp_errors)
+        if tqos_exhausted > 0 and recovery_events <= 0:
+            self.record_failure("party_tqos_unrecovered", "party TQOS retries exhausted %s times without route or peer recovery" % tqos_exhausted)
+        if unresolved:
+            self.record_failure("party_route_unrecovered", "%s party routes remained degraded: %s" % (len(unresolved), ",".join(unresolved[:20])))
+        if probe_cycles > 12 and peer_ready <= 0:
+            self.record_failure("party_peer_probe_storm", "%s robot peer probe cycles completed without a ready transition" % probe_cycles)
+        if supervisor_panics > 0:
+            self.record_failure("party_supervisor_panic", "party supervisor recovered from %s panic(s)" % supervisor_panics)
         self.sample_with_event("party_observer_smoke_done")
 
     def party_skill_observer(self):
         self.log("party_skill_observer begin")
-        before = self.party_log_counts()
+        before_logs = self.party_log_parts()
+        before = self.party_log_counts(self.join_party_logs(before_logs))
         if before.get("skill_profiles", 0) <= 0:
             self.log("party_skill_observer note=no_skill_profile_logs_yet")
         self.burst_sample("party_skill_window", self.scaled_seconds(60, 150), 5)
-        after = self.party_log_counts()
-        self.log("party_skill_observer after=%s" % json_text(after, 1000))
-        skill_events = after.get("skill_casts", 0) - before.get("skill_casts", 0)
-        skill_errors = after.get("skill_errors", 0) - before.get("skill_errors", 0)
-        skill_profiles = after.get("skill_profiles", 0) - before.get("skill_profiles", 0)
-        empty_profiles = after.get("skill_empty_profiles", 0) - before.get("skill_empty_profiles", 0)
+        after_logs = self.party_log_parts()
+        delta = self.party_log_counts(self.party_log_delta(before_logs, after_logs))
+        self.log("party_skill_observer delta=%s" % json_text(delta, 1000))
+        skill_events = delta.get("skill_casts", 0)
+        skill_errors = delta.get("skill_errors", 0)
+        skill_profiles = delta.get("skill_profiles", 0)
+        empty_profiles = delta.get("skill_empty_profiles", 0)
         if empty_profiles > 0:
             self.record_failure("party_skill_empty_profile", "%s new skill profiles had zero effective candidates" % empty_profiles)
         if skill_errors > 0:
@@ -1325,21 +1369,97 @@ echo RESTORED
             self.log("party_skill_observer note=profile_seen_without_cast profiles=%s" % skill_profiles)
         self.sample_with_event("party_skill_observer_done")
 
-    def party_log_counts(self):
+    def party_log_counts(self, text=None):
         patterns = {
             "party_total": r"\[PARTY_",
             "relay_errors": r"PARTY_RELAY_.*ERROR|PARTY_RELAY_BAD_PACKET",
             "udp_errors": r"PARTY_UDP_.*ERROR|PARTY_ROBOT_PROBE_ERROR",
+            "tqos_exhausted": r"PARTY_TQOS_RETRY_EXHAUSTED",
+            "route_degraded": r"PARTY_ROUTE_DEGRADED",
+            "route_recovery": r"PARTY_ROUTE_RECOVERY\]",
+            "route_recovered": r"PARTY_ROUTE_RECOVERED",
+            "relay_connected": r"PARTY_RELAY_CONNECTED",
+            "probe_cycles": r"PARTY_ROBOT_PROBE_CYCLE",
+            "peer_ready": r"PARTY_ROBOT_TQOS_READY",
+            "self_id_refresh": r"PARTY_SELF_ID_REFRESH",
+            "udp_recycles": r"PARTY_UDP_RECYCLE",
+            "supervisor_panics": r"PARTY_SUPERVISOR_PANIC",
             "skill_profiles": r"PARTY_DUNGEON_SKILL_PROFILE\]",
             "skill_empty_profiles": r"PARTY_DUNGEON_SKILL_PROFILE\][^\n]*candidates=0(?:\s|$)",
             "skill_casts": r"PARTY_DUNGEON_SKILL\]",
             "skill_errors": r"PARTY_DUNGEON_SKILL_.*ERROR|PARTY_DUNGEON_SKILL_CATALOG_ERROR",
         }
-        text = self.robot_log_tail()
+        if text is None:
+            text = self.party_log_tail()
         return dict((name, len(re.findall(pattern, text))) for name, pattern in patterns.items())
 
     def robot_log_tail(self, max_bytes=1024 * 1024):
-        path = "/root/config/log_robot"
+        return self.read_log_tail("/root/config/log_robot", max_bytes)
+
+    def party_log_tail(self, max_bytes=2 * 1024 * 1024):
+        return self.join_party_logs(self.party_log_parts(max_bytes))
+
+    def party_log_parts(self, max_bytes=2 * 1024 * 1024):
+        each = max(1, max_bytes // 2)
+        return {
+            "log_robot": self.read_log_tail("/root/config/log_robot", each),
+            "robot_stdout": self.read_log_tail("/root/config/robot_stdout.log", each),
+        }
+
+    def join_party_logs(self, parts):
+        return safe_text(parts.get("log_robot")) + u"\n" + safe_text(parts.get("robot_stdout"))
+
+    def party_log_delta(self, before, after):
+        chunks = []
+        for name in ("log_robot", "robot_stdout"):
+            old = safe_text(before.get(name))
+            new = safe_text(after.get(name))
+            if not old:
+                chunks.append(new)
+                continue
+            if new.startswith(old):
+                chunks.append(new[len(old):])
+                continue
+            overlap = u""
+            limit = min(len(old), 65536)
+            size = limit
+            while size >= 256:
+                marker = old[-size:]
+                if new.rfind(marker) >= 0:
+                    overlap = marker
+                    break
+                size //= 2
+            if overlap:
+                chunks.append(new[new.rfind(overlap) + len(overlap):])
+            else:
+                chunks.append(new)
+        return u"\n".join(chunks)
+
+    def party_unresolved_routes(self, text):
+        route_pattern = re.compile(r"\[PARTY_ROUTE_(DEGRADED|RECOVERY|RECOVERED)\][^\n]*uid=(\d+)[^\n]*peer=(\d+)[^\n]*route=(\d+)")
+        ready_pattern = re.compile(r"\[PARTY_ROBOT_TQOS_READY\][^\n]*uid=(\d+)[^\n]*peer=(\d+)[^\n]*route=(\d+)")
+        states = {}
+        for line in safe_text(text).splitlines():
+            match = route_pattern.search(line)
+            if match:
+                key = (match.group(2), match.group(3), match.group(4))
+                state = match.group(1).lower()
+                states[key] = state
+                continue
+            match = ready_pattern.search(line)
+            if not match:
+                continue
+            uid, peer = match.group(1), match.group(2)
+            for key in list(states):
+                if key[0] == uid and key[1] == peer and states[key] in ("degraded", "recovery"):
+                    states[key] = "ready"
+        unresolved = []
+        for key, state in states.items():
+            if state in ("degraded", "recovery"):
+                unresolved.append("uid=%s/peer=%s/route=%s" % key)
+        return sorted(unresolved)
+
+    def read_log_tail(self, path, max_bytes):
         try:
             fh = open(path, "rb")
             try:
@@ -2853,8 +2973,18 @@ echo "KEYS_RESTORED"
         try:
             counts = self.party_log_counts()
             row["party_log_hits"] = counts.get("party_total", "")
-            row["party_error_hits"] = self.sum_ints(counts.get("relay_errors"), counts.get("udp_errors"), counts.get("skill_errors"))
+            row["party_error_hits"] = self.sum_ints(counts.get("relay_errors"), counts.get("udp_errors"), counts.get("skill_errors"), counts.get("supervisor_panics"))
             row["party_relay_error_hits"] = counts.get("relay_errors", "")
+            row["party_tqos_exhausted_hits"] = counts.get("tqos_exhausted", "")
+            row["party_route_degraded_hits"] = counts.get("route_degraded", "")
+            row["party_route_recovery_hits"] = counts.get("route_recovery", "")
+            row["party_route_recovered_hits"] = counts.get("route_recovered", "")
+            row["party_relay_connected_hits"] = counts.get("relay_connected", "")
+            row["party_probe_cycle_hits"] = counts.get("probe_cycles", "")
+            row["party_peer_ready_hits"] = counts.get("peer_ready", "")
+            row["party_self_id_refresh_hits"] = counts.get("self_id_refresh", "")
+            row["party_udp_recycle_hits"] = counts.get("udp_recycles", "")
+            row["party_supervisor_panic_hits"] = counts.get("supervisor_panics", "")
             row["party_skill_hits"] = counts.get("skill_casts", "")
             row["party_skill_error_hits"] = counts.get("skill_errors", "")
         except Exception as exc:
