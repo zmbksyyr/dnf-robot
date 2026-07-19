@@ -3,18 +3,19 @@ package dnf
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"robot/internal/shared"
 )
 
 func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
-	if uid <= 0 {
+	if db == nil || uid <= 0 {
 		return false
 	}
 
-	if !runOnlineRepairSQL(db, "CREATE TABLE IF NOT EXISTS d_taiwan.member_info_bot_backup LIKE d_taiwan.member_info", "create member_info_bot_backup") {
+	capabilities, err := loginRepairCapabilitiesFor(db)
+	if err != nil {
+		fmt.Printf("MsgOnLine preflight sql failed: inspect login repair schema: %v\n", err)
 		return false
 	}
 
@@ -38,22 +39,22 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 		}
 	}
 	joinArgs := []interface{}{uid, time.Now().Year(), loginIP, loginIP}
-	for _, table := range []string{"d_taiwan.member_join_info", "taiwan_login.member_join_info"} {
+	for _, table := range capabilities.memberJoinInfoTables() {
 		query := "INSERT INTO " + table + " (m_id,reg_date,ip,contry_code,login_time,error_type,login_ip,game_use_history) VALUES (?,?,?,0,UNIX_TIMESTAMP(),0,?,1) ON DUPLICATE KEY UPDATE ip=VALUES(ip),login_time=VALUES(login_time),error_type=0,login_ip=VALUES(login_ip),game_use_history=1"
-		if !runOnlineRepairSQLIfTableExists(db, table, query, "upsert member_join_info", joinArgs...) {
+		if !runOnlineRepairSQL(db, query, "upsert member_join_info", joinArgs...) {
 			return false
 		}
 	}
-	for _, table := range []string{"d_taiwan.member_security_grade", "d_taiwan_secu.member_security_grade"} {
+	for _, table := range capabilities.memberSecurityGradeTables() {
 		query := "INSERT IGNORE INTO " + table + " (m_id) VALUES (?)"
-		if !runOnlineRepairSQLIfTableExists(db, table, query, "upsert member_security_grade", uid) {
+		if !runOnlineRepairSQL(db, query, "upsert member_security_grade", uid) {
 			return false
 		}
 	}
-	if !runOnlineRepairSQLIfTableExists(db, "d_taiwan.member_punish_info", "DELETE FROM d_taiwan.member_punish_info WHERE m_id=? AND punish_type=11", "clear trade punish", uid) {
+	if capabilities.memberPunishInfo && !runOnlineRepairSQL(db, "DELETE FROM d_taiwan.member_punish_info WHERE m_id=? AND punish_type=11", "clear trade punish", uid) {
 		return false
 	}
-	if !repairOnlineRobotExpBounds(db, uid) {
+	if !repairOnlineRobotExpBounds(db, uid, capabilities) {
 		return false
 	}
 
@@ -66,15 +67,11 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 	return true
 }
 
-func repairOnlineRobotExpBounds(db *sql.DB, uid int) bool {
-	if !onlineTableExists(db, "d_starsky.robot_registry") {
+func repairOnlineRobotExpBounds(db *sql.DB, uid int, capabilities loginRepairCapabilities) bool {
+	if !capabilities.robotRegistry {
 		return true
 	}
-	refRows := 0
-	if onlineTableExists(db, "taiwan_cain.exp_level_ref") {
-		_ = db.QueryRow("SELECT COUNT(*) FROM taiwan_cain.exp_level_ref").Scan(&refRows)
-	}
-	if refRows > 0 {
+	if capabilities.expLevelRefPopulated {
 		infoSQL := `UPDATE taiwan_cain.charac_info c
 			JOIN d_starsky.robot_registry r ON r.cid=c.charac_no
 			JOIN taiwan_cain.exp_level_ref e ON e.lev=c.lev
@@ -115,37 +112,6 @@ func repairOnlineRobotExpBounds(db *sql.DB, uid int) bool {
 		return false
 	}
 	return runOnlineRepairSQL(db, "UPDATE taiwan_cain.charac_stat s JOIN d_starsky.robot_registry r ON r.cid=s.charac_no SET s.exp=? WHERE r.uid=? AND s.exp<?", "repair charac_stat exp fallback", minExp, uid, minExp)
-}
-
-func onlineTableExists(db *sql.DB, table string) bool {
-	schema, name, ok := strings.Cut(table, ".")
-	if !ok {
-		return false
-	}
-	var tableName sql.NullString
-	err := db.QueryRow("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=? LIMIT 1", schema, name).Scan(&tableName)
-	return err == nil && tableName.Valid
-}
-
-func runOnlineRepairSQLIfTableExists(db *sql.DB, table string, query string, step string, args ...interface{}) bool {
-	schema, name, ok := strings.Cut(table, ".")
-	if !ok {
-		fmt.Printf("MsgOnLine preflight sql failed: invalid optional table %s\n", table)
-		return false
-	}
-	var tableName sql.NullString
-	err := db.QueryRow("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=? LIMIT 1", schema, name).Scan(&tableName)
-	if err == sql.ErrNoRows {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("MsgOnLine preflight sql failed: check optional %s: %v\n", table, err)
-		return false
-	}
-	if !tableName.Valid {
-		return true
-	}
-	return runOnlineRepairSQL(db, query, step, args...)
 }
 
 func runOnlineRepairSQL(db *sql.DB, query string, step string, args ...interface{}) bool {
