@@ -15,15 +15,18 @@ import (
 )
 
 type pvfManifest struct {
-	Version int         `json:"version"`
-	Source  string      `json:"source"`
-	Size    int64       `json:"size"`
-	ModTime int64       `json:"mod_time"`
-	MD5     string      `json:"md5"`
-	Runtime interface{} `json:"runtime,omitempty"`
+	Version           int         `json:"version"`
+	SkillStateVersion int         `json:"skill_state_version"`
+	Source            string      `json:"source"`
+	Size              int64       `json:"size"`
+	ModTime           int64       `json:"mod_time"`
+	MD5               string      `json:"md5"`
+	Runtime           interface{} `json:"runtime,omitempty"`
 }
 
 const pvfExportVersion = 1
+
+const pvfSkillStateExportVersion = 2
 
 const pvfItemInfoExportName = "pvf_iteminfo.dat"
 
@@ -88,11 +91,12 @@ func buildPVFManifest(path string, stat os.FileInfo) (pvfManifest, error) {
 	}
 	sum := md5.Sum(data)
 	return pvfManifest{
-		Version: pvfExportVersion,
-		Source:  path,
-		Size:    stat.Size(),
-		ModTime: stat.ModTime().Unix(),
-		MD5:     hex.EncodeToString(sum[:]),
+		Version:           pvfExportVersion,
+		SkillStateVersion: pvfSkillStateExportVersion,
+		Source:            path,
+		Size:              stat.Size(),
+		ModTime:           stat.ModTime().Unix(),
+		MD5:               hex.EncodeToString(sum[:]),
 	}, nil
 }
 
@@ -122,7 +126,7 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 	if json.Unmarshal(data, &got) != nil {
 		return false
 	}
-	return got.Version == want.Version && got.Source == want.Source && got.Size == want.Size && got.ModTime == want.ModTime && got.MD5 == want.MD5
+	return got.Version == want.Version && got.SkillStateVersion == want.SkillStateVersion && got.Source == want.Source && got.Size == want.Size && got.ModTime == want.ModTime && got.MD5 == want.MD5
 }
 
 func removeObsoletePVFExports(configDir string) {

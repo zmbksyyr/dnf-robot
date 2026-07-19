@@ -29,3 +29,38 @@ func TestEnsureExportsLoadsExistingSkillCatalogWithoutPVFSource(t *testing.T) {
 		}
 	}
 }
+
+func TestPVFExportsCurrentInvalidatesOldSkillStateSchema(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string][]byte{
+		"pvf_equipment_catalog.json": []byte(`[{"item_type": 20}]`),
+		"pvf_stackable_catalog.json": []byte(`[{"id": 1}]`),
+		"pvf_map_catalog.json":       []byte(`[{"id": 1}]`),
+		pvfSkillStateExportName:      []byte(`[{"job": 1}]`),
+		pvfItemInfoExportName:        []byte("iteminfo"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := pvfManifest{
+		Version: pvfExportVersion, SkillStateVersion: pvfSkillStateExportVersion,
+		Source: "/game/Script.pvf", Size: 100, ModTime: 200, MD5: "abc",
+	}
+	manifestPath := filepath.Join(dir, "pvf_manifest.json")
+	old := want
+	old.SkillStateVersion = 0
+	if err := WriteJSON(manifestPath, old); err != nil {
+		t.Fatal(err)
+	}
+	if pvfExportsCurrent(manifestPath, want, dir) {
+		t.Fatal("old skill state schema was treated as current")
+	}
+	if err := WriteJSON(manifestPath, want); err != nil {
+		t.Fatal(err)
+	}
+	if !pvfExportsCurrent(manifestPath, want, dir) {
+		t.Fatal("matching skill state schema was not current")
+	}
+}
