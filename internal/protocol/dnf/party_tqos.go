@@ -130,6 +130,17 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			return nil
 		}
 		r.rememberPartyPeerRouteUnsafe(peer.slot, route, now)
+		var request partyTQOSPacket
+		requestOK := false
+		var preferred *partyTQOSCodec
+		if peer.slot < 4 && route < 3 && r.partyTQOSCodecKnown[peer.slot][route] {
+			codec := r.partyTQOSCodecs[peer.slot][route]
+			preferred = &codec
+		}
+		request, requestOK = parsePartyTQOSPacketWithCodec(frame, route, preferred)
+		if requestOK && request.state == 2 {
+			r.markPartyRobotPeerReadyUnsafe(peer, "state2")
+		}
 		if frame[0] == 0x01 {
 			sequence := binary.LittleEndian.Uint32(frame[1:5])
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
@@ -141,13 +152,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			r.rememberPartyDungeonActivityUnsafe(frame, route, peer, now)
 			r.queuePartyDungeonFollowUnsafe(frame, peer, now)
 		}
-		var preferred *partyTQOSCodec
-		if peer.slot < 4 && route < 3 && r.partyTQOSCodecKnown[peer.slot][route] {
-			codec := r.partyTQOSCodecs[peer.slot][route]
-			preferred = &codec
-		}
-		request, ok := parsePartyTQOSPacketWithCodec(frame, route, preferred)
-		if !ok {
+		if !requestOK {
 			continue
 		}
 		if r.partyRobotHandshakeReadyUnsafe(peer, route) {
@@ -155,9 +160,6 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		if request.state == 3 {
 			r.beginPartyTQOSEpochUnsafe(peer.slot, route, request, now)
-		}
-		if request.state == 2 {
-			r.markPartyRobotPeerReadyUnsafe(peer, "state2")
 		}
 		if peer.slot < 4 && route < 3 {
 			r.partyTQOSCodecs[peer.slot][route] = request.codec

@@ -420,6 +420,30 @@ func TestRobotPartyTQOSReadyRequiresState2OrReplyACK(t *testing.T) {
 	}
 }
 
+func TestRobotPartyTQOSDuplicateSequenceState2StillMarksReady(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	vo := &RobotVo{UID: 17000001}
+	vo.partySelfPeer = partyIPPeer{accID: 17000001, slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, accID: 17000002, slot: 0, slotKnown: true}
+
+	reliableGameFrame := buildPartyReliablePacket(0, peer.slot, 0, [][]byte{{0x11, 0x22, 0x33}})
+	gameAck := vo.buildPartyTQOSRepliesUnsafe(reliableGameFrame, 1, peer)
+	if len(gameAck) != 1 || gameAck[0][0] != 0 {
+		t.Fatalf("game reliable ack=%x", gameAck)
+	}
+	if window := vo.partyTQOSReceived[peer.slot][1]; !window.initialized || window.latest != 0 {
+		t.Fatalf("game reliable frame did not initialize receive window: %+v", window)
+	}
+
+	state2Ack := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(0, peer.slot, 0, 2, 1, codec), 1, peer)
+	if len(state2Ack) != 1 || state2Ack[0][0] != 0 {
+		t.Fatalf("duplicate-sequence state2 ack=%x", state2Ack)
+	}
+	if !vo.partyRobotPeerReady[peer.slot] {
+		t.Fatal("duplicate-sequence state2 did not mark robot peer ready")
+	}
+}
+
 func TestRobotPartyTQOSRelayACKDoesNotConfirmNewEpoch(t *testing.T) {
 	codec := partyTQOSCodec{key: 0x7e}
 	vo := &RobotVo{UID: 17000001}
