@@ -34,6 +34,10 @@ func (e moveActionEnv) RandBetween(min, max int) int {
 	return e.manager.randBetween(min, max)
 }
 
+func (e moveActionEnv) RuntimeStatus(uid int) (robotcap.RuntimeStatus, bool) {
+	return e.manager.runtimeStatus(uid)
+}
+
 func (e moveActionEnv) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {
 	return e.manager.runtimeStatusMap()
 }

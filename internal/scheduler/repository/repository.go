@@ -142,20 +142,31 @@ LIMIT 1`, account).Scan(&village)
 	return int(village.Int64), true, nil
 }
 
+var schemaStatements = [...]string{
+	"CREATE DATABASE IF NOT EXISTS d_starsky DEFAULT CHARACTER SET gbk",
+	"CREATE TABLE IF NOT EXISTS d_starsky.Dummylist (ID VARCHAR(32), YID VARCHAR(32), UID VARCHAR(32), port VARCHAR(16), curvill VARCHAR(32), curarea VARCHAR(32), curx VARCHAR(32), cury VARCHAR(32), CID VARCHAR(32), ip VARCHAR(64), function_type VARCHAR(8), discost VARCHAR(8), PRIMARY KEY (UID)) DEFAULT CHARSET=gbk",
+	"CREATE TABLE IF NOT EXISTS d_starsky.v4_ai_user (uid VARCHAR(32) NOT NULL, msg_state VARCHAR(8) DEFAULT '0', move_state VARCHAR(8) DEFAULT '0', PRIMARY KEY (uid)) DEFAULT CHARSET=gbk",
+	"CREATE TABLE IF NOT EXISTS d_starsky.Robot_stall (id INT NOT NULL AUTO_INCREMENT, Trade_item INT DEFAULT 0, price BIGINT DEFAULT 0, item_number INT DEFAULT 1, function_type INT DEFAULT 1, state INT DEFAULT 1, UID INT DEFAULT 0, PRIMARY KEY (id), KEY idx_robot_stall (function_type,state,UID)) DEFAULT CHARSET=gbk",
+	"CREATE TABLE IF NOT EXISTS d_starsky.Robot_stall_config (id INT NOT NULL AUTO_INCREMENT, cfg_content VARCHAR(255) DEFAULT '', cfg_type INT DEFAULT 0, UID INT DEFAULT 0, function_type INT DEFAULT 1, state INT DEFAULT 1, PRIMARY KEY (id), KEY idx_robot_stall_cfg (cfg_type,function_type,state,UID)) DEFAULT CHARSET=gbk",
+	"CREATE TABLE IF NOT EXISTS d_starsky.robot_registry (uid INT NOT NULL, cid INT NOT NULL, account VARCHAR(32) NOT NULL, charac_name VARCHAR(64) NOT NULL, created_at DATETIME NOT NULL, PRIMARY KEY (uid), KEY idx_robot_registry_cid (cid)) DEFAULT CHARSET=utf8",
+	"INSERT IGNORE INTO d_starsky.Robot_stall_config (id,cfg_content,cfg_type,UID,function_type,state) VALUES (1,'bot-store',3,0,2,1)",
+}
+
 func (r *SQLRepository) EnsureSchema() error {
-	stmts := []string{
-		"CREATE DATABASE IF NOT EXISTS d_starsky DEFAULT CHARACTER SET gbk",
-		"CREATE TABLE IF NOT EXISTS d_starsky.Dummylist (ID VARCHAR(32), YID VARCHAR(32), UID VARCHAR(32), port VARCHAR(16), curvill VARCHAR(32), curarea VARCHAR(32), curx VARCHAR(32), cury VARCHAR(32), CID VARCHAR(32), ip VARCHAR(64), function_type VARCHAR(8), discost VARCHAR(8), PRIMARY KEY (UID)) DEFAULT CHARSET=gbk",
-		"CREATE TABLE IF NOT EXISTS d_starsky.v4_ai_user (uid VARCHAR(32) NOT NULL, msg_state VARCHAR(8) DEFAULT '0', move_state VARCHAR(8) DEFAULT '0', PRIMARY KEY (uid)) DEFAULT CHARSET=gbk",
-		"CREATE TABLE IF NOT EXISTS d_starsky.Robot_stall (id INT NOT NULL AUTO_INCREMENT, Trade_item INT DEFAULT 0, price BIGINT DEFAULT 0, item_number INT DEFAULT 1, function_type INT DEFAULT 1, state INT DEFAULT 1, UID INT DEFAULT 0, PRIMARY KEY (id), KEY idx_robot_stall (function_type,state,UID)) DEFAULT CHARSET=gbk",
-		"CREATE TABLE IF NOT EXISTS d_starsky.Robot_stall_config (id INT NOT NULL AUTO_INCREMENT, cfg_content VARCHAR(255) DEFAULT '', cfg_type INT DEFAULT 0, UID INT DEFAULT 0, function_type INT DEFAULT 1, state INT DEFAULT 1, PRIMARY KEY (id), KEY idx_robot_stall_cfg (cfg_type,function_type,state,UID)) DEFAULT CHARSET=gbk",
-		"CREATE TABLE IF NOT EXISTS d_starsky.robot_registry (uid INT NOT NULL, cid INT NOT NULL, account VARCHAR(32) NOT NULL, charac_name VARCHAR(64) NOT NULL, created_at DATETIME NOT NULL, PRIMARY KEY (uid), KEY idx_robot_registry_cid (cid)) DEFAULT CHARSET=utf8",
-		"INSERT IGNORE INTO d_starsky.Robot_stall_config (id,cfg_content,cfg_type,UID,function_type,state) VALUES (1,'bot-store',3,0,2,1)",
+	return r.ensureSchema(r.Exec)
+}
+
+func (r *SQLRepository) ensureSchema(exec func(string, ...interface{}) (sql.Result, error)) error {
+	r.schemaMu.Lock()
+	defer r.schemaMu.Unlock()
+	if r.schemaReady {
+		return nil
 	}
-	for _, stmt := range stmts {
-		if _, err := r.Exec(stmt); err != nil {
+	for _, stmt := range schemaStatements {
+		if _, err := exec(stmt); err != nil {
 			return err
 		}
 	}
+	r.schemaReady = true
 	return nil
 }

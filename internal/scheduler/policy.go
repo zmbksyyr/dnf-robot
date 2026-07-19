@@ -152,29 +152,83 @@ func (m *RobotManager) autoGamePortStable(now time.Time, rc robotconfig.RuntimeC
 
 const runtimeStatusCacheTTL = 2000 * time.Millisecond
 
+// runtimeStatusMap returns an immutable snapshot. Callers that need to delete
+// or replace entries must use runtimeStatusMapCopy.
 func (m *RobotManager) runtimeStatusMap() map[int]robotcap.RuntimeStatus {
-	now := time.Now()
-	var out map[int]robotcap.RuntimeStatus
-	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerRuntimeStatus, "runtime_status_cache_read", func() error {
-		if !m.runtimeStatusCacheAt.IsZero() && now.Sub(m.runtimeStatusCacheAt) <= runtimeStatusCacheTTL && m.runtimeStatusCache != nil {
-			out = robotcap.CopyRuntimeStatusMap(m.runtimeStatusCache)
+	for {
+		now := time.Now()
+		m.runtimeStatusMu.RLock()
+		snapshot := m.runtimeStatusCache
+		cacheAt := m.runtimeStatusCacheAt
+		refreshDone := m.runtimeStatusRefresh
+		m.runtimeStatusMu.RUnlock()
+		if snapshot != nil && !cacheAt.IsZero() && now.Sub(cacheAt) <= runtimeStatusCacheTTL {
+			return snapshot
 		}
-		return nil
-	})
-	if out != nil {
-		return out
-	}
+		if refreshDone != nil {
+			<-refreshDone
+			continue
+		}
 
-	status := map[int]robotcap.RuntimeStatus{}
+		snapshot = nil
+		refreshDone = nil
+		refresh := false
+		m.runtimeStatusMu.Lock()
+		now = time.Now()
+		if m.runtimeStatusCache != nil && !m.runtimeStatusCacheAt.IsZero() && now.Sub(m.runtimeStatusCacheAt) <= runtimeStatusCacheTTL {
+			snapshot = m.runtimeStatusCache
+		} else if m.runtimeStatusRefresh != nil {
+			refreshDone = m.runtimeStatusRefresh
+		} else {
+			refreshDone = make(chan struct{})
+			m.runtimeStatusRefresh = refreshDone
+			refresh = true
+		}
+		m.runtimeStatusMu.Unlock()
+		if snapshot != nil {
+			return snapshot
+		}
+		if !refresh {
+			<-refreshDone
+			continue
+		}
+		return m.refreshRuntimeStatusMap(refreshDone)
+	}
+}
+
+func (m *RobotManager) refreshRuntimeStatusMap(refreshDone chan struct{}) (status map[int]robotcap.RuntimeStatus) {
+	complete := false
+	defer func() {
+		m.runtimeStatusMu.Lock()
+		if complete {
+			m.runtimeStatusCache = status
+			m.runtimeStatusCacheAt = time.Now()
+		}
+		if m.runtimeStatusRefresh == refreshDone {
+			m.runtimeStatusRefresh = nil
+			close(refreshDone)
+		}
+		m.runtimeStatusMu.Unlock()
+	}()
+
+	status = make(map[int]robotcap.RuntimeStatus)
 	for _, st := range m.doll.RuntimeStatus() {
 		status[st.UID] = st
 	}
-	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerRuntimeStatus, "runtime_status_cache_write", func() error {
-		m.runtimeStatusCache = robotcap.CopyRuntimeStatusMap(status)
-		m.runtimeStatusCacheAt = now
-		return nil
-	})
+	complete = true
 	return status
+}
+
+func (m *RobotManager) runtimeStatusMapCopy() map[int]robotcap.RuntimeStatus {
+	return robotcap.CopyRuntimeStatusMap(m.runtimeStatusMap())
+}
+
+func (m *RobotManager) runtimeStatus(uid int) (robotcap.RuntimeStatus, bool) {
+	if uid <= 0 {
+		return robotcap.RuntimeStatus{}, false
+	}
+	status, ok := m.runtimeStatusMap()[uid]
+	return status, ok
 }
 
 func (m *RobotManager) countRuntimeRunning() int {
@@ -340,7 +394,7 @@ func (s *RobotSupervisor) updateMetrics(rc robotconfig.RuntimeConfig) {
 		return
 	}
 	s.nextMetrics = now.Add(time.Duration(rc.SchedulerMetricsIntervalSec) * time.Second)
-	status := s.manager.runtimeStatusMap()
+	status := s.manager.runtimeStatusMapCopy()
 	s.filterBlockedRuntimeStatus(status)
 	s.filterMissingRuntimeStatus(status)
 	summary := robotcap.SummarizeRuntimeStatusMap(status)

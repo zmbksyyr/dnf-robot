@@ -31,8 +31,7 @@ func (r *RobotRuntime) Config() robotconfig.RuntimeConfig {
 }
 
 func (r *RobotRuntime) Status(uid int) (robotcap.RuntimeStatus, bool) {
-	st, ok := r.manager.runtimeStatusMap()[uid]
-	return st, ok
+	return r.manager.runtimeStatus(uid)
 }
 
 func (r *RobotRuntime) PartyActive(uid int) bool {
@@ -293,7 +292,7 @@ func (r *RobotRuntime) tryDisjointPosition(info robotcap.Info, rc robotconfig.Ru
 		if shouldStop != nil && shouldStop() {
 			return false, "cancelled"
 		}
-		if st, ok := r.manager.runtimeStatusMap()[info.UID]; ok {
+		if st, ok := r.manager.runtimeStatus(info.UID); ok {
 			if st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 				return false, "runtime_stopped"
 			}

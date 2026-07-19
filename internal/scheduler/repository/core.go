@@ -8,9 +8,11 @@ import (
 )
 
 type SQLRepository struct {
-	db       *sql.DB
-	colCache map[string]map[string]bool
-	locks    *lockhub.Hub
+	db          *sql.DB
+	colCache    map[string]map[string]bool
+	locks       *lockhub.Hub
+	schemaMu    lockhub.Locker
+	schemaReady bool
 }
 
 func NewSQLRepository(db *sql.DB) *SQLRepository {

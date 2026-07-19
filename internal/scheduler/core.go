@@ -48,8 +48,10 @@ type RobotManager struct {
 	autoBreakerLastShoutLocalFailed int
 	autoBreakerLastShoutWorldFailed int
 	autoBreakerLastStoreFailed      int
+	runtimeStatusMu                 lockhub.RWLocker
 	runtimeStatusCache              map[int]robotcap.RuntimeStatus
 	runtimeStatusCacheAt            time.Time
+	runtimeStatusRefresh            chan struct{}
 	autoPolicyLastMode              schedulerPolicyMode
 	autoPolicyLastReason            string
 	schedulerStatus                 robotcap.SchedulerStatus

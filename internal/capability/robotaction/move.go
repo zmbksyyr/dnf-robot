@@ -16,6 +16,7 @@ type MoveEnv interface {
 	DispatchMoveStep(info robotcap.Info, targetX, targetY, step, steps, speed int, rc robotconfig.RuntimeConfig) error
 	LoadMapCatalog() []shared.MapCatalogItem
 	RandBetween(min, max int) int
+	RuntimeStatus(uid int) (robotcap.RuntimeStatus, bool)
 	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
 	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
 }
@@ -112,7 +113,7 @@ func (s MoveService) AutoMove(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 	}
 	steps := s.Env.RandBetween(mathx.MaxInt(2, rc.MoveSteps-1), mathx.MinInt(8, rc.MoveSteps+2))
 	for step := 1; step <= steps; step++ {
-		if st, ok := s.Env.RuntimeStatusMap()[info.UID]; ok && (st.RobotType == 2 || st.RobotType == 3 || st.StateName != robotcap.RuntimeStateRunning) {
+		if st, ok := s.Env.RuntimeStatus(info.UID); ok && (st.RobotType == 2 || st.RobotType == 3 || st.StateName != robotcap.RuntimeStateRunning) {
 			return
 		}
 		speed := s.Env.RandBetween(rc.MoveSpeedMin, rc.MoveSpeedMax)
