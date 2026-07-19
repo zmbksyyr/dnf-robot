@@ -14,6 +14,7 @@ import (
 
 const (
 	partyDungeonActivityTimeout = 15 * time.Second
+	partyDungeonEntryTimeout    = 30 * time.Minute
 	partySkillRecoveryGrace     = 2 * time.Second
 	partySkillRecoveryRetry     = 750 * time.Millisecond
 	partySkillRecoverDelay      = 900 * time.Millisecond
@@ -47,8 +48,14 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 	if (route != 1 && route != 2) || !r.shouldFollowPartyPeerUnsafe(peer) || len(frame) < 9 {
 		return
 	}
-	if !partyDungeonFrameContainsCommand(frame, 0x0004) && !partyDungeonFrameContainsCommand(frame, 0x0027) && !partyDungeonFrameContainsCommand(frame, 0x0051) {
+	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
 		return
+	}
+	strongActivity := partyDungeonFrameContainsCommand(frame, 0x0004) || partyDungeonFrameContainsCommand(frame, 0x0027)
+	if !strongActivity {
+		if !partyDungeonFrameContainsCommand(frame, 0x0051) || r.partyDungeonLastAt.IsZero() || now.Sub(r.partyDungeonLastAt) > partyDungeonActivityTimeout {
+			return
+		}
 	}
 	r.partyDungeonLastAt = now
 	r.partyDungeonFlags = frame[8]
@@ -57,7 +64,33 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 	}
 }
 
+func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
+	r.partyDungeonEnteredAt = now
+	if r.partyDungeonLastAt.IsZero() {
+		r.partyDungeonLastAt = now
+	}
+	if r.partySkillNextAt.IsZero() {
+		r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+	}
+}
+
+func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {
+	if r.partyDungeonEnteredAt.IsZero() && r.partyDungeonLastAt.IsZero() && r.partySkillNextAt.IsZero() && r.partySkillRecoverAt.IsZero() && len(r.partyDungeonFollow) == 0 {
+		return
+	}
+	r.partyDungeonFollow = nil
+	r.partyDungeonEnteredAt = time.Time{}
+	r.partyDungeonLastAt = time.Time{}
+	r.partyDungeonFlags = 0
+	r.partySkillNextAt = time.Time{}
+	r.partySkillRecoverAt = time.Time{}
+}
+
 func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time) {
+	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
+		r.clearPartyDungeonRuntimeUnsafe()
+		return
+	}
 	if r.partyDungeonLastAt.IsZero() {
 		r.partySkillNextAt = time.Time{}
 		r.partySkillRecoverAt = time.Time{}
@@ -176,7 +209,7 @@ func (r *RobotVo) loadPartySkillProfile(generation uint64, uid uint32, cid int, 
 	r.partySkillLoaded = true
 	r.partySkillJob = profile.job
 	r.partySkillCandidates = profile.candidates
-	if !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= partyDungeonActivityTimeout {
+	if !r.partyDungeonEnteredAt.IsZero() && now.Sub(r.partyDungeonEnteredAt) <= partyDungeonEntryTimeout && !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= partyDungeonActivityTimeout {
 		r.partySkillNextAt = now
 	}
 	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_missing_pvf=%d skipped_path_mismatch=%d\n", uid, profile.cid, profile.job, profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, len(profile.candidates), profile.stats.SkippedMissingPVF, profile.stats.SkippedPathMismatch)

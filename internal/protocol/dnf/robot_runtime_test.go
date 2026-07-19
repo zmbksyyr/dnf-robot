@@ -53,10 +53,11 @@ func TestPartySkillProfileLoadIsSingleflightAndDoesNotHoldRobotLock(t *testing.T
 	release := make(chan struct{})
 	var calls atomic.Int32
 	vo := &RobotVo{
-		UID:                17000001,
-		CID:                900001,
-		State:              StateRun,
-		partyDungeonLastAt: time.Now(),
+		UID:                   17000001,
+		CID:                   900001,
+		State:                 StateRun,
+		partyDungeonEnteredAt: time.Now(),
+		partyDungeonLastAt:    time.Now(),
 		partySkillLoad: func(uid uint32, cid int) (partySkillProfile, error) {
 			calls.Add(1)
 			started <- struct{}{}

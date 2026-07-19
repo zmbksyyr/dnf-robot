@@ -3,6 +3,7 @@ package dnf
 import (
 	"encoding/binary"
 	"fmt"
+	"time"
 )
 
 func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
@@ -11,6 +12,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if r.State != StateRun || packet.flag != 0 || packet.size < 15 {
 			return
 		}
+		r.markPartyDungeonEnteredUnsafe(time.Now())
 		pkt, err := buildSendPacket(40, uint16(r.PacketID), buildFinishLoadingPayload(0, 0), r.Cipher)
 		r.PacketID++
 		if err != nil {
@@ -24,6 +26,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 			return
 		}
 		if body, ok := r.selectTownEntityPositionBodyUnsafe(r.Cipher, packet.data, packet.isAnti); ok {
+			r.clearPartyDungeonRuntimeUnsafe()
 			position, _ := r.rememberTownEntityUnsafe(body)
 			r.followPartyLeaderTownPositionUnsafe(position)
 		}
@@ -33,6 +36,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 			return
 		}
 		if area, ok := r.selectTownEntityAreaUnsafe(r.Cipher, packet.data, packet.isAnti); ok {
+			r.clearPartyDungeonRuntimeUnsafe()
 			r.followPartyLeaderTownAreaUnsafe(area)
 		}
 

@@ -138,13 +138,14 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			preferred = &codec
 		}
 		request, requestOK = parsePartyTQOSPacketWithCodec(frame, route, preferred)
-		if requestOK && request.state == 2 {
-			r.markPartyRobotPeerReadyUnsafe(peer, "state2")
-		}
+		readyFromState2 := requestOK && request.state == 2
 		if frame[0] == 0x01 {
 			sequence := binary.LittleEndian.Uint32(frame[1:5])
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
 			if !r.partyTQOSReceived[peer.slot][route].accept(sequence) {
+				if readyFromState2 {
+					r.markPartyRobotPeerReadyUnsafe(peer, "state2-duplicate")
+				}
 				continue
 			}
 		}
@@ -160,6 +161,9 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		if request.state == 3 {
 			r.beginPartyTQOSEpochUnsafe(peer.slot, route, request, now)
+		}
+		if request.state == 2 {
+			r.markPartyRobotPeerReadyUnsafe(peer, "state2")
 		}
 		if peer.slot < 4 && route < 3 {
 			r.partyTQOSCodecs[peer.slot][route] = request.codec
@@ -213,7 +217,7 @@ func (r *RobotVo) markPartyRobotPeerReadyUnsafe(peer partyIPPeer, reason string)
 		return
 	}
 	r.partyRobotPeerReady[peer.slot] = true
-	if reason != "ack" {
+	if reason != "ack" && reason != "state2-duplicate" {
 		r.clearPartyTQOSPendingRepliesUnsafe(peer.slot)
 	}
 	fmt.Printf("[PARTY_ROBOT_TQOS_READY] uid=%d peer=%d slot=%d reason=%s\n", r.UID, peer.accID, peer.slot, reason)
@@ -455,6 +459,7 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyPeerRoute = [4]byte{}
 	r.partyPeerRouteAt = [4]time.Time{}
 	r.partyDungeonFollow = nil
+	r.partyDungeonEnteredAt = time.Time{}
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
 	r.partySkillNextAt = time.Time{}

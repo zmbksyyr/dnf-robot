@@ -25,6 +25,9 @@ func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, 
 	if len(frame) < 9 || !peer.slotKnown || peer.slot >= 4 {
 		return false
 	}
+	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
+		return false
+	}
 	bodySize := int(binary.LittleEndian.Uint16(frame[5:7]))
 	if len(frame) != 9+bodySize {
 		return false

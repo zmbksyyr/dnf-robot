@@ -285,6 +285,7 @@ func TestRobotPartyReliableRetransmitOnlyQueuesFollowOnce(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 0xee9f, slot: 1, slotKnown: true}
 	peer := partyIPPeer{uniqueID: 0xf4a1, slot: 0, slotKnown: true}
+	vo.markPartyDungeonEnteredUnsafe(time.Now())
 	body := mustPartyHex(t, "015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000")
 	frame := buildPartyReliablePacket(7, peer.slot, 0, [][]byte{body})
 

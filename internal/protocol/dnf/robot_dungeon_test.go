@@ -89,6 +89,7 @@ func TestRobotDoesNotFollowPartySkillState(t *testing.T) {
 	now := time.Now()
 	peer := partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true}
 	vo := &RobotVo{UID: 17000001, partySelfPeer: partyIPPeer{uniqueID: 0x2222, slot: 1, slotKnown: true}}
+	vo.markPartyDungeonEnteredUnsafe(now)
 	body := buildPartySkillStateBody(peer.uniqueID, 22, []byte{3, 0, 0}, 7)
 	if vo.queuePartyDungeonFollowUnsafe(buildPartyUnreliablePacket(1, peer.slot, 0, body), peer, now) {
 		t.Fatal("standalone skill state entered the follow queue")
@@ -200,14 +201,15 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	remote := receiver.LocalAddr().(*net.UDPAddr)
 	now := time.Unix(200, 0)
 	vo := &RobotVo{
-		UID:                  17000001,
-		partySelfPeer:        partyIPPeer{uniqueID: 0x2f3e, slot: 2, slotKnown: true},
-		partyDungeonLastAt:   now,
-		partyDungeonFlags:    5,
-		partySkillNextAt:     now.Add(-time.Millisecond),
-		partySkillLoaded:     true,
-		partySkillJob:        8,
-		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{0x03, 0x00, 0x00}}},
+		UID:                   17000001,
+		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, slot: 2, slotKnown: true},
+		partyDungeonEnteredAt: now,
+		partyDungeonLastAt:    now,
+		partyDungeonFlags:     5,
+		partySkillNextAt:      now.Add(-time.Millisecond),
+		partySkillLoaded:      true,
+		partySkillJob:         8,
+		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{0x03, 0x00, 0x00}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
 	vo.flushPartyDungeonSkillUnsafe(sender, now)
@@ -260,13 +262,14 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 func TestPartySkillRecoveryFailureBacksOffAndBlocksCast(t *testing.T) {
 	now := time.Unix(300, 0)
 	vo := &RobotVo{
-		UID:                  17000001,
-		partySelfPeer:        partyIPPeer{uniqueID: 0x2f3e, slot: 1, slotKnown: true},
-		partyDungeonLastAt:   now,
-		partySkillRecoverAt:  now.Add(-time.Millisecond),
-		partySkillNextAt:     now.Add(-time.Millisecond),
-		partySkillLoaded:     true,
-		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+		UID:                   17000001,
+		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt: now,
+		partyDungeonLastAt:    now,
+		partySkillRecoverAt:   now.Add(-time.Millisecond),
+		partySkillNextAt:      now.Add(-time.Millisecond),
+		partySkillLoaded:      true,
+		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
 
@@ -304,6 +307,7 @@ func flushQueuedDungeonFollow(t *testing.T, vo *RobotVo, frame []byte, peer part
 	peer.port = uint16(remote.Port)
 	vo.partyPeers[peer.slot] = peer
 	now := time.Unix(100, 0)
+	vo.markPartyDungeonEnteredUnsafe(now)
 	if !vo.queuePartyDungeonFollowUnsafe(frame, peer, now) {
 		t.Fatal("follow frame was not queued")
 	}
@@ -359,9 +363,49 @@ func TestRememberPartyDungeonActivityFromReliableBatch(t *testing.T) {
 		UID:           17000149,
 		partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0x5678},
 	}
+	vo.markPartyDungeonEnteredUnsafe(now)
 	vo.rememberPartyDungeonActivityUnsafe(frame, 1, peer, now)
 	if vo.partyDungeonLastAt != now || vo.partyDungeonFlags != 5 || vo.partySkillNextAt.IsZero() {
 		t.Fatalf("dungeon activity not scheduled: last=%s flags=%d next=%s", vo.partyDungeonLastAt, vo.partyDungeonFlags, vo.partySkillNextAt)
+	}
+}
+
+func TestPartyDungeonEnvelopeDoesNotStartSkillInTown(t *testing.T) {
+	now := time.Unix(210, 0)
+	peer := partyIPPeer{slot: 0, slotKnown: true, uniqueID: 0x1234}
+	vo := &RobotVo{
+		UID:           17000149,
+		partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0x5678},
+	}
+	frame := buildPartyUnreliablePacket(1, peer.slot, 5, mustPartyHex(t, "015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000"))
+
+	vo.rememberPartyDungeonActivityUnsafe(frame, 1, peer, now)
+	if !vo.partyDungeonLastAt.IsZero() || !vo.partySkillNextAt.IsZero() {
+		t.Fatalf("standalone envelope started dungeon skill: last=%s next=%s", vo.partyDungeonLastAt, vo.partySkillNextAt)
+	}
+
+	vo.markPartyDungeonEnteredUnsafe(now)
+	vo.partyDungeonLastAt = now.Add(-time.Second)
+	vo.rememberPartyDungeonActivityUnsafe(frame, 1, peer, now)
+	if vo.partyDungeonLastAt != now || vo.partyDungeonFlags != 5 || vo.partySkillNextAt.IsZero() {
+		t.Fatalf("recent envelope did not refresh dungeon activity: last=%s flags=%d next=%s", vo.partyDungeonLastAt, vo.partyDungeonFlags, vo.partySkillNextAt)
+	}
+}
+
+func TestTownActivityClearsDungeonRuntime(t *testing.T) {
+	now := time.Unix(220, 0)
+	vo := &RobotVo{
+		partyDungeonEnteredAt: now,
+		partyDungeonLastAt:    now,
+		partyDungeonFlags:     5,
+		partySkillNextAt:      now,
+		partySkillRecoverAt:   now,
+		partyDungeonFollow:    []partyDungeonFollowPending{{due: now}},
+	}
+	vo.clearPartyDungeonRuntimeUnsafe()
+	if !vo.partyDungeonEnteredAt.IsZero() || !vo.partyDungeonLastAt.IsZero() || vo.partyDungeonFlags != 0 || !vo.partySkillNextAt.IsZero() || !vo.partySkillRecoverAt.IsZero() || len(vo.partyDungeonFollow) != 0 {
+		t.Fatalf("dungeon runtime survived town clear: entered=%s last=%s flags=%d next=%s recover=%s follow=%d",
+			vo.partyDungeonEnteredAt, vo.partyDungeonLastAt, vo.partyDungeonFlags, vo.partySkillNextAt, vo.partySkillRecoverAt, len(vo.partyDungeonFollow))
 	}
 }
 
@@ -404,13 +448,14 @@ func TestPartyDungeonSkillSurvivesRandomDelayOnRelay(t *testing.T) {
 	defer peerConn.Close()
 	now := time.Now()
 	vo := &RobotVo{
-		UID:                  17000001,
-		partyRelayConn:       relay,
-		partySelfPeer:        partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
-		partyDungeonLastAt:   now.Add(-5 * time.Second),
-		partySkillNextAt:     now,
-		partySkillLoaded:     true,
-		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+		UID:                   17000001,
+		partyRelayConn:        relay,
+		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt: now,
+		partyDungeonLastAt:    now.Add(-5 * time.Second),
+		partySkillNextAt:      now,
+		partySkillLoaded:      true,
+		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
 	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
@@ -429,14 +474,15 @@ func TestPartyRelayOnlyLoopFlushesDungeonSkill(t *testing.T) {
 	defer peerConn.Close()
 	now := time.Now()
 	vo := &RobotVo{
-		UID:                  17000001,
-		State:                StateRun,
-		partyRelayConn:       relay,
-		partySelfPeer:        partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
-		partyDungeonLastAt:   now,
-		partySkillNextAt:     now.Add(-time.Millisecond),
-		partySkillLoaded:     true,
-		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+		UID:                   17000001,
+		State:                 StateRun,
+		partyRelayConn:        relay,
+		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt: now,
+		partyDungeonLastAt:    now,
+		partySkillNextAt:      now.Add(-time.Millisecond),
+		partySkillLoaded:      true,
+		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
 	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
