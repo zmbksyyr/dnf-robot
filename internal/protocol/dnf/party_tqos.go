@@ -160,6 +160,9 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			r.partyTQOSCodecs[peer.slot][route] = request.codec
 			r.partyTQOSCodecKnown[peer.slot][route] = true
 		}
+		if r.partyRobotHandshakeReadyUnsafe(peer, route) {
+			continue
+		}
 		nextState, hasNextState := nextPartyTQOSState(request.state)
 		if hasNextState {
 			var reply []byte
@@ -179,6 +182,10 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 	}
 	return replies
+}
+
+func (r *RobotVo) partyRobotHandshakeReadyUnsafe(peer partyIPPeer, route byte) bool {
+	return route == 1 && peer.slot < 4 && isPartyRobotAccount(peer.accID) && r.partyRobotPeerReady[peer.slot]
 }
 
 func (r *RobotVo) partyTQOSReplyAcknowledgedUnsafe(frame []byte, route byte, peer partyIPPeer) bool {

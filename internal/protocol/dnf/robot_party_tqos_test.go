@@ -121,6 +121,19 @@ func TestMarkPartyRobotPeerReadyClearsPendingReplies(t *testing.T) {
 	}
 }
 
+func TestReadyPartyRobotPeerDoesNotRestartHandshake(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{accID: 17000001, slot: 1, slotKnown: true}
+	peer := partyIPPeer{accID: 17000002, slot: 2, slotKnown: true}
+	vo.partyRobotPeerReady[peer.slot] = true
+
+	replies := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 1, codec), 1, peer)
+	if len(replies) != 0 || len(vo.partyTQOSReplies[peer.slot][1].packet) != 0 {
+		t.Fatalf("ready peer restarted handshake replies=%x pending=%+v", replies, vo.partyTQOSReplies[peer.slot][1])
+	}
+}
+
 func TestRobotPartyTQOSReliableReplyStartsNewEpochForCodecOrFlags(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{slot: 1, slotKnown: true}
