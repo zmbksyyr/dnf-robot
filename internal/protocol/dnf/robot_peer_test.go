@@ -2,14 +2,17 @@ package dnf
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"encoding/hex"
+	"io"
 	"net"
-	"os"
-	"path/filepath"
-	"robot/internal/shared"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"robot/internal/protocol/dnf/crypt"
+	"robot/internal/shared"
 )
 
 func TestBuildPeerResponse(t *testing.T) {
@@ -62,6 +65,110 @@ func TestPlainRecvBodySupportsPartyNotify(t *testing.T) {
 	response, typ, ok := buildPeerResponse(plain)
 	if !ok || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != 0x1234 {
 		t.Fatalf("buildPeerResponse response=%x typ=%d ok=%t", response, typ, ok)
+	}
+}
+
+func TestSelectPeerResponsePacketSupportsEncryptedAndPlainBodies(t *testing.T) {
+	cipher := newPartyTestCipher(t)
+	body := []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0xaa}
+
+	plain := makePartyRecvPacket(7, body)
+	response, typ, source, err := selectPeerResponsePacket(cipher, plain, false)
+	if err != nil || source != "plain" || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != 0x1234 {
+		t.Fatalf("plain response=%x typ=%d source=%q err=%v", response, typ, source, err)
+	}
+
+	encrypted := makeEncryptedPartyRecvPacket(t, cipher, 7, body)
+	response, typ, source, err = selectPeerResponsePacket(cipher, encrypted, false)
+	if err != nil || source != "decrypted" || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != 0x1234 {
+		t.Fatalf("encrypted response=%x typ=%d source=%q err=%v", response, typ, source, err)
+	}
+}
+
+func TestPartyIPInfoPacketSupportsEncryptedAndPlainBodies(t *testing.T) {
+	cipher := newPartyTestCipher(t)
+	body := make([]byte, 45)
+	body[0] = 2
+	putPartyPeer(body[1:23], 0x1111, net.IPv4(192, 168, 200, 1), 5063, 18000000, 1, 1472)
+	putPartyPeer(body[23:45], 0x2222, net.IPv4(192, 168, 200, 131), 45678, 17000001, 1, 1472)
+
+	for _, tt := range []struct {
+		name   string
+		packet []byte
+		source string
+	}{
+		{name: "plain", packet: makePartyRecvPacket(11, body), source: "plain"},
+		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 11, padPartyBlock(body)), source: "decrypted"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			self, peers, source, err := selectPartyIPInfoPacket(cipher, tt.packet, false, 17000001)
+			if err != nil || source != tt.source || self.accID != 17000001 || len(peers) != 1 || peers[0].accID != 18000000 {
+				t.Fatalf("self=%+v peers=%+v source=%q err=%v", self, peers, source, err)
+			}
+		})
+	}
+}
+
+func TestPartyInfoPacketSupportsEncryptedAndPlainZlib(t *testing.T) {
+	cipher := newPartyTestCipher(t)
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(mustPartyHex(t, "0100220002ffffff486b01ffffffffffff00010000005887dd13")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name   string
+		packet []byte
+		source string
+	}{
+		{name: "plain", packet: makePartyRecvPacket(9, compressed.Bytes()), source: "plain"},
+		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 9, padPartyBlock(compressed.Bytes())), source: "decrypted"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clears, source, err := partyInfoPacketClearsParty(cipher, tt.packet, false)
+			if err != nil || !clears || source != tt.source {
+				t.Fatalf("clears=%t source=%q err=%v", clears, source, err)
+			}
+		})
+	}
+}
+
+func TestParseRecvPacketDoesNotTreatDamagedCiphertextAsPlain(t *testing.T) {
+	cipher := newPartyTestCipher(t)
+	packet := makePartyRecvPacket(22, []byte{1, 2, 3, 4, 5, 6, 7})
+	if _, _, _, err := parseRecvPacket(cipher, packet, false); err == nil {
+		t.Fatal("damaged ciphertext was accepted as a decrypted packet")
+	}
+}
+
+func TestTownNotifySelectionPrefersKnownPlainCandidate(t *testing.T) {
+	cipher := newPartyTestCipher(t)
+	vo := &RobotVo{}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1234, slot: 0, slotKnown: true}
+
+	position := make([]byte, 16)
+	binary.LittleEndian.PutUint16(position[:2], 0x1234)
+	binary.LittleEndian.PutUint16(position[2:4], 100)
+	binary.LittleEndian.PutUint16(position[4:6], 200)
+	position[6] = 5
+	binary.LittleEndian.PutUint16(position[7:9], 120)
+	body, ok := vo.selectTownEntityPositionBodyUnsafe(cipher, makePartyRecvPacket(22, position), false)
+	if !ok || binary.LittleEndian.Uint16(body[:2]) != 0x1234 {
+		t.Fatalf("selected position=%x ok=%t", body, ok)
+	}
+
+	area := make([]byte, 8)
+	binary.LittleEndian.PutUint16(area[:2], 0x1234)
+	area[2], area[3] = 3, 4
+	binary.LittleEndian.PutUint16(area[4:6], 300)
+	binary.LittleEndian.PutUint16(area[6:8], 400)
+	selectedArea, ok := vo.selectTownEntityAreaUnsafe(cipher, makePartyRecvPacket(23, area), false)
+	if !ok || selectedArea.uniqueID != 0x1234 || selectedArea.village != 3 || selectedArea.area != 4 {
+		t.Fatalf("selected area=%+v ok=%t", selectedArea, ok)
 	}
 }
 
@@ -332,13 +439,6 @@ func TestRobotPeerResetDropsOnlyItsDelayedDungeonFrames(t *testing.T) {
 	}
 }
 
-func TestParsePartyLearnedSkillsUsesIndexLevelPairs(t *testing.T) {
-	learned := parsePartyLearnedSkills([]byte{1, 22, 3, 28, 0, 0, 16, 0, 1, 30})
-	if len(learned) != 2 || learned[1] != 30 || learned[3] != 28 {
-		t.Fatalf("learned skills = %+v", learned)
-	}
-}
-
 func TestBuildPartySkillStateBody(t *testing.T) {
 	body := buildPartySkillStateBody(0x2f3e, 0x16, nil, 0xe708)
 	if len(body) != partySkillStateBodyBaseSize || body[0] != 2 || binary.LittleEndian.Uint16(body[1:3]) != partyDungeonEnvelopeCommand {
@@ -375,34 +475,8 @@ func TestBuildPartySkillStateBodyMatchesCapturedShiningCut(t *testing.T) {
 	}
 }
 
-func TestLoadPartySkillCatalogFiltersLevelAndDisabled(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "party_skill_catalog.json")
-	data := []byte(`{
-  "max_skill_level": 70,
-  "skills": [
-    {"job":6,"skill_index":3,"state":22,"level":5,"name":"ok","state_data":[3],"risk":1},
-    {"job":6,"skill_index":4,"state":23,"level":75,"name":"too_high","state_data":[0],"risk":1},
-    {"job":6,"skill_index":5,"state":24,"level":10,"disabled":true,"state_data":[0],"risk":1},
-    {"job":2,"skill_index":6,"state":25,"level":10,"state_data":[0],"risk":1}
-  ]
-}`)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PARTY_SKILL_CATALOG_CONFIG", path)
-
-	got, ok := loadPartySkillCatalogStatesForJob(6)
-	if !ok {
-		t.Fatal("catalog was not loaded")
-	}
-	if len(got) != 1 || got[0].SkillIndex != 3 || got[0].Level != 5 || got[0].Name != "ok" || !bytes.Equal(got[0].StateData, []byte{3, 0, 0}) {
-		t.Fatalf("filtered catalog = %+v", got)
-	}
-}
-
 func TestPartySkillCandidatesRequireWhitelistAndPVF(t *testing.T) {
-	whitelist := []shared.SkillState{
+	whitelist := []shared.PartySkillState{
 		{Job: 6, SkillIndex: 3, State: 22, Level: 5, Name: "ok", StateData: []byte{3, 0, 0}, Risk: 1, ScriptPath: "ok.nut"},
 		{Job: 6, SkillIndex: 4, State: 23, Level: 10, Name: "unlearned", StateData: []byte{0, 0, 0}, Risk: 1},
 		{Job: 6, SkillIndex: 5, State: 24, Level: 10, Name: "missing_pvf", StateData: []byte{0, 0, 0}, Risk: 1},
@@ -413,16 +487,14 @@ func TestPartySkillCandidatesRequireWhitelistAndPVF(t *testing.T) {
 		{Job: 6, SkillIndex: 4, State: 23},
 		{Job: 2, SkillIndex: 6, State: 25},
 	}
-	learned := map[byte]byte{3: 1, 5: 1}
-
-	got, stats := partySkillCandidatesFromCatalog(6, learned, whitelist, pvfStates)
-	if len(got) != 2 || got[0].skillIndex != 3 || got[0].state != 22 || !got[0].learned || !bytes.Equal(got[0].stateData, []byte{3, 0, 0}) {
+	got, stats := partySkillCandidatesFromCatalog(6, whitelist, pvfStates)
+	if len(got) != 2 || got[0].skillIndex != 3 || got[0].state != 22 || !bytes.Equal(got[0].stateData, []byte{3, 0, 0}) {
 		t.Fatalf("candidates = %+v", got)
 	}
-	if got[1].skillIndex != 4 || got[1].state != 23 || got[1].learned {
-		t.Fatalf("unlearned whitelist candidate = %+v", got[1])
+	if got[1].skillIndex != 4 || got[1].state != 23 {
+		t.Fatalf("second whitelist candidate = %+v", got[1])
 	}
-	if stats.PVFMatched != 2 || stats.SkippedUnlearned != 0 || stats.SkippedMissingPVF != 1 {
+	if stats.PVFMatched != 2 || stats.SkippedMissingPVF != 1 {
 		t.Fatalf("stats = %+v", stats)
 	}
 }
@@ -965,6 +1037,122 @@ func TestPartyRelayNormalCloseIsAlreadyDetached(t *testing.T) {
 	}
 }
 
+func TestEnsurePartyRelayIsAsyncSingleflightAndUsesLoginIP(t *testing.T) {
+	gameConn, gamePeer := net.Pipe()
+	defer gameConn.Close()
+	defer gamePeer.Close()
+
+	release := make(chan struct{})
+	address := make(chan string, 1)
+	var calls atomic.Int32
+	vo := &RobotVo{
+		UID:           17000001,
+		LoginIP:       "192.0.2.44",
+		State:         StateRun,
+		Conn:          gameConn,
+		partySelfPeer: partyIPPeer{uniqueID: 7, accID: 17000001, slot: 1, slotKnown: true},
+		partyRelayDial: func(_, target string, _ time.Duration) (net.Conn, error) {
+			calls.Add(1)
+			address <- target
+			<-release
+			return nil, net.ErrClosed
+		},
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 9, accID: 18000000, slot: 0, slotKnown: true}
+
+	vo.mu.Lock()
+	vo.ensurePartyRelayUnsafe()
+	vo.ensurePartyRelayUnsafe()
+	vo.mu.Unlock()
+
+	select {
+	case got := <-address:
+		want := net.JoinHostPort(vo.LoginIP, "7200")
+		if got != want {
+			t.Fatalf("relay address=%q want=%q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("relay dial did not start")
+	}
+	locked := make(chan struct{})
+	go func() {
+		vo.mu.Lock()
+		vo.mu.Unlock()
+		close(locked)
+	}()
+	select {
+	case <-locked:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("relay dial held the Robot mutex")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("dial calls=%d want=1", got)
+	}
+	close(release)
+}
+
+func TestPartyUDPAuthenticatesBeforeLearningNATEndpoint(t *testing.T) {
+	sharedIP := net.IPv4(192, 168, 200, 1)
+	vo := &RobotVo{partySelfPeer: partyIPPeer{uniqueID: 3, accID: 17000001, slot: 2, slotKnown: true}}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, innerIP: sharedIP, outerIP: sharedIP, port: 5063}
+	vo.partyPeers[1] = partyIPPeer{uniqueID: 2, accID: 18000001, slot: 1, slotKnown: true, innerIP: sharedIP, outerIP: sharedIP, port: 5064}
+
+	remote := &net.UDPAddr{IP: sharedIP, Port: 62000}
+	payload := buildPartyTQOSPacket(7, 1, 0, 3, 1, partyTQOSCodec{key: 0x7e})
+	if replies := vo.buildPartyUDPAcks(payload, remote); len(replies) == 0 {
+		t.Fatal("authenticated NAT endpoint produced no reply")
+	}
+	if vo.partyPeers[0].observedPort != 0 || vo.partyPeers[1].observedPort != 62000 || !vo.partyPeers[1].observedIP.Equal(sharedIP) {
+		t.Fatalf("observed endpoints=%+v", vo.partyPeers)
+	}
+
+	unknown := &net.UDPAddr{IP: net.IPv4(203, 0, 113, 9), Port: 62001}
+	if replies := vo.buildPartyUDPAcks(payload, unknown); len(replies) != 0 {
+		t.Fatalf("unknown IP was accepted: %x", replies)
+	}
+	if vo.partyPeers[1].observedPort != 62000 {
+		t.Fatalf("unknown IP rewrote observed endpoint: %+v", vo.partyPeers[1])
+	}
+
+	badSlot := buildPartyTQOSPacket(8, 3, 0, 3, 1, partyTQOSCodec{key: 0x7e})
+	if replies := vo.buildPartyUDPAcks(badSlot, &net.UDPAddr{IP: sharedIP, Port: 62002}); len(replies) != 0 {
+		t.Fatalf("unknown sender slot was accepted: %x", replies)
+	}
+}
+
+func TestPartyDungeonSkillAndFollowUseRecentRelayRoute(t *testing.T) {
+	relay, peerConn := net.Pipe()
+	defer relay.Close()
+	defer peerConn.Close()
+	now := time.Now()
+	vo := &RobotVo{
+		UID:            17000001,
+		partyRelayConn: relay,
+		partySelfPeer:  partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
+
+	skillPacket := make(chan []byte, 1)
+	go func() { skillPacket <- readPartyRelayPacket(t, peerConn) }()
+	if !vo.sendPartySkillStateUnsafe(nil, now, 22, []byte{3, 0, 0}, "TEST") {
+		t.Fatal("relay skill send failed")
+	}
+	assertPartyRelayPayload(t, <-skillPacket, vo.UID, vo.partyPeers[0].accID)
+	if vo.partyTQOSReliableSeq[0][2] != 1 || vo.partyTQOSReliableSeq[0][1] != 0 {
+		t.Fatalf("skill route sequences=%+v", vo.partyTQOSReliableSeq[0])
+	}
+
+	vo.partyDungeonFollow = []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, body: []byte{1, 2, 3}}}
+	followPacket := make(chan []byte, 1)
+	go func() { followPacket <- readPartyRelayPacket(t, peerConn) }()
+	vo.flushPartyDungeonFollowUnsafe(nil, now)
+	assertPartyRelayPayload(t, <-followPacket, vo.UID, vo.partyPeers[0].accID)
+	if vo.partyTQOSSeq[0][2] != 1 || vo.partyTQOSSeq[0][1] != 0 {
+		t.Fatalf("follow route sequences=%+v", vo.partyTQOSSeq[0])
+	}
+}
+
 func putPartyPeer(dst []byte, uniqueID uint16, ip net.IP, port uint16, accID uint32, natType byte, mtu uint32) {
 	binary.LittleEndian.PutUint16(dst[:2], uniqueID)
 	copy(dst[2:6], ip.To4())
@@ -982,4 +1170,64 @@ func mustPartyHex(t *testing.T, value string) []byte {
 		t.Fatalf("decode %q: %v", value, err)
 	}
 	return data
+}
+
+func newPartyTestCipher(t *testing.T) *crypt.DNFCipher {
+	t.Helper()
+	cipher := crypt.NewDNFCipher()
+	if err := cipher.Initialize(make([]byte, 334)); err != nil {
+		t.Fatalf("initialize cipher: %v", err)
+	}
+	return cipher
+}
+
+func makePartyRecvPacket(packetType uint16, body []byte) []byte {
+	packet := make([]byte, 15+len(body))
+	binary.LittleEndian.PutUint16(packet[1:3], packetType)
+	binary.LittleEndian.PutUint32(packet[3:7], uint32(len(packet)))
+	copy(packet[15:], body)
+	return packet
+}
+
+func makeEncryptedPartyRecvPacket(t *testing.T, cipher *crypt.DNFCipher, packetType uint16, body []byte) []byte {
+	t.Helper()
+	encrypted, err := cipher.Encrypt(packetType, body)
+	if err != nil {
+		t.Fatalf("encrypt packet type %d: %v", packetType, err)
+	}
+	return makePartyRecvPacket(packetType, encrypted)
+}
+
+func padPartyBlock(body []byte) []byte {
+	padded := make([]byte, alignTo(len(body), 8))
+	copy(padded, body)
+	return padded
+}
+
+func readPartyRelayPacket(t *testing.T, conn net.Conn) []byte {
+	t.Helper()
+	header := make([]byte, 12)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		t.Errorf("read relay header: %v", err)
+		return nil
+	}
+	size := int(binary.LittleEndian.Uint16(header[2:4]))
+	if size < len(header) {
+		t.Errorf("invalid relay size %d", size)
+		return nil
+	}
+	packet := make([]byte, size)
+	copy(packet, header)
+	if _, err := io.ReadFull(conn, packet[len(header):]); err != nil {
+		t.Errorf("read relay body: %v", err)
+		return nil
+	}
+	return packet
+}
+
+func assertPartyRelayPayload(t *testing.T, packet []byte, src, dst uint32) {
+	t.Helper()
+	if len(packet) < 21 || binary.LittleEndian.Uint16(packet[:2]) != 1 || binary.LittleEndian.Uint32(packet[4:8]) != src || binary.LittleEndian.Uint32(packet[8:12]) != dst {
+		t.Fatalf("relay packet=%x src=%d dst=%d", packet, src, dst)
+	}
 }

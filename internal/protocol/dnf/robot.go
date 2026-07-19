@@ -5,26 +5,26 @@ import (
 	"compress/zlib"
 	"database/sql"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"math/bits"
 	"net"
-	"os"
-	"path/filepath"
+	"sort"
+	"strconv"
+	"time"
+
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	sqlpkg "robot/internal/foundation/sql"
 	"robot/internal/protocol/dnf/crypt"
 	"robot/internal/shared"
-	"sort"
-	"strconv"
-	"time"
 )
 
 // ---- robot.go ----
 var partyRelayPort = 7200
+
+const partyRelayWriteTimeout = 500 * time.Millisecond
 
 func ConfigurePartyRelayPort(port int) {
 	if port <= 0 || port > 65535 {
@@ -126,6 +126,8 @@ type ShopVo struct {
 	ItemNumber int
 }
 
+type partyRelayDialFunc func(network, address string, timeout time.Duration) (net.Conn, error)
+
 type RobotVo struct {
 	UID       uint32
 	CID       int
@@ -195,7 +197,11 @@ type RobotVo struct {
 	townEntityPositions  map[uint16]townEntityPosition
 	partyUDPConn         *net.UDPConn
 	partyRelayConn       net.Conn
+	partyRelayConnecting bool
+	partyRelayGeneration uint64
 	partyRelayAt         time.Time
+	partyRelayDial       partyRelayDialFunc
+	partyRelaySendMu     lockhub.Locker
 	partyTQOSSeq         [4][3]uint32
 	partyTQOSReliableSeq [4][3]uint32
 	partyTQOSCodecs      [4][3]partyTQOSCodec
@@ -203,6 +209,8 @@ type RobotVo struct {
 	partyRobotProbeAt    [4]time.Time
 	partyRobotProbeCount [4]uint8
 	partyRobotPeerReady  [4]bool
+	partyPeerRoute       [4]byte
+	partyPeerRouteAt     [4]time.Time
 	partyUDPDiagAt       time.Time
 	partyDungeonTraceAt  time.Time
 	partyDungeonFollow   []partyDungeonFollowPending
@@ -702,73 +710,63 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 
 	if r.State == StateRun && packetFlag == 0 && packetType == 22 {
-		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
-		if err == nil {
-			if position, ok := r.rememberTownEntityUnsafe(decData); ok {
-				r.followPartyLeaderTownPositionUnsafe(position)
-			}
+		if body, ok := r.selectTownEntityPositionBodyUnsafe(r.Cipher, pInBuf, isAnti); ok {
+			position, _ := r.rememberTownEntityUnsafe(body)
+			r.followPartyLeaderTownPositionUnsafe(position)
 		}
 		return
 	}
 
 	if r.State == StateRun && packetFlag == 0 && packetType == 23 {
-		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
-		if err == nil {
-			if area, ok := parseTownEntityArea(decData); ok {
-				r.followPartyLeaderTownAreaUnsafe(area)
-			}
+		if area, ok := r.selectTownEntityAreaUnsafe(r.Cipher, pInBuf, isAnti); ok {
+			r.followPartyLeaderTownAreaUnsafe(area)
 		}
 		return
 	}
 
 	if r.State == StateRun && packetFlag == 0 && packetType == 9 && len(pInBuf) > 15 {
-		if decData, err := inflatePartyInfo(pInBuf[15:]); err == nil && partyInfoClearsParty(decData) {
+		clears, source, err := partyInfoPacketClearsParty(r.Cipher, pInBuf, isAnti)
+		if err != nil {
+			fmt.Printf("[PARTY_INFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
+		} else if clears {
+			if source == "plain" {
+				fmt.Printf("[PARTY_INFO_PLAIN] uid=%d size=%d\n", r.UID, dInSize)
+			}
 			r.clearPartyUnsafe()
 		}
 		return
 	}
 
 	if r.State == StateRun && packetFlag == 0 && packetType == 11 {
-		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		self, peers, source, err := selectPartyIPInfoPacket(r.Cipher, pInBuf, isAnti, uint32(r.UID))
 		if err != nil {
-			if plain, ok := plainRecvBody(pInBuf, isAnti); ok {
-				decData = plain
-				fmt.Printf("[PARTY_IPINFO_PLAIN_FALLBACK] uid=%d err=%v size=%d\n", r.UID, err, len(plain))
-			} else {
-				fmt.Printf("[PARTY_IPINFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
-				return
-			}
+			fmt.Printf("[PARTY_IPINFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
+			return
 		}
-		if self, peers, ok := parsePartyIPInfoSnapshot(decData, uint32(r.UID)); ok {
-			tracePartyIPInfo(r.UID, self, peers)
-			r.partySelfPeer = self
-			r.setPartyPeersUnsafe(peers)
-			r.ensurePartyRelayUnsafe()
-			r.followCachedPartyLeaderTownPositionUnsafe()
-			r.startPartyRobotPeerNegotiationUnsafe()
-		} else {
-			if plain, plainOK := plainRecvBody(pInBuf, isAnti); plainOK && !bytes.Equal(plain, decData) {
-				if self, peers, ok := parsePartyIPInfoSnapshot(plain, uint32(r.UID)); ok {
-					fmt.Printf("[PARTY_IPINFO_PLAIN_FALLBACK] uid=%d data_size=%d\n", r.UID, len(plain))
-					tracePartyIPInfo(r.UID, self, peers)
-					r.partySelfPeer = self
-					r.setPartyPeersUnsafe(peers)
-					r.ensurePartyRelayUnsafe()
-					r.followCachedPartyLeaderTownPositionUnsafe()
-					r.startPartyRobotPeerNegotiationUnsafe()
-					return
-				}
-			}
-			fmt.Printf("[PARTY_IPINFO_SNAPSHOT_INVALID] uid=%d data_size=%d anti=%t\n", r.UID, len(decData), isAnti)
+		if source == "plain" {
+			fmt.Printf("[PARTY_IPINFO_PLAIN] uid=%d size=%d\n", r.UID, dInSize)
 		}
+		tracePartyIPInfo(r.UID, self, peers)
+		r.partySelfPeer = self
+		r.setPartyPeersUnsafe(peers)
+		r.ensurePartyRelayUnsafe()
+		r.followCachedPartyLeaderTownPositionUnsafe()
+		r.startPartyRobotPeerNegotiationUnsafe()
 		return
 	}
 
 	if r.State == StateRun && packetFlag == 0 && packetType == 6 {
-		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
-		if err == nil && len(decData) >= 2 {
-			uniqueID := binary.LittleEndian.Uint16(decData[:2])
+		candidates, _ := recvBodyCandidates(r.Cipher, pInBuf, isAnti)
+		for _, candidate := range candidates {
+			if len(candidate.body) < 2 {
+				continue
+			}
+			uniqueID := binary.LittleEndian.Uint16(candidate.body[:2])
+			if uniqueID == 0 || !r.partyEntityKnownUnsafe(uniqueID) {
+				continue
+			}
 			delete(r.townEntityPositions, uniqueID)
+			break
 		}
 		return
 	}
@@ -1007,30 +1005,13 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 
 	if packetFlag == 0 && packetType == 7 && r.State == StateRun {
-		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
+		data, typ, source, err := selectPeerResponsePacket(r.Cipher, pInBuf, isAnti)
 		if err != nil {
-			if plain, ok := plainRecvBody(pInBuf, isAnti); ok {
-				decData = plain
-				fmt.Printf("[PEER_REQUEST_PLAIN_FALLBACK] uid=%d err=%v size=%d\n", r.UID, err, len(plain))
-			} else {
-				fmt.Printf("[PEER_REQUEST_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
-				return
-			}
+			fmt.Printf("[PEER_REQUEST_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
+			return
 		}
-		data, typ, ok := buildPeerResponse(decData)
-		if !ok {
-			if plain, plainOK := plainRecvBody(pInBuf, isAnti); plainOK && !bytes.Equal(plain, decData) {
-				if plainData, plainTyp, plainOK := buildPeerResponse(plain); plainOK {
-					fmt.Printf("[PEER_REQUEST_PLAIN_FALLBACK] uid=%d data_size=%d\n", r.UID, len(plain))
-					data = plainData
-					typ = plainTyp
-					ok = true
-				}
-			}
-			if !ok {
-				fmt.Printf("[PEER_REQUEST_UNSUPPORTED] uid=%d data_size=%d data=%x\n", r.UID, len(decData), decData)
-				return
-			}
+		if source == "plain" {
+			fmt.Printf("[PEER_REQUEST_PLAIN] uid=%d size=%d\n", r.UID, dInSize)
 		}
 		if typ == peerRequestParty || (!r.LastTradeState && r.LastTradeID == 0) {
 			uniqueID := binary.LittleEndian.Uint16(data[0:2])
@@ -1316,45 +1297,64 @@ func (r *RobotVo) sendNATInfoUnsafe() bool {
 }
 
 func (r *RobotVo) ensurePartyRelayUnsafe() {
-	if r.partyRelayConn != nil || r.Conn == nil || !r.partyActiveUnsafe() {
-		return
-	}
-	if addr, ok := r.Conn.LocalAddr().(*net.TCPAddr); ok {
-		r.startPartyRelayUnsafe(addr.IP)
-	}
-}
-
-func (r *RobotVo) startPartyRelayUnsafe(ip net.IP) {
-	if r.partyRelayConn != nil || r.LoginIP == "" {
+	if r.partyRelayConn != nil || r.partyRelayConnecting || r.State != StateRun || r.Conn == nil || !r.partyActiveUnsafe() || r.LoginIP == "" {
 		return
 	}
 	host := r.LoginIP
-	if ip != nil && ip.String() != "" {
-		host = ip.String()
-	}
 	now := time.Now()
 	if !r.partyRelayAt.IsZero() && now.Sub(r.partyRelayAt) < 5*time.Second {
 		return
 	}
 	r.partyRelayAt = now
 	relayAddr := net.JoinHostPort(host, strconv.Itoa(partyRelayPort))
-	conn, err := net.DialTimeout("tcp", relayAddr, 3*time.Second)
+	r.partyRelayConnecting = true
+	generation := r.partyRelayGeneration
+	uid := r.UID
+	dial := r.partyRelayDial
+	if dial == nil {
+		dial = net.DialTimeout
+	}
+	go r.connectPartyRelay(generation, uid, relayAddr, dial)
+}
+
+func (r *RobotVo) connectPartyRelay(generation uint64, uid uint32, relayAddr string, dial partyRelayDialFunc) {
+	conn, err := dial("tcp", relayAddr, 3*time.Second)
 	if err != nil {
-		fmt.Printf("[PARTY_RELAY_CONNECT_ERROR] uid=%d addr=%s err=%v\n", r.UID, relayAddr, err)
+		r.finishPartyRelayConnect(generation, nil)
+		fmt.Printf("[PARTY_RELAY_CONNECT_ERROR] uid=%d addr=%s err=%v\n", uid, relayAddr, err)
 		return
 	}
-	auth := buildPartyRelayPacket(0, r.UID, 0, nil)
-	_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
-	if _, err := conn.Write(auth); err != nil {
+	auth := buildPartyRelayPacket(0, uid, 0, nil)
+	if err := r.writePartyRelayConn(conn, auth); err != nil {
 		_ = conn.Close()
-		fmt.Printf("[PARTY_RELAY_AUTH_ERROR] uid=%d err=%v\n", r.UID, err)
+		r.finishPartyRelayConnect(generation, nil)
+		fmt.Printf("[PARTY_RELAY_AUTH_ERROR] uid=%d err=%v\n", uid, err)
 		return
+	}
+	if !r.finishPartyRelayConnect(generation, conn) {
+		_ = conn.Close()
+		return
+	}
+	go r.partyRelayLoop(conn, uid)
+}
+
+func (r *RobotVo) finishPartyRelayConnect(generation uint64, conn net.Conn) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if generation != r.partyRelayGeneration {
+		return false
+	}
+	r.partyRelayConnecting = false
+	if conn == nil || r.partyRelayConn != nil || r.State != StateRun || !r.partyActiveUnsafe() {
+		return false
 	}
 	r.partyRelayConn = conn
-	go r.partyRelayLoop(conn, r.UID)
+	return true
 }
 
 func (r *RobotVo) closePartyRelayUnsafe() {
+	r.partyRelayGeneration++
+	r.partyRelayConnecting = false
 	conn := r.partyRelayConn
 	r.partyRelayConn = nil
 	if conn != nil {
@@ -1372,7 +1372,31 @@ func (r *RobotVo) detachPartyRelayConn(conn net.Conn) bool {
 		return false
 	}
 	r.partyRelayConn = nil
+	r.partyRelayGeneration++
+	r.partyRelayConnecting = false
 	return r.State != StateStop
+}
+
+func (r *RobotVo) writePartyRelayConn(conn net.Conn, packet []byte) error {
+	if conn == nil {
+		return fmt.Errorf("party relay is not connected")
+	}
+	r.partyRelaySendMu.Lock()
+	defer r.partyRelaySendMu.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(partyRelayWriteTimeout)); err != nil {
+		return err
+	}
+	for len(packet) > 0 {
+		n, err := conn.Write(packet)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrUnexpectedEOF
+		}
+		packet = packet[n:]
+	}
+	return nil
 }
 
 func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
@@ -1386,8 +1410,7 @@ func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				now := time.Now()
 				if now.After(nextHeartbeat) {
-					_ = conn.SetWriteDeadline(now.Add(3 * time.Second))
-					if _, err := conn.Write(buildPartyRelayPacket(1, uid, uid, nil)); err != nil {
+					if err := r.writePartyRelayConn(conn, buildPartyRelayPacket(1, uid, uid, nil)); err != nil {
 						unexpected := r.detachPartyRelayConn(conn)
 						_ = conn.Close()
 						if unexpected {
@@ -1451,8 +1474,7 @@ func (r *RobotVo) handlePartyRelayPacket(conn net.Conn, packet []byte) {
 	replies := r.buildPartyRelayReplies(payload, src)
 	for _, replyPayload := range replies {
 		reply := buildPartyRelayPacket(1, r.UID, src, replyPayload)
-		_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
-		if _, err := conn.Write(reply); err != nil {
+		if err := r.writePartyRelayConn(conn, reply); err != nil {
 			unexpected := r.detachPartyRelayConn(conn)
 			_ = conn.Close()
 			if unexpected {
@@ -1596,11 +1618,44 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 		r.tracePartyUDPUnsafe("DROP_PEER", remote, senderSlot, 0, 0)
 		return nil
 	}
+	exactEndpoint := partyPeerEndpointMatches(peer.observedIP, peer.observedPort, remote) || partyPeerEndpointMatches(peer.outerIP, peer.port, remote)
+	if !exactEndpoint {
+		if senderSlot == nil || !r.partyTQOSPayloadAuthenticatesPeerUnsafe(payload, 1, peer) {
+			r.tracePartyUDPUnsafe("DROP_ENDPOINT", remote, senderSlot, peer.accID, len(payload))
+			return nil
+		}
+		peer = r.learnPartyPeerEndpointUnsafe(peer, remote)
+	}
 	r.tracePartyUDPUnsafe("RECV", remote, senderSlot, peer.accID, len(payload))
 	if len(payload) == 8 && payload[0] == 0x00 {
 		return nil
 	}
 	return r.buildPartyTQOSRepliesUnsafe(payload, 1, peer)
+}
+
+func (r *RobotVo) partyTQOSPayloadAuthenticatesPeerUnsafe(payload []byte, route byte, peer partyIPPeer) bool {
+	if !peer.slotKnown || route < 1 || route > 2 {
+		return false
+	}
+	frames, ok := splitPartyTransportFrames(payload)
+	if !ok {
+		return false
+	}
+	var preferred *partyTQOSCodec
+	if peer.slot < 4 && r.partyTQOSCodecKnown[peer.slot][route] {
+		codec := r.partyTQOSCodecs[peer.slot][route]
+		preferred = &codec
+	}
+	for _, frame := range frames {
+		if len(frame) < 9 || frame[0] == 0 || frame[7] != peer.slot {
+			continue
+		}
+		request, ok := parsePartyTQOSPacketWithCodec(frame, route, preferred)
+		if ok && request.senderSlot == peer.slot && request.route == route {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *RobotVo) buildPartyRelayReplies(payload []byte, src uint32) [][]byte {
@@ -1623,6 +1678,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		return nil
 	}
 	replies := make([][]byte, 0, len(frames)+1)
+	now := time.Now()
 	for _, frame := range frames {
 		if frame[0] == 0x00 {
 			continue
@@ -1630,16 +1686,15 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		if frame[7] != peer.slot {
 			return nil
 		}
+		r.rememberPartyPeerRouteUnsafe(peer.slot, route, now)
 		if frame[0] == 0x01 {
 			sequence := binary.LittleEndian.Uint32(frame[1:5])
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
-			r.rememberPartyDungeonActivityUnsafe(frame, route, peer, time.Now())
+			r.rememberPartyDungeonActivityUnsafe(frame, route, peer, now)
 			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
-			if route == 1 {
-				r.queuePartyDungeonFollowUnsafe(frame, peer, time.Now())
-			}
+			r.queuePartyDungeonFollowUnsafe(frame, peer, now)
 		}
 		var preferred *partyTQOSCodec
 		if peer.slot < 4 && route < 3 && r.partyTQOSCodecKnown[peer.slot][route] {
@@ -1717,6 +1772,24 @@ func (r *RobotVo) nextPartyTQOSSequenceUnsafe(peerSlot, route byte, reliable boo
 	return sequence, true
 }
 
+func (r *RobotVo) rememberPartyPeerRouteUnsafe(peerSlot, route byte, now time.Time) {
+	if peerSlot >= byte(len(r.partyPeerRoute)) || (route != 1 && route != 2) {
+		return
+	}
+	r.partyPeerRoute[peerSlot] = route
+	r.partyPeerRouteAt[peerSlot] = now
+}
+
+func (r *RobotVo) partyRouteForPeerUnsafe(peerSlot byte) byte {
+	if peerSlot < byte(len(r.partyPeerRoute)) && !r.partyPeerRouteAt[peerSlot].IsZero() {
+		route := r.partyPeerRoute[peerSlot]
+		if route == 1 || route == 2 {
+			return route
+		}
+	}
+	return 1
+}
+
 func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 	if r.partyUDPConn == nil || !r.partySelfPeer.slotKnown || !isPartyRobotAccount(r.partySelfPeer.accID) {
 		return
@@ -1725,7 +1798,10 @@ func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 		if !peer.slotKnown || peer.slot >= 4 || r.partyRobotPeerReady[peer.slot] || r.partyRobotProbeCount[peer.slot] >= 4 || !isPartyRobotAccount(peer.accID) {
 			continue
 		}
-		if r.partySelfPeer.accID == peer.accID || peer.outerIP == nil || peer.port == 0 {
+		if r.partySelfPeer.accID == peer.accID {
+			continue
+		}
+		if _, ok := partyPeerUDPAddr(peer); !ok {
 			continue
 		}
 		now := time.Now()
@@ -1741,7 +1817,11 @@ func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 }
 
 func (r *RobotVo) sendPartyRobotPeerProbeUnsafe(peer partyIPPeer, attempt int) bool {
-	if r.partyUDPConn == nil || !peer.slotKnown || peer.slot >= 4 || peer.outerIP == nil || peer.port == 0 {
+	if r.partyUDPConn == nil || !peer.slotKnown || peer.slot >= 4 {
+		return false
+	}
+	remote, ok := partyPeerUDPAddr(peer)
+	if !ok {
 		return false
 	}
 	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, false)
@@ -1749,7 +1829,6 @@ func (r *RobotVo) sendPartyRobotPeerProbeUnsafe(peer partyIPPeer, attempt int) b
 		return false
 	}
 	payload := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, 0, 3, 1, partyTQOSCodec{key: 0x7e})
-	remote := &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}
 	if _, err := r.partyUDPConn.WriteToUDP(payload, remote); err != nil {
 		fmt.Printf("[PARTY_ROBOT_PROBE_ERROR] uid=%d peer=%d attempt=%d remote=%s err=%v\n", r.UID, peer.accID, attempt, remote.String(), err)
 		return false
@@ -1823,7 +1902,7 @@ func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
 }
 
 func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, peer partyIPPeer, now time.Time) {
-	if route != 1 || !r.shouldFollowPartyPeerUnsafe(peer) || len(frame) < 9 {
+	if (route != 1 && route != 2) || !r.shouldFollowPartyPeerUnsafe(peer) || len(frame) < 9 {
 		return
 	}
 	if !partyDungeonFrameContainsCommand(frame, 0x0004) && !partyDungeonFrameContainsCommand(frame, 0x0027) && !partyDungeonFrameContainsCommand(frame, 0x0051) {
@@ -1860,13 +1939,13 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		return
 	}
 	peer := r.partyPeerForSlotUnsafe(0)
-	if peer.uniqueID == 0 || peer.outerIP == nil || peer.port == 0 {
+	if peer.uniqueID == 0 {
 		return
 	}
 	candidate := r.nextPartySkillCandidateUnsafe(now)
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
 		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d level=%d name=%s data=%x risk=%d learned=%t path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.level, candidate.name, candidate.stateData, candidate.risk, candidate.learned, candidate.path, r.partySkillRecoverAt.Sub(now))
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d level=%d name=%s data=%x risk=%d path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.level, candidate.name, candidate.stateData, candidate.risk, candidate.path, r.partySkillRecoverAt.Sub(now))
 	}
 }
 
@@ -1879,21 +1958,22 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) partySkillCandida
 
 func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string) bool {
 	peer := r.partyPeerForSlotUnsafe(0)
-	if peer.uniqueID == 0 || peer.outerIP == nil || peer.port == 0 {
+	if peer.uniqueID == 0 {
 		return false
 	}
 	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
-	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, true)
+	route := r.partyRouteForPeerUnsafe(peer.slot)
+	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, true)
 	if !ok {
 		return false
 	}
 	payload := buildPartyReliablePacket(sequence, r.partySelfPeer.slot, r.partyDungeonFlags, [][]byte{body})
-	remote := &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}
-	if _, err := conn.WriteToUDP(payload, remote); err != nil {
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d state=%d data=%x remote=%s err=%v\n", reason, r.UID, state, stateData, remote.String(), err)
+	destination, err := r.sendPartyTransportUnsafe(conn, peer, route, payload)
+	if err != nil {
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d state=%d data=%x route=%d destination=%s err=%v\n", reason, r.UID, state, stateData, route, destination, err)
 		return false
 	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s] uid=%d state=%d data=%x sequence=%d remote=%s\n", reason, r.UID, state, stateData, sequence, remote.String())
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s] uid=%d state=%d data=%x sequence=%d route=%d destination=%s\n", reason, r.UID, state, stateData, sequence, route, destination)
 	return true
 }
 
@@ -1911,8 +1991,7 @@ func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
 	}
 	var cid int
 	var job int
-	var raw []byte
-	err := db.QueryRow("SELECT c.charac_no,c.job,UNCOMPRESS(s.skill_slot) FROM taiwan_cain.charac_info c JOIN taiwan_cain_2nd.skill s ON s.charac_no=c.charac_no WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", r.UID, r.CID, r.CID).Scan(&cid, &job, &raw)
+	err := db.QueryRow("SELECT c.charac_no,c.job FROM taiwan_cain.charac_info c WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", r.UID, r.CID, r.CID).Scan(&cid, &job)
 	if err != nil {
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_ERROR] uid=%d cid=%d err=%v\n", r.UID, r.CID, err)
 		return false
@@ -1921,13 +2000,12 @@ func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
 		r.CID = cid
 	}
 	r.partySkillLoaded = true
-	learned := parsePartyLearnedSkills(raw)
-	whitelist, whitelistLoaded := loadPartySkillCatalogStatesForJob(job)
+	whitelist := shared.PartySkillStatesForJob(job)
 	pvfStates := shared.SkillStatesForJob(job)
 	r.partySkillJob = job
 	var stats partySkillCandidateStats
-	r.partySkillCandidates, stats = partySkillCandidatesFromCatalog(job, learned, whitelist, pvfStates)
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d learned=%d whitelist_loaded=%t whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_unlearned=%d skipped_missing_pvf=%d\n", r.UID, r.CID, job, len(learned), whitelistLoaded, len(whitelist), len(pvfStates), stats.PVFMatched, len(r.partySkillCandidates), stats.SkippedUnlearned, stats.SkippedMissingPVF)
+	r.partySkillCandidates, stats = partySkillCandidatesFromCatalog(job, whitelist, pvfStates)
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_missing_pvf=%d\n", r.UID, r.CID, job, len(whitelist), len(pvfStates), stats.PVFMatched, len(r.partySkillCandidates), stats.SkippedMissingPVF)
 	return true
 }
 
@@ -1942,10 +2020,11 @@ func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time
 		pending := r.partyDungeonFollow[0]
 		r.partyDungeonFollow = r.partyDungeonFollow[1:]
 		peer := r.partyPeerForSlotUnsafe(pending.peerSlot)
-		if peer.uniqueID == 0 || peer.outerIP == nil || peer.port == 0 {
+		if peer.uniqueID == 0 {
 			continue
 		}
-		sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, pending.reliable)
+		route := r.partyRouteForPeerUnsafe(peer.slot)
+		sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, pending.reliable)
 		if !ok {
 			continue
 		}
@@ -1955,7 +2034,36 @@ func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time
 		} else {
 			payload = buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, pending.flags, pending.body)
 		}
-		writePartyUDPReply(conn, payload, &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}, r.UID)
+		if _, err := r.sendPartyTransportUnsafe(conn, peer, route, payload); err != nil {
+			foundationlog.Robotf("[PARTY_DUNGEON_FOLLOW_ERROR] uid=%d peer=%d route=%d err=%v\n", r.UID, peer.accID, route, err)
+		}
+	}
+}
+
+func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, route byte, payload []byte) (string, error) {
+	switch route {
+	case 1:
+		remote, ok := partyPeerUDPAddr(peer)
+		if !ok {
+			return "", fmt.Errorf("party peer UDP endpoint is unavailable")
+		}
+		if conn == nil {
+			return remote.String(), fmt.Errorf("party UDP socket is unavailable")
+		}
+		_, err := conn.WriteToUDP(payload, remote)
+		return remote.String(), err
+	case 2:
+		if peer.accID == 0 {
+			return "relay", fmt.Errorf("party peer account is unavailable")
+		}
+		relay := r.partyRelayConn
+		if relay == nil {
+			return "relay", fmt.Errorf("party relay is unavailable")
+		}
+		err := r.writePartyRelayConn(relay, buildPartyRelayPacket(1, r.UID, peer.accID, payload))
+		return "relay", err
+	default:
+		return "", fmt.Errorf("unsupported party route %d", route)
 	}
 }
 
@@ -2034,18 +2142,67 @@ func (r *RobotVo) partyPeerForUDPUnsafe(remote *net.UDPAddr, senderSlot *byte) (
 	if remote == nil || remote.IP == nil || remote.Port <= 0 || remote.Port > 0xffff {
 		return partyIPPeer{}, false
 	}
-	for _, peer := range r.partyPeers {
-		if peer.uniqueID == 0 || peer.outerIP == nil || peer.port == 0 {
+	for i := range r.partyPeers {
+		peer := r.partyPeers[i]
+		if peer.uniqueID == 0 {
 			continue
 		}
 		if senderSlot != nil && (!peer.slotKnown || peer.slot != *senderSlot) {
 			continue
 		}
-		if peer.outerIP.Equal(remote.IP) && peer.port == uint16(remote.Port) {
+		if partyPeerEndpointMatches(peer.observedIP, peer.observedPort, remote) || partyPeerEndpointMatches(peer.outerIP, peer.port, remote) {
 			return peer, true
 		}
 	}
+	if senderSlot == nil {
+		return partyIPPeer{}, false
+	}
+	for i := range r.partyPeers {
+		peer := r.partyPeers[i]
+		if peer.uniqueID == 0 || !peer.slotKnown || peer.slot != *senderSlot || !partyPeerKnownIP(peer, remote.IP) {
+			continue
+		}
+		return peer, true
+	}
 	return partyIPPeer{}, false
+}
+
+func (r *RobotVo) learnPartyPeerEndpointUnsafe(peer partyIPPeer, remote *net.UDPAddr) partyIPPeer {
+	if remote == nil || remote.IP == nil || remote.Port <= 0 || remote.Port > 0xffff || !peer.slotKnown || !partyPeerKnownIP(peer, remote.IP) {
+		return peer
+	}
+	for i := range r.partyPeers {
+		if r.partyPeers[i].uniqueID != peer.uniqueID || !r.partyPeers[i].slotKnown || r.partyPeers[i].slot != peer.slot {
+			continue
+		}
+		r.partyPeers[i].observedIP = append(net.IP(nil), remote.IP...)
+		r.partyPeers[i].observedPort = uint16(remote.Port)
+		return r.partyPeers[i]
+	}
+	return peer
+}
+
+func partyPeerEndpointMatches(ip net.IP, port uint16, remote *net.UDPAddr) bool {
+	return ip != nil && port != 0 && remote != nil && remote.IP != nil && ip.Equal(remote.IP) && port == uint16(remote.Port)
+}
+
+func partyPeerKnownIP(peer partyIPPeer, ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return (peer.innerIP != nil && peer.innerIP.Equal(ip)) ||
+		(peer.outerIP != nil && peer.outerIP.Equal(ip)) ||
+		(peer.observedIP != nil && peer.observedIP.Equal(ip))
+}
+
+func partyPeerUDPAddr(peer partyIPPeer) (*net.UDPAddr, bool) {
+	if peer.observedIP != nil && peer.observedPort != 0 {
+		return &net.UDPAddr{IP: peer.observedIP, Port: int(peer.observedPort)}, true
+	}
+	if peer.outerIP == nil || peer.port == 0 {
+		return nil, false
+	}
+	return &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}, true
 }
 
 func (r *RobotVo) partyPeerForAccountUnsafe(accID uint32) (partyIPPeer, bool) {
@@ -2058,6 +2215,22 @@ func (r *RobotVo) partyPeerForAccountUnsafe(accID uint32) (partyIPPeer, bool) {
 		}
 	}
 	return partyIPPeer{}, false
+}
+
+func (r *RobotVo) partyEntityKnownUnsafe(uniqueID uint16) bool {
+	if uniqueID == 0 {
+		return false
+	}
+	if r.partySelfPeer.uniqueID == uniqueID {
+		return true
+	}
+	for _, peer := range r.partyPeers {
+		if peer.uniqueID == uniqueID {
+			return true
+		}
+	}
+	_, ok := r.townEntityPositions[uniqueID]
+	return ok
 }
 
 const partyTownPositionMaxAge = 15 * time.Second
@@ -2112,6 +2285,44 @@ func parseTownEntityArea(data []byte) (townEntityArea, bool) {
 		x:        binary.LittleEndian.Uint16(data[4:6]),
 		y:        binary.LittleEndian.Uint16(data[6:8]),
 	}, true
+}
+
+func (r *RobotVo) selectTownEntityPositionBodyUnsafe(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]byte, bool) {
+	candidates, _ := recvBodyCandidates(cipher, raw, isAnti)
+	var fallback []byte
+	for _, candidate := range candidates {
+		position, ok := parseTownEntityPosition(candidate.body)
+		if !ok {
+			continue
+		}
+		if r.partyEntityKnownUnsafe(position.uniqueID) {
+			return candidate.body, true
+		}
+		if fallback == nil {
+			fallback = candidate.body
+		}
+	}
+	return fallback, fallback != nil
+}
+
+func (r *RobotVo) selectTownEntityAreaUnsafe(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (townEntityArea, bool) {
+	candidates, _ := recvBodyCandidates(cipher, raw, isAnti)
+	var fallback townEntityArea
+	hasFallback := false
+	for _, candidate := range candidates {
+		area, ok := parseTownEntityArea(candidate.body)
+		if !ok {
+			continue
+		}
+		if r.partyEntityKnownUnsafe(area.uniqueID) {
+			return area, true
+		}
+		if !hasFallback {
+			fallback = area
+			hasFallback = true
+		}
+	}
+	return fallback, hasFallback
 }
 
 func (r *RobotVo) rememberTownEntityUnsafe(data []byte) (townEntityPosition, bool) {
@@ -2309,6 +2520,8 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyRobotProbeAt = [4]time.Time{}
 	r.partyRobotProbeCount = [4]uint8{}
 	r.partyRobotPeerReady = [4]bool{}
+	r.partyPeerRoute = [4]byte{}
+	r.partyPeerRouteAt = [4]time.Time{}
 	r.partyDungeonFollow = nil
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
@@ -2327,6 +2540,8 @@ func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
 	r.partyRobotProbeAt[slot] = time.Time{}
 	r.partyRobotProbeCount[slot] = 0
 	r.partyRobotPeerReady[slot] = false
+	r.partyPeerRoute[slot] = 0
+	r.partyPeerRouteAt[slot] = time.Time{}
 	if len(r.partyDungeonFollow) > 0 {
 		kept := r.partyDungeonFollow[:0]
 		for _, pending := range r.partyDungeonFollow {
@@ -2363,6 +2578,12 @@ func mergePartyPeer(old, next partyIPPeer) partyIPPeer {
 	}
 	if next.port == 0 {
 		next.port = old.port
+	}
+	if next.observedIP == nil {
+		next.observedIP = old.observedIP
+	}
+	if next.observedPort == 0 {
+		next.observedPort = old.observedPort
 	}
 	if next.natType == 0 {
 		next.natType = old.natType
@@ -3063,15 +3284,17 @@ func buildNATInfoPayload(ip net.IP, port uint16) ([]byte, bool) {
 }
 
 type partyIPPeer struct {
-	uniqueID  uint16
-	accID     uint32
-	slot      byte
-	slotKnown bool
-	innerIP   net.IP
-	outerIP   net.IP
-	port      uint16
-	natType   byte
-	mtu       uint32
+	uniqueID     uint16
+	accID        uint32
+	slot         byte
+	slotKnown    bool
+	innerIP      net.IP
+	outerIP      net.IP
+	port         uint16
+	observedIP   net.IP
+	observedPort uint16
+	natType      byte
+	mtu          uint32
 }
 
 type partyDungeonFollowPending struct {
@@ -3091,33 +3314,14 @@ type partySkillCandidate struct {
 	stateData  []byte
 	risk       int
 	path       string
-	learned    bool
-}
-
-type partySkillCatalogConfig struct {
-	MaxSkillLevel int                      `json:"max_skill_level"`
-	Skills        []partySkillCatalogEntry `json:"skills"`
-}
-
-type partySkillCatalogEntry struct {
-	Disabled   bool   `json:"disabled,omitempty"`
-	Job        int    `json:"job"`
-	SkillIndex int    `json:"skill_index"`
-	State      int    `json:"state"`
-	Level      int    `json:"level"`
-	Name       string `json:"name,omitempty"`
-	ScriptPath string `json:"script_path,omitempty"`
-	StateData  []int  `json:"state_data,omitempty"`
-	Risk       int    `json:"risk,omitempty"`
 }
 
 type partySkillCandidateStats struct {
 	PVFMatched        int
-	SkippedUnlearned  int
 	SkippedMissingPVF int
 }
 
-func partySkillCandidatesFromCatalog(job int, learned map[byte]byte, whitelist []shared.SkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
+func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
 	pvfIndex := make(map[[3]int]bool, len(pvfStates))
 	for _, entry := range pvfStates {
 		if entry.Job != job || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
@@ -3136,7 +3340,6 @@ func partySkillCandidatesFromCatalog(job int, learned map[byte]byte, whitelist [
 			continue
 		}
 		stats.PVFMatched++
-		known := learned[byte(entry.SkillIndex)] != 0
 		candidates = append(candidates, partySkillCandidate{
 			skillIndex: byte(entry.SkillIndex),
 			state:      byte(entry.State),
@@ -3145,7 +3348,6 @@ func partySkillCandidatesFromCatalog(job int, learned map[byte]byte, whitelist [
 			stateData:  append([]byte(nil), entry.StateData...),
 			risk:       entry.Risk,
 			path:       entry.ScriptPath,
-			learned:    known,
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
@@ -3160,64 +3362,6 @@ func partySkillCandidatesFromCatalog(job int, learned map[byte]byte, whitelist [
 	return candidates, stats
 }
 
-func loadPartySkillCatalogStatesForJob(job int) ([]shared.SkillState, bool) {
-	path := os.Getenv("PARTY_SKILL_CATALOG_CONFIG")
-	if path == "" {
-		path = filepath.Join("/root/config", "party_skill_catalog.json")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, false
-	}
-	var cfg partySkillCatalogConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_CATALOG_ERROR] path=%s err=%v\n", path, err)
-		return nil, true
-	}
-	maxLevel := cfg.MaxSkillLevel
-	if maxLevel <= 0 {
-		maxLevel = 70
-	}
-	states := make([]shared.SkillState, 0)
-	for _, entry := range cfg.Skills {
-		if entry.Disabled || entry.Job != job || entry.Level <= 0 || entry.Level > maxLevel || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
-			continue
-		}
-		stateData, ok := partySkillStateDataFromInts(entry.StateData)
-		if !ok {
-			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_CATALOG_SKIP] job=%d skill=%d state=%d reason=bad_state_data\n", entry.Job, entry.SkillIndex, entry.State)
-			continue
-		}
-		states = append(states, shared.SkillState{
-			Job:          entry.Job,
-			SkillIndex:   entry.SkillIndex,
-			State:        entry.State,
-			Level:        entry.Level,
-			Name:         entry.Name,
-			ScriptPath:   entry.ScriptPath,
-			StateData:    stateData,
-			Verified:     true,
-			Experimental: true,
-			Risk:         entry.Risk,
-		})
-	}
-	return states, true
-}
-
-func partySkillStateDataFromInts(values []int) ([]byte, bool) {
-	if len(values) > 3 {
-		return nil, false
-	}
-	data := make([]byte, 0, len(values)*3)
-	for _, value := range values {
-		if value < 0 || value > 0xffffff {
-			return nil, false
-		}
-		data = append(data, byte(value), byte(value>>8), byte(value>>16))
-	}
-	return data, true
-}
-
 func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
 	if len(packet) < 1 {
 		return nil, false
@@ -3227,8 +3371,14 @@ func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
 		return nil, false
 	}
 	const entrySize = 22
-	if len(packet) < 1+count*entrySize {
+	expectedSize := 1 + count*entrySize
+	if len(packet) < expectedSize || len(packet)-expectedSize >= 8 {
 		return nil, false
+	}
+	for _, padding := range packet[expectedSize:] {
+		if padding != 0 {
+			return nil, false
+		}
 	}
 	peers := make([]partyIPPeer, 0, count)
 	offset := 1
@@ -3327,16 +3477,6 @@ const partySkillStateBodyBaseSize = 31
 const partySkillRecoverDelay = 900 * time.Millisecond
 
 var partyDungeonEnvelopeChecksumOffsets = [...]int{10, 18}
-
-func parsePartyLearnedSkills(raw []byte) map[byte]byte {
-	learned := make(map[byte]byte)
-	for i := 0; i+1 < len(raw); i += 2 {
-		if raw[i] != 0 && raw[i+1] != 0 {
-			learned[raw[i]] = raw[i+1]
-		}
-	}
-	return learned
-}
 
 func buildPartySkillStateBody(uniqueID uint16, state byte, stateData []byte, token uint16) []byte {
 	body := make([]byte, partySkillStateBodyBaseSize+len(stateData))
@@ -3719,6 +3859,99 @@ func buildFinishLoadingPayload(inventoryChecksum, skillChecksum uint32) []byte {
 	return body
 }
 
+type recvBodyCandidate struct {
+	body   []byte
+	source string
+}
+
+func recvBodyCandidates(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]recvBodyCandidate, error) {
+	_, _, decrypted, decryptErr := parseRecvPacket(cipher, raw, isAnti)
+	candidates := make([]recvBodyCandidate, 0, 2)
+	if decryptErr == nil {
+		candidates = append(candidates, recvBodyCandidate{body: decrypted, source: "decrypted"})
+	}
+	if plain, ok := plainRecvBody(raw, isAnti); ok {
+		duplicate := false
+		for _, candidate := range candidates {
+			if bytes.Equal(candidate.body, plain) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			candidates = append(candidates, recvBodyCandidate{body: plain, source: "plain"})
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, decryptErr
+	}
+	return candidates, decryptErr
+}
+
+func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]byte, byte, string, error) {
+	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
+	for _, candidate := range candidates {
+		response, typ, ok := buildPeerResponse(candidate.body)
+		if ok {
+			return response, typ, candidate.source, nil
+		}
+	}
+	if decryptErr != nil {
+		return nil, 0, "", decryptErr
+	}
+	return nil, 0, "", fmt.Errorf("peer request has no valid body")
+}
+
+func selectPartyIPInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, selfAccID uint32) (partyIPPeer, []partyIPPeer, string, error) {
+	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
+	var fallbackSelf partyIPPeer
+	var fallbackPeers []partyIPPeer
+	fallbackSource := ""
+	for _, candidate := range candidates {
+		self, peers, ok := parsePartyIPInfoSnapshot(candidate.body, selfAccID)
+		if !ok {
+			continue
+		}
+		if selfAccID == 0 || self.accID == selfAccID {
+			return self, peers, candidate.source, nil
+		}
+		if fallbackSource == "" {
+			fallbackSelf = self
+			fallbackPeers = peers
+			fallbackSource = candidate.source
+		}
+	}
+	if fallbackSource != "" {
+		return fallbackSelf, fallbackPeers, fallbackSource, nil
+	}
+	if decryptErr != nil {
+		return partyIPPeer{}, nil, "", decryptErr
+	}
+	return partyIPPeer{}, nil, "", fmt.Errorf("party IP info has no valid body")
+}
+
+func partyInfoPacketClearsParty(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (bool, string, error) {
+	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
+	valid := false
+	for _, candidate := range candidates {
+		inflated, err := inflatePartyInfo(candidate.body)
+		if err != nil {
+			continue
+		}
+		valid = true
+		if partyInfoClearsParty(inflated) {
+			return true, candidate.source, nil
+		}
+	}
+	if valid {
+		return false, "", nil
+	}
+	if decryptErr != nil {
+		return false, "", decryptErr
+	}
+	return false, "", fmt.Errorf("party info has no valid zlib body")
+}
+
 func parseRecvPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (dataType uint16, dataSize int, decrypted []byte, err error) {
 	if len(raw) < 15 {
 		return 0, 0, nil, fmt.Errorf("packet too short: %d bytes", len(raw))
@@ -3745,10 +3978,6 @@ func parseRecvPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (dataType
 	}
 
 	if err != nil {
-		if !isAnti && recvPacketPlainFallback(dataType, encryptedData) {
-			dec := append([]byte(nil), encryptedData...)
-			return dataType, len(dec), dec, nil
-		}
 		return dataType, 0, nil, err
 	}
 
@@ -3760,19 +3989,6 @@ func plainRecvBody(raw []byte, isAnti bool) ([]byte, bool) {
 		return nil, false
 	}
 	return append([]byte(nil), raw[15:]...), true
-}
-
-func recvPacketPlainFallback(dataType uint16, data []byte) bool {
-	if len(data) == 0 {
-		return false
-	}
-	if dataType >= 6 && dataType <= 11 {
-		return true
-	}
-	if dataType >= 22 && dataType <= 31 {
-		return true
-	}
-	return dataType == 153
 }
 
 func alignTo16(size int) int {
