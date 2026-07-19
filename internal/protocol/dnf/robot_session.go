@@ -110,6 +110,9 @@ type RobotVo struct {
 	WaitingMsgType    int
 	LastTradeState    bool
 	TradeMoney        uint32
+	tradeQuoteLoading bool
+	tradeQuotePending bool
+	tradeQuoteVersion uint64
 
 	TransactionArr [24]*Transaction
 	InfanMap       map[int]Transaction
@@ -357,6 +360,8 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.LastStoreError = 0
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
+	r.invalidateTradeQuoteUnsafe()
+	r.clearTradeUnsafe()
 	r.DisjointCreateSent = false
 	r.DisjointDirectAck = false
 	r.DisjointActive = false
@@ -408,6 +413,8 @@ func (r *RobotVo) closeOutUnsafe() {
 	r.closePartyRelayUnsafe()
 	r.recvBuffer = nil
 	r.recvSize = 0
+	r.invalidateTradeQuoteUnsafe()
+	r.clearTradeUnsafe()
 	r.State = StateStop
 	r.publishSnapshotUnsafe()
 }

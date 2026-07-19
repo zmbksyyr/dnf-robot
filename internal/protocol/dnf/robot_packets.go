@@ -257,7 +257,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 					}
 				}()
 			} else {
-				r.getDbDataAndCompleteDisplayUnsafe()
+				go r.GetDbDataAndCompleteDisplay()
 			}
 		}
 		return
@@ -289,57 +289,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 				}
 			}
 
-			shopVoMap := r.getShopVo(1)
-			var money uint32
-			if len(shopVoMap) > 0 {
-				for i := 0; i < 24; i++ {
-					if r.TransactionArr[i] != nil {
-						tx := r.TransactionArr[i]
-						if vo, ok := shopVoMap[int(tx.ItemId)]; ok && tx.ItemNum > 0 {
-							itemPrice := uint32(tx.ItemNum) * uint32(vo.Price)
-							if itemPrice > 0 {
-								money += itemPrice
-							}
-						}
-					}
-				}
-			}
-
-			{
-				var sendBuf [32]byte
-				binary.LittleEndian.PutUint32(sendBuf[7:11], r.TradeMoney)
-				sendBuf[0] = 4
-				pkt, err := buildSendPacket(19, uint16(r.PacketID), sendBuf[:], r.Cipher)
-				r.PacketID++
-				if err == nil && !r.sendRaw(pkt) {
-					r.TradeMoney = 0
-					r.LastTradeState = false
-					r.LastTradeID = 0
-					for i := 0; i < 24; i++ {
-						r.TransactionArr[i] = nil
-					}
-				}
-			}
-
-			{
-				var sendBuf [32]byte
-				binary.LittleEndian.PutUint32(sendBuf[7:11], money)
-				sendBuf[11] = 4
-				pkt, err := buildSendPacket(19, uint16(r.PacketID), sendBuf[:], r.Cipher)
-				r.PacketID++
-				if err == nil {
-					if r.sendRaw(pkt) {
-						r.TradeMoney = money
-					} else {
-						r.TradeMoney = 0
-						r.LastTradeState = false
-						r.LastTradeID = 0
-						for i := 0; i < 24; i++ {
-							r.TransactionArr[i] = nil
-						}
-					}
-				}
-			}
+			r.queueTradeQuoteRefreshUnsafe()
 		}
 		return
 	}
@@ -375,6 +325,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 				}
 			}
 			if typ == peerRequestTrade {
+				r.invalidateTradeQuoteUnsafe()
 				r.TradeMoney = 0
 			}
 		}
@@ -382,12 +333,8 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 
 	if packetFlag == 0 && packetType == 16 && r.State == StateRun {
-		r.TradeMoney = 0
-		r.LastTradeState = false
-		r.LastTradeID = 0
-		for i := 0; i < 24; i++ {
-			r.TransactionArr[i] = nil
-		}
+		r.invalidateTradeQuoteUnsafe()
+		r.clearTradeUnsafe()
 		return
 	}
 

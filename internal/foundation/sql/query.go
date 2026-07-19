@@ -1,12 +1,17 @@
 package sql
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 )
 
 func Select(db *sql.DB, query string, args ...interface{}) ([][]string, error) {
-	rows, err := db.Query(query, args...)
+	return SelectContext(context.Background(), db, query, args...)
+}
+
+func SelectContext(ctx context.Context, db *sql.DB, query string, args ...interface{}) ([][]string, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

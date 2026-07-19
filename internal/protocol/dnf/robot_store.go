@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"strconv"
@@ -8,6 +9,8 @@ import (
 
 	sqlpkg "robot/internal/foundation/sql"
 )
+
+const storeQueryTimeout = 3 * time.Second
 
 type AsyncTaskType int
 
@@ -43,12 +46,6 @@ type Transaction struct {
 	ItemId   int32
 	ItemNum  int32
 	ItemType int32
-}
-
-type ShopVo struct {
-	TradeItem  int
-	Price      int
-	ItemNumber int
 }
 
 func (r *RobotVo) ResetPrivateStoreState() {
@@ -233,31 +230,6 @@ func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) {
 	}
 }
 
-func (r *RobotVo) getShopVo(functionType int) map[int]ShopVo {
-	result := make(map[int]ShopVo)
-	if r.DB == nil {
-		return result
-	}
-
-	rows, err := sqlpkg.Select(r.DB, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=? and state=1 and (UID=? or UID=0) order by UID", functionType, r.UID)
-	if err != nil {
-		fmt.Printf("getShopVo query error: %v\n", err)
-		return result
-	}
-
-	for _, row := range rows {
-		if len(row) >= 3 && row[0] != "" && row[1] != "" && row[2] != "" {
-			tradeItem, _ := strconv.Atoi(row[0])
-			price, _ := strconv.Atoi(row[1])
-			itemNumber, _ := strconv.Atoi(row[2])
-			if price > 0 {
-				result[tradeItem] = ShopVo{TradeItem: tradeItem, Price: price, ItemNumber: itemNumber}
-			}
-		}
-	}
-	return result
-}
-
 func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -282,26 +254,22 @@ func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 
 func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.partyActiveUnsafe() {
+	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || len(r.InfanMap) == 0 || r.DB == nil {
+		r.mu.Unlock()
 		return false
 	}
-	if !r.StoreCreated {
-		return false
+	uid := r.UID
+	db := r.DB
+	title := r.PendingStoreTitle
+	inventory := make(map[int]Transaction, len(r.InfanMap))
+	for itemID, transaction := range r.InfanMap {
+		inventory[itemID] = transaction
 	}
-	return r.getDbDataAndCompleteDisplayUnsafe()
-}
+	r.mu.Unlock()
 
-func (r *RobotVo) getDbDataAndCompleteDisplayUnsafe() bool {
-	if r.State != StateRun {
-		return false
-	}
-
-	if len(r.InfanMap) == 0 || r.DB == nil {
-		return false
-	}
-
-	rows, err := sqlpkg.Select(r.DB, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID", r.UID)
+	ctx, cancel := context.WithTimeout(context.Background(), storeQueryTimeout)
+	defer cancel()
+	rows, err := sqlpkg.SelectContext(ctx, db, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID", uid)
 	if err != nil {
 		return false
 	}
@@ -313,7 +281,7 @@ func (r *RobotVo) getDbDataAndCompleteDisplayUnsafe() bool {
 			price, _ := strconv.Atoi(row[1])
 			itemNumber, _ := strconv.Atoi(row[2])
 			if price > 0 {
-				if tx, ok := r.InfanMap[tradeItem]; ok {
+				if tx, ok := inventory[tradeItem]; ok {
 					storeInfo = append(storeInfo, StoreInfo{
 						Index:    len(storeInfo),
 						BoxIndex: int(tx.ItemPos),
@@ -326,17 +294,21 @@ func (r *RobotVo) getDbDataAndCompleteDisplayUnsafe() bool {
 	}
 
 	if len(storeInfo) > 0 {
-		title := r.PendingStoreTitle
+		customTitle := title != ""
 		if title == "" {
 			title = "store"
 		}
 
-		cfgRows, _ := sqlpkg.Select(r.DB, "select cfg_content from d_starsky.Robot_stall_config where cfg_type=3 and function_type=2 and state=1 and (UID=? or UID=0) order by UID", r.UID)
-		if len(cfgRows) > 0 && len(cfgRows[0]) > 0 && r.PendingStoreTitle == "" {
+		cfgRows, _ := sqlpkg.SelectContext(ctx, db, "select cfg_content from d_starsky.Robot_stall_config where cfg_type=3 and function_type=2 and state=1 and (UID=? or UID=0) order by UID", uid)
+		if len(cfgRows) > 0 && len(cfgRows[0]) > 0 && !customTitle {
 			title = cfgRows[0][0]
 		}
 
-		r.completeDisplay(title, storeInfo)
+		r.mu.Lock()
+		if r.State == StateRun && r.StoreCreated && r.UID == uid && r.DB == db {
+			r.completeDisplay(title, storeInfo)
+		}
+		r.mu.Unlock()
 	}
 
 	return true
@@ -344,15 +316,18 @@ func (r *RobotVo) getDbDataAndCompleteDisplayUnsafe() bool {
 
 func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	r.mu.Lock()
-	if r.State != StateRun || !r.StoreCreated || r.StoreDisplayAck || r.DB == nil {
+	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.StoreDisplayAck || r.DB == nil {
 		r.mu.Unlock()
 		return false
 	}
 	uid := r.UID
 	title := r.PendingStoreTitle
+	db := r.DB
 	r.mu.Unlock()
 
-	rows, err := sqlpkg.Select(r.DB, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID,id limit 24", uid)
+	ctx, cancel := context.WithTimeout(context.Background(), storeQueryTimeout)
+	defer cancel()
+	rows, err := sqlpkg.SelectContext(ctx, db, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID,id limit 24", uid)
 	if err != nil || len(rows) == 0 {
 		return false
 	}
@@ -365,7 +340,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	}
 	inventory := make(map[int]invPos)
 	var invRaw []byte
-	err = r.DB.QueryRow("SELECT UNCOMPRESS(i.inventory) FROM taiwan_cain.charac_info c JOIN taiwan_cain_2nd.inventory i ON i.charac_no=c.charac_no WHERE c.m_id=? ORDER BY c.charac_no LIMIT 1", uid).Scan(&invRaw)
+	err = db.QueryRowContext(ctx, "SELECT UNCOMPRESS(i.inventory) FROM taiwan_cain.charac_info c JOIN taiwan_cain_2nd.inventory i ON i.charac_no=c.charac_no WHERE c.m_id=? ORDER BY c.charac_no LIMIT 1", uid).Scan(&invRaw)
 	if err == nil {
 		for rawIndex := 0; rawIndex+1 < 249 && (rawIndex+1)*61 <= len(invRaw); rawIndex++ {
 			slot := invRaw[rawIndex*61 : (rawIndex+1)*61]
@@ -421,9 +396,10 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	}
 
 	r.mu.Lock()
-	if r.State != StateRun || !r.StoreCreated || r.StoreDisplayAck || r.UID != uid || r.DB == nil {
+	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.StoreDisplayAck || r.UID != uid || r.DB != db {
+		ack := r.StoreDisplayAck
 		r.mu.Unlock()
-		return r.StoreDisplayAck
+		return ack
 	}
 	r.StoreDisplaySent = false
 	r.StoreDisplayAck = false
