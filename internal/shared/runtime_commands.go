@@ -5,7 +5,6 @@ package shared
 type RuntimeOnlineUser struct {
 	IP             string
 	Port           int
-	DelayMS        int
 	Token          string
 	UID            int
 	CID            int

@@ -84,7 +84,7 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 
 func validOnlineUser(user shared.RuntimeOnlineUser) bool {
 	return user.UID > 0 && len(user.IP) > 0 && len(user.IP) <= 15 &&
-		user.Port > 0 && user.Port < 1<<16 && user.DelayMS >= 0 &&
+		user.Port > 0 && user.Port < 1<<16 &&
 		user.MaxReconnect >= 0 && user.ReconnectDelay >= 0
 }
 

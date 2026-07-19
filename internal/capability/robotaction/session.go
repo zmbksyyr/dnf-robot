@@ -153,7 +153,6 @@ func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.Runtim
 		BirthX:         robot.X,
 		BirthY:         robot.Y,
 		CID:            0,
-		DelayMS:        rc.LoginDelayMS,
 		IP:             s.Env.RobotConnectIP(),
 		MaxReconnect:   rc.MaxReconnect,
 		Port:           robot.Port,
