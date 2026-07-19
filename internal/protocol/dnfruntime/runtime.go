@@ -77,7 +77,7 @@ func (rs *RobotSvc) ForceClose(uid int) bool {
 	}
 	vo := task.Find(uid)
 	if vo == nil {
-		return false
+		return true
 	}
 	if !vo.TryCloseOut() {
 		robotLogf("[RobotSvc] force_close_busy uid=%d\n", uid)

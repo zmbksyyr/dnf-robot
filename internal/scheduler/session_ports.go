@@ -32,6 +32,10 @@ func (e sessionActionEnv) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {
 	return e.manager.runtimeStatusMap()
 }
 
+func (e sessionActionEnv) RuntimeStatusMapFresh() map[int]robotcap.RuntimeStatus {
+	return e.manager.runtimeStatusMapFresh()
+}
+
 func (e sessionActionEnv) SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error) {
 	return e.manager.repo().SelectRobots(req)
 }

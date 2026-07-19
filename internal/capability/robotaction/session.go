@@ -18,6 +18,7 @@ type SessionEnv interface {
 	EnsureWorldHornByCID(cid int) error
 	RobotConnectIP() string
 	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
+	RuntimeStatusMapFresh() map[int]robotcap.RuntimeStatus
 	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
 	SendLogout(uid int) error
 	SendOnline(userinfos []shared.RuntimeOnlineUser) error
@@ -110,6 +111,17 @@ func (s SessionService) Logout(req robotcap.CommandRequest) (robotcap.CommandRes
 	if err != nil {
 		return robotcap.CommandResult{}, err
 	}
+	return s.logoutRobots(robots), nil
+}
+
+func (s SessionService) LogoutUID(uid int) (robotcap.CommandResult, error) {
+	if uid <= 0 {
+		return robotcap.CommandResult{}, fmt.Errorf("invalid uid %d", uid)
+	}
+	return s.logoutRobots([]robotcap.Info{{UID: uid}}), nil
+}
+
+func (s SessionService) logoutRobots(robots []robotcap.Info) robotcap.CommandResult {
 	result := robotcap.NewCommandResult(len(robots))
 	for _, robot := range robots {
 		if err := s.Env.SendLogout(robot.UID); err == nil {
@@ -121,7 +133,7 @@ func (s SessionService) Logout(req robotcap.CommandRequest) (robotcap.CommandRes
 		}
 	}
 	time.Sleep(500 * time.Millisecond)
-	status := s.Env.RuntimeStatusMap()
+	status := s.Env.RuntimeStatusMapFresh()
 	for i := range result.Robots {
 		if _, ok := status[result.Robots[i].UID]; !ok {
 			result.Robots[i].OK = true
@@ -133,7 +145,7 @@ func (s SessionService) Logout(req robotcap.CommandRequest) (robotcap.CommandRes
 			result.Failed++
 		}
 	}
-	return result, nil
+	return result
 }
 
 func (s SessionService) ConfirmAccepted(result *robotcap.CommandResult, timeout time.Duration) {

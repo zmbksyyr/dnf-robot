@@ -23,6 +23,10 @@ type controlResult struct {
 	ok  bool
 }
 
+type runtimeForceCloser interface {
+	ForceClose(uid int) bool
+}
+
 func (a *Actor) start() {
 	go a.loop()
 }
@@ -112,7 +116,7 @@ func (a *Actor) loop() {
 	for {
 		select {
 		case <-a.stop:
-			a.releaseCurrentUID()
+			a.releaseCurrentUIDUntilClosed()
 			return
 		case ctrl := <-a.ctrls:
 			res := a.handleControl(ctrl)
@@ -164,9 +168,42 @@ func (a *Actor) releaseCurrentUID() int {
 		cid = st.CID
 	}
 	a.finishStoreStateIfNeeded(uid, cid, st, statusOK, "release")
-	a.runtime.Logout(uid)
+	if !a.releaseRuntimeUID(uid) {
+		foundationlog.Robotf("[Actor] release_pending slot=%d uid=%d\n", a.slotIDValue(), uid)
+		return 0
+	}
 	a.resetForUID(0)
 	return uid
+}
+
+func (a *Actor) releaseCurrentUIDUntilClosed() {
+	uid := a.uidValue()
+	if uid <= 0 {
+		a.setState(StateIdle)
+		return
+	}
+	a.setState(StateReleasing)
+	cid := 0
+	st, statusOK := a.runtime.Status(uid)
+	if statusOK {
+		cid = st.CID
+	}
+	a.finishStoreStateIfNeeded(uid, cid, st, statusOK, "release")
+	for !a.releaseRuntimeUID(uid) {
+		foundationlog.Robotf("[Actor] stop_release_retry slot=%d uid=%d\n", a.slotIDValue(), uid)
+		time.Sleep(250 * time.Millisecond)
+	}
+	a.resetForUID(0)
+}
+
+func (a *Actor) releaseRuntimeUID(uid int) bool {
+	if result := a.runtime.Logout(uid); result.OK {
+		return true
+	}
+	if closer, ok := a.runtime.(runtimeForceCloser); ok {
+		return closer.ForceClose(uid)
+	}
+	return !a.runtime.IsActive(uid)
 }
 
 func (a *Actor) AssignAndWait(uid int, timeout time.Duration) bool {

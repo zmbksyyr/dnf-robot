@@ -78,7 +78,7 @@ func (r *RobotRuntime) OnlineNoConfirm(uid int) robotcap.ActionResult {
 
 func (r *RobotRuntime) Logout(uid int) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
-		res, err := r.manager.sessionService().Logout(robotcap.CommandRequest{UIDs: []int{uid}})
+		res, err := r.manager.sessionService().LogoutUID(uid)
 		return firstActionResult(uid, res, err)
 	})
 }

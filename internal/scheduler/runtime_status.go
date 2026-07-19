@@ -105,6 +105,14 @@ func (m *RobotManager) runtimeStatusMapCopy() map[int]robotcap.RuntimeStatus {
 	return robotcap.CopyRuntimeStatusMap(m.runtimeStatusMap())
 }
 
+func (m *RobotManager) runtimeStatusMapFresh() map[int]robotcap.RuntimeStatus {
+	status := make(map[int]robotcap.RuntimeStatus)
+	for _, st := range m.doll.RuntimeStatus() {
+		status[st.UID] = st
+	}
+	return status
+}
+
 func (m *RobotManager) runtimeStatus(uid int) (robotcap.RuntimeStatus, bool) {
 	if uid <= 0 {
 		return robotcap.RuntimeStatus{}, false
