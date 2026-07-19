@@ -55,7 +55,7 @@ func (dt *DnfTableDrive) dispatchMoves(task *RobotDnfTask, commands []shared.Run
 		}
 	}
 	for _, command := range commands {
-		task.AddMessage("MsgMove", &moveInternalData{
+		if !task.TryAddMessage("MsgMove", &moveInternalData{
 			ID:       command.UID,
 			Village:  uint8(command.Village),
 			Area:     uint8(command.Area),
@@ -63,7 +63,9 @@ func (dt *DnfTableDrive) dispatchMoves(task *RobotDnfTask, commands []shared.Run
 			Y:        uint16(command.Y),
 			MoveType: uint8(command.MoveType),
 			Speed:    uint16(command.Speed),
-		})
+		}) {
+			return DnfTableTaskResult{Msg: "move queue full"}
+		}
 	}
 	return DnfTableTaskResult{Msg: "ok", Code: 200}
 }
@@ -85,11 +87,13 @@ func (dt *DnfTableDrive) dispatchShouts(task *RobotDnfTask, commands []shared.Ru
 		}
 	}
 	for _, command := range commands {
-		task.AddMessage("MsgPublicMsg", &publicMsgInternalData{
+		if !task.TryAddMessage("MsgPublicMsg", &publicMsgInternalData{
 			ID:   command.UID,
 			Msg:  command.Message,
 			Type: command.Type,
-		})
+		}) {
+			return DnfTableTaskResult{Msg: "shout queue full"}
+		}
 	}
 	return DnfTableTaskResult{Code: 200}
 }
