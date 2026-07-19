@@ -52,17 +52,12 @@ const (
 )
 
 func buildPeerResponse(request []byte) ([]byte, byte, bool) {
-	if len(request) < 8 {
+	if len(request) < 7 {
 		return nil, 0, false
 	}
 	typ := request[2]
 	if typ != peerRequestParty && typ != peerRequestTrade {
 		return nil, typ, false
-	}
-	for _, padding := range request[7:] {
-		if padding != 0 {
-			return nil, typ, false
-		}
 	}
 	response := make([]byte, 8)
 	copy(response, request[:7])
@@ -246,6 +241,17 @@ func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, 
 			}
 		}
 	}
+	if len(valid) > 1 && !isAnti && len(raw) >= 15 {
+		shapeSource := recvBodySourceDecrypted
+		if len(raw)-15 <= 8 {
+			shapeSource = recvBodySourcePlain
+		}
+		for _, candidate := range valid {
+			if candidate.source == shapeSource {
+				return candidate.data, candidate.typ, candidate.source, nil
+			}
+		}
+	}
 	if len(valid) > 1 && preferred != recvBodySourceUnknown {
 		for _, candidate := range valid {
 			if candidate.source == preferred {
@@ -253,9 +259,6 @@ func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, 
 			}
 		}
 	}
-	// The compatibility patch raw-sends peer requests. When the first request
-	// arrives before any entity/source evidence exists, prefer the valid plain
-	// body over a coincidentally valid decryption of those same eight bytes.
 	for _, candidate := range valid {
 		if candidate.source == recvBodySourcePlain {
 			return candidate.data, candidate.typ, candidate.source, nil
