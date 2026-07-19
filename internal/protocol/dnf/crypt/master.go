@@ -65,6 +65,19 @@ func (c *DNFCipher) Initialize(key []byte) error {
 
 func (c *DNFCipher) KeySize() int { return c.keySize }
 
+func (c *DNFCipher) PacketKey(packetType uint16) []byte {
+	index := int(packetType % uint16(len(c.handles)))
+	offset := 0
+	for i := 0; i < index; i++ {
+		offset += c.handles[i].KeySize()
+	}
+	size := c.handles[index].KeySize()
+	if offset+size > len(c.keys) {
+		return nil
+	}
+	return append([]byte(nil), c.keys[offset:offset+size]...)
+}
+
 func (c *DNFCipher) Encrypt(packetType uint16, data []byte) ([]byte, error) {
 	return c.handles[packetType%14].Encrypt(data)
 }
