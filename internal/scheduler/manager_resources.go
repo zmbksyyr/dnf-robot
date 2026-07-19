@@ -171,7 +171,7 @@ func (m *RobotManager) loadMapCatalog() []shared.MapCatalogItem {
 	if m.cfg == nil {
 		return nil
 	}
-	return catalog.Maps(m.cfg.ConfigDir)
+	return catalog.ViewMaps(m.cfg.ConfigDir)
 }
 
 func (m *RobotManager) robotConnectIP() string {

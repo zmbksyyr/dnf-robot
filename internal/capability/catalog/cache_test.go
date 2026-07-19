@@ -38,6 +38,27 @@ func TestMapsCacheRefreshesAndReturnsCopies(t *testing.T) {
 	}
 }
 
+func TestMapViewReusesUnchangedCatalogAndRefreshes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pvf_map_catalog.json")
+	writeCatalogJSON(t, path, []shared.MapCatalogItem{{Village: 3, Area: 1}})
+
+	first := ViewMaps(dir)
+	second := ViewMaps(dir)
+	if len(first) != 1 || len(second) != 1 || &first[0] != &second[0] {
+		t.Fatalf("unchanged map view was not reused: first=%+v second=%+v", first, second)
+	}
+
+	writeCatalogJSON(t, path, []shared.MapCatalogItem{{Village: 3, Area: 2}, {Village: 3, Area: 3}})
+	third := ViewMaps(dir)
+	if len(third) != 2 || third[0].Area != 2 || third[1].Area != 3 {
+		t.Fatalf("map view did not refresh: %+v", third)
+	}
+	if len(first) != 1 || first[0].Area != 1 {
+		t.Fatalf("previous map view was mutated: %+v", first)
+	}
+}
+
 func TestShoutTemplatesCacheRefreshesMissingFileAndReturnsCopies(t *testing.T) {
 	dir := t.TempDir()
 	missing := ShoutTemplates(dir)
@@ -228,6 +249,20 @@ func BenchmarkMapsCached(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = Maps(dir)
+	}
+}
+
+func BenchmarkMapViewCached(b *testing.B) {
+	dir := b.TempDir()
+	path := filepath.Join(dir, "pvf_map_catalog.json")
+	entries := benchmarkMapEntries()
+	writeCatalogJSON(b, path, entries)
+	_ = ViewMaps(dir)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ViewMaps(dir)
 	}
 }
 

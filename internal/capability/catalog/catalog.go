@@ -136,15 +136,19 @@ var (
 )
 
 func Maps(configDir string) []shared.MapCatalogItem {
+	return append([]shared.MapCatalogItem(nil), ViewMaps(configDir)...)
+}
+
+// ViewMaps returns the cached map catalog for audited read-only callers.
+func ViewMaps(configDir string) []shared.MapCatalogItem {
 	path := filepath.Join(configDir, "pvf_map_catalog.json")
-	maps := mapCatalogFiles.load(path, nil, func(data []byte, fallback []shared.MapCatalogItem) []shared.MapCatalogItem {
+	return mapCatalogFiles.load(path, nil, func(data []byte, fallback []shared.MapCatalogItem) []shared.MapCatalogItem {
 		var out []shared.MapCatalogItem
 		if json.Unmarshal(data, &out) != nil {
 			return fallback
 		}
 		return out
 	})
-	return append([]shared.MapCatalogItem(nil), maps...)
 }
 
 func ShoutTemplates(configDir string) robottemplate.ShoutTemplates {
