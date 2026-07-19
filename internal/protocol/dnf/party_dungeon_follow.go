@@ -58,6 +58,15 @@ func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, 
 		r.partyDungeonFollow = nil
 		return false
 	}
+	for i := range r.partyDungeonFollow {
+		existing := &r.partyDungeonFollow[i]
+		if existing.peerSlot == pending.peerSlot && existing.reliable == pending.reliable {
+			existing.flags = pending.flags
+			existing.body = pending.body
+			existing.records = pending.records
+			return true
+		}
+	}
 	r.partyDungeonFollow = append(r.partyDungeonFollow, pending)
 	return true
 }

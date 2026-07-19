@@ -341,6 +341,38 @@ func TestPartyDungeonFrameCommandDetection(t *testing.T) {
 	}
 }
 
+func TestPartyDungeonFollowCoalescesPendingFrames(t *testing.T) {
+	now := time.Unix(180, 0)
+	peer := partyIPPeer{slot: 0, slotKnown: true, uniqueID: 0xf4a1}
+	vo := &RobotVo{
+		UID:           17000149,
+		partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0xee9f},
+	}
+	vo.markPartyDungeonEnteredUnsafe(now)
+	firstBody := mustPartyHex(t, "015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000")
+	secondBody := append([]byte(nil), firstBody...)
+	secondExpected, _, ok := rewritePartyDungeonBody(secondBody, peer.uniqueID, vo.partySelfPeer.uniqueID)
+	if !ok {
+		t.Fatal("second follow body was not rewritable")
+	}
+	first := buildPartyUnreliablePacket(1, peer.slot, 5, firstBody)
+	second := buildPartyUnreliablePacket(2, peer.slot, 7, secondBody)
+
+	if !vo.queuePartyDungeonFollowUnsafe(first, peer, now) || !vo.queuePartyDungeonFollowUnsafe(second, peer, now.Add(time.Second)) {
+		t.Fatal("follow frame was not queued")
+	}
+	if len(vo.partyDungeonFollow) != 1 {
+		t.Fatalf("coalesced queue length = %d", len(vo.partyDungeonFollow))
+	}
+	pending := vo.partyDungeonFollow[0]
+	if pending.flags != 7 || !bytes.Equal(pending.body, secondExpected) {
+		t.Fatalf("pending frame was not updated to latest: flags=%d body=%x", pending.flags, pending.body)
+	}
+	if !pending.due.Equal(now.Add(vo.partyDungeonFollowDelayUnsafe())) {
+		t.Fatalf("coalescing changed due time: %s", pending.due)
+	}
+}
+
 func TestRememberPartyDungeonActivityFromReliableBatch(t *testing.T) {
 	record := make([]byte, 11)
 	record[0] = 0x02
