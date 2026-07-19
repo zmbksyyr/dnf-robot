@@ -114,11 +114,10 @@ func TestSelectPeerResponsePacketUsesKnownEntityForAmbiguousPlainBody(t *testing
 	}
 }
 
-func TestSelectPeerResponsePacketUsesHistoryForAmbiguousEightByteBody(t *testing.T) {
+func TestSelectPeerResponsePacketPlainShapeOverridesHistoryForAmbiguousEightByteBody(t *testing.T) {
 	cipher := newPartyTestCipher(t)
 	const uniqueID = uint16(0x1234)
 	var body []byte
-	var decryptedUniqueID uint16
 	for requestID := uint32(1); requestID < 1<<20; requestID++ {
 		candidate := make([]byte, 8)
 		binary.LittleEndian.PutUint16(candidate[:2], uniqueID)
@@ -132,7 +131,6 @@ func TestSelectPeerResponsePacketUsesHistoryForAmbiguousEightByteBody(t *testing
 		response, typ, ok := buildPeerResponse(decrypted)
 		if ok && typ == peerRequestParty && binary.LittleEndian.Uint16(response[:2]) != uniqueID {
 			body = candidate
-			decryptedUniqueID = binary.LittleEndian.Uint16(response[:2])
 			break
 		}
 	}
@@ -141,48 +139,11 @@ func TestSelectPeerResponsePacketUsesHistoryForAmbiguousEightByteBody(t *testing
 	}
 
 	packet := makePartyRecvPacket(7, body)
-	response, typ, source, err := selectPeerResponsePacket(cipher, packet, false, recvBodySourcePlain, nil)
-	if err != nil || source != recvBodySourcePlain || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != uniqueID {
-		t.Fatalf("plain history response=%x typ=%d source=%s err=%v", response, typ, source, err)
-	}
-	response, typ, source, err = selectPeerResponsePacket(cipher, packet, false, recvBodySourceDecrypted, nil)
-	if err != nil || source != recvBodySourceDecrypted || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != decryptedUniqueID {
-		t.Fatalf("decrypted history response=%x typ=%d source=%s err=%v", response, typ, source, err)
-	}
-	if response, typ, source, err = selectPeerResponsePacket(cipher, packet, false, recvBodySourceUnknown, nil); err == nil || response != nil || typ != 0 || source != recvBodySourceUnknown {
-		t.Fatalf("ambiguous response=%x typ=%d source=%s err=%v", response, typ, source, err)
-	}
-}
-
-func TestSelectPeerResponsePacketAmbiguousEightByteCiphertextNeedsEvidence(t *testing.T) {
-	cipher := newPartyTestCipher(t)
-	const uniqueID = uint16(0x3456)
-	var packet []byte
-	for requestID := uint32(1); requestID < 1<<20; requestID++ {
-		body := make([]byte, 8)
-		binary.LittleEndian.PutUint16(body[:2], uniqueID)
-		body[2] = peerRequestParty
-		binary.LittleEndian.PutUint32(body[3:7], requestID)
-		encrypted, err := cipher.Encrypt(7, body)
-		if err != nil {
-			t.Fatal(err)
+	for _, preferred := range []recvBodySource{recvBodySourceUnknown, recvBodySourceDecrypted, recvBodySourcePlain} {
+		response, typ, source, err := selectPeerResponsePacket(cipher, packet, false, preferred, nil)
+		if err != nil || source != recvBodySourcePlain || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != uniqueID {
+			t.Fatalf("preferred=%s response=%x typ=%d source=%s err=%v", preferred, response, typ, source, err)
 		}
-		response, _, ok := buildPeerResponse(encrypted)
-		if ok && binary.LittleEndian.Uint16(response[:2]) != uniqueID {
-			packet = makePartyRecvPacket(7, encrypted)
-			break
-		}
-	}
-	if packet == nil {
-		t.Fatal("failed to construct ambiguous eight-byte ciphertext")
-	}
-
-	response, typ, source, err := selectPeerResponsePacket(cipher, packet, false, recvBodySourceDecrypted, nil)
-	if err != nil || source != recvBodySourceDecrypted || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != uniqueID {
-		t.Fatalf("response=%x typ=%d source=%s err=%v", response, typ, source, err)
-	}
-	if response, typ, source, err = selectPeerResponsePacket(cipher, packet, false, recvBodySourceUnknown, nil); err == nil || response != nil || typ != 0 || source != recvBodySourceUnknown {
-		t.Fatalf("ambiguous ciphertext response=%x typ=%d source=%s err=%v", response, typ, source, err)
 	}
 }
 

@@ -246,9 +246,13 @@ func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, 
 			return candidate.data, candidate.typ, candidate.source, nil
 		}
 	}
-	if len(valid) > 1 && !isAnti && len(raw) > 15+8 {
+	if len(valid) > 1 && !isAnti && len(raw) >= 15 {
+		shapeSource := recvBodySourceDecrypted
+		if len(raw)-15 <= 8 {
+			shapeSource = recvBodySourcePlain
+		}
 		for _, candidate := range valid {
-			if candidate.source == recvBodySourceDecrypted {
+			if candidate.source == shapeSource {
 				return candidate.data, candidate.typ, candidate.source, nil
 			}
 		}
