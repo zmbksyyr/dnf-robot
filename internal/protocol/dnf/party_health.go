@@ -35,6 +35,17 @@ func (r *RobotVo) setPartyRobotRouteReadyUnsafe(peer partyIPPeer, route byte, re
 	if wasPeerReady && !r.partyRobotPeerReady[peer.slot] {
 		r.partyRobotProbeAt[peer.slot] = time.Time{}
 		r.partyRobotProbeCount[peer.slot] = 0
+		return
+	}
+	if r.partyRobotPeerReady[peer.slot] && r.partyPeerRoute[peer.slot] == route {
+		alternate := byte(1)
+		if route == 1 {
+			alternate = 2
+		}
+		if r.partyRobotRouteReady[peer.slot][alternate] {
+			r.partyPeerRoute[peer.slot] = alternate
+			r.partyPeerRouteAt[peer.slot] = now
+		}
 	}
 }
 
@@ -71,15 +82,67 @@ func (r *RobotVo) markPartyRouteFailureUnsafe(peer partyIPPeer, route byte, now 
 	if blockedUntil.After(r.partyRouteBlockedUntil[peer.slot][route]) {
 		r.partyRouteBlockedUntil[peer.slot][route] = blockedUntil
 	}
+	failedOver := false
+	activeRoute := byte(0)
 	if isPartyRobotAccount(peer.accID) {
+		wasRouteReady := r.partyRobotRouteReady[peer.slot][route]
 		r.setPartyRobotRouteReadyUnsafe(peer, route, false, reason, now)
+		if wasRouteReady && r.partyRobotPeerReady[peer.slot] {
+			failedOver = true
+			activeRoute = r.partyPeerRoute[peer.slot]
+		}
 	}
 	if now.Before(r.partyRouteDiagAt[peer.slot][route]) {
+		if failedOver {
+			fmt.Printf("[PARTY_ROUTE_FAILOVER] uid=%d peer=%d slot=%d failed_route=%d active_route=%d reason=%s\n",
+				r.UID, peer.accID, peer.slot, route, activeRoute, reason)
+		}
 		return
 	}
 	r.partyRouteDiagAt[peer.slot][route] = now.Add(partyRouteDiagGap)
 	fmt.Printf("[PARTY_ROUTE_DEGRADED] uid=%d peer=%d slot=%d route=%d failures=%d retry_in=%s reason=%s\n",
 		r.UID, peer.accID, peer.slot, route, failures, delay, reason)
+	if failedOver {
+		fmt.Printf("[PARTY_ROUTE_FAILOVER] uid=%d peer=%d slot=%d failed_route=%d active_route=%d reason=%s\n",
+			r.UID, peer.accID, peer.slot, route, activeRoute, reason)
+	}
+}
+
+func (r *RobotVo) partyRouteInUseUnsafe(slot, route byte) bool {
+	if slot >= 4 || route < 1 || route > 2 {
+		return false
+	}
+	if r.partyPeerRoute[slot] == route && !r.partyPeerRouteAt[slot].IsZero() {
+		return true
+	}
+	if r.partyRobotRouteReady[slot][route] || len(r.partyReliablePending[slot][route]) > 0 {
+		return true
+	}
+	pending := r.partyTQOSReplies[slot][route]
+	return len(pending.packet) > 0 && !pending.acknowledged
+}
+
+func (r *RobotVo) logPartyTransportClearedUnsafe(reason string) {
+	known := r.partyPendingPeer != 0 || partyPeerIdentityKnown(r.partySelfPeer)
+	if !known {
+		for _, peer := range r.partyPeers {
+			if partyPeerIdentityKnown(peer) {
+				known = true
+				break
+			}
+		}
+	}
+	if known {
+		fmt.Printf("[PARTY_TRANSPORT_CLEARED] uid=%d reason=%s\n", r.UID, reason)
+	}
+}
+
+func (r *RobotVo) logPartyPeerTransportResetUnsafe(peer partyIPPeer, reason string) {
+	if !partyPeerIdentityKnown(peer) {
+		return
+	}
+	fmt.Printf("[PARTY_PEER_TRANSPORT_RESET] uid=%d peer=%d unique=%d slot=%d reason=%s\n",
+		r.UID, peer.accID, peer.uniqueID, peer.slot, reason)
 }
 
 func (r *RobotVo) shouldLogPartyRuntimeErrorUnsafe(now time.Time) bool {

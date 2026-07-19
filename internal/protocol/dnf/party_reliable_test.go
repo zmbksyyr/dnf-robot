@@ -125,6 +125,9 @@ func TestPartyRouteFailureKeepsReadyAlternateRoute(t *testing.T) {
 	if route := vo.partyRouteForPeerUnsafe(peer.slot); route != 2 {
 		t.Fatalf("route=%d want relay alternate", route)
 	}
+	if vo.partyPeerRoute[peer.slot] != 2 {
+		t.Fatalf("remembered route=%d want relay alternate", vo.partyPeerRoute[peer.slot])
+	}
 }
 
 func TestPartyReadyRouteHeartbeatReusesState2Sequence(t *testing.T) {

@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	partySupervisorTick        = 100 * time.Millisecond
-	partySupervisorMaintenance = time.Second
-	partySelfRefreshInitial    = 3 * time.Second
-	partySelfRefreshMax        = 30 * time.Second
+	partySupervisorTick          = 100 * time.Millisecond
+	partySupervisorMaintenance   = time.Second
+	partySelfRefreshInitial      = 3 * time.Second
+	partySelfRefreshMax          = 30 * time.Second
+	partySelfRefreshRecycleAfter = 6
 )
 
 func (r *RobotVo) ensurePartySupervisorUnsafe() bool {
@@ -84,7 +85,22 @@ func (r *RobotVo) refreshPartySelfIdentityUnsafe(now time.Time) {
 	if !r.partySelfRefreshAt.IsZero() && now.Before(r.partySelfRefreshAt) {
 		return
 	}
-	if r.sendNATInfoUpdateUnsafe(true) {
+	sent := false
+	if r.partySelfRefreshAttempts >= partySelfRefreshRecycleAfter {
+		if r.rebuildPartyUDPUnsafe(r.UID, "self identity stalled") {
+			r.partySelfRefreshAttempts = 0
+			r.partySelfRefreshBackoff = 0
+			sent = true
+			fmt.Printf("[PARTY_SELF_ID_RECYCLE] uid=%d slot=%d\n", r.UID, self.slot)
+		}
+	}
+	if !sent {
+		sent = r.sendNATInfoUpdateUnsafe(true)
+	}
+	if sent {
+		if r.partySelfRefreshAttempts < 0xff {
+			r.partySelfRefreshAttempts++
+		}
 		fmt.Printf("[PARTY_SELF_ID_REFRESH] uid=%d slot=%d\n", r.UID, self.slot)
 	}
 	if r.partySelfRefreshBackoff <= 0 {
@@ -105,9 +121,21 @@ func (r *RobotVo) ensurePartyUDPHealthUnsafe(uid uint32) {
 	if r.partyUDPConn != nil && r.partyUDPRunning {
 		return
 	}
+	if r.partyUDPConn != nil {
+		r.closePartyUDPUnsafe()
+	}
+	if r.rebuildPartyUDPUnsafe(uid, "receive loop stopped") {
+		return
+	}
+}
+
+func (r *RobotVo) rebuildPartyUDPUnsafe(uid uint32, reason string) bool {
+	if r.Conn == nil {
+		return false
+	}
 	addr, ok := r.Conn.LocalAddr().(*net.TCPAddr)
 	if !ok || addr == nil {
-		return
+		return false
 	}
 	if r.partyUDPConn != nil {
 		r.closePartyUDPUnsafe()
@@ -119,6 +147,8 @@ func (r *RobotVo) ensurePartyUDPHealthUnsafe(uid uint32) {
 	}
 	r.natInfoSent = false
 	if r.sendNATInfoUnsafe() {
-		fmt.Printf("[PARTY_UDP_RECOVERED] uid=%d\n", uid)
+		fmt.Printf("[PARTY_UDP_RECOVERED] uid=%d reason=%s\n", uid, reason)
+		return true
 	}
+	return false
 }

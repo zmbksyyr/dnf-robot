@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"robot/internal/protocol/dnf/crypt"
 )
 
 type panicLocalAddrConn struct {
@@ -360,6 +362,88 @@ func TestPartyRelayNormalCloseIsAlreadyDetached(t *testing.T) {
 	defer vo.mu.Unlock()
 	if vo.partyRelayConn != nil {
 		t.Fatal("normal relay close left a stale active connection")
+	}
+}
+
+func TestPartyRelayDisconnectDoesNotDegradeUnusedRoute(t *testing.T) {
+	robotConn, peerConn := net.Pipe()
+	defer peerConn.Close()
+	vo := &RobotVo{State: StateRun, partyRelayConn: robotConn}
+	peer := partyIPPeer{uniqueID: 7, accID: 17000002, slot: 1, slotKnown: true}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 9, accID: 17000001, slot: 2, slotKnown: true}
+	vo.partyPeers[0] = peer
+
+	if !vo.detachPartyRelayConn(robotConn) {
+		t.Fatal("active relay disconnect was not classified as unexpected")
+	}
+	if vo.partyRouteFailures[peer.slot][2] != 0 || !vo.partyRouteBlockedUntil[peer.slot][2].IsZero() {
+		t.Fatalf("unused relay route was degraded: failures=%d blocked_until=%s",
+			vo.partyRouteFailures[peer.slot][2], vo.partyRouteBlockedUntil[peer.slot][2])
+	}
+}
+
+func TestPartySelfIdentityStallRebuildsUDPWithoutRelay(t *testing.T) {
+	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan *net.TCPConn, 1)
+	go func() {
+		conn, _ := listener.AcceptTCP()
+		accepted <- conn
+	}()
+	gameConn, err := net.DialTCP("tcp4", nil, listener.Addr().(*net.TCPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gameConn.Close()
+	gamePeer := <-accepted
+	if gamePeer == nil {
+		t.Fatal("game listener did not accept connection")
+	}
+	defer gamePeer.Close()
+
+	oldUDP, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vo := NewRobotVo(nil)
+	vo.UID = 17000001
+	vo.State = StateRun
+	vo.Conn = gameConn
+	vo.Cipher = crypt.NewDNFCipher()
+	if err := vo.Cipher.Initialize(make([]byte, 334)); err != nil {
+		t.Fatal(err)
+	}
+	vo.partyUDPConn = oldUDP
+	vo.partySelfPeer = partyIPPeer{accID: vo.UID, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 7, accID: 17000002, slot: 0, slotKnown: true}
+	vo.partySelfRefreshAttempts = partySelfRefreshRecycleAfter
+	vo.partySelfRefreshBackoff = partySelfRefreshMax
+	t.Cleanup(func() {
+		vo.mu.Lock()
+		vo.closePartyUDPUnsafe()
+		vo.mu.Unlock()
+	})
+
+	now := time.Now()
+	vo.refreshPartySelfIdentityUnsafe(now)
+
+	if vo.partyUDPConn == nil || vo.partyUDPConn == oldUDP {
+		t.Fatal("stalled self identity did not replace the UDP socket")
+	}
+	if vo.partyRelayConn != nil {
+		t.Fatal("test unexpectedly acquired a relay connection")
+	}
+	if !vo.natInfoSent || vo.PacketID != 1 {
+		t.Fatalf("rebuilt UDP did not send NAT info: sent=%t packet_id=%d", vo.natInfoSent, vo.PacketID)
+	}
+	if vo.partySelfRefreshAttempts != 1 {
+		t.Fatalf("refresh attempts=%d want 1 after recycle", vo.partySelfRefreshAttempts)
+	}
+	if !vo.partySelfRefreshAt.After(now) {
+		t.Fatalf("next self refresh=%s want after %s", vo.partySelfRefreshAt, now)
 	}
 }
 

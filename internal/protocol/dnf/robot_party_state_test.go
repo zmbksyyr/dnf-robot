@@ -129,6 +129,35 @@ func TestPartyPeerLifecycle(t *testing.T) {
 	}
 }
 
+func TestRemovePartyPeerImmediatelyResetsOnlyItsTransport(t *testing.T) {
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 9, accID: 17000001, slot: 2, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 7, accID: 17000002, slot: 0, slotKnown: true}
+	vo.partyPeers[1] = partyIPPeer{uniqueID: 8, accID: 17000003, slot: 1, slotKnown: true}
+	vo.partyTQOSSeq[0][1] = 7
+	vo.partyTQOSSeq[1][1] = 8
+	vo.partyRobotPeerReady[0] = true
+	vo.partyRobotPeerReady[1] = true
+	vo.partyReliablePending[0][1] = []partyReliablePending{{packet: []byte{1}}}
+
+	vo.removePartyPeerUnsafe(7)
+
+	if partyPeerIdentityKnown(vo.partyPeers[0]) {
+		t.Fatalf("removed peer remained in snapshot: %+v", vo.partyPeers[0])
+	}
+	if vo.partyTQOSSeq[0][1] != 0 || vo.partyRobotPeerReady[0] || len(vo.partyReliablePending[0][1]) != 0 {
+		t.Fatalf("removed peer transport remained: seq=%d ready=%t pending=%d",
+			vo.partyTQOSSeq[0][1], vo.partyRobotPeerReady[0], len(vo.partyReliablePending[0][1]))
+	}
+	if vo.partyTQOSSeq[1][1] != 8 || !vo.partyRobotPeerReady[1] || vo.partyPeers[1].uniqueID != 8 {
+		t.Fatalf("remaining peer transport changed: seq=%d ready=%t peer=%+v",
+			vo.partyTQOSSeq[1][1], vo.partyRobotPeerReady[1], vo.partyPeers[1])
+	}
+	if !vo.partyActiveUnsafe() {
+		t.Fatal("party was cleared while another peer remained")
+	}
+}
+
 func TestSetPartyPeersKeepsAccountOnlyRobotPeers(t *testing.T) {
 	vo := &RobotVo{State: StateRun}
 	vo.setPartyPeersUnsafe([]partyIPPeer{

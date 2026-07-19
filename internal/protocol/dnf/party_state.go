@@ -466,12 +466,19 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 		identityChanged := uniqueChanged || (!partyPeerSameIdentity(before, after) && (partyPeerIdentityKnown(before) || partyPeerIdentityKnown(after)))
 		endpointChanged := partyPeerSameIdentity(before, after) && partyPeerIdentityKnown(before) && !partyPeerAdvertisedEndpointEqual(before, after)
 		if identityChanged || endpointChanged {
+			reason := "identity changed"
+			if endpointChanged {
+				reason = "endpoint changed"
+			}
+			r.logPartyPeerTransportResetUnsafe(before, reason)
 			r.resetPartyTQOSPeerUnsafe(slot)
 		}
 	}
 	if !r.partyActiveUnsafe() {
+		r.logPartyTransportClearedUnsafe("empty snapshot")
 		r.stopPartySupervisorUnsafe()
 		r.partySelfPeer = partyIPPeer{}
+		r.partySelfRefreshAttempts = 0
 		r.resetPartyTQOSTransportUnsafe()
 	}
 }
@@ -486,11 +493,13 @@ func (r *RobotVo) setPartySelfPeerUnsafe(peer partyIPPeer) {
 	}
 	r.partySelfPeer = peer
 	if uniqueChanged {
+		r.logPartyTransportClearedUnsafe("self identity changed")
 		r.resetPartyTQOSTransportUnsafe()
 	}
 	if peer.uniqueID != 0 {
 		r.partySelfRefreshAt = time.Time{}
 		r.partySelfRefreshBackoff = 0
+		r.partySelfRefreshAttempts = 0
 	} else if peer.accID == r.UID && peer.slotKnown && r.partySelfRefreshAt.IsZero() {
 		r.partySelfRefreshAt = time.Now().Add(3 * time.Second)
 	}
@@ -506,7 +515,11 @@ func (r *RobotVo) removePartyPeerUnsafe(uniqueID uint16) {
 	}
 	for i, peer := range r.partyPeers {
 		if peer.uniqueID == uniqueID {
+			r.logPartyPeerTransportResetUnsafe(peer, "peer removed")
 			r.partyPeers[i] = partyIPPeer{}
+			if peer.slotKnown {
+				r.resetPartyTQOSPeerUnsafe(peer.slot)
+			}
 		}
 	}
 	if !r.partyActiveUnsafe() {
@@ -515,10 +528,12 @@ func (r *RobotVo) removePartyPeerUnsafe(uniqueID uint16) {
 }
 
 func (r *RobotVo) clearPartyUnsafe() {
+	r.logPartyTransportClearedUnsafe("party cleared")
 	r.stopPartySupervisorUnsafe()
 	r.partySelfPeer = partyIPPeer{}
 	r.partySelfRefreshAt = time.Time{}
 	r.partySelfRefreshBackoff = 0
+	r.partySelfRefreshAttempts = 0
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)

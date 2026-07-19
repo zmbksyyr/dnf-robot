@@ -125,7 +125,7 @@ func (r *RobotVo) detachPartyRelayConnUnsafe(conn net.Conn) bool {
 		now := time.Now()
 		for slot := byte(0); slot < 4; slot++ {
 			peer := r.partyPeerForSlotUnsafe(slot)
-			if partyPeerIdentityKnown(peer) {
+			if partyPeerIdentityKnown(peer) && r.partyRouteInUseUnsafe(slot, 2) {
 				r.markPartyRouteFailureUnsafe(peer, 2, now, "relay disconnected")
 			}
 		}

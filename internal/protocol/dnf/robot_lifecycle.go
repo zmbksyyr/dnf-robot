@@ -10,6 +10,7 @@ func (r *RobotVo) CheckUserState() bool {
 		return false
 	}
 	if r.DisconReason != NoDisconnect {
+		r.logPartyTransportClearedUnsafe("disconnect reason")
 		r.stopPartySupervisorUnsafe()
 		if r.Conn != nil {
 			r.Conn.Close()
@@ -22,6 +23,7 @@ func (r *RobotVo) CheckUserState() bool {
 		return false
 	}
 	if r.State != StateRun {
+		r.logPartyTransportClearedUnsafe("runtime stopped")
 		r.stopPartySupervisorUnsafe()
 		if r.Conn != nil {
 			r.Conn.Close()
@@ -54,6 +56,7 @@ func (r *RobotVo) RefishConnect() bool {
 	uid := r.UID
 
 	if r.State == StateStop {
+		r.logPartyTransportClearedUnsafe("refresh stopped session")
 		r.stopPartySupervisorUnsafe()
 		if r.Conn != nil {
 			r.Conn.Close()
@@ -69,6 +72,7 @@ func (r *RobotVo) RefishConnect() bool {
 	}
 
 	if r.State == StateRun || r.State == StateLogin || r.State == StateInit {
+		r.logPartyTransportClearedUnsafe("session reconnect")
 		r.stopPartySupervisorUnsafe()
 		r.recvBuffer = nil
 		r.recvSize = 0
@@ -115,6 +119,7 @@ func (r *RobotVo) RefishConnect() bool {
 	}
 
 	r.State = StateStop
+	r.logPartyTransportClearedUnsafe("refresh invalid state")
 	r.stopPartySupervisorUnsafe()
 	if r.Conn != nil {
 		r.Conn.Close()
