@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"robot/internal/foundation/charset"
+	"robot/internal/foundation/lockhub"
 )
 
 const (
@@ -23,7 +23,7 @@ const (
 type Client struct {
 	Address string
 
-	mu       sync.Mutex
+	mu       lockhub.Locker
 	failures int
 	retryAt  time.Time
 	dial     func(network, address string, timeout time.Duration) (net.Conn, error)
