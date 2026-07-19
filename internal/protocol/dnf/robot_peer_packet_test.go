@@ -110,6 +110,34 @@ func TestSelectPeerResponsePacketUsesKnownEntityForAmbiguousPlainBody(t *testing
 	}
 }
 
+func TestSelectPeerResponsePacketPrefersPlainForAmbiguousFirstRequest(t *testing.T) {
+	cipher := newPartyTestCipher(t)
+	const uniqueID = uint16(0x1234)
+	var body []byte
+	for requestID := uint32(1); requestID < 1<<20; requestID++ {
+		candidate := make([]byte, 8)
+		binary.LittleEndian.PutUint16(candidate[:2], uniqueID)
+		candidate[2] = peerRequestParty
+		binary.LittleEndian.PutUint32(candidate[3:7], requestID)
+		decrypted, err := cipher.Decrypt(7, candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response, _, ok := buildPeerResponse(decrypted); ok && binary.LittleEndian.Uint16(response[:2]) != uniqueID {
+			body = candidate
+			break
+		}
+	}
+	if body == nil {
+		t.Fatal("failed to construct an ambiguous plain peer request")
+	}
+
+	response, typ, source, err := selectPeerResponsePacket(cipher, makePartyRecvPacket(7, body), false, recvBodySourceUnknown, nil)
+	if err != nil || source != recvBodySourcePlain || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != uniqueID {
+		t.Fatalf("response=%x typ=%d source=%s err=%v", response, typ, source, err)
+	}
+}
+
 func TestPartyIPInfoPacketSupportsEncryptedAndPlainBodies(t *testing.T) {
 	cipher := newPartyTestCipher(t)
 	body := make([]byte, 45)

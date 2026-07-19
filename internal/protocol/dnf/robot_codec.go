@@ -253,6 +253,14 @@ func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, 
 			}
 		}
 	}
+	// The compatibility patch raw-sends peer requests. When the first request
+	// arrives before any entity/source evidence exists, prefer the valid plain
+	// body over a coincidentally valid decryption of those same eight bytes.
+	for _, candidate := range valid {
+		if candidate.source == recvBodySourcePlain {
+			return candidate.data, candidate.typ, candidate.source, nil
+		}
+	}
 	if len(valid) > 0 {
 		candidate := valid[0]
 		return candidate.data, candidate.typ, candidate.source, nil
