@@ -52,6 +52,8 @@ type RobotManager struct {
 	runtimeStatusMu                 lockhub.RWLocker
 	runtimeStatusCache              map[int]robotcap.RuntimeStatus
 	runtimeStatusCacheAt            time.Time
+	runtimeStatusSummary            robotcap.RuntimeStatusSummary
+	runtimeStatusSummaryAt          time.Time
 	runtimeStatusRefresh            chan struct{}
 	schedulerStatus                 robotcap.SchedulerStatus
 	nextOperationID                 int64

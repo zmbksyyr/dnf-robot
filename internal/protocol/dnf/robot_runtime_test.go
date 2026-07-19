@@ -29,6 +29,25 @@ func TestOnRecvDataCompactsBatchedPacketsOnce(t *testing.T) {
 	}
 }
 
+func TestTrySnapshotUsesCachedValueWhileRobotIsBusy(t *testing.T) {
+	vo := NewRobotVo(nil)
+	vo.Load(UserLoginInfo{UID: 17000001, CID: 2001})
+	vo.mu.Lock()
+	started := time.Now()
+	snapshot, fresh := vo.TrySnapshot()
+	vo.mu.Unlock()
+
+	if fresh {
+		t.Fatal("busy robot unexpectedly returned a fresh snapshot")
+	}
+	if snapshot.UID != 17000001 || snapshot.CID != 2001 {
+		t.Fatalf("cached snapshot = %+v", snapshot)
+	}
+	if elapsed := time.Since(started); elapsed > 50*time.Millisecond {
+		t.Fatalf("cached snapshot blocked for %s", elapsed)
+	}
+}
+
 func TestPartySkillProfileLoadIsSingleflightAndDoesNotHoldRobotLock(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})

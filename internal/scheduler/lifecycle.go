@@ -22,7 +22,7 @@ type SystemStatus struct {
 }
 
 func (m *RobotManager) SystemStatus() SystemStatus {
-	auto := m.AutoStatus()
+	summary := m.runtimeStatusSummarySnapshot()
 	cpu, mem, threads := process.ResourceSnapshot()
 	return SystemStatus{
 		UpdatedAt:       time.Now(),
@@ -30,8 +30,8 @@ func (m *RobotManager) SystemStatus() SystemStatus {
 		RobotMemoryMB:   mem,
 		RobotThreads:    threads,
 		RobotUptimeSec:  int(time.Since(m.startedAt).Seconds()),
-		Running:         auto.Running,
-		Store:           auto.StoreRunning,
+		Running:         summary.Running,
+		Store:           summary.Stores,
 	}
 }
 

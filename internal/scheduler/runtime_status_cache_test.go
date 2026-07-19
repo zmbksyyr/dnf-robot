@@ -116,6 +116,25 @@ func TestCountRuntimeRunningUsesCachedSnapshot(t *testing.T) {
 	}
 }
 
+func TestAutoAndSystemStatusShareRuntimeSummary(t *testing.T) {
+	runtime := &countingStatusRuntime{statuses: []robotcap.RuntimeStatus{
+		{UID: 17000001, StateName: robotcap.RuntimeStateRunning},
+		{UID: 17000002, StateName: robotcap.RuntimeStateRunning, RobotType: 2, StoreDisplayAck: true},
+		{UID: 17000003, StateName: robotcap.RuntimeStateLogin},
+	}}
+	manager := testRobotManagerWithConfig(t, "")
+	manager.doll = runtime
+
+	auto := manager.AutoStatus()
+	system := manager.SystemStatus()
+	if auto.Running != 2 || auto.StoreRunning != 1 || system.Running != 2 || system.Store != 1 {
+		t.Fatalf("auto=%+v system=%+v", auto, system)
+	}
+	if got := runtime.calls.Load(); got != 1 {
+		t.Fatalf("RuntimeStatus calls got %d want 1", got)
+	}
+}
+
 func BenchmarkRuntimeStatusLookup550(b *testing.B) {
 	manager := benchmarkRuntimeStatusManager(b)
 	if _, ok := manager.runtimeStatus(17000275); !ok {

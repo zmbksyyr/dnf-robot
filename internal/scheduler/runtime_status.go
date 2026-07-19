@@ -54,11 +54,15 @@ func (m *RobotManager) runtimeStatusMap() map[int]robotcap.RuntimeStatus {
 
 func (m *RobotManager) refreshRuntimeStatusMap(refreshDone chan struct{}) (status map[int]robotcap.RuntimeStatus) {
 	complete := false
+	summary := robotcap.RuntimeStatusSummary{}
 	defer func() {
 		m.runtimeStatusMu.Lock()
 		if complete {
+			cacheAt := time.Now()
 			m.runtimeStatusCache = status
-			m.runtimeStatusCacheAt = time.Now()
+			m.runtimeStatusCacheAt = cacheAt
+			m.runtimeStatusSummary = summary
+			m.runtimeStatusSummaryAt = cacheAt
 		}
 		if m.runtimeStatusRefresh == refreshDone {
 			m.runtimeStatusRefresh = nil
@@ -70,9 +74,31 @@ func (m *RobotManager) refreshRuntimeStatusMap(refreshDone chan struct{}) (statu
 	status = make(map[int]robotcap.RuntimeStatus)
 	for _, st := range m.doll.RuntimeStatus() {
 		status[st.UID] = st
+		summary.Add(st)
 	}
 	complete = true
 	return status
+}
+
+func (m *RobotManager) runtimeStatusSummarySnapshot() robotcap.RuntimeStatusSummary {
+	status := m.runtimeStatusMap()
+	m.runtimeStatusMu.RLock()
+	if m.runtimeStatusSummaryAt.Equal(m.runtimeStatusCacheAt) {
+		summary := m.runtimeStatusSummary
+		m.runtimeStatusMu.RUnlock()
+		return summary
+	}
+	cacheAt := m.runtimeStatusCacheAt
+	m.runtimeStatusMu.RUnlock()
+
+	summary := robotcap.SummarizeRuntimeStatusMap(status)
+	m.runtimeStatusMu.Lock()
+	if m.runtimeStatusCacheAt.Equal(cacheAt) {
+		m.runtimeStatusSummary = summary
+		m.runtimeStatusSummaryAt = cacheAt
+	}
+	m.runtimeStatusMu.Unlock()
+	return summary
 }
 
 func (m *RobotManager) runtimeStatusMapCopy() map[int]robotcap.RuntimeStatus {

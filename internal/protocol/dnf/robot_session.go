@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"robot/internal/foundation/lockhub"
@@ -173,6 +174,8 @@ type RobotVo struct {
 	mu     lockhub.Locker
 	sendMu lockhub.Locker
 
+	lastSnapshot atomic.Pointer[RobotSnapshot]
+
 	DB *sql.DB
 
 	recvBuffer    []byte
@@ -281,7 +284,23 @@ func NewRobotVo(db *sql.DB) *RobotVo {
 func (r *RobotVo) Snapshot() RobotSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return RobotSnapshot{
+	return r.publishSnapshotUnsafe()
+}
+
+func (r *RobotVo) TrySnapshot() (RobotSnapshot, bool) {
+	if r.mu.TryLock() {
+		snapshot := r.publishSnapshotUnsafe()
+		r.mu.Unlock()
+		return snapshot, true
+	}
+	if snapshot := r.lastSnapshot.Load(); snapshot != nil {
+		return *snapshot, false
+	}
+	return RobotSnapshot{}, false
+}
+
+func (r *RobotVo) publishSnapshotUnsafe() RobotSnapshot {
+	snapshot := RobotSnapshot{
 		UID:                  r.UID,
 		CID:                  r.CID,
 		State:                r.State,
@@ -306,6 +325,8 @@ func (r *RobotVo) Snapshot() RobotSnapshot {
 		X:                    r.CurX,
 		Y:                    r.CurY,
 	}
+	r.lastSnapshot.Store(&snapshot)
+	return snapshot
 }
 
 func (r *RobotVo) Load(info UserLoginInfo) {
@@ -362,6 +383,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.LoginIP = info.IP
 	r.LoginPort = info.Port
 	r.LocalIP = "127.0.0.1"
+	r.publishSnapshotUnsafe()
 }
 
 func (r *RobotVo) CloseOut() {
@@ -377,6 +399,7 @@ func (r *RobotVo) CloseOut() {
 	r.recvBuffer = nil
 	r.recvSize = 0
 	r.State = StateStop
+	r.publishSnapshotUnsafe()
 }
 
 func (r *RobotVo) Connect() {

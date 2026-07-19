@@ -170,7 +170,10 @@ func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 	out := make([]shared.RuntimeStatus, 0, len(robotMap))
 	now := uint32(time.Now().Unix())
 	for _, vo := range robotMap {
-		snap := vo.Snapshot()
+		snap, _ := vo.TrySnapshot()
+		if snap.UID == 0 {
+			continue
+		}
 		state := int(snap.State)
 		out = append(out, shared.RuntimeStatus{
 			UID:                  int(snap.UID),

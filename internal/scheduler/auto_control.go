@@ -70,8 +70,7 @@ func (m *RobotManager) SetAutoEnabled(enabled bool) robotcap.AutoStatus {
 
 func (m *RobotManager) AutoStatus() robotcap.AutoStatus {
 	rc := m.loadRobotConfig()
-	status := m.doll.RuntimeStatus()
-	summary := robotcap.SummarizeRuntimeStatusSlice(status)
+	summary := m.runtimeStatusSummarySnapshot()
 	running, connecting, stores := summary.Running, summary.Connecting, summary.Stores
 	m.autoMu.Lock()
 	out := m.autoStats
