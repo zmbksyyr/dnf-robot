@@ -18,6 +18,8 @@ const (
 	robotSocketWriteTimeout   = 2 * time.Second
 )
 
+type robotDialFunc func(gameIP string, gamePort int, localIP string) (net.Conn, error)
+
 type ClientState int
 
 const (
@@ -193,16 +195,10 @@ type RobotVo struct {
 	setArea      [16]byte
 	setPosStart  [8]byte
 
-	Controller Controller
+	Controller      *RobotDnfTask
+	connectInFlight bool
 
 	done chan struct{}
-}
-
-type Controller interface {
-	Insert(uid uint32, vo *RobotVo)
-	Delete(uid uint32)
-	AddMessage(msgType string, data interface{})
-	AddMessageDelay(msgType string, data interface{}, delaySec int)
 }
 
 type RobotSnapshot struct {
@@ -417,33 +413,62 @@ func (r *RobotVo) closeOutUnsafe() {
 	r.publishSnapshotUnsafe()
 }
 
-func (r *RobotVo) Connect() {
+func (r *RobotVo) prepareConnect(controller *RobotDnfTask) bool {
 	r.mu.Lock()
-	if r.State != StateStop {
+	defer r.mu.Unlock()
+	if controller == nil || r.State != StateStop {
+		return false
+	}
+	r.Controller = controller
+	r.IsTokenRight = false
+	r.connectInFlight = false
+	r.State = StateInit
+	r.publishSnapshotUnsafe()
+	return true
+}
+
+func (r *RobotVo) readyToConnect() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.State == StateInit && !r.connectInFlight
+}
+
+func (r *RobotVo) Connect() {
+	r.connect(dialRobot)
+}
+
+func (r *RobotVo) connect(dial robotDialFunc) {
+	if dial == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.State != StateInit || r.connectInFlight {
 		r.mu.Unlock()
 		return
 	}
-	r.State = StateInit
+	r.connectInFlight = true
 	gameIP := r.IP
 	gamePort := r.Port
 	localIP := r.LocalIP
+	controller := r.Controller
 	r.mu.Unlock()
-
+	if controller == nil || !controller.isCurrent(r.UID, r) {
+		r.mu.Lock()
+		r.connectInFlight = false
+		r.mu.Unlock()
+		return
+	}
 	if gameIP == "" || gameIP == "127.0.0.1" {
 		gameIP = "10.0.0.1"
 	}
+
+	conn, err := dial(gameIP, gamePort, localIP)
 	addr := net.JoinHostPort(gameIP, strconv.Itoa(gamePort))
-	var d net.Dialer
-	d.Timeout = 10 * time.Second
-	if localIPAvailable(gameIP) {
-		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(gameIP, "0"))
-		if err == nil {
-			d.LocalAddr = tcpAddr
-		}
-	}
-	conn, err := d.Dial("tcp", addr)
 	if err != nil {
 		fmt.Printf("[RobotVo] connect failed uid=%d addr=%s err=%v\n", r.UID, addr, err)
+		r.mu.Lock()
+		r.connectInFlight = false
+		r.mu.Unlock()
 		r.RefishConnect()
 		return
 	}
@@ -453,6 +478,12 @@ func (r *RobotVo) Connect() {
 	}
 
 	r.mu.Lock()
+	r.connectInFlight = false
+	if r.State != StateInit || r.Controller != controller {
+		r.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
 	if gameIP != localIP {
 		r.RobotTyp = 1
 	}
@@ -463,12 +494,23 @@ func (r *RobotVo) Connect() {
 	r.recvMaxSize = 4096
 	r.recvBuffer = make([]byte, r.recvMaxSize)
 	r.Conn = conn
-	if r.Controller != nil {
-		r.Controller.Insert(r.UID, r)
-	}
+	r.publishSnapshotUnsafe()
 	r.mu.Unlock()
 
 	go r.readLoop(conn)
+}
+
+func dialRobot(gameIP string, gamePort int, localIP string) (net.Conn, error) {
+	addr := net.JoinHostPort(gameIP, strconv.Itoa(gamePort))
+	var d net.Dialer
+	d.Timeout = 10 * time.Second
+	if localIPAvailable(localIP) {
+		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(localIP, "0"))
+		if err == nil {
+			d.LocalAddr = tcpAddr
+		}
+	}
+	return d.Dial("tcp", addr)
 }
 
 func localIPAvailable(ip string) bool {
@@ -520,10 +562,11 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 			shouldReconnect := r.Controller != nil && r.ConnCount < r.MaxReConn
 			if !shouldReconnect {
 				r.State = StateStop
-				if r.Controller != nil {
-					r.Controller.Delete(r.UID)
-				}
+				controller := r.Controller
 				r.mu.Unlock()
+				if controller != nil {
+					controller.DeleteIf(r.UID, r)
+				}
 				return
 			}
 			r.mu.Unlock()

@@ -18,6 +18,7 @@ type publicMsgInternalData struct {
 
 func (t *RobotDnfTask) initKeyCall() {
 	t.keyToHandle["MsgOnLine"] = t.dnfMsgOnLine
+	t.keyToHandle["MsgReconnect"] = t.msgReconnect
 	t.keyToHandle["MsgMove"] = t.dnfMsgMove
 	t.keyToHandle["MsgLogout"] = t.msgLogout
 	t.keyToHandle["MsgPublicMsg"] = t.msgPublicMsg
@@ -30,7 +31,6 @@ func (t *RobotDnfTask) dnfMsgOnLine(_ *RobotDnfTask, voVoid interface{}) bool {
 	tmpVo := t.Find(int(vo.UID))
 	if tmpVo != nil {
 		if !tmpVo.CheckUserState() {
-			t.DeleteByInt(int(vo.UID))
 		} else {
 			vo.mu.Lock()
 			tasks := append([]AsyncTask(nil), vo.AfterRunAsyncTaskVec...)
@@ -45,10 +45,23 @@ func (t *RobotDnfTask) dnfMsgOnLine(_ *RobotDnfTask, voVoid interface{}) bool {
 		}
 	}
 
-	vo.mu.Lock()
-	vo.Controller = t
-	vo.IsTokenRight = false
-	vo.mu.Unlock()
+	if !vo.prepareConnect(t) || !t.replaceCurrent(vo.UID, tmpVo, vo) {
+		vo.CloseOut()
+		return false
+	}
+	if t.enqueueConnect(vo) {
+		return true
+	}
+	vo.CloseOut()
+	t.DeleteIf(vo.UID, vo)
+	return false
+}
+
+func (t *RobotDnfTask) msgReconnect(_ *RobotDnfTask, voVoid interface{}) bool {
+	vo, ok := voVoid.(*RobotVo)
+	if !ok || vo == nil || !t.isCurrent(vo.UID, vo) || !vo.readyToConnect() {
+		return false
+	}
 	return t.enqueueConnect(vo)
 }
 
@@ -70,8 +83,8 @@ func (t *RobotDnfTask) msgLogout(_ *RobotDnfTask, moveVoid interface{}) bool {
 	uid := moveVoid.(int)
 	voObj := t.Find(uid)
 	if voObj != nil {
-		t.DeleteByInt(uid)
 		voObj.CloseOut()
+		t.DeleteIf(uint32(uid), voObj)
 	}
 	return true
 }

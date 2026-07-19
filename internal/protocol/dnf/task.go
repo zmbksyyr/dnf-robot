@@ -21,7 +21,7 @@ type RobotDnfTask struct {
 
 	connectQueue  chan *RobotVo
 	connectMu     lockhub.Locker
-	connectQueued map[uint32]struct{}
+	connectQueued map[uint32]*RobotVo
 }
 
 func NewRobotDnfTask() *RobotDnfTask {
@@ -31,7 +31,7 @@ func NewRobotDnfTask() *RobotDnfTask {
 		keyToHandle:       make(map[string]func(task *RobotDnfTask, data interface{}) bool),
 		done:              make(chan struct{}),
 		connectQueue:      make(chan *RobotVo, maxMessageQueueSize),
-		connectQueued:     make(map[uint32]struct{}),
+		connectQueued:     make(map[uint32]*RobotVo),
 	}
 	t.initKeyCall()
 	for i := range t.messageShards {

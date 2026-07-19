@@ -14,6 +14,10 @@ func (t *RobotDnfTask) connectLoop() {
 			return
 		case vo := <-t.connectQueue:
 			t.connectMu.Lock()
+			if t.connectQueued[vo.UID] != vo {
+				t.connectMu.Unlock()
+				continue
+			}
 			delete(t.connectQueued, vo.UID)
 			t.connectMu.Unlock()
 			select {
@@ -26,10 +30,17 @@ func (t *RobotDnfTask) connectLoop() {
 	}
 }
 
-func (t *RobotDnfTask) Insert(uid uint32, vo *RobotVo) {
+func (t *RobotDnfTask) replaceCurrent(uid uint32, current, replacement *RobotVo) bool {
+	if replacement == nil {
+		return false
+	}
 	t.robotVoMutex.Lock()
 	defer t.robotVoMutex.Unlock()
-	t.robotVoMap[int(uid)] = vo
+	if t.robotVoMap[int(uid)] != current {
+		return false
+	}
+	t.robotVoMap[int(uid)] = replacement
+	return true
 }
 
 func (t *RobotDnfTask) Find(uid int) *RobotVo {
@@ -38,10 +49,14 @@ func (t *RobotDnfTask) Find(uid int) *RobotVo {
 	return t.robotVoMap[uid]
 }
 
-func (t *RobotDnfTask) Delete(uid uint32) {
+func (t *RobotDnfTask) DeleteIf(uid uint32, vo *RobotVo) bool {
 	t.robotVoMutex.Lock()
 	defer t.robotVoMutex.Unlock()
+	if t.robotVoMap[int(uid)] != vo {
+		return false
+	}
 	delete(t.robotVoMap, int(uid))
+	return true
 }
 
 func (t *RobotDnfTask) DeleteByInt(key int) bool {
@@ -52,6 +67,12 @@ func (t *RobotDnfTask) DeleteByInt(key int) bool {
 		return true
 	}
 	return false
+}
+
+func (t *RobotDnfTask) isCurrent(uid uint32, vo *RobotVo) bool {
+	t.robotVoMutex.RLock()
+	defer t.robotVoMutex.RUnlock()
+	return t.robotVoMap[int(uid)] == vo
 }
 
 func (t *RobotDnfTask) GetRobotVoMap() map[int]*RobotVo {
@@ -69,13 +90,13 @@ func (t *RobotDnfTask) enqueueConnect(vo *RobotVo) bool {
 		return false
 	}
 	t.connectMu.Lock()
-	if _, exists := t.connectQueued[vo.UID]; exists {
+	if queued := t.connectQueued[vo.UID]; queued == vo {
 		t.connectMu.Unlock()
 		return true
 	}
 	select {
 	case t.connectQueue <- vo:
-		t.connectQueued[vo.UID] = struct{}{}
+		t.connectQueued[vo.UID] = vo
 		t.connectMu.Unlock()
 		return true
 	default:

@@ -17,6 +17,7 @@ func (r *RobotVo) CheckUserState() bool {
 		r.closePartyUDPUnsafe()
 		r.closePartyRelayUnsafe()
 		r.State = StateStop
+		r.publishSnapshotUnsafe()
 		return false
 	}
 	if r.State != StateRun {
@@ -27,6 +28,7 @@ func (r *RobotVo) CheckUserState() bool {
 		r.closePartyUDPUnsafe()
 		r.closePartyRelayUnsafe()
 		r.State = StateStop
+		r.publishSnapshotUnsafe()
 		return false
 	}
 	partyActive := r.partyActiveUnsafe()
@@ -42,7 +44,8 @@ func (r *RobotVo) CheckUserState() bool {
 
 func (r *RobotVo) RefishConnect() bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	controller := r.Controller
+	uid := r.UID
 
 	if r.State == StateStop {
 		if r.Conn != nil {
@@ -51,8 +54,9 @@ func (r *RobotVo) RefishConnect() bool {
 		}
 		r.closePartyUDPUnsafe()
 		r.closePartyRelayUnsafe()
-		if r.Controller != nil {
-			r.Controller.Delete(r.UID)
+		r.mu.Unlock()
+		if controller != nil {
+			controller.DeleteIf(uid, r)
 		}
 		return false
 	}
@@ -61,13 +65,12 @@ func (r *RobotVo) RefishConnect() bool {
 		r.recvBuffer = nil
 		r.recvSize = 0
 
-		newVo := NewRobotVo(r.DB)
-		newVo.Controller = r.Controller
-		newVo.Load(r.LoginInfo)
-		newVo.RunStartTime = r.RunStartTime
-		newVo.ConnCount = r.ConnCount + 1
-		newVo.AfterRunAsyncTaskVec = r.AfterRunAsyncTaskVec
-		newVo.PendingStoreTitle = r.PendingStoreTitle
+		db := r.DB
+		loginInfo := r.LoginInfo
+		runStartTime := r.RunStartTime
+		connCount := r.ConnCount + 1
+		tasks := append([]AsyncTask(nil), r.AfterRunAsyncTaskVec...)
+		pendingStoreTitle := r.PendingStoreTitle
 
 		if r.Conn != nil {
 			r.Conn.Close()
@@ -76,10 +79,21 @@ func (r *RobotVo) RefishConnect() bool {
 		r.closePartyUDPUnsafe()
 		r.closePartyRelayUnsafe()
 		r.State = StateStop
+		r.publishSnapshotUnsafe()
+		r.mu.Unlock()
 
-		if newVo.ConnCount < newVo.MaxReConn {
-			if r.Controller != nil {
-				r.Controller.Delete(r.UID)
+		if connCount < loginInfo.MaxReConn && controller != nil {
+			newVo := NewRobotVo(db)
+			newVo.Load(loginInfo)
+			newVo.mu.Lock()
+			newVo.RunStartTime = runStartTime
+			newVo.ConnCount = connCount
+			newVo.AfterRunAsyncTaskVec = tasks
+			newVo.PendingStoreTitle = pendingStoreTitle
+			newVo.mu.Unlock()
+			if !newVo.prepareConnect(controller) || !controller.replaceCurrent(uid, r, newVo) {
+				newVo.CloseOut()
+				return true
 			}
 			delaySec := int(newVo.ReDelay)
 			if delaySec <= 0 {
@@ -87,9 +101,9 @@ func (r *RobotVo) RefishConnect() bool {
 			} else {
 				delaySec = int((time.Duration(newVo.ReDelay)*time.Millisecond + time.Second - 1) / time.Second)
 			}
-			if r.Controller != nil {
-				r.Controller.AddMessageDelay("MsgOnLine", newVo, delaySec)
-			}
+			controller.AddMessageDelay("MsgReconnect", newVo, delaySec)
+		} else if controller != nil {
+			controller.DeleteIf(uid, r)
 		}
 		return true
 	}
@@ -101,5 +115,10 @@ func (r *RobotVo) RefishConnect() bool {
 	}
 	r.closePartyUDPUnsafe()
 	r.closePartyRelayUnsafe()
+	r.publishSnapshotUnsafe()
+	r.mu.Unlock()
+	if controller != nil {
+		controller.DeleteIf(uid, r)
+	}
 	return true
 }

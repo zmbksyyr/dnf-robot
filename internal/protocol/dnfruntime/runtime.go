@@ -83,8 +83,7 @@ func (rs *RobotSvc) ForceClose(uid int) bool {
 		robotLogf("[RobotSvc] force_close_busy uid=%d\n", uid)
 		return false
 	}
-	task.DeleteByInt(uid)
-	return true
+	return task.DeleteIf(uint32(uid), vo)
 }
 
 func (rs *RobotSvc) InvalidateLoginRepairs(uids []int) {

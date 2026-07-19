@@ -139,7 +139,7 @@ func (t *RobotDnfTask) TryAddMessage(typ string, data interface{}) bool {
 func messageShardIndex(typ string, data interface{}) int {
 	uid := 0
 	switch typ {
-	case "MsgOnLine", "MsgOnLineAsyncTaskVec":
+	case "MsgOnLine", "MsgReconnect", "MsgOnLineAsyncTaskVec":
 		if vo, ok := data.(*RobotVo); ok && vo != nil {
 			uid = int(vo.UID)
 		}
