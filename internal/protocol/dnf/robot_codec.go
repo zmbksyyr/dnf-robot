@@ -100,51 +100,70 @@ func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
 	if count > 4 {
 		return nil, false
 	}
-	entrySize, ok := partyIPInfoEntrySize(len(packet), count)
-	if !ok {
-		return nil, false
-	}
-	expectedSize := 1 + count*entrySize
-	for _, padding := range packet[expectedSize:] {
-		if padding != 0 {
-			return nil, false
-		}
-	}
-	peers := make([]partyIPPeer, 0, count)
-	offset := 1
-	for i := 0; i < count; i++ {
-		entry := packet[offset : offset+entrySize]
-		peer, ok := parsePartyIPInfoMember(entry, byte(i))
-		if ok && (peer.uniqueID != 0 || peer.accID != 0) {
-			peers = append(peers, partyIPPeer{
-				uniqueID:  peer.uniqueID,
-				accID:     peer.accID,
-				slot:      peer.slot,
-				slotKnown: true,
-				innerIP:   peer.innerIP,
-				outerIP:   peer.outerIP,
-				port:      peer.port,
-				natType:   peer.natType,
-				mtu:       peer.mtu,
-			})
-		}
-		offset += entrySize
-	}
-	return peers, true
+	return parsePartyIPInfoMembersAt(packet, count, 1, 0, nil)
 }
 
-func parsePartyIPInfoMember(entry []byte, slot byte) (partyIPPeer, bool) {
-	switch len(entry) {
-	case 22:
-		return partyIPInfoMemberWithID(entry, slot), true
-	case 24:
-		if partyIPInfoMemberStartsWithIP(entry) {
-			return partyIPInfoMemberWithoutID(entry, slot), true
+func parsePartyIPInfoMembersAt(packet []byte, count, offset int, slot byte, peers []partyIPPeer) ([]partyIPPeer, bool) {
+	if int(slot) == count {
+		if len(packet)-offset >= 8 {
+			return nil, false
 		}
-		return partyIPInfoMemberWithID(entry, slot), true
-	default:
-		return partyIPPeer{}, false
+		for _, padding := range packet[offset:] {
+			if padding != 0 {
+				return nil, false
+			}
+		}
+		return peers, true
 	}
+	for _, candidate := range partyIPInfoMemberCandidates(packet[offset:], slot) {
+		nextPeers := peers
+		if candidate.peer.uniqueID != 0 || candidate.peer.accID != 0 {
+			peer := candidate.peer
+			peer.slotKnown = true
+			nextPeers = append(append([]partyIPPeer(nil), peers...), peer)
+		}
+		if parsed, ok := parsePartyIPInfoMembersAt(packet, count, offset+candidate.size, slot+1, nextPeers); ok {
+			return parsed, true
+		}
+	}
+	return nil, false
+}
+
+type partyIPInfoMemberCandidate struct {
+	peer partyIPPeer
+	size int
+}
+
+func partyIPInfoMemberCandidates(data []byte, slot byte) []partyIPInfoMemberCandidate {
+	candidates := make([]partyIPInfoMemberCandidate, 0, 8)
+	for size := 22; size <= 24 && len(data) >= size; size++ {
+		if partyIPInfoMemberWithIDValid(data[:size]) {
+			candidates = append(candidates, partyIPInfoMemberCandidate{peer: partyIPInfoMemberWithID(data[:size], slot), size: size})
+		}
+	}
+	for size := 19; size <= 24 && len(data) >= size; size++ {
+		if partyIPInfoMemberWithoutIDValid(data[:size]) {
+			candidates = append(candidates, partyIPInfoMemberCandidate{peer: partyIPInfoMemberWithoutID(data[:size], slot), size: size})
+		}
+	}
+	return candidates
+}
+
+func partyIPInfoMemberWithIDValid(entry []byte) bool {
+	if len(entry) < 22 {
+		return false
+	}
+	if binary.LittleEndian.Uint16(entry[0:2]) == 0 && partyIPInfoIPZero(entry[2:6]) && partyIPInfoIPZero(entry[6:10]) {
+		return true
+	}
+	return partyIPInfoPrivateIP(entry[2:6]) && partyIPInfoPrivateIP(entry[6:10])
+}
+
+func partyIPInfoMemberWithoutIDValid(entry []byte) bool {
+	if len(entry) < 19 {
+		return false
+	}
+	return partyIPInfoPrivateIP(entry[0:4]) && partyIPInfoPrivateIP(entry[4:8])
 }
 
 func partyIPInfoMemberWithID(entry []byte, slot byte) partyIPPeer {
@@ -172,28 +191,15 @@ func partyIPInfoMemberWithoutID(entry []byte, slot byte) partyIPPeer {
 	}
 }
 
-func partyIPInfoMemberStartsWithIP(entry []byte) bool {
-	if len(entry) < 4 {
+func partyIPInfoPrivateIP(ip []byte) bool {
+	if len(ip) < 4 {
 		return false
 	}
-	return entry[0] == 10 || (entry[0] == 192 && entry[1] == 168) || (entry[0] == 172 && entry[1] >= 16 && entry[1] <= 31)
+	return ip[0] == 10 || (ip[0] == 192 && ip[1] == 168) || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31)
 }
 
-func partyIPInfoEntrySize(packetSize, count int) (int, bool) {
-	if count == 0 {
-		if packetSize < 1 || packetSize-1 >= 8 {
-			return 0, false
-		}
-		return 22, true
-	}
-	for _, entrySize := range []int{24, 22} {
-		expectedSize := 1 + count*entrySize
-		if packetSize < expectedSize || packetSize-expectedSize >= 8 {
-			continue
-		}
-		return entrySize, true
-	}
-	return 0, false
+func partyIPInfoIPZero(ip []byte) bool {
+	return len(ip) >= 4 && ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0
 }
 
 func parsePartyIPInfoSnapshot(packet []byte, selfAccID uint32) (partyIPPeer, []partyIPPeer, bool) {
