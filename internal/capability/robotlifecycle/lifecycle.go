@@ -11,9 +11,14 @@ type RobotIDAllocation struct {
 	FirstCID int
 }
 
+type CreateCatalogs struct {
+	Equipment []shared.EquipmentCatalogItem
+	Stackable []shared.EquipmentCatalogItem
+}
+
 type CreateEnv interface {
 	AllocateRobotIDs(count, uidStart, uidEnd int) (RobotIDAllocation, error)
-	AvatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error
+	AvatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error
 	ApplyConfiguredLocation(info *robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem)
 	Config() robotconfig.RuntimeConfig
 	CopyTemplateDefaults(cid int) error
@@ -21,9 +26,10 @@ type CreateEnv interface {
 	EnsureAccount(uid int, innerIP string) error
 	EnsureWorldHornByCID(cid int) error
 	EnsureSchema() error
-	EquipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error
+	EquipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error
+	LoadCreateCatalogs() CreateCatalogs
 	LoadMapCatalog() []shared.MapCatalogItem
-	PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig) error
+	PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error
 	RebuildCharacView(uid int) error
 	RegisterRobot(info robotcap.Info) error
 	RandomFrom(vals []int) int
@@ -56,6 +62,7 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	catalogs := env.LoadCreateCatalogs()
 	robots := make([]robotcap.Info, 0, req.Count)
 	usedNames := make(map[string]struct{}, req.Count)
 	for i := 0; i < req.Count; i++ {
@@ -79,7 +86,7 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 			info.Y = env.RandBetween(mp.YMin, mp.YMax)
 		}
 		env.ApplyConfiguredLocation(&info, rc, maps)
-		if err := c.createRobot(info, rc); err != nil {
+		if err := c.createRobot(info, rc, catalogs); err != nil {
 			return robots, err
 		}
 		robots = append(robots, info)
@@ -87,7 +94,7 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	return robots, nil
 }
 
-func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
+func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig, catalogs CreateCatalogs) error {
 	env := c.Env
 	innerIP := env.RobotInnerIP()
 	if err := env.EnsureAccount(info.UID, innerIP); err != nil {
@@ -97,13 +104,13 @@ func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig) e
 		return err
 	}
 	_ = env.CopyTemplateDefaults(info.CID)
-	if err := env.EquipFromCatalog(info.CID, info.Level, info.Job, rc); err != nil {
+	if err := env.EquipFromCatalog(info.CID, info.Level, info.Job, rc, catalogs.Equipment); err != nil {
 		return err
 	}
-	if err := env.AvatarFromCatalog(info.CID, info.Level, info.Job, rc); err != nil {
+	if err := env.AvatarFromCatalog(info.CID, info.Level, info.Job, rc, catalogs.Equipment); err != nil {
 		return err
 	}
-	if err := env.PopulateInventory(info, rc); err != nil {
+	if err := env.PopulateInventory(info, rc, catalogs.Stackable); err != nil {
 		return err
 	}
 	if err := env.EnsureWorldHornByCID(info.CID); err != nil {

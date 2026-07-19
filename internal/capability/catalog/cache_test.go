@@ -95,6 +95,107 @@ func TestMapsCacheConcurrentReadersReceiveIndependentSlices(t *testing.T) {
 	}
 }
 
+func TestItemCatalogCacheHitDecodesOnce(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "items.json")
+	writeCatalogJSON(t, path, []shared.EquipmentCatalogItem{{ID: 1001}})
+
+	var cache jsonFileCache[[]shared.EquipmentCatalogItem]
+	decodeCount := 0
+	decode := func(data []byte, fallback []shared.EquipmentCatalogItem) []shared.EquipmentCatalogItem {
+		decodeCount++
+		var items []shared.EquipmentCatalogItem
+		if json.Unmarshal(data, &items) != nil {
+			return fallback
+		}
+		return items
+	}
+	for i := 0; i < 3; i++ {
+		items := cache.load(path, nil, decode)
+		if len(items) != 1 || items[0].ID != 1001 {
+			t.Fatalf("load %d items = %+v", i, items)
+		}
+	}
+	if decodeCount != 1 {
+		t.Fatalf("decode count = %d, want 1", decodeCount)
+	}
+}
+
+func TestEquipmentCacheRefreshesOnSizeOrModTimeChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pvf_equipment_catalog.json")
+	fixed := time.Now().Add(-time.Hour).Truncate(time.Second)
+
+	writeCatalogJSON(t, path, []shared.EquipmentCatalogItem{{ID: 1, Name: "a"}})
+	if err := os.Chtimes(path, fixed, fixed); err != nil {
+		t.Fatal(err)
+	}
+	firstInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items := Equipment(dir); len(items) != 1 || items[0].ID != 1 {
+		t.Fatalf("initial equipment = %+v", items)
+	}
+
+	writeCatalogJSON(t, path, []shared.EquipmentCatalogItem{{ID: 22, Name: "longer"}})
+	if err := os.Chtimes(path, fixed, fixed); err != nil {
+		t.Fatal(err)
+	}
+	secondInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstInfo.Size() == secondInfo.Size() || !firstInfo.ModTime().Equal(secondInfo.ModTime()) {
+		t.Fatalf("size refresh fixture has first=%d/%s second=%d/%s", firstInfo.Size(), firstInfo.ModTime(), secondInfo.Size(), secondInfo.ModTime())
+	}
+	if items := Equipment(dir); len(items) != 1 || items[0].ID != 22 {
+		t.Fatalf("size-refreshed equipment = %+v", items)
+	}
+
+	future := fixed.Add(2 * time.Hour)
+	writeCatalogJSON(t, path, []shared.EquipmentCatalogItem{{ID: 33, Name: "longer"}})
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+	thirdInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondInfo.Size() != thirdInfo.Size() || secondInfo.ModTime().Equal(thirdInfo.ModTime()) {
+		t.Fatalf("mtime refresh fixture has second=%d/%s third=%d/%s", secondInfo.Size(), secondInfo.ModTime(), thirdInfo.Size(), thirdInfo.ModTime())
+	}
+	if items := Equipment(dir); len(items) != 1 || items[0].ID != 33 {
+		t.Fatalf("mtime-refreshed equipment = %+v", items)
+	}
+}
+
+func TestItemCatalogSnapshotReturnsDeepCopies(t *testing.T) {
+	dir := t.TempDir()
+	trade := true
+	writeCatalogJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []shared.EquipmentCatalogItem{{
+		ID: 1001, UseJob: []int{1, 2}, CanTrade: &trade,
+	}})
+	writeCatalogJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []shared.EquipmentCatalogItem{{
+		ID: 2001, UseJob: []int{3}, CanTrade: &trade,
+	}})
+
+	first := ItemCatalogs(dir)
+	first.Equipment[0].ID = 9999
+	first.Equipment[0].UseJob[0] = 99
+	*first.Equipment[0].CanTrade = false
+	first.Stackable[0].UseJob[0] = 88
+	*first.Stackable[0].CanTrade = false
+
+	second := ItemCatalogs(dir)
+	if got := second.Equipment[0]; got.ID != 1001 || len(got.UseJob) != 2 || got.UseJob[0] != 1 || got.CanTrade == nil || !*got.CanTrade {
+		t.Fatalf("equipment cache was mutated: %+v", got)
+	}
+	if got := second.Stackable[0]; got.ID != 2001 || len(got.UseJob) != 1 || got.UseJob[0] != 3 || got.CanTrade == nil || !*got.CanTrade {
+		t.Fatalf("stackable cache was mutated: %+v", got)
+	}
+}
+
 func BenchmarkMapsCached(b *testing.B) {
 	dir := b.TempDir()
 	path := filepath.Join(dir, "pvf_map_catalog.json")
@@ -162,12 +263,60 @@ func BenchmarkShoutTemplatesReadAndDecode(b *testing.B) {
 	}
 }
 
+func BenchmarkItemCatalogsCached(b *testing.B) {
+	dir := b.TempDir()
+	items := benchmarkEquipmentEntries()
+	writeCatalogJSON(b, filepath.Join(dir, "pvf_equipment_catalog.json"), items)
+	writeCatalogJSON(b, filepath.Join(dir, "pvf_stackable_catalog.json"), items)
+	_ = ItemCatalogs(dir)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ItemCatalogs(dir)
+	}
+}
+
+func BenchmarkItemCatalogsReadAndDecode(b *testing.B) {
+	dir := b.TempDir()
+	equipmentPath := filepath.Join(dir, "pvf_equipment_catalog.json")
+	stackablePath := filepath.Join(dir, "pvf_stackable_catalog.json")
+	items := benchmarkEquipmentEntries()
+	writeCatalogJSON(b, equipmentPath, items)
+	writeCatalogJSON(b, stackablePath, items)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var equipment []shared.EquipmentCatalogItem
+		if err := readJSON(equipmentPath, &equipment); err != nil {
+			b.Fatal(err)
+		}
+		var stackable []shared.EquipmentCatalogItem
+		if err := readJSON(stackablePath, &stackable); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func benchmarkMapEntries() []shared.MapCatalogItem {
 	entries := make([]shared.MapCatalogItem, 128)
 	for i := range entries {
 		entries[i] = shared.MapCatalogItem{Village: i % 8, Area: i, XMin: 100, XMax: 1800, YMin: 100, YMax: 500, Use: true}
 	}
 	return entries
+}
+
+func benchmarkEquipmentEntries() []shared.EquipmentCatalogItem {
+	trade := true
+	items := make([]shared.EquipmentCatalogItem, 2048)
+	for i := range items {
+		items[i] = shared.EquipmentCatalogItem{
+			ID: i + 1, Name: "benchmark-item-" + strconv.Itoa(i), Level: i % 70,
+			ItemType: i%29 + 1, UseJob: []int{i % 16}, CanTrade: &trade,
+		}
+	}
+	return items
 }
 
 type testingTB interface {

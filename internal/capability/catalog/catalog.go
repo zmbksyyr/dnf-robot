@@ -79,6 +79,20 @@ func Stackable(configDir string) []shared.EquipmentCatalogItem {
 	return equipmentFile(configDir, "pvf_stackable_catalog.json")
 }
 
+// ItemCatalogSnapshot is an isolated view of the item catalogs used by one
+// operation. Mutating either slice cannot change the process-wide file cache.
+type ItemCatalogSnapshot struct {
+	Equipment []shared.EquipmentCatalogItem
+	Stackable []shared.EquipmentCatalogItem
+}
+
+func ItemCatalogs(configDir string) ItemCatalogSnapshot {
+	return ItemCatalogSnapshot{
+		Equipment: Equipment(configDir),
+		Stackable: Stackable(configDir),
+	}
+}
+
 type jsonFileStamp struct {
 	exists  bool
 	mtimeNS int64
@@ -96,8 +110,9 @@ type jsonFileCache[T any] struct {
 }
 
 var (
-	mapCatalogFiles jsonFileCache[[]shared.MapCatalogItem]
-	shoutFiles      jsonFileCache[robottemplate.ShoutTemplates]
+	mapCatalogFiles  jsonFileCache[[]shared.MapCatalogItem]
+	shoutFiles       jsonFileCache[robottemplate.ShoutTemplates]
+	itemCatalogFiles jsonFileCache[[]shared.EquipmentCatalogItem]
 )
 
 func Maps(configDir string) []shared.MapCatalogItem {
@@ -225,8 +240,56 @@ func NameTemplates(configDir string) robottemplate.NameTemplates {
 }
 
 func equipmentFile(configDir string, name string) []shared.EquipmentCatalogItem {
-	var out []shared.EquipmentCatalogItem
-	_ = readJSON(filepath.Join(configDir, name), &out)
+	path := filepath.Join(configDir, name)
+	items := itemCatalogFiles.load(path, nil, func(data []byte, fallback []shared.EquipmentCatalogItem) []shared.EquipmentCatalogItem {
+		var out []shared.EquipmentCatalogItem
+		if json.Unmarshal(data, &out) != nil {
+			return fallback
+		}
+		return out
+	})
+	return cloneEquipmentCatalog(items)
+}
+
+func cloneEquipmentCatalog(items []shared.EquipmentCatalogItem) []shared.EquipmentCatalogItem {
+	if items == nil {
+		return nil
+	}
+	out := make([]shared.EquipmentCatalogItem, len(items))
+	copy(out, items)
+	jobCount := 0
+	boolCount := 0
+	for i := range items {
+		jobCount += len(items[i].UseJob)
+		for _, value := range []*bool{items[i].CanTrade, items[i].CanAuction, items[i].CanShop, items[i].CanDrop} {
+			if value != nil {
+				boolCount++
+			}
+		}
+	}
+	jobs := make([]int, jobCount)
+	jobIndex := 0
+	boolValues := make([]bool, boolCount)
+	boolIndex := 0
+	cloneBool := func(value *bool) *bool {
+		if value == nil {
+			return nil
+		}
+		boolValues[boolIndex] = *value
+		cloned := &boolValues[boolIndex]
+		boolIndex++
+		return cloned
+	}
+	for i := range out {
+		jobEnd := jobIndex + len(items[i].UseJob)
+		copy(jobs[jobIndex:jobEnd], items[i].UseJob)
+		out[i].UseJob = jobs[jobIndex:jobEnd:jobEnd]
+		jobIndex = jobEnd
+		out[i].CanTrade = cloneBool(items[i].CanTrade)
+		out[i].CanAuction = cloneBool(items[i].CanAuction)
+		out[i].CanShop = cloneBool(items[i].CanShop)
+		out[i].CanDrop = cloneBool(items[i].CanDrop)
+	}
 	return out
 }
 

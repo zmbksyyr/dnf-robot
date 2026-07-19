@@ -30,6 +30,9 @@ func TestCreatorCapsCountAndCreatesRobots(t *testing.T) {
 	if len(robots) != 200 || env.created != 200 {
 		t.Fatalf("created got robots=%d env=%d want 200", len(robots), env.created)
 	}
+	if env.catalogLoads != 1 || env.equipCalls != 200 || env.avatarCalls != 200 || env.inventoryCalls != 200 || env.catalogMismatches != 0 {
+		t.Fatalf("catalog reuse got loads=%d equip=%d avatar=%d inventory=%d mismatches=%d", env.catalogLoads, env.equipCalls, env.avatarCalls, env.inventoryCalls, env.catalogMismatches)
+	}
 	if robots[0].UID != 17000000 || robots[0].CID != 900000 || robots[0].Port != 10011 {
 		t.Fatalf("first robot got %+v", robots[0])
 	}
@@ -58,8 +61,15 @@ func TestCleanerDryRunAndForce(t *testing.T) {
 }
 
 type testCreateEnv struct {
-	rc      robotconfig.RuntimeConfig
-	created int
+	rc                robotconfig.RuntimeConfig
+	created           int
+	catalogLoads      int
+	equipCalls        int
+	avatarCalls       int
+	inventoryCalls    int
+	catalogMismatches int
+	equipmentBase     *shared.EquipmentCatalogItem
+	stackableBase     *shared.EquipmentCatalogItem
 }
 
 func (e *testCreateEnv) AllocateRobotIDs(count, uidStart, uidEnd int) (RobotIDAllocation, error) {
@@ -73,7 +83,13 @@ func (e *testCreateEnv) AllocateRobotIDs(count, uidStart, uidEnd int) (RobotIDAl
 	return RobotIDAllocation{UIDs: uids, FirstCID: 900000}, nil
 }
 
-func (e *testCreateEnv) AvatarFromCatalog(int, int, int, robotconfig.RuntimeConfig) error {
+func (e *testCreateEnv) AvatarFromCatalog(_ int, _ int, _ int, _ robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
+	e.avatarCalls++
+	if len(items) != 1 || items[0].ID != 1001 {
+		e.catalogMismatches++
+	} else if e.equipmentBase != &items[0] {
+		e.catalogMismatches++
+	}
 	return nil
 }
 
@@ -94,13 +110,37 @@ func (e *testCreateEnv) EnsureWorldHornByCID(int) error { return nil }
 
 func (e *testCreateEnv) EnsureSchema() error { return nil }
 
-func (e *testCreateEnv) EquipFromCatalog(int, int, int, robotconfig.RuntimeConfig) error {
+func (e *testCreateEnv) EquipFromCatalog(_ int, _ int, _ int, _ robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
+	e.equipCalls++
+	if len(items) != 1 || items[0].ID != 1001 {
+		e.catalogMismatches++
+	} else if e.equipmentBase == nil {
+		e.equipmentBase = &items[0]
+	} else if e.equipmentBase != &items[0] {
+		e.catalogMismatches++
+	}
 	return nil
+}
+
+func (e *testCreateEnv) LoadCreateCatalogs() CreateCatalogs {
+	e.catalogLoads++
+	return CreateCatalogs{
+		Equipment: []shared.EquipmentCatalogItem{{ID: 1001}},
+		Stackable: []shared.EquipmentCatalogItem{{ID: 2001}},
+	}
 }
 
 func (e *testCreateEnv) LoadMapCatalog() []shared.MapCatalogItem { return nil }
 
-func (e *testCreateEnv) PopulateInventory(robotcap.Info, robotconfig.RuntimeConfig) error {
+func (e *testCreateEnv) PopulateInventory(_ robotcap.Info, _ robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
+	e.inventoryCalls++
+	if len(items) != 1 || items[0].ID != 2001 {
+		e.catalogMismatches++
+	} else if e.stackableBase == nil {
+		e.stackableBase = &items[0]
+	} else if e.stackableBase != &items[0] {
+		e.catalogMismatches++
+	}
 	return nil
 }
 

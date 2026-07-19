@@ -33,8 +33,7 @@ func (m *RobotManager) CreateRobots(req robotcap.CreateRequest) ([]robotcap.Info
 	return robots, err
 }
 
-func (m *RobotManager) equipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error {
-	items := m.loadEquipmentCatalog()
+func (m *RobotManager) equipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -42,8 +41,7 @@ func (m *RobotManager) equipFromCatalog(cid int, level int, job int, rc robotcon
 	return m.schemaRepo().SaveEquipmentSlots(cid, raw)
 }
 
-func (m *RobotManager) avatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error {
-	items := m.loadEquipmentCatalog()
+func (m *RobotManager) avatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -54,11 +52,11 @@ func (m *RobotManager) avatarFromCatalog(cid int, level int, job int, rc robotco
 	return m.schemaRepo().ReplaceAvatarItems(cid, selected)
 }
 
-func (m *RobotManager) loadEquipmentCatalog() []shared.EquipmentCatalogItem {
+func (m *RobotManager) loadCreateCatalogs() catalog.ItemCatalogSnapshot {
 	if m.cfg == nil {
-		return nil
+		return catalog.ItemCatalogSnapshot{}
 	}
-	return catalog.Equipment(m.cfg.ConfigDir)
+	return catalog.ItemCatalogs(m.cfg.ConfigDir)
 }
 
 func (m *RobotManager) loadStackableCatalog() []shared.EquipmentCatalogItem {

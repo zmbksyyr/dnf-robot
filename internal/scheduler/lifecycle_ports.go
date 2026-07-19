@@ -20,8 +20,8 @@ func (e lifecycleCreateEnv) AllocateRobotIDs(count, uidStart, uidEnd int) (lifec
 	return e.manager.schemaRepo().AllocateRobotIDs(count, uidStart, uidEnd)
 }
 
-func (e lifecycleCreateEnv) AvatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error {
-	return e.manager.avatarFromCatalog(cid, level, job, rc)
+func (e lifecycleCreateEnv) AvatarFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
+	return e.manager.avatarFromCatalog(cid, level, job, rc, items)
 }
 
 func (e lifecycleCreateEnv) ApplyConfiguredLocation(info *robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem) {
@@ -52,16 +52,21 @@ func (e lifecycleCreateEnv) EnsureSchema() error {
 	return e.manager.repo().EnsureSchema()
 }
 
-func (e lifecycleCreateEnv) EquipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig) error {
-	return e.manager.equipFromCatalog(cid, level, job, rc)
+func (e lifecycleCreateEnv) EquipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
+	return e.manager.equipFromCatalog(cid, level, job, rc, items)
+}
+
+func (e lifecycleCreateEnv) LoadCreateCatalogs() lifecyclecap.CreateCatalogs {
+	snapshot := e.manager.loadCreateCatalogs()
+	return lifecyclecap.CreateCatalogs{Equipment: snapshot.Equipment, Stackable: snapshot.Stackable}
 }
 
 func (e lifecycleCreateEnv) LoadMapCatalog() []shared.MapCatalogItem {
 	return e.manager.loadMapCatalog()
 }
 
-func (e lifecycleCreateEnv) PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
-	return e.manager.storePreparer().PopulateInventory(info, rc)
+func (e lifecycleCreateEnv) PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
+	return e.manager.storePreparer().PopulateInventoryFromCatalog(info, rc, items)
 }
 
 func (e lifecycleCreateEnv) RebuildCharacView(uid int) error {

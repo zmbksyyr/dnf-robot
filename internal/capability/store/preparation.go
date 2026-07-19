@@ -28,9 +28,13 @@ type PreparationEnv interface {
 }
 
 func (p Preparer) PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
+	return p.PopulateInventoryFromCatalog(info, rc, p.Env.StackableCatalog())
+}
+
+func (p Preparer) PopulateInventoryFromCatalog(info robotcap.Info, rc robotconfig.RuntimeConfig, catalog []shared.EquipmentCatalogItem) error {
 	env := p.Env
 	plan := InventoryPlanFor(rc.StoreInventoryStartBox)
-	items := p.selectItemsForPlan(info, rc, plan)
+	items := p.selectItemsForPlan(info, rc, plan, catalog)
 	if len(items) == 0 {
 		return nil
 	}
@@ -161,11 +165,10 @@ func (p Preparer) EnsureWorldHornByCID(cid int) error {
 }
 
 func (p Preparer) SelectItems(info robotcap.Info, rc robotconfig.RuntimeConfig) []shared.EquipmentCatalogItem {
-	return p.selectItemsForPlan(info, rc, InventoryPlanFor(rc.StoreInventoryStartBox))
+	return p.selectItemsForPlan(info, rc, InventoryPlanFor(rc.StoreInventoryStartBox), p.Env.StackableCatalog())
 }
 
-func (p Preparer) selectItemsForPlan(info robotcap.Info, rc robotconfig.RuntimeConfig, plan InventoryPlan) []shared.EquipmentCatalogItem {
-	catalog := p.Env.StackableCatalog()
+func (p Preparer) selectItemsForPlan(info robotcap.Info, rc robotconfig.RuntimeConfig, plan InventoryPlan, catalog []shared.EquipmentCatalogItem) []shared.EquipmentCatalogItem {
 	count := rc.StoreItemSlots
 	if count <= 0 {
 		count = 6
