@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/lockhub"
@@ -27,7 +26,7 @@ var defaultFiles embed.FS
 type RuntimeKeySink func(*rsa.PrivateKey)
 
 var runtimeKeySink struct {
-	mu   sync.RWMutex
+	mu   lockhub.RWLocker
 	sink RuntimeKeySink
 }
 
