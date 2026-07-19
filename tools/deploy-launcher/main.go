@@ -243,6 +243,11 @@ func (dw *DeployWindow) doDeploy() error {
 }
 
 func verifyRemoteRobot(client *ssh.Client) (string, error) {
+	expectedPorts, err := readRemoteRobotListenPorts(client)
+	if err != nil {
+		return "", fmt.Errorf("robot 启动校验失败: %w", err)
+	}
+
 	lastReason := ""
 	for attempt := 0; attempt < 180; attempt++ {
 		robotPID, _ := runCmdOutput(client, "pgrep -f '^/root/robot$' | head -1 || true")
@@ -255,10 +260,10 @@ func verifyRemoteRobot(client *ssh.Client) (string, error) {
 				lastReason = "stdout 日志进程未运行"
 			} else {
 				ports, _ := runCmdOutput(client, "ss -ltnH 2>/dev/null | awk '{print $4}' || true")
-				if strings.Contains(ports, ":8111") && strings.Contains(ports, ":8112") {
+				if listenerPortsReady(ports, expectedPorts) {
 					return robotPID, nil
 				}
-				lastReason = "端口 8111/8112 未就绪"
+				lastReason = fmt.Sprintf("端口 %d/%d 未就绪", expectedPorts.robotAPI, expectedPorts.web)
 			}
 		}
 		time.Sleep(time.Second)
