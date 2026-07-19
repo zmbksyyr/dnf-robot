@@ -37,12 +37,19 @@ func (m *RobotManager) StopAutoActions() {
 func (m *RobotManager) stopAutoActions() error {
 	m.autoMu.Lock()
 	supervisor := m.supervisor
-	m.supervisor = nil
 	m.autoEnabled = false
 	m.autoMu.Unlock()
-	if supervisor != nil {
-		return supervisor.StopWithError()
+	if supervisor == nil {
+		return nil
 	}
+	if err := supervisor.StopWithError(); err != nil {
+		return err
+	}
+	m.autoMu.Lock()
+	if m.supervisor == supervisor {
+		m.supervisor = nil
+	}
+	m.autoMu.Unlock()
 	return nil
 }
 

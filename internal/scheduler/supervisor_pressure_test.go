@@ -209,3 +209,40 @@ func TestSupervisorShutdownBroadcastsBeforeWaiting(t *testing.T) {
 		t.Fatal("shutdown did not finish after releasing all actors")
 	}
 }
+
+func TestManagerRetainsSupervisorAfterIncompleteStop(t *testing.T) {
+	release := make(chan struct{})
+	runtime := &blockingActorStopRuntime{
+		started: make(chan int, 1),
+		release: release,
+	}
+	manager := testRobotManagerWithConfig(t, "")
+	supervisor := NewRobotSupervisor(manager, runtime)
+	supervisor.shutdownTimeout = 50 * time.Millisecond
+	supervisor.shutdownForceGrace = 20 * time.Millisecond
+	actor := ensureSupervisorActors(t, supervisor, 1)[0]
+	const uid = 101
+	if !actor.AssignAndWait(uid, time.Second) || !supervisor.ledger.TryLeaseUID(uid, actor) {
+		t.Fatal("assign stop test actor")
+	}
+	manager.supervisor = supervisor
+	supervisor.Start()
+
+	if err := manager.stopAutoActions(); err == nil {
+		t.Fatal("incomplete stop should return an error")
+	}
+	if manager.supervisor != supervisor {
+		t.Fatal("incomplete stop cleared the supervisor")
+	}
+	manager.StartAutoActions()
+	if manager.supervisor != supervisor {
+		t.Fatal("start replaced an incompletely stopped supervisor")
+	}
+
+	close(release)
+	select {
+	case <-actor.Done():
+	case <-time.After(time.Second):
+		t.Fatal("actor did not finish after release")
+	}
+}

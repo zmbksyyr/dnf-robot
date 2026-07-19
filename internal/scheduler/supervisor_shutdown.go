@@ -3,7 +3,6 @@ package scheduler
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	actormodel "robot/internal/actor"
@@ -44,7 +43,7 @@ func (s *RobotSupervisor) shutdownActors() error {
 		pending = s.waitForDrainingActorsUntil(pending, deadline)
 	}
 
-	workersDone := waitGroupUntil(&s.stopWG, deadline)
+	workersDone := s.waitPressureWorkerUntil(deadline)
 	if len(pending) == 0 && workersDone {
 		return nil
 	}
@@ -69,12 +68,13 @@ func (s *RobotSupervisor) forceCloseActors(actors []*actormodel.Actor) int {
 	return attempted
 }
 
-func waitGroupUntil(wg *sync.WaitGroup, deadline time.Time) bool {
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
+func (s *RobotSupervisor) waitPressureWorkerUntil(deadline time.Time) bool {
+	s.pressureMu.Lock()
+	done := s.pressureDone
+	s.pressureMu.Unlock()
+	if done == nil {
+		return true
+	}
 	wait := time.Until(deadline)
 	if wait <= 0 {
 		select {

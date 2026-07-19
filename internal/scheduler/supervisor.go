@@ -14,10 +14,9 @@ type RobotSupervisor struct {
 
 	ledger actormodel.Ledger
 
-	stop   chan struct{}
-	done   chan struct{}
-	once   sync.Once
-	stopWG sync.WaitGroup
+	stop chan struct{}
+	done chan struct{}
+	once sync.Once
 
 	shutdownMu         lockhub.Locker
 	shutdownErr        error
@@ -26,6 +25,7 @@ type RobotSupervisor struct {
 
 	pressureMu      lockhub.Locker
 	pressureRunning bool
+	pressureDone    chan struct{}
 
 	nextMetrics      time.Time
 	nextKeyLog       time.Time

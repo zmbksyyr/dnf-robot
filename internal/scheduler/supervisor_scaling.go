@@ -27,6 +27,8 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 		return
 	}
 	s.pressureRunning = true
+	pressureDone := make(chan struct{})
+	s.pressureDone = pressureDone
 	s.pressureMu.Unlock()
 
 	status := s.manager.runtimeStatusMap()
@@ -34,17 +36,23 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 	if len(actors) == 0 {
 		s.pressureMu.Lock()
 		s.pressureRunning = false
+		if s.pressureDone == pressureDone {
+			s.pressureDone = nil
+		}
 		s.pressureMu.Unlock()
+		close(pressureDone)
 		return
 	}
 	robotLogf("[RobotSupervisor] pressure_release actors=%d floor=%d logout=%v\n", len(actors), floor, logout)
-	s.stopWG.Add(1)
 	go func() {
 		defer func() {
 			s.pressureMu.Lock()
 			s.pressureRunning = false
+			if s.pressureDone == pressureDone {
+				s.pressureDone = nil
+			}
 			s.pressureMu.Unlock()
-			s.stopWG.Done()
+			close(pressureDone)
 		}()
 		s.stopDrainingActors(actors, actorStopWait)
 	}()
