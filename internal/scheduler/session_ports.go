@@ -20,8 +20,8 @@ func (e sessionActionEnv) CountRuntimeRunning() int {
 	return e.manager.countRuntimeRunning()
 }
 
-func (e sessionActionEnv) EnsureWorldHorn(uid int) error {
-	return e.manager.storePreparer().EnsureWorldHorn(uid)
+func (e sessionActionEnv) EnsureWorldHornByCID(cid int) error {
+	return e.manager.storePreparer().EnsureWorldHornByCID(cid)
 }
 
 func (e sessionActionEnv) RobotConnectIP() string {

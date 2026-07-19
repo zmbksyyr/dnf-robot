@@ -65,6 +65,7 @@ type RobotManager struct {
 	configSnapshot                  atomic.Pointer[robotConfigSnapshot]
 	supervisor                      *RobotSupervisor
 	storePointsCoord                *storecap.PointCoordinator
+	worldHornCache                  *storecap.WorldHornCache
 	positionWrites                  *positionBatcher
 	repository                      SchedulerRepository
 	autoPolicy                      AutoPolicy
@@ -85,6 +86,7 @@ func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Run
 		cleanupPendingUIDs:  make(map[int]time.Time),
 		sessionLastLogout:   make(map[int]time.Time),
 		sessionReloginDelay: 15 * time.Second,
+		worldHornCache:      storecap.NewWorldHornCache(),
 	}
 	manager.positionWrites = newPositionBatcher(manager.positionRepo(), defaultPositionBatchOptions())
 	return manager

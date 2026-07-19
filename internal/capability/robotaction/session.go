@@ -15,7 +15,7 @@ type SessionService struct {
 
 type SessionEnv interface {
 	CountRuntimeRunning() int
-	EnsureWorldHorn(uid int) error
+	EnsureWorldHornByCID(cid int) error
 	RobotConnectIP() string
 	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
 	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
@@ -64,7 +64,7 @@ func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint
 	if rc.OnlineDispatchIntervalMS <= 0 {
 		userinfos := make([]shared.RuntimeOnlineUser, 0, len(robots))
 		for _, robot := range robots {
-			if err := env.EnsureWorldHorn(robot.UID); err != nil {
+			if err := env.EnsureWorldHornByCID(robot.CID); err != nil {
 				result.Failed++
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue
@@ -83,7 +83,7 @@ func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint
 		}
 	} else {
 		for _, robot := range robots {
-			if err := env.EnsureWorldHorn(robot.UID); err != nil {
+			if err := env.EnsureWorldHornByCID(robot.CID); err != nil {
 				result.Failed++
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue

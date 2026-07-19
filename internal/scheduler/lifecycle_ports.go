@@ -121,7 +121,13 @@ type lifecycleCleanupEnv struct {
 }
 
 func (e lifecycleCleanupEnv) BatchDeleteRobotData(uids, cids []int) error {
-	return e.manager.schemaRepo().BatchDeleteRobotData(uids, cids)
+	if err := e.manager.schemaRepo().BatchDeleteRobotData(uids, cids); err != nil {
+		return err
+	}
+	for _, cid := range cids {
+		e.manager.worldHornCache.Invalidate(cid)
+	}
+	return nil
 }
 
 func (e lifecycleCleanupEnv) CleanupCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, error) {

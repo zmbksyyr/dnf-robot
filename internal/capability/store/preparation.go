@@ -10,7 +10,8 @@ import (
 )
 
 type Preparer struct {
-	Env PreparationEnv
+	Env        PreparationEnv
+	WorldHorns *WorldHornCache
 }
 
 type PreparationEnv interface {
@@ -66,7 +67,11 @@ func (p Preparer) PopulateInventoryFromCatalog(info robotcap.Info, rc robotconfi
 	}
 	env.Logf("[StorePrepare] uid=%d cid=%d store_plan=%s selected_items=%d slots=%d start_box=%d capacity=%d\n",
 		info.UID, info.CID, plan.Name, len(items), rc.StoreItemSlots, plan.StartBox, rc.InventoryCapacity)
-	return env.SaveInventory(info.CID, rc.InventoryCapacity, invRaw)
+	if err := env.SaveInventory(info.CID, rc.InventoryCapacity, invRaw); err != nil {
+		return err
+	}
+	p.WorldHorns.Invalidate(info.CID)
+	return nil
 }
 
 func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
@@ -144,6 +149,12 @@ func (p Preparer) EnsureWorldHorn(uid int) error {
 }
 
 func (p Preparer) EnsureWorldHornByCID(cid int) error {
+	return p.WorldHorns.Ensure(cid, func() error {
+		return p.ensureWorldHornByCID(cid)
+	})
+}
+
+func (p Preparer) ensureWorldHornByCID(cid int) error {
 	invRaw, err := p.Env.LoadInventory(cid)
 	if err != nil {
 		return fmt.Errorf("world horn inventory cid=%d: %w", cid, err)

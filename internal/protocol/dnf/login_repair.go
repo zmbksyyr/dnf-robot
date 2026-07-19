@@ -5,8 +5,85 @@ import (
 	"fmt"
 	"time"
 
+	"robot/internal/foundation/lockhub"
 	"robot/internal/shared"
 )
+
+type loginStaticRepairKey struct {
+	db  *sql.DB
+	uid int
+}
+
+type loginStaticRepairEntry struct {
+	done      chan struct{}
+	ok        bool
+	expiresAt time.Time
+}
+
+type loginStaticRepairCache struct {
+	access  lockhub.Locker
+	entries map[loginStaticRepairKey]*loginStaticRepairEntry
+	ttl     time.Duration
+	now     func() time.Time
+}
+
+const loginStaticRepairTTL = time.Hour
+
+func (c *loginStaticRepairCache) currentTime() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+func (c *loginStaticRepairCache) successTTL() time.Duration {
+	if c.ttl > 0 {
+		return c.ttl
+	}
+	return loginStaticRepairTTL
+}
+
+func (c *loginStaticRepairCache) ensure(db *sql.DB, uid int, repair func() bool) bool {
+	if db == nil || uid <= 0 || repair == nil {
+		return false
+	}
+	key := loginStaticRepairKey{db: db, uid: uid}
+	c.access.Lock()
+	if entry := c.entries[key]; entry != nil {
+		c.access.Unlock()
+		<-entry.done
+		if !entry.ok || c.currentTime().Before(entry.expiresAt) {
+			return entry.ok
+		}
+		c.access.Lock()
+		if c.entries[key] == entry {
+			delete(c.entries, key)
+		}
+		c.access.Unlock()
+		return c.ensure(db, uid, repair)
+	}
+	if c.entries == nil {
+		c.entries = make(map[loginStaticRepairKey]*loginStaticRepairEntry)
+	}
+	entry := &loginStaticRepairEntry{done: make(chan struct{})}
+	c.entries[key] = entry
+	c.access.Unlock()
+
+	ok := repair()
+	c.access.Lock()
+	entry.ok = ok
+	if ok {
+		entry.expiresAt = c.currentTime().Add(c.successTTL())
+	}
+	if !ok && c.entries[key] == entry {
+		delete(c.entries, key)
+	}
+	close(entry.done)
+	c.access.Unlock()
+	return ok
+}
+
+var loginStaticRepairs loginStaticRepairCache
 
 func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 	if db == nil || uid <= 0 {
@@ -18,7 +95,15 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 		fmt.Printf("MsgOnLine preflight sql failed: inspect login repair schema: %v\n", err)
 		return false
 	}
+	if !loginStaticRepairs.ensure(db, uid, func() bool {
+		return repairStaticLoginPrerequisites(db, uid, capabilities)
+	}) {
+		return false
+	}
+	return refreshLoginSession(db, uid, loginIP, capabilities)
+}
 
+func repairStaticLoginPrerequisites(db *sql.DB, uid int, capabilities loginRepairCapabilities) bool {
 	sqls := []struct {
 		query string
 		args  []interface{}
@@ -27,7 +112,6 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 		{"UPDATE d_taiwan.member_info_bot_backup SET user_id=?,state=1,slot=8,hangame_flag=0 WHERE m_id=?", []interface{}{fmt.Sprintf("%d", uid), uid}},
 		{"INSERT IGNORE INTO taiwan_login.allow_proxy_user (m_id) VALUES (?)", []interface{}{uid}},
 		{"INSERT IGNORE INTO taiwan_login.login_account_3 (m_id,m_channel_no) VALUES (?,'3011')", []interface{}{uid}},
-		{"UPDATE taiwan_login.login_account_3 SET login_status=0 WHERE m_id=?", []interface{}{uid}},
 		{"INSERT IGNORE INTO taiwan_login.churn_member_info (m_id,play_info) VALUES (?,'000000000000000000000000000011')", []interface{}{uid}},
 		{"INSERT IGNORE INTO taiwan_login.member_game_option VALUES (?,0x48000000789C63646064F85FCF90028408F0BF9E9181112C0382CC50B117CC20F114A038023042210009AC0C9,'','',0x10020000789C636018058319686115D5C62AAA83555417ABA81E56517D06003C02010C)", []interface{}{uid}},
 		{"INSERT IGNORE INTO taiwan_login_play.member_key_option (m_id,key_type,key_option) VALUES (?,0,UNHEX(''))", []interface{}{uid}},
@@ -35,13 +119,6 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 
 	for _, s := range sqls {
 		if !runOnlineRepairSQL(db, s.query, "repair step", s.args...) {
-			return false
-		}
-	}
-	joinArgs := []interface{}{uid, time.Now().Year(), loginIP, loginIP}
-	for _, table := range capabilities.memberJoinInfoTables() {
-		query := "INSERT INTO " + table + " (m_id,reg_date,ip,contry_code,login_time,error_type,login_ip,game_use_history) VALUES (?,?,?,0,UNIX_TIMESTAMP(),0,?,1) ON DUPLICATE KEY UPDATE ip=VALUES(ip),login_time=VALUES(login_time),error_type=0,login_ip=VALUES(login_ip),game_use_history=1"
-		if !runOnlineRepairSQL(db, query, "upsert member_join_info", joinArgs...) {
 			return false
 		}
 	}
@@ -56,6 +133,20 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 	}
 	if !repairOnlineRobotExpBounds(db, uid, capabilities) {
 		return false
+	}
+	return true
+}
+
+func refreshLoginSession(db *sql.DB, uid int, loginIP string, capabilities loginRepairCapabilities) bool {
+	if !runOnlineRepairSQL(db, "UPDATE taiwan_login.login_account_3 SET login_status=0 WHERE m_id=?", "reset login status", uid) {
+		return false
+	}
+	joinArgs := []interface{}{uid, time.Now().Year(), loginIP, loginIP}
+	for _, table := range capabilities.memberJoinInfoTables() {
+		query := "INSERT INTO " + table + " (m_id,reg_date,ip,contry_code,login_time,error_type,login_ip,game_use_history) VALUES (?,?,?,0,UNIX_TIMESTAMP(),0,?,1) ON DUPLICATE KEY UPDATE ip=VALUES(ip),login_time=VALUES(login_time),error_type=0,login_ip=VALUES(login_ip),game_use_history=1"
+		if !runOnlineRepairSQL(db, query, "upsert member_join_info", joinArgs...) {
+			return false
+		}
 	}
 
 	stmtSQL := "INSERT INTO taiwan_login.member_login (m_id,login_time,expire_time,last_play_time,login_ip,cleanpad_point,tutorial_skipable) VALUES (?,UNIX_TIMESTAMP(),2147483647,UNIX_TIMESTAMP(),?,1,'1') ON DUPLICATE KEY UPDATE login_time=UNIX_TIMESTAMP(),expire_time=2147483647,last_play_time=UNIX_TIMESTAMP(),login_ip=VALUES(login_ip),cleanpad_point=1,tutorial_skipable='1'"

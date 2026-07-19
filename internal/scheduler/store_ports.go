@@ -105,7 +105,10 @@ func (e storeWorkflowEnv) SyncRobotCharacterVillage(cid int, village int) error 
 }
 
 func (m *RobotManager) storePreparer() storecap.Preparer {
-	return storecap.Preparer{Env: storePreparationEnv{manager: m}}
+	return storecap.Preparer{
+		Env:        storePreparationEnv{manager: m},
+		WorldHorns: m.worldHornCache,
+	}
 }
 
 type storePreparationEnv struct {
