@@ -118,18 +118,21 @@ func (t *RobotDnfTask) TryAddMessage(typ string, data interface{}) bool {
 		return false
 	default:
 	}
+	if typ == "MsgLogout" {
+		shard.queue = removeQueuedUID(shard.queue, messageUID(typ, data))
+	} else if typ == "MsgMove" && coalesceQueuedMove(shard.queue, data) {
+		return true
+	}
 	if len(shard.queue) >= messageShardQueueSize {
-		if typ == "MsgOnLine" {
-			fmt.Printf("[RobotDnfTask] message_queue_full reject_online shard_len=%d\n", len(shard.queue))
+		evict := oldestEvictableMessage(shard.queue)
+		if evict < 0 {
+			fmt.Printf("[RobotDnfTask] message_queue_full reject type=%s shard_len=%d\n", typ, len(shard.queue))
 			return false
 		}
-		if typ == "MsgLogout" {
-			fmt.Printf("[RobotDnfTask] message_queue_full enqueue_logout_drop_oldest shard_len=%d\n", len(shard.queue))
-		} else {
-			fmt.Printf("[RobotDnfTask] message_queue_overflow drop_oldest type=%s shard_len=%d\n", typ, len(shard.queue))
-		}
-		shard.queue[0] = MsgQueueData{}
-		shard.queue = shard.queue[1:]
+		fmt.Printf("[RobotDnfTask] message_queue_overflow evict type=%s for=%s shard_len=%d\n", shard.queue[evict].Type, typ, len(shard.queue))
+		copy(shard.queue[evict:], shard.queue[evict+1:])
+		shard.queue[len(shard.queue)-1] = MsgQueueData{}
+		shard.queue = shard.queue[:len(shard.queue)-1]
 	}
 	shard.queue = append(shard.queue, msg)
 	shard.cond.Signal()
@@ -137,24 +140,85 @@ func (t *RobotDnfTask) TryAddMessage(typ string, data interface{}) bool {
 }
 
 func messageShardIndex(typ string, data interface{}) int {
-	uid := 0
+	uid := messageUID(typ, data)
+	return int(uint32(uid) * 2654435761 % messageDispatchShards)
+}
+
+func messageUID(typ string, data interface{}) int {
 	switch typ {
 	case "MsgOnLine", "MsgReconnect", "MsgOnLineAsyncTaskVec":
 		if vo, ok := data.(*RobotVo); ok && vo != nil {
-			uid = int(vo.UID)
+			return int(vo.UID)
 		}
 	case "MsgMove":
 		if move, ok := data.(*moveInternalData); ok && move != nil {
-			uid = move.ID
+			return move.ID
 		}
 	case "MsgLogout":
-		uid, _ = data.(int)
+		uid, _ := data.(int)
+		return uid
 	case "MsgPublicMsg":
 		if msg, ok := data.(*publicMsgInternalData); ok && msg != nil {
-			uid = msg.ID
+			return msg.ID
 		}
 	}
-	return int(uint32(uid) * 2654435761 % messageDispatchShards)
+	return 0
+}
+
+func lifecycleMessage(typ string) bool {
+	switch typ {
+	case "MsgOnLine", "MsgReconnect", "MsgLogout", "MsgOnLineAsyncTaskVec":
+		return true
+	default:
+		return false
+	}
+}
+
+func removeQueuedUID(queue []MsgQueueData, uid int) []MsgQueueData {
+	if uid <= 0 || len(queue) == 0 {
+		return queue
+	}
+	kept := queue[:0]
+	for _, queued := range queue {
+		if messageUID(queued.Type, queued.Data) == uid {
+			continue
+		}
+		kept = append(kept, queued)
+	}
+	for i := len(kept); i < len(queue); i++ {
+		queue[i] = MsgQueueData{}
+	}
+	return kept
+}
+
+func coalesceQueuedMove(queue []MsgQueueData, data interface{}) bool {
+	uid := messageUID("MsgMove", data)
+	if uid <= 0 {
+		return false
+	}
+	for i := len(queue) - 1; i >= 0; i-- {
+		queuedUID := messageUID(queue[i].Type, queue[i].Data)
+		if queuedUID != uid {
+			continue
+		}
+		if lifecycleMessage(queue[i].Type) {
+			return false
+		}
+		if queue[i].Type == "MsgMove" {
+			queue[i].Data = data
+			return true
+		}
+	}
+	return false
+}
+
+func oldestEvictableMessage(queue []MsgQueueData) int {
+	for i := range queue {
+		if !lifecycleMessage(queue[i].Type) {
+			return i
+		}
+	}
+	return -1
 }
 
 func (t *RobotDnfTask) AddMessageDelay(typ string, data interface{}, sleepVal int) {

@@ -16,7 +16,9 @@ func (dt *DnfTableDrive) dispatchLogouts(task *RobotDnfTask, uids []int) DnfTabl
 		}
 	}
 	for _, uid := range uids {
-		task.AddMessage("MsgLogout", uid)
+		if !task.TryAddMessage("MsgLogout", uid) {
+			return DnfTableTaskResult{Msg: "logout queue full"}
+		}
 	}
 	return DnfTableTaskResult{Code: 200}
 }
