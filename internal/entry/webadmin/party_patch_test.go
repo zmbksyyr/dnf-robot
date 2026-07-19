@@ -156,7 +156,7 @@ func TestBuildPartyCompatCaveUsesCUserArgumentAndRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrefix, _ := hex.DecodeString("8b45088b80ac0407003d406603010f82540000003d80a812010f8349000000c7442404000000008b450c890424e8ec4073ff0fb740016683f8060f82280000006683f80b0f862d0000006683f8160f82140000006683f81f0f8619000000663d99000f840f000000807dd3000f848d0db5ffe9c90ab5ffe9830db5ff")
+	wantPrefix, _ := hex.DecodeString("8b45088b80ac0407003d406603010f82550000003d80a812010f834a000000c7442404000000008b450c890424e8ec4073ff0fb740016685c0743d6683f8060f82240000006683f80b0f86290000006683f8160f82100000006683f81f0f8615000000663d9900740f807dd3000f848c0db5ffe9c80ab5ffe9820db5ff")
 	if len(cave) != len(partyCompatZeroCave) || !bytes.Equal(cave[:len(wantPrefix)], wantPrefix) || !allZero(cave[len(wantPrefix):]) {
 		t.Fatalf("cave = %x, want prefix %x and zero padding", cave, wantPrefix)
 	}

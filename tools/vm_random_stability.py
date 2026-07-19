@@ -71,6 +71,7 @@ KEYWORDS = [
     "PARTY_RELAY",
     "PARTY_DUNGEON",
     "PARTY_DUNGEON_SKILL",
+    "SESSION_CHECK_RESPONSE_ERROR",
     "cannot assign requested address",
     "too many open files",
     "connection reset",
@@ -127,14 +128,20 @@ SAMPLE_FIELDS = [
     "party_route_degraded_hits",
     "party_route_recovery_hits",
     "party_route_recovered_hits",
+    "party_route_failover_hits",
     "party_relay_connected_hits",
     "party_probe_cycle_hits",
     "party_peer_ready_hits",
     "party_self_id_refresh_hits",
+    "party_self_id_recycle_hits",
     "party_udp_recycle_hits",
+    "party_transport_cleared_hits",
+    "party_peer_transport_reset_hits",
     "party_supervisor_panic_hits",
     "party_skill_hits",
     "party_skill_error_hits",
+    "game_ping_timeout_hits",
+    "game_check_disconnect_hits",
     "market_auto",
     "market_last_status",
     "market_last_error",
@@ -207,6 +214,11 @@ CONFIG_FAULT_BACKUP_NAME_RE = re.compile(r"^(?:config\.vm_random_backup_|.+\.vm_
 CONFIG_FAULT_BACKUP_TEMP_RE = re.compile(r"^config\.vm_random_backup_\d+\.(?:tar\.)?tmp\.\d+$")
 STABILITY_OUTPUT_NAME_RE = re.compile(r"^robot_stability_\d{8}-\d{6}$")
 DEFAULT_ARTIFACT_MAX_MB = 512
+
+GAME_CONNECTION_CHECK_PATTERNS = {
+    "ping_timeout": r"no response 2th ping",
+    "check_disconnect": r"DisConnSig[^\n]*from \(8\)",
+}
 
 
 def now_text():
@@ -394,6 +406,10 @@ class StabilityRun(object):
         self.market_zero_since = 0
         self.market_zero_last_seen = 0
         self.last_invariant_failure = {}
+        self.game_log_offsets = {}
+        self.game_connection_counts = dict((name, 0) for name in GAME_CONNECTION_CHECK_PATTERNS)
+        self.game_connection_failure_reported = set()
+        self.prime_game_connection_logs()
         self.ports = self.read_ports()
         self.web_password = self.read_web_password()
         self.web_opener = None
@@ -1322,14 +1338,15 @@ echo RESTORED
         route_degraded = delta.get("route_degraded", 0)
         route_recovery = delta.get("route_recovery", 0)
         route_recovered = delta.get("route_recovered", 0)
+        route_failover = delta.get("route_failover", 0)
         relay_connected = delta.get("relay_connected", 0)
         probe_cycles = delta.get("probe_cycles", 0)
         peer_ready = delta.get("peer_ready", 0)
         udp_recycles = delta.get("udp_recycles", 0)
         supervisor_panics = delta.get("supervisor_panics", 0)
-        recovery_events = route_recovered + peer_ready
-        self.log("party_observer_smoke delta relay_errors=%s udp_errors=%s tqos_exhausted=%s route_degraded=%s route_recovery=%s route_recovered=%s relay_connected=%s probe_cycles=%s peer_ready=%s" % (
-            relay_errors, udp_errors, tqos_exhausted, route_degraded, route_recovery, route_recovered, relay_connected, probe_cycles, peer_ready,
+        recovery_events = route_recovered + route_failover + peer_ready
+        self.log("party_observer_smoke delta relay_errors=%s udp_errors=%s tqos_exhausted=%s route_degraded=%s route_recovery=%s route_recovered=%s route_failover=%s relay_connected=%s probe_cycles=%s peer_ready=%s" % (
+            relay_errors, udp_errors, tqos_exhausted, route_degraded, route_recovery, route_recovered, route_failover, relay_connected, probe_cycles, peer_ready,
         ))
         if relay_errors > 0 and relay_connected <= 0 and recovery_events <= 0:
             self.record_failure("party_relay_errors_unrecovered", "party relay errors increased by %s without a recovery event" % relay_errors)
@@ -1378,11 +1395,15 @@ echo RESTORED
             "route_degraded": r"PARTY_ROUTE_DEGRADED",
             "route_recovery": r"PARTY_ROUTE_RECOVERY\]",
             "route_recovered": r"PARTY_ROUTE_RECOVERED",
+            "route_failover": r"PARTY_ROUTE_FAILOVER",
             "relay_connected": r"PARTY_RELAY_CONNECTED",
             "probe_cycles": r"PARTY_ROBOT_PROBE_CYCLE",
             "peer_ready": r"PARTY_ROBOT_TQOS_READY",
             "self_id_refresh": r"PARTY_SELF_ID_REFRESH",
-            "udp_recycles": r"PARTY_UDP_RECYCLE",
+            "self_id_recycle": r"PARTY_SELF_ID_RECYCLE",
+            "udp_recycles": r"PARTY_UDP_(?:RECYCLE|RECOVERED)",
+            "transport_cleared": r"PARTY_TRANSPORT_CLEARED",
+            "peer_transport_reset": r"PARTY_PEER_TRANSPORT_RESET",
             "supervisor_panics": r"PARTY_SUPERVISOR_PANIC",
             "skill_profiles": r"PARTY_DUNGEON_SKILL_PROFILE\]",
             "skill_empty_profiles": r"PARTY_DUNGEON_SKILL_PROFILE\][^\n]*candidates=0(?:\s|$)",
@@ -1437,6 +1458,8 @@ echo RESTORED
 
     def party_unresolved_routes(self, text):
         route_pattern = re.compile(r"\[PARTY_ROUTE_(DEGRADED|RECOVERY|RECOVERED)\][^\n]*uid=(\d+)[^\n]*peer=(\d+)[^\n]*route=(\d+)")
+        failover_pattern = re.compile(r"\[PARTY_ROUTE_FAILOVER\][^\n]*uid=(\d+)[^\n]*peer=(\d+)[^\n]*failed_route=(\d+)")
+        reset_pattern = re.compile(r"\[PARTY_PEER_TRANSPORT_RESET\][^\n]*uid=(\d+)[^\n]*peer=(\d+)")
         ready_pattern = re.compile(r"\[PARTY_ROBOT_TQOS_READY\][^\n]*uid=(\d+)[^\n]*peer=(\d+)[^\n]*route=(\d+)")
         states = {}
         for line in safe_text(text).splitlines():
@@ -1445,6 +1468,17 @@ echo RESTORED
                 key = (match.group(2), match.group(3), match.group(4))
                 state = match.group(1).lower()
                 states[key] = state
+                continue
+            match = failover_pattern.search(line)
+            if match:
+                states[(match.group(1), match.group(2), match.group(3))] = "failover"
+                continue
+            match = reset_pattern.search(line)
+            if match:
+                uid, peer = match.group(1), match.group(2)
+                for key in list(states):
+                    if key[0] == uid and key[1] == peer:
+                        states[key] = "reset"
                 continue
             match = ready_pattern.search(line)
             if not match:
@@ -2842,6 +2876,7 @@ echo "KEYS_RESTORED"
         self.fill_tcp_row(row)
         self.fill_port_row(row)
         self.fill_party_row(row)
+        self.fill_game_connection_row(row)
         row["fd_robot"] = self.robot_fd_count()
         load1, load5, load15 = self.load_average()
         row["load1"], row["load5"], row["load15"] = load1, load5, load15
@@ -2979,17 +3014,73 @@ echo "KEYS_RESTORED"
             row["party_route_degraded_hits"] = counts.get("route_degraded", "")
             row["party_route_recovery_hits"] = counts.get("route_recovery", "")
             row["party_route_recovered_hits"] = counts.get("route_recovered", "")
+            row["party_route_failover_hits"] = counts.get("route_failover", "")
             row["party_relay_connected_hits"] = counts.get("relay_connected", "")
             row["party_probe_cycle_hits"] = counts.get("probe_cycles", "")
             row["party_peer_ready_hits"] = counts.get("peer_ready", "")
             row["party_self_id_refresh_hits"] = counts.get("self_id_refresh", "")
+            row["party_self_id_recycle_hits"] = counts.get("self_id_recycle", "")
             row["party_udp_recycle_hits"] = counts.get("udp_recycles", "")
+            row["party_transport_cleared_hits"] = counts.get("transport_cleared", "")
+            row["party_peer_transport_reset_hits"] = counts.get("peer_transport_reset", "")
             row["party_supervisor_panic_hits"] = counts.get("supervisor_panics", "")
             row["party_skill_hits"] = counts.get("skill_casts", "")
             row["party_skill_error_hits"] = counts.get("skill_errors", "")
         except Exception as exc:
             if not row.get("api_error"):
                 row["api_error"] = "party:%r" % (exc,)
+
+    def game_connection_log_paths(self):
+        today = datetime.datetime.now().strftime("%Y%m%d")
+        pattern = "/home/neople/game/log/*/Log%s.log" % today
+        return sorted(path for path in glob.glob(pattern) if os.path.isfile(path))
+
+    def prime_game_connection_logs(self):
+        for path in self.game_connection_log_paths():
+            try:
+                stat = os.stat(path)
+                self.game_log_offsets[path] = (getattr(stat, "st_ino", 0), stat.st_size)
+            except (IOError, OSError):
+                pass
+
+    def read_game_connection_updates(self):
+        for path in self.game_connection_log_paths():
+            try:
+                stat = os.stat(path)
+                inode = getattr(stat, "st_ino", 0)
+                previous = self.game_log_offsets.get(path)
+                start = 0
+                if previous and previous[0] == inode and stat.st_size >= previous[1]:
+                    start = previous[1]
+                if stat.st_size <= start:
+                    self.game_log_offsets[path] = (inode, stat.st_size)
+                    continue
+                fh = open(path, "rb")
+                try:
+                    fh.seek(start, os.SEEK_SET)
+                    raw = fh.read()
+                    end = fh.tell()
+                finally:
+                    fh.close()
+                self.game_log_offsets[path] = (inode, end)
+                text = safe_text(raw)
+                for name, pattern in GAME_CONNECTION_CHECK_PATTERNS.items():
+                    self.game_connection_counts[name] += len(re.findall(pattern, text))
+            except (IOError, OSError):
+                continue
+
+    def fill_game_connection_row(self, row):
+        self.read_game_connection_updates()
+        row["game_ping_timeout_hits"] = self.game_connection_counts.get("ping_timeout", 0)
+        row["game_check_disconnect_hits"] = self.game_connection_counts.get("check_disconnect", 0)
+        for name, count in self.game_connection_counts.items():
+            if count <= 0 or name in self.game_connection_failure_reported:
+                continue
+            self.game_connection_failure_reported.add(name)
+            self.record_failure(
+                "game_connection_%s" % name,
+                "df_game_r reported %s new %s event(s) after stability test start" % (count, name),
+            )
 
     def robot_fd_count(self):
         try:
@@ -3031,6 +3122,8 @@ echo '===== market files ====='
 ls -l /root/config/market_config.json /root/config/pvf_*catalog.json /root/config/pvf_iteminfo.dat /home/neople/auction/iteminfo.dat /home/neople/point/iteminfo.dat 2>/dev/null || true
 echo '===== web stdout filtered ====='
 tail -n %s /root/config/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth rejected|web admin exited' | tail -n 120 || true
+echo '===== game connection checks ====='
+find /home/neople/game/log -mindepth 2 -maxdepth 2 -type f -name "Log$(date +%%Y%%m%%d).log" -print0 2>/dev/null | xargs -0 -r grep -a -H -E 'no response 2th ping|DisConnSig.*from \\(8\\)' 2>/dev/null | tail -n 200 || true
 """ % (
             label,
             now_text(),

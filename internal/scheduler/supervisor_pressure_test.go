@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"net"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -97,6 +99,57 @@ func TestSupervisorPressureReleaseAllowsOnlyOneBatchAndStopWaits(t *testing.T) {
 	supervisor.pressureMu.Unlock()
 	if running {
 		t.Fatal("pressure release remained marked in flight after stop")
+	}
+}
+
+func TestSupervisorBreakerPreservesHealthyActorCapacity(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	manager := testRobotManagerWithConfig(t, "")
+	manager.cfg.DFGameR = filepath.Join(t.TempDir(), "df_game_r")
+	manager.cfg.RobotConnectIP = "127.0.0.1"
+	manager.cfg.RobotGamePort = listener.Addr().(*net.TCPAddr).Port
+	status, err := manager.ReleaseDefaultKeypair()
+	if err != nil || !status.GameValid {
+		t.Fatalf("prepare keypair: status=%+v err=%v", status, err)
+	}
+
+	now := time.Now()
+	manager.autoMu.Lock()
+	manager.autoEnabled = true
+	manager.autoPortSince = now.Add(-time.Minute)
+	manager.autoBreakerUntil = now.Add(time.Minute)
+	manager.autoMu.Unlock()
+
+	supervisor := NewRobotSupervisor(manager, actorTestRuntime{})
+	actors := ensureSupervisorActors(t, supervisor, 3)
+	for index, actor := range actors {
+		uid := 101 + index
+		if !actor.AssignAndWait(uid, time.Second) || !supervisor.ledger.TryLeaseUID(uid, actor) {
+			t.Fatalf("assign actor uid=%d", uid)
+		}
+	}
+	rc := robotconfig.RuntimeConfig{
+		AutoActions:                  true,
+		AutoTargetOnlineCount:        3,
+		AutoGamePortCheckTimeoutMS:   100,
+		AutoGamePortStableSec:        1,
+		SchedulerBreakerReleaseBatch: 2,
+		SchedulerBadRecoverSec:       60,
+		SchedulerBadFailures:         3,
+		SchedulerMetricsIntervalSec:  60,
+	}
+
+	if !supervisor.handleAutoGuards(now, rc, adaptiveSchedulerSignals{}) {
+		t.Fatal("active breaker did not pause the supervisor loop")
+	}
+	counts := supervisor.ledger.Counts(time.Now(), rc)
+	if counts.Auto != 3 || counts.Leased != 3 || counts.Draining != 0 {
+		t.Fatalf("breaker changed healthy actor capacity: %+v", counts)
 	}
 }
 

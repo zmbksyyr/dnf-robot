@@ -44,7 +44,6 @@ func (s *RobotSupervisor) handleAutoGuards(now time.Time, rc robotconfig.Runtime
 	}
 	if s.manager.autoBreakerActive(now) {
 		s.recycleUnhealthyActors(now, rc)
-		s.stopSomeAutoActors(true, rc.SchedulerBreakerReleaseBatch, robotconfig.BreakerActorFloor(rc))
 		s.updateGuardStatus(rc, signals, schedulerPolicyBreaker, schedulerReasonBreakerActive)
 		s.updateMetrics(rc, signals)
 		return true

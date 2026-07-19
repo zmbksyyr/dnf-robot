@@ -210,7 +210,9 @@ func buildPartyCompatCave(layout partyCompatLayout, start, end uint32) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	result = append(result, 0x0f, 0xb7, 0x40, 0x01, 0x66, 0x83, 0xf8, 0x06)
+	result = append(result, 0x0f, 0xb7, 0x40, 0x01, 0x66, 0x85, 0xc0)
+	checkConnBranch := len(result)
+	result = append(result, 0x74, 0, 0x66, 0x83, 0xf8, 0x06)
 	belowPartyBranch := len(result)
 	result = append(result, 0x0f, 0x82, 0, 0, 0, 0, 0x66, 0x83, 0xf8, 0x0b)
 	partyRangeBranch := len(result)
@@ -220,7 +222,7 @@ func buildPartyCompatCave(layout partyCompatLayout, start, end uint32) ([]byte, 
 	dungeonRangeBranch := len(result)
 	result = append(result, 0x0f, 0x86, 0, 0, 0, 0, 0x66, 0x3d, 0x99, 0x00)
 	realtimeBranch := len(result)
-	result = append(result, 0x0f, 0x84, 0, 0, 0, 0)
+	result = append(result, 0x74, 0)
 	fallbackOffset := len(result)
 	result = append(result, 0x80, 0x7d, 0xd3, 0x00)
 	result, err = appendRelativeBranch(result, layout.cave, []byte{0x0f, 0x84}, layout.rawSend)
@@ -239,14 +241,31 @@ func buildPartyCompatCave(layout partyCompatLayout, start, end uint32) ([]byte, 
 	for _, branch := range []int{accountLowBranch, accountHighBranch, belowPartyBranch, belowDungeonBranch} {
 		patchInternalRelativeBranch(result, layout.cave, branch, fallbackOffset)
 	}
-	for _, branch := range []int{partyRangeBranch, dungeonRangeBranch, realtimeBranch} {
+	for _, branch := range []int{partyRangeBranch, dungeonRangeBranch} {
 		patchInternalRelativeBranch(result, layout.cave, branch, rawOffset)
+	}
+	if err := patchInternalShortBranch(result, layout.cave, checkConnBranch, rawOffset); err != nil {
+		return nil, err
+	}
+	if err := patchInternalShortBranch(result, layout.cave, realtimeBranch, rawOffset); err != nil {
+		return nil, err
 	}
 	if len(result) > len(partyCompatZeroCave) {
 		return nil, fmt.Errorf("party compatibility cave size is %d, max %d", len(result), len(partyCompatZeroCave))
 	}
 	result = append(result, make([]byte, len(partyCompatZeroCave)-len(result))...)
 	return result, nil
+}
+
+func patchInternalShortBranch(code []byte, base int64, branchOffset, targetOffset int) error {
+	next := base + int64(branchOffset+2)
+	target := base + int64(targetOffset)
+	delta := target - next
+	if delta < -128 || delta > 127 {
+		return fmt.Errorf("short branch target is out of range")
+	}
+	code[branchOffset+1] = byte(int8(delta))
+	return nil
 }
 
 func patchInternalRelativeBranch(code []byte, base int64, branchOffset, targetOffset int) {
