@@ -52,7 +52,18 @@ func TestRestockJobSucceedsWhenAuctionDBFactExists(t *testing.T) {
 
 func TestAppendLogWithoutConfigDirDoesNotWriteCurrentDirectory(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir)
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
 	app := &App{}
 
 	app.appendLog(LogEvent{Type: "test", Status: marketLogStatusSuccess})

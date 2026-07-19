@@ -18,8 +18,15 @@ func TestBuildFinishLoadingPayload(t *testing.T) {
 }
 
 func TestDungeonLoadingNotificationSendsFinishLoading(t *testing.T) {
-	for _, packetType := range []uint16{28, 29} {
-		t.Run(NotiPacketNames[int(packetType)], func(t *testing.T) {
+	tests := []struct {
+		name       string
+		packetType uint16
+	}{
+		{name: "dungeon info", packetType: 28},
+		{name: "start map", packetType: 29},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			cipher := crypt.NewDNFCipher()
 			if err := cipher.Initialize(make([]byte, 334)); err != nil {
 				t.Fatalf("initialize cipher: %v", err)
@@ -30,7 +37,7 @@ func TestDungeonLoadingNotificationSendsFinishLoading(t *testing.T) {
 
 			vo := &RobotVo{State: StateRun, Cipher: cipher, Conn: robotConn, PacketID: 7}
 			packet := make([]byte, 32)
-			binary.LittleEndian.PutUint16(packet[1:3], packetType)
+			binary.LittleEndian.PutUint16(packet[1:3], tt.packetType)
 			binary.LittleEndian.PutUint32(packet[3:7], uint32(len(packet)))
 			copy(packet[15:], []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17})
 
