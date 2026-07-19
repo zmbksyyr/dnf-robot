@@ -472,10 +472,10 @@ func parsePartyRealtimeInfo(data []byte) ([]partyRealtimeIdentity, bool) {
 		return nil, false
 	}
 	count := int(data[0])
-	if count > 4 {
+	if count < 1 || count > 4 {
 		return nil, false
 	}
-	expected := 1 + count*8
+	expected := 1 + count*5 + 4
 	if len(data) < expected || len(data)-expected > 15 {
 		return nil, false
 	}
@@ -487,7 +487,7 @@ func parsePartyRealtimeInfo(data []byte) ([]partyRealtimeIdentity, bool) {
 	identities := make([]partyRealtimeIdentity, 0, count)
 	seenSlots := [4]bool{}
 	for i := 0; i < count; i++ {
-		offset := 1 + i*8
+		offset := 1 + i*5
 		uniqueID := binary.LittleEndian.Uint16(data[offset : offset+2])
 		slot := data[offset+4]
 		if uniqueID == 0 || slot >= 4 || seenSlots[slot] {

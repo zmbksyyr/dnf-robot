@@ -7,53 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"robot/internal/foundation/lockhub"
 	"robot/internal/protocol/dnf/crypt"
 )
-
-const partyAccountIdentityTTL = 30 * time.Second
-
-type partyAccountIdentity struct {
-	uniqueID uint16
-	seenAt   time.Time
-}
-
-var partyAccountIdentities = struct {
-	lockhub.Locker
-	values map[uint32]partyAccountIdentity
-}{values: make(map[uint32]partyAccountIdentity)}
-
-func rememberPartyAccountIdentity(accID uint32, uniqueID uint16, now time.Time) {
-	if accID == 0 || uniqueID == 0 {
-		return
-	}
-	partyAccountIdentities.Lock()
-	partyAccountIdentities.values[accID] = partyAccountIdentity{uniqueID: uniqueID, seenAt: now}
-	partyAccountIdentities.Unlock()
-}
-
-func loadPartyAccountIdentity(accID uint32, now time.Time) (uint16, bool) {
-	if accID == 0 {
-		return 0, false
-	}
-	partyAccountIdentities.Lock()
-	record, ok := partyAccountIdentities.values[accID]
-	if ok && now.Sub(record.seenAt) > partyAccountIdentityTTL {
-		delete(partyAccountIdentities.values, accID)
-		ok = false
-	}
-	partyAccountIdentities.Unlock()
-	return record.uniqueID, ok
-}
-
-func forgetPartyAccountIdentity(accID uint32) {
-	if accID == 0 {
-		return
-	}
-	partyAccountIdentities.Lock()
-	delete(partyAccountIdentities.values, accID)
-	partyAccountIdentities.Unlock()
-}
 
 func (r *RobotVo) partyPeerForSlotUnsafe(slot byte) partyIPPeer {
 	return partyPeerForSlot(r.partyPeers, slot)
@@ -502,10 +457,6 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 		}
 	}
 	r.rememberPartyPeersUnsafe(peers)
-	now := time.Now()
-	for _, peer := range r.partyPeers {
-		rememberPartyAccountIdentity(peer.accID, peer.uniqueID, now)
-	}
 	r.ensurePartyUDPLoopUnsafe()
 	r.ensurePartySupervisorUnsafe()
 	for slot := byte(0); slot < 4; slot++ {
@@ -541,7 +492,6 @@ func (r *RobotVo) setPartySelfPeerUnsafe(peer partyIPPeer) {
 		peer = mergePartyPeer(previous, peer)
 	}
 	r.partySelfPeer = peer
-	rememberPartyAccountIdentity(peer.accID, peer.uniqueID, time.Now())
 	if uniqueChanged {
 		r.logPartyTransportClearedUnsafe("self identity changed")
 		r.resetPartyTQOSTransportUnsafe()
@@ -567,7 +517,6 @@ func (r *RobotVo) rememberPartyRealtimeIdentitiesUnsafe(identities []partyRealti
 }
 
 func (r *RobotVo) applyPartyRealtimeIdentitiesUnsafe() {
-	now := time.Now()
 	self := r.partySelfPeer
 	selfRecovered := false
 	if self.slotKnown && self.slot < 4 {
@@ -590,19 +539,10 @@ func (r *RobotVo) applyPartyRealtimeIdentitiesUnsafe() {
 				peersChanged = true
 			}
 		}
-		rememberPartyAccountIdentity(peer.accID, peer.uniqueID, now)
 		peers = append(peers, peer)
 	}
 	if peersChanged {
 		r.setPartyPeersUnsafe(peers)
-	}
-	self = r.partySelfPeer
-	if self.uniqueID == 0 && self.accID == r.UID {
-		if uniqueID, ok := loadPartyAccountIdentity(r.UID, now); ok {
-			self.uniqueID = uniqueID
-			selfRecovered = true
-			r.setPartySelfPeerUnsafe(self)
-		}
 	}
 	if selfRecovered {
 		fmt.Printf("[PARTY_SELF_ID_RECOVERED] uid=%d slot=%d unique=%d source=realtime\n", r.UID, r.partySelfPeer.slot, r.partySelfPeer.uniqueID)
@@ -632,7 +572,6 @@ func (r *RobotVo) removePartyPeerUnsafe(uniqueID uint16) {
 }
 
 func (r *RobotVo) clearPartyUnsafe() {
-	forgetPartyAccountIdentity(r.UID)
 	r.logPartyTransportClearedUnsafe("party cleared")
 	r.stopPartySupervisorUnsafe()
 	r.partySelfPeer = partyIPPeer{}

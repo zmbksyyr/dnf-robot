@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -516,17 +517,20 @@ func TestPartyRealtimeInfoPacketSupportsEncryptedAndPlainBodies(t *testing.T) {
 	cipher := newPartyTestCipher(t)
 	body := []byte{
 		3,
-		0x34, 0x12, 1, 0, 0, 0, 0, 0,
-		0x78, 0x56, 1, 0, 1, 0, 0, 0,
-		0xbc, 0x9a, 1, 0, 3, 0, 0, 0,
+		0x34, 0x12, 1, 0, 0,
+		0x78, 0x56, 1, 0, 1,
+		0xbc, 0x9a, 1, 0, 3,
+		0xde, 0xad, 0xbe, 0xef,
 	}
+	encryptedBody := make([]byte, alignTo16(len(body)))
+	copy(encryptedBody, body)
 	for _, tt := range []struct {
 		name   string
 		packet []byte
 		source recvBodySource
 	}{
 		{name: "plain", packet: makePartyRecvPacket(153, body), source: recvBodySourcePlain},
-		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 153, padPartyBlock(body)), source: recvBodySourceDecrypted},
+		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 153, encryptedBody), source: recvBodySourceDecrypted},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			identities, source, err := selectPartyRealtimeInfoPacket(cipher, tt.packet, false)
@@ -537,6 +541,23 @@ func TestPartyRealtimeInfoPacketSupportsEncryptedAndPlainBodies(t *testing.T) {
 				t.Fatalf("parsed identities = %+v", identities)
 			}
 		})
+	}
+}
+
+func TestParsePartyRealtimeInfoFourMemberCapture(t *testing.T) {
+	body := mustPartyHex(t, "04243464000049356400017b366400026434640003545168b900000000000000")
+	identities, ok := parsePartyRealtimeInfo(body)
+	if !ok || len(identities) != 4 {
+		t.Fatalf("identities=%+v ok=%t", identities, ok)
+	}
+	want := []partyRealtimeIdentity{
+		{uniqueID: 0x3424, slot: 0},
+		{uniqueID: 0x3549, slot: 1},
+		{uniqueID: 0x367b, slot: 2},
+		{uniqueID: 0x3464, slot: 3},
+	}
+	if !reflect.DeepEqual(identities, want) {
+		t.Fatalf("identities=%+v want=%+v", identities, want)
 	}
 }
 

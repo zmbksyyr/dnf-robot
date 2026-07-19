@@ -228,9 +228,11 @@ func TestPartyRealtimePacketDispatchCompletesPeerIdentities(t *testing.T) {
 	vo.partyPeers[0] = partyIPPeer{accID: 18000000, slot: 0, slotKnown: true, port: 5063}
 	vo.partyPeers[1] = partyIPPeer{accID: 17000027, slot: 3, slotKnown: true, port: 47000}
 	body := []byte{
-		2,
-		0x11, 0x11, 1, 0, 0, 0, 0, 0,
-		0x33, 0x33, 1, 0, 3, 0, 0, 0,
+		3,
+		0x11, 0x11, 1, 0, 0,
+		0x22, 0x22, 1, 0, 2,
+		0x33, 0x33, 1, 0, 3,
+		0xde, 0xad, 0xbe, 0xef,
 	}
 	encryptedBody := make([]byte, alignTo16(len(body)))
 	copy(encryptedBody, body)
@@ -243,23 +245,8 @@ func TestPartyRealtimePacketDispatchCompletesPeerIdentities(t *testing.T) {
 	if peer := vo.partyPeerForSlotUnsafe(3); peer.uniqueID != 0x3333 {
 		t.Fatalf("robot identity = %+v", peer)
 	}
-}
-
-func TestPartyRealtimePeerIdentityRecoversAnotherRobotSelf(t *testing.T) {
-	const targetUID = uint32(17000991)
-	forgetPartyAccountIdentity(targetUID)
-	t.Cleanup(func() { forgetPartyAccountIdentity(targetUID) })
-
-	publisher := &RobotVo{UID: 17000990, State: StateRun}
-	publisher.partySelfPeer = partyIPPeer{accID: publisher.UID, uniqueID: 0x2222, slot: 1, slotKnown: true}
-	publisher.partyPeers[0] = partyIPPeer{accID: targetUID, slot: 3, slotKnown: true}
-	publisher.rememberPartyRealtimeIdentitiesUnsafe([]partyRealtimeIdentity{{uniqueID: 0x4444, slot: 3}})
-
-	target := &RobotVo{UID: targetUID, State: StateRun}
-	target.partySelfPeer = partyIPPeer{accID: targetUID, slot: 3, slotKnown: true}
-	target.refreshPartySelfIdentityUnsafe(time.Now())
-	if target.partySelfPeer.uniqueID != 0x4444 {
-		t.Fatalf("shared identity did not recover self: %+v", target.partySelfPeer)
+	if vo.partySelfPeer.uniqueID != 0x2222 {
+		t.Fatalf("self identity = %+v", vo.partySelfPeer)
 	}
 }
 
