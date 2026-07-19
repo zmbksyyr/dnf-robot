@@ -261,6 +261,7 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	uid := r.UID
 	db := r.DB
 	title := r.PendingStoreTitle
+	inventoryVersion := r.storeInventoryVersion
 	inventory := make(map[int]Transaction, len(r.InfanMap))
 	for itemID, transaction := range r.InfanMap {
 		inventory[itemID] = transaction
@@ -305,7 +306,7 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 		}
 
 		r.mu.Lock()
-		if r.State == StateRun && r.StoreCreated && r.UID == uid && r.DB == db {
+		if r.State == StateRun && r.StoreCreated && r.UID == uid && r.DB == db && r.storeInventoryVersion == inventoryVersion {
 			r.completeDisplay(title, storeInfo)
 		}
 		r.mu.Unlock()

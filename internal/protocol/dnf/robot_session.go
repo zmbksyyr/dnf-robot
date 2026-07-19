@@ -125,6 +125,7 @@ type RobotVo struct {
 	LastStoreError            byte
 	StoreCreated              bool
 	PrepareStoreAfterItemList bool
+	storeInventoryVersion     uint64
 	AfterRunAsyncTaskVec      []AsyncTask
 	LoginInfo                 UserLoginInfo
 
@@ -361,6 +362,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.LastStoreError = 0
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
+	r.storeInventoryVersion++
 	r.invalidateTradeQuoteUnsafe()
 	r.clearTradeUnsafe()
 	r.DisjointCreateSent = false

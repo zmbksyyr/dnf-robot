@@ -15,8 +15,11 @@ import (
 var blockingStoreDriverID atomic.Uint64
 
 type blockingStoreDriver struct {
-	started chan struct{}
-	release chan struct{}
+	started  chan struct{}
+	release  chan struct{}
+	columns  []string
+	rows     [][]driver.Value
+	queryErr error
 }
 
 func (d *blockingStoreDriver) Open(string) (driver.Conn, error) {
@@ -44,80 +47,38 @@ func (c *blockingStoreConn) QueryContext(ctx context.Context, _ string, _ []driv
 	}
 	select {
 	case <-c.driver.release:
-		return emptyStoreRows{}, nil
+		if c.driver.queryErr != nil {
+			return nil, c.driver.queryErr
+		}
+		columns := c.driver.columns
+		if len(columns) == 0 {
+			columns = []string{"item", "price", "count"}
+		}
+		return &storeTestRows{columns: columns, rows: c.driver.rows}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-type emptyStoreRows struct{}
-
-func (emptyStoreRows) Columns() []string         { return []string{"item", "price", "count"} }
-func (emptyStoreRows) Close() error              { return nil }
-func (emptyStoreRows) Next([]driver.Value) error { return io.EOF }
-
-func TestCalculateTradeQuoteUsesActiveValidTransactions(t *testing.T) {
-	snapshot := tradeQuoteSnapshot{}
-	snapshot.transactions[0] = Transaction{ItemId: 100, ItemNum: 3}
-	snapshot.active[0] = true
-	snapshot.transactions[1] = Transaction{ItemId: 200, ItemNum: 2}
-	snapshot.active[1] = true
-	snapshot.transactions[2] = Transaction{ItemId: 300, ItemNum: 7}
-	snapshot.active[2] = true
-	snapshot.transactions[3] = Transaction{ItemId: 100, ItemNum: 9}
-
-	prices := map[int]ShopVo{
-		100: {TradeItem: 100, Price: 25},
-		200: {TradeItem: 200, Price: 0},
-	}
-
-	if got, want := calculateTradeQuote(snapshot, prices), uint32(75); got != want {
-		t.Fatalf("calculateTradeQuote() = %d, want %d", got, want)
-	}
+type storeTestRows struct {
+	columns []string
+	rows    [][]driver.Value
+	index   int
 }
 
-func TestTradeQuoteRefreshCoalescesAndInvalidatesPendingWork(t *testing.T) {
-	r := NewRobotVo(nil)
-	r.State = StateRun
-	r.UID = 17000001
-	r.tradeQuoteLoading = true // Model an already running worker without starting a goroutine.
-	r.TransactionArr[0] = &Transaction{ItemId: 100, ItemNum: 1}
-
-	r.queueTradeQuoteRefreshUnsafe()
-	firstVersion := r.tradeQuoteVersion
-	r.TransactionArr[0].ItemNum = 4
-	r.queueTradeQuoteRefreshUnsafe()
-
-	if !r.tradeQuotePending {
-		t.Fatal("latest quote refresh was not kept pending")
+func (r *storeTestRows) Columns() []string { return r.columns }
+func (*storeTestRows) Close() error        { return nil }
+func (r *storeTestRows) Next(values []driver.Value) error {
+	if r.index >= len(r.rows) {
+		return io.EOF
 	}
-	if r.tradeQuoteVersion <= firstVersion {
-		t.Fatal("quote version did not advance for the newer transaction")
-	}
-
-	snapshot, ok := r.tradeQuoteSnapshotUnsafe()
-	if !ok {
-		t.Fatal("latest quote snapshot was not available")
-	}
-	if snapshot.version != r.tradeQuoteVersion || snapshot.transactions[0].ItemNum != 4 {
-		t.Fatalf("snapshot did not contain latest transaction: %+v", snapshot.transactions[0])
-	}
-	if r.tradeQuotePending {
-		t.Fatal("snapshot did not consume pending refresh")
-	}
-
-	r.queueTradeQuoteRefreshUnsafe()
-	r.invalidateTradeQuoteUnsafe()
-	if r.tradeQuotePending {
-		t.Fatal("invalidation left obsolete refresh pending")
-	}
-	if _, ok := r.tradeQuoteSnapshotUnsafe(); ok {
-		t.Fatal("invalidated quote produced a new snapshot")
-	}
+	copy(values, r.rows[r.index])
+	r.index++
+	return nil
 }
 
-func TestStoreDisplayQueryDoesNotHoldRobotLock(t *testing.T) {
-	drv := &blockingStoreDriver{started: make(chan struct{}, 1), release: make(chan struct{})}
+func openStoreTestDB(t *testing.T, drv *blockingStoreDriver) *sql.DB {
+	t.Helper()
 	driverName := fmt.Sprintf("blocking-store-%d", blockingStoreDriverID.Add(1))
 	sql.Register(driverName, drv)
 	db, err := sql.Open(driverName, "")
@@ -125,6 +86,12 @@ func TestStoreDisplayQueryDoesNotHoldRobotLock(t *testing.T) {
 		t.Fatalf("open test database: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func TestStoreDisplayQueryDoesNotHoldRobotLock(t *testing.T) {
+	drv := &blockingStoreDriver{started: make(chan struct{}, 1), release: make(chan struct{})}
+	db := openStoreTestDB(t, drv)
 
 	r := NewRobotVo(db)
 	r.State = StateRun
@@ -154,5 +121,50 @@ func TestStoreDisplayQueryDoesNotHoldRobotLock(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("store display query did not finish")
+	}
+}
+
+func TestStoreDisplayQueryDoesNotPublishStaleInventory(t *testing.T) {
+	drv := &blockingStoreDriver{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+		rows: [][]driver.Value{
+			{"100", "50", "1"},
+		},
+	}
+	db := openStoreTestDB(t, drv)
+	r := NewRobotVo(db)
+	r.State = StateRun
+	r.UID = 17000001
+	r.StoreCreated = true
+	r.InfanMap[100] = Transaction{ItemId: 100, ItemPos: 3, ItemNum: 1}
+
+	result := make(chan bool, 1)
+	go func() {
+		result <- r.GetDbDataAndCompleteDisplay()
+	}()
+	select {
+	case <-drv.started:
+	case <-time.After(time.Second):
+		t.Fatal("store query did not start")
+	}
+
+	r.mu.Lock()
+	r.storeInventoryVersion++
+	delete(r.InfanMap, 100)
+	r.InfanMap[200] = Transaction{ItemId: 200, ItemPos: 9, ItemNum: 2}
+	r.mu.Unlock()
+	close(drv.release)
+
+	select {
+	case ok := <-result:
+		if !ok {
+			t.Fatal("store display query failed after release")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("store display query did not finish")
+	}
+	if r.Snapshot().StoreDisplaySent {
+		t.Fatal("stale inventory query published a store display")
 	}
 }

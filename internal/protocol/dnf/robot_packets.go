@@ -219,6 +219,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 
 	if packetFlag == 0 && packetType == 13 && (r.State == StateRun || r.State == StateLogin) {
+		r.storeInventoryVersion++
 		wasWaiting := r.IsWaitingItemList
 		r.IsWaitingItemList = false
 		for k := range r.InfanMap {

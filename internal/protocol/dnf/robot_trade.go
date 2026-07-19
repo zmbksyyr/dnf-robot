@@ -112,8 +112,7 @@ func (r *RobotVo) refreshTradeQuote() {
 		}
 		if err != nil {
 			fmt.Printf("getShopVo query error: %v\n", err)
-			r.mu.Unlock()
-			return
+			prices = nil
 		}
 		r.applyTradeQuoteUnsafe(calculateTradeQuote(snapshot, prices))
 		r.mu.Unlock()
