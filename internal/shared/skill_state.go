@@ -16,9 +16,22 @@ type SkillState struct {
 }
 
 var skillStateSnapshot atomic.Value
+var partySkillStateSnapshot atomic.Value
 
 func init() {
 	skillStateSnapshot.Store([]SkillState(nil))
+	partySkillStateSnapshot.Store([]PartySkillState(nil))
+}
+
+type PartySkillState struct {
+	Job        int
+	SkillIndex int
+	State      int
+	Level      int
+	Name       string
+	ScriptPath string
+	StateData  []byte
+	Risk       int
 }
 
 func SetSkillStates(entries []SkillState) {
@@ -39,6 +52,30 @@ func SkillStatesForJob(job int) []SkillState {
 
 func cloneSkillStates(entries []SkillState) []SkillState {
 	out := append([]SkillState(nil), entries...)
+	for i := range out {
+		out[i].StateData = append([]byte(nil), out[i].StateData...)
+	}
+	return out
+}
+
+func SetPartySkillStates(entries []PartySkillState) {
+	partySkillStateSnapshot.Store(clonePartySkillStates(entries))
+}
+
+func PartySkillStatesForJob(job int) []PartySkillState {
+	entries := partySkillStateSnapshot.Load().([]PartySkillState)
+	out := make([]PartySkillState, 0)
+	for _, entry := range entries {
+		if entry.Job == job {
+			entry.StateData = append([]byte(nil), entry.StateData...)
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func clonePartySkillStates(entries []PartySkillState) []PartySkillState {
+	out := append([]PartySkillState(nil), entries...)
 	for i := range out {
 		out[i].StateData = append([]byte(nil), out[i].StateData...)
 	}

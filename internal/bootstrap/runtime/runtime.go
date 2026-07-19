@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"robot/internal/capability/catalog"
 	"robot/internal/capability/keypair"
 	"robot/internal/capability/pvf"
 	"robot/internal/foundation/config"
@@ -33,6 +34,9 @@ func Init(cfg *config.SysConfig) error {
 	}
 	if err := ensureConfigRuntimeFiles(cfg.ConfigDir); err != nil {
 		return err
+	}
+	if err := catalog.LoadPartySkills(cfg.ConfigDir); err != nil {
+		fmt.Printf("[Runtime] party skill catalog unavailable: %v\n", err)
 	}
 	keypair.EnsureRuntimeKeypair(cfg)
 	if err := pvf.EnsureExports(cfg.DFGameR, cfg.ConfigDir); err != nil {
