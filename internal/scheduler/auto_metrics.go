@@ -7,7 +7,6 @@ import (
 	actormodel "robot/internal/actor"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
-	"robot/internal/foundation/process"
 )
 
 func (m *RobotManager) addAutoCreated(n int) {
@@ -157,7 +156,7 @@ func (m *RobotManager) autoBreakerActive(now time.Time) bool {
 	return now.Before(m.autoBreakerUntil)
 }
 
-func (s *RobotSupervisor) updateMetrics(rc robotconfig.RuntimeConfig) {
+func (s *RobotSupervisor) updateMetrics(rc robotconfig.RuntimeConfig, signals adaptiveSchedulerSignals) {
 	now := time.Now()
 	if !s.nextMetrics.IsZero() && now.Before(s.nextMetrics) {
 		return
@@ -172,7 +171,6 @@ func (s *RobotSupervisor) updateMetrics(rc robotconfig.RuntimeConfig) {
 	counts := s.ledger.Counts(now, rc)
 	s.manager.updateAutoActorSnapshot(counts)
 	s.manager.updateAutoBreaker(now, rc, counts, running, connecting)
-	cpu, mem, threads := process.ResourceSnapshot()
 	s.manager.autoMu.Lock()
 	stats := s.manager.autoStats
 	policy := s.manager.schedulerStatus
@@ -182,7 +180,7 @@ func (s *RobotSupervisor) updateMetrics(rc robotconfig.RuntimeConfig) {
 		rc.AutoTargetOnlineCount, counts.Auto, counts.Leased, counts.Idle,
 		counts.StateIdle, counts.StateAssigned, counts.StateOnline, counts.StateRunning, counts.StateBusy, counts.StateReleasing,
 		running, stores, connecting, counts.Releasing, counts.Blocked,
-		cpu, mem, threads,
+		signals.CPUPercent, signals.MemoryMB, signals.Goroutines,
 		stats.OnlineSuccess, stats.OnlineFailed,
 		stats.MoveSuccess, stats.MoveFailed,
 		stats.ShoutLocalSuccess, stats.ShoutLocalFailed,

@@ -64,9 +64,11 @@ func (s *RobotSupervisor) loop() {
 }
 
 func (s *RobotSupervisor) tick(now time.Time) {
-	rc := s.manager.loadRobotConfig()
+	signals := s.manager.adaptiveSchedulerSignals()
+	rc, decision := s.manager.refreshAdaptiveRobotConfig(signals)
+	s.manager.updateSchedulerStatus(rc, signals, decision)
 	s.sendSystemAnnouncementIfDue(now)
-	if s.handleAutoGuards(now, rc) {
+	if s.handleAutoGuards(now, rc, signals) {
 		return
 	}
 	s.maintainTarget(rc)
@@ -74,5 +76,5 @@ func (s *RobotSupervisor) tick(now time.Time) {
 	s.cleanupBlockedUIDs(10)
 	s.recycleUnhealthyActors(now, rc)
 	s.assignIdleAutoActors(rc)
-	s.updateMetrics(rc)
+	s.updateMetrics(rc, signals)
 }
