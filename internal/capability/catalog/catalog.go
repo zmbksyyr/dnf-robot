@@ -95,6 +95,24 @@ func ItemCatalogs(configDir string) ItemCatalogSnapshot {
 	}
 }
 
+// ItemCatalogView exposes the cached catalogs to audited read-only callers.
+// The slices and their nested values must not be modified.
+type ItemCatalogView struct {
+	Equipment []shared.EquipmentCatalogItem
+	Stackable []shared.EquipmentCatalogItem
+}
+
+func ViewItemCatalogs(configDir string) ItemCatalogView {
+	return ItemCatalogView{
+		Equipment: equipmentFileView(configDir, "pvf_equipment_catalog.json"),
+		Stackable: equipmentFileView(configDir, "pvf_stackable_catalog.json"),
+	}
+}
+
+func ViewStackable(configDir string) []shared.EquipmentCatalogItem {
+	return equipmentFileView(configDir, "pvf_stackable_catalog.json")
+}
+
 type jsonFileStamp struct {
 	exists  bool
 	mtimeNS int64
@@ -242,15 +260,18 @@ func NameTemplates(configDir string) robottemplate.NameTemplates {
 }
 
 func equipmentFile(configDir string, name string) []shared.EquipmentCatalogItem {
+	return cloneEquipmentCatalog(equipmentFileView(configDir, name))
+}
+
+func equipmentFileView(configDir string, name string) []shared.EquipmentCatalogItem {
 	path := filepath.Join(configDir, name)
-	items := itemCatalogFiles.load(path, nil, func(data []byte, fallback []shared.EquipmentCatalogItem) []shared.EquipmentCatalogItem {
+	return itemCatalogFiles.load(path, nil, func(data []byte, fallback []shared.EquipmentCatalogItem) []shared.EquipmentCatalogItem {
 		var out []shared.EquipmentCatalogItem
 		if json.Unmarshal(data, &out) != nil {
 			return fallback
 		}
 		return out
 	})
-	return cloneEquipmentCatalog(items)
 }
 
 func cloneEquipmentCatalog(items []shared.EquipmentCatalogItem) []shared.EquipmentCatalogItem {

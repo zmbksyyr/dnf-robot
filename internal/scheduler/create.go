@@ -52,18 +52,18 @@ func (m *RobotManager) avatarFromCatalog(cid int, level int, job int, rc robotco
 	return m.schemaRepo().ReplaceAvatarItems(cid, selected)
 }
 
-func (m *RobotManager) loadCreateCatalogs() catalog.ItemCatalogSnapshot {
+func (m *RobotManager) loadCreateCatalogs() catalog.ItemCatalogView {
 	if m.cfg == nil {
-		return catalog.ItemCatalogSnapshot{}
+		return catalog.ItemCatalogView{}
 	}
-	return catalog.ItemCatalogs(m.cfg.ConfigDir)
+	return catalog.ViewItemCatalogs(m.cfg.ConfigDir)
 }
 
 func (m *RobotManager) loadStackableCatalog() []shared.EquipmentCatalogItem {
 	if m.cfg == nil {
 		return nil
 	}
-	return catalog.Stackable(m.cfg.ConfigDir)
+	return catalog.ViewStackable(m.cfg.ConfigDir)
 }
 
 func (m *RobotManager) applyConfiguredLocation(info *robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem) {

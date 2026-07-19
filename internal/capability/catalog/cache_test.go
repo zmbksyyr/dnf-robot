@@ -196,6 +196,27 @@ func TestItemCatalogSnapshotReturnsDeepCopies(t *testing.T) {
 	}
 }
 
+func TestItemCatalogViewRefreshesWithoutCopyingUnchangedData(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pvf_stackable_catalog.json")
+	writeCatalogJSON(t, path, []shared.EquipmentCatalogItem{{ID: 2001}})
+
+	first := ViewStackable(dir)
+	second := ViewStackable(dir)
+	if len(first) != 1 || len(second) != 1 || &first[0] != &second[0] {
+		t.Fatalf("unchanged catalog view was not reused: first=%+v second=%+v", first, second)
+	}
+
+	writeCatalogJSON(t, path, []shared.EquipmentCatalogItem{{ID: 2002}, {ID: 2003}})
+	third := ViewStackable(dir)
+	if len(third) != 2 || third[0].ID != 2002 || third[1].ID != 2003 {
+		t.Fatalf("catalog view did not refresh: %+v", third)
+	}
+	if len(first) != 1 || first[0].ID != 2001 {
+		t.Fatalf("previous catalog view was mutated: %+v", first)
+	}
+}
+
 func BenchmarkMapsCached(b *testing.B) {
 	dir := b.TempDir()
 	path := filepath.Join(dir, "pvf_map_catalog.json")
@@ -274,6 +295,20 @@ func BenchmarkItemCatalogsCached(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = ItemCatalogs(dir)
+	}
+}
+
+func BenchmarkItemCatalogViewCached(b *testing.B) {
+	dir := b.TempDir()
+	items := benchmarkEquipmentEntries()
+	writeCatalogJSON(b, filepath.Join(dir, "pvf_equipment_catalog.json"), items)
+	writeCatalogJSON(b, filepath.Join(dir, "pvf_stackable_catalog.json"), items)
+	_ = ViewItemCatalogs(dir)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ViewItemCatalogs(dir)
 	}
 }
 
