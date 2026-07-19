@@ -9,22 +9,6 @@ import (
 	"testing"
 )
 
-var importRules = []struct {
-	dir       string
-	forbidden []string
-}{
-	{dir: "internal/bootstrap", forbidden: []string{"robot/internal/entry", "robot/internal/scheduler", "robot/internal/actor", "robot/internal/protocol"}},
-	{dir: "internal/scheduler", forbidden: []string{"robot/internal/protocol"}},
-	{dir: "internal/foundation", forbidden: []string{"robot/internal/protocol"}},
-	{dir: "internal/foundation", forbidden: []string{"robot/internal/capability"}},
-	{dir: "internal/capability", forbidden: []string{"robot/internal/protocol"}},
-	{dir: "internal/entry", forbidden: []string{"robot/internal/protocol"}},
-	{dir: "internal/actor", forbidden: []string{"robot/internal/scheduler", "robot/internal/entry"}},
-	{dir: "internal/capability", forbidden: []string{"robot/internal/scheduler", "robot/internal/entry"}},
-	{dir: "internal/foundation", forbidden: []string{"robot/internal/scheduler", "robot/internal/entry"}},
-	{dir: "internal/protocol", forbidden: []string{"robot/internal/scheduler", "robot/internal/entry"}},
-}
-
 var knownInternalDirs = map[string]bool{
 	"actor":        true,
 	"architecture": true,
@@ -53,8 +37,6 @@ var allowedLayerImports = []struct {
 	{dir: "internal/shared", allowed: nil},
 }
 
-var legacyLayerImports = map[string][]string{}
-
 func TestTopLevelInternalDirectoriesAreKnownLayers(t *testing.T) {
 	root := repoRoot(t)
 	internal := filepath.Join(root, "internal")
@@ -68,28 +50,6 @@ func TestTopLevelInternalDirectoriesAreKnownLayers(t *testing.T) {
 		}
 		if !knownInternalDirs[entry.Name()] {
 			t.Errorf("internal/%s is not assigned to an architecture layer", entry.Name())
-		}
-	}
-}
-
-func TestLayerImportBoundaries(t *testing.T) {
-	root := repoRoot(t)
-	for _, rule := range importRules {
-		dir := filepath.Join(root, filepath.FromSlash(rule.dir))
-		if _, err := os.Stat(dir); err != nil {
-			t.Fatalf("stat %s: %v", dir, err)
-		}
-		if err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() || !strings.HasSuffix(path, ".go") {
-				return nil
-			}
-			checkFileImports(t, path, rule.forbidden)
-			return nil
-		}); err != nil {
-			t.Fatalf("walk %s: %v", dir, err)
 		}
 	}
 }
@@ -108,7 +68,7 @@ func TestLayerImportWhitelist(t *testing.T) {
 			if entry.IsDir() || !strings.HasSuffix(path, ".go") {
 				return nil
 			}
-			checkFileImportWhitelist(t, root, path, rule.allowed)
+			checkFileImportWhitelist(t, path, rule.allowed)
 			return nil
 		}); err != nil {
 			t.Fatalf("walk %s: %v", dir, err)
@@ -125,23 +85,7 @@ func repoRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(wd, "..", ".."))
 }
 
-func checkFileImports(t *testing.T, path string, forbidden []string) {
-	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
-	if err != nil {
-		t.Fatalf("parse imports %s: %v", path, err)
-	}
-	for _, imp := range file.Imports {
-		value := strings.Trim(imp.Path.Value, `"`)
-		for _, prefix := range forbidden {
-			if value == prefix || strings.HasPrefix(value, prefix+"/") {
-				t.Errorf("%s imports forbidden layer %s", path, value)
-			}
-		}
-	}
-}
-
-func checkFileImportWhitelist(t *testing.T, root, path string, allowed []string) {
+func checkFileImportWhitelist(t *testing.T, path string, allowed []string) {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 	if err != nil {
@@ -155,9 +99,6 @@ func checkFileImportWhitelist(t *testing.T, root, path string, allowed []string)
 		if importAllowed(value, allowed) {
 			continue
 		}
-		if legacyImportAllowed(root, path, value) {
-			continue
-		}
 		t.Errorf("%s imports unapproved internal layer %s", path, value)
 	}
 }
@@ -165,20 +106,6 @@ func checkFileImportWhitelist(t *testing.T, root, path string, allowed []string)
 func importAllowed(value string, allowed []string) bool {
 	for _, prefix := range allowed {
 		if value == prefix || strings.HasPrefix(value, prefix+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-func legacyImportAllowed(root, path, value string) bool {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	rel = filepath.ToSlash(rel)
-	for _, allowed := range legacyLayerImports[rel] {
-		if value == allowed || strings.HasPrefix(value, allowed+"/") {
 			return true
 		}
 	}
