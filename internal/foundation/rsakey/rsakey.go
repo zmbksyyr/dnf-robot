@@ -6,9 +6,10 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"sync/atomic"
 )
 
-var privateKey *rsa.PrivateKey
+var privateKey atomic.Pointer[rsa.PrivateKey]
 
 func InitPrivateKey(keyFile string) error {
 	data, err := os.ReadFile(keyFile)
@@ -25,21 +26,21 @@ func InitPrivateKey(keyFile string) error {
 		if err2 != nil {
 			return fmt.Errorf("failed to parse private key: %v / %v", err, err2)
 		}
-		var ok bool
-		privateKey, ok = key2.(*rsa.PrivateKey)
+		parsed, ok := key2.(*rsa.PrivateKey)
 		if !ok {
 			return fmt.Errorf("key is not RSA")
 		}
+		privateKey.Store(parsed)
 	} else {
-		privateKey = key
+		privateKey.Store(key)
 	}
 	return nil
 }
 
 func ClosePrivateKey() {
-	privateKey = nil
+	privateKey.Store(nil)
 }
 
 func GetRSAKey() *rsa.PrivateKey {
-	return privateKey
+	return privateKey.Load()
 }

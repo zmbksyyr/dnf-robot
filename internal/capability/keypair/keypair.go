@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/lockhub"
@@ -25,7 +26,10 @@ var defaultFiles embed.FS
 
 type RuntimeKeySink func(*rsa.PrivateKey)
 
-var runtimeKeySink RuntimeKeySink
+var runtimeKeySink struct {
+	mu   sync.RWMutex
+	sink RuntimeKeySink
+}
 
 type statusCacheKey struct {
 	configDir string
@@ -49,12 +53,17 @@ var currentStatusCache struct {
 }
 
 func SetRuntimeKeySink(sink RuntimeKeySink) {
-	runtimeKeySink = sink
+	runtimeKeySink.mu.Lock()
+	runtimeKeySink.sink = sink
+	runtimeKeySink.mu.Unlock()
 }
 
 func publishRuntimeKey(key *rsa.PrivateKey) {
-	if runtimeKeySink != nil {
-		runtimeKeySink(key)
+	runtimeKeySink.mu.RLock()
+	sink := runtimeKeySink.sink
+	runtimeKeySink.mu.RUnlock()
+	if sink != nil {
+		sink(key)
 	}
 }
 

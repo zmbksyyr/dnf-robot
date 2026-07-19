@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"robot/internal/foundation/crypto"
@@ -13,12 +14,12 @@ import (
 )
 
 var (
-	rsaKey *rsa.PrivateKey
+	rsaKey atomic.Pointer[rsa.PrivateKey]
 	dbPool *sql.DB
 )
 
 func SetRSAKey(key *rsa.PrivateKey) {
-	rsaKey = key
+	rsaKey.Store(key)
 }
 
 func SetDBPool(db *sql.DB) {
@@ -71,7 +72,7 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 				uint32(user.BirthY),
 			},
 		}
-		setLoginToken(&loginInfo, resolveLoginToken(user.Token, user.UID, rsaKey))
+		setLoginToken(&loginInfo, resolveLoginToken(user.Token, user.UID, rsaKey.Load()))
 
 		vo := NewRobotVo(db)
 		vo.Load(loginInfo)
