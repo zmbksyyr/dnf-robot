@@ -383,7 +383,7 @@ func TestLoadPartySkillCatalogFiltersLevelAndDisabled(t *testing.T) {
 	}
 }
 
-func TestPartySkillCandidatesRequireWhitelistPVFAndLearned(t *testing.T) {
+func TestPartySkillCandidatesRequireWhitelistAndPVF(t *testing.T) {
 	whitelist := []shared.SkillState{
 		{Job: 6, SkillIndex: 3, State: 22, Level: 5, Name: "ok", StateData: []byte{3, 0, 0}, Risk: 1, ScriptPath: "ok.nut"},
 		{Job: 6, SkillIndex: 4, State: 23, Level: 10, Name: "unlearned", StateData: []byte{0, 0, 0}, Risk: 1},
@@ -398,10 +398,13 @@ func TestPartySkillCandidatesRequireWhitelistPVFAndLearned(t *testing.T) {
 	learned := map[byte]byte{3: 1, 5: 1}
 
 	got, stats := partySkillCandidatesFromCatalog(6, learned, whitelist, pvfStates)
-	if len(got) != 1 || got[0].skillIndex != 3 || got[0].state != 22 || !got[0].learned || !bytes.Equal(got[0].stateData, []byte{3, 0, 0}) {
+	if len(got) != 2 || got[0].skillIndex != 3 || got[0].state != 22 || !got[0].learned || !bytes.Equal(got[0].stateData, []byte{3, 0, 0}) {
 		t.Fatalf("candidates = %+v", got)
 	}
-	if stats.PVFMatched != 2 || stats.SkippedUnlearned != 1 || stats.SkippedMissingPVF != 1 {
+	if got[1].skillIndex != 4 || got[1].state != 23 || got[1].learned {
+		t.Fatalf("unlearned whitelist candidate = %+v", got[1])
+	}
+	if stats.PVFMatched != 2 || stats.SkippedUnlearned != 0 || stats.SkippedMissingPVF != 1 {
 		t.Fatalf("stats = %+v", stats)
 	}
 }

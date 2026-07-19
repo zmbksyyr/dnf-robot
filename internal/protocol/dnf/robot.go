@@ -3095,10 +3095,6 @@ func partySkillCandidatesFromCatalog(job int, learned map[byte]byte, whitelist [
 		}
 		stats.PVFMatched++
 		known := learned[byte(entry.SkillIndex)] != 0
-		if !known {
-			stats.SkippedUnlearned++
-			continue
-		}
 		candidates = append(candidates, partySkillCandidate{
 			skillIndex: byte(entry.SkillIndex),
 			state:      byte(entry.State),
@@ -3107,7 +3103,7 @@ func partySkillCandidatesFromCatalog(job int, learned map[byte]byte, whitelist [
 			stateData:  append([]byte(nil), entry.StateData...),
 			risk:       entry.Risk,
 			path:       entry.ScriptPath,
-			learned:    true,
+			learned:    known,
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
