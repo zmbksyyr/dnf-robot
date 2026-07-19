@@ -108,6 +108,19 @@ func TestRobotPartyTQOSRetransmitsPendingReliableReply(t *testing.T) {
 	}
 }
 
+func TestMarkPartyRobotPeerReadyClearsPendingReplies(t *testing.T) {
+	vo := &RobotVo{}
+	vo.partyTQOSReplies[1][1] = partyTQOSReliableReply{
+		packet:    []byte{1, 2, 3, 4, 5},
+		nextRetry: time.Now(),
+	}
+
+	vo.markPartyRobotPeerReadyUnsafe(partyIPPeer{accID: 17000001, slot: 1, slotKnown: true}, "test")
+	if len(vo.partyTQOSReplies[1][1].packet) != 0 || !vo.partyTQOSReplies[1][1].nextRetry.IsZero() {
+		t.Fatalf("pending reply was retained after ready: %+v", vo.partyTQOSReplies[1][1])
+	}
+}
+
 func TestRobotPartyTQOSReliableReplyStartsNewEpochForCodecOrFlags(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{slot: 1, slotKnown: true}

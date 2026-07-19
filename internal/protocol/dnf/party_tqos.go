@@ -204,7 +204,19 @@ func (r *RobotVo) markPartyRobotPeerReadyUnsafe(peer partyIPPeer, reason string)
 		return
 	}
 	r.partyRobotPeerReady[peer.slot] = true
+	if reason != "ack" {
+		r.clearPartyTQOSPendingRepliesUnsafe(peer.slot)
+	}
 	fmt.Printf("[PARTY_ROBOT_TQOS_READY] uid=%d peer=%d slot=%d reason=%s\n", r.UID, peer.accID, peer.slot, reason)
+}
+
+func (r *RobotVo) clearPartyTQOSPendingRepliesUnsafe(peerSlot byte) {
+	if peerSlot >= byte(len(r.partyTQOSReplies)) {
+		return
+	}
+	for route := range r.partyTQOSReplies[peerSlot] {
+		r.partyTQOSReplies[peerSlot][route] = partyTQOSReliableReply{}
+	}
 }
 
 func (r *RobotVo) partyTQOSReliableReplyUnsafe(peerSlot, route byte, request partyTQOSPacket) ([]byte, bool) {
