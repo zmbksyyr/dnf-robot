@@ -339,14 +339,18 @@ func TestEnsurePartyRelayIsAsyncSingleflightAndUsesLoginIP(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay dial did not start")
 	}
-	locked := make(chan struct{})
+	locked := make(chan bool, 1)
 	go func() {
 		vo.mu.Lock()
+		connecting := vo.partyRelayConnecting
 		vo.mu.Unlock()
-		close(locked)
+		locked <- connecting
 	}()
 	select {
-	case <-locked:
+	case connecting := <-locked:
+		if !connecting {
+			t.Fatal("relay connection attempt stopped unexpectedly")
+		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("relay dial held the Robot mutex")
 	}
@@ -373,14 +377,18 @@ func TestPartyRelayQueuedWriteDoesNotHoldRobotMutex(t *testing.T) {
 		t.Fatalf("relay enqueue blocked for %s", elapsed)
 	}
 
-	locked := make(chan struct{})
+	locked := make(chan bool, 1)
 	go func() {
 		vo.mu.Lock()
+		active := vo.partyRelayConn == robotConn
 		vo.mu.Unlock()
-		close(locked)
+		locked <- active
 	}()
 	select {
-	case <-locked:
+	case active := <-locked:
+		if !active {
+			t.Fatal("relay connection detached before the blocked write")
+		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("blocked relay socket held the Robot mutex")
 	}

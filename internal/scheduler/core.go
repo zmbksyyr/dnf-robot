@@ -52,8 +52,6 @@ type RobotManager struct {
 	runtimeStatusCache              map[int]robotcap.RuntimeStatus
 	runtimeStatusCacheAt            time.Time
 	runtimeStatusRefresh            chan struct{}
-	autoPolicyLastMode              schedulerPolicyMode
-	autoPolicyLastReason            string
 	schedulerStatus                 robotcap.SchedulerStatus
 	nextOperationID                 int64
 	operations                      []robotcap.OperationStatus

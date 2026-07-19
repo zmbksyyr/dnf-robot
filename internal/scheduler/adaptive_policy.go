@@ -61,13 +61,6 @@ type schedulerPolicyDecision struct {
 	Reason string
 }
 
-func (m *RobotManager) applyAdaptiveSchedulerConfig(rc *robotconfig.RuntimeConfig) {
-	signals := m.adaptiveSchedulerSignals()
-	decision := m.policy().ApplyConfig(rc, signals)
-	m.updateSchedulerStatus(*rc, signals, decision)
-	m.logSchedulerPolicyDecision(decision)
-}
-
 func (m *RobotManager) SchedulerStatus() robotcap.SchedulerStatus {
 	rc := m.loadRobotConfig()
 	signals := m.adaptiveSchedulerSignals()
@@ -110,22 +103,6 @@ func (m *RobotManager) adaptiveSchedulerSignals() adaptiveSchedulerSignals {
 		MemoryMB:       mem,
 		Goroutines:     threads,
 	}
-}
-
-func (m *RobotManager) logSchedulerPolicyDecision(decision schedulerPolicyDecision) {
-	if decision.Mode == "" {
-		return
-	}
-	m.autoMu.Lock()
-	lastMode := m.autoPolicyLastMode
-	if lastMode == decision.Mode {
-		m.autoMu.Unlock()
-		return
-	}
-	m.autoPolicyLastMode = decision.Mode
-	m.autoPolicyLastReason = decision.Reason
-	m.autoMu.Unlock()
-	robotLogf("[SchedulerPolicy] mode=%s reason=%s\n", decision.Mode, decision.Reason)
 }
 
 func (m *RobotManager) updateSchedulerStatus(rc robotconfig.RuntimeConfig, sig adaptiveSchedulerSignals, decision schedulerPolicyDecision) {

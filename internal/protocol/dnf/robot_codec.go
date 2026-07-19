@@ -139,20 +139,6 @@ func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
 	return peers, true
 }
 
-func parsePartyIPInfo(packet []byte, selfAccID uint32) []partyIPPeer {
-	_, peers, ok := parsePartyIPInfoSnapshot(packet, selfAccID)
-	if !ok {
-		return nil
-	}
-	return peers
-}
-
-func parsePartySelfIPInfo(packet []byte, selfAccID uint32) partyIPPeer {
-	self, _, _ := parsePartyIPInfoSnapshot(packet, selfAccID)
-	return self
-
-}
-
 func parsePartyIPInfoSnapshot(packet []byte, selfAccID uint32) (partyIPPeer, []partyIPPeer, bool) {
 	members, ok := parsePartyIPInfoMembers(packet)
 	if !ok {

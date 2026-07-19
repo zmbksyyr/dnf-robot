@@ -63,14 +63,18 @@ func TestPartySkillProfileLoadIsSingleflightAndDoesNotHoldRobotLock(t *testing.T
 	vo.mu.Unlock()
 	<-started
 
-	lockAcquired := make(chan struct{})
+	lockAcquired := make(chan bool, 1)
 	go func() {
 		vo.mu.Lock()
+		loading := vo.partySkillLoading
 		vo.mu.Unlock()
-		close(lockAcquired)
+		lockAcquired <- loading
 	}()
 	select {
-	case <-lockAcquired:
+	case loading := <-lockAcquired:
+		if !loading {
+			t.Fatal("profile load stopped before release")
+		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("profile loader held the Robot mutex")
 	}

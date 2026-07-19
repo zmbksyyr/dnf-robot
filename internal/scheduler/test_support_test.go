@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +10,6 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/foundation/config"
-	"robot/internal/shared"
 )
 
 func newRobotActor(slotID int, mode actormodel.Mode, runtime actormodel.RobotRuntime) *actormodel.Actor {
@@ -108,25 +106,4 @@ func ensureSupervisorActors(t *testing.T, supervisor *RobotSupervisor, count int
 	}
 	t.Cleanup(func() { supervisor.stopAll(false) })
 	return actors
-}
-
-func containsInt(values []int, want int) bool {
-	for _, v := range values {
-		if v == want {
-			return true
-		}
-	}
-	return false
-}
-
-func writeStoreMapCatalog(t *testing.T, configDir string, maps []shared.MapCatalogItem) []byte {
-	t.Helper()
-	data, err := json.Marshal(maps)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "pvf_map_catalog.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	return data
 }

@@ -15,32 +15,31 @@ const configFile = "./config/config.ini"
 
 // SysConfig holds all robot configuration from config.ini.
 type SysConfig struct {
-	RobotPort            int
-	DBHost               string
-	DBPort               int
-	DBName               string
-	DBUser               string
-	DBPassword           string
-	DFGameR              string
-	ConfigDir            string
-	RobotInnerIP         string
-	RobotConnectIP       string
-	RobotGamePort        int
-	MonitorPort          int
-	AuctionPort          int
-	PointPort            int
-	RelayPort            int
-	PartyRoute0Port      int
-	DBInitSize           int
-	DBMaxSize            int
-	DBConnectionTimeout  int
-	WebPort              int
-	WebPassword          string
-	LogMaxSizeMB         int
-	LogMaxBackups        int
-	MaxResponseBytes     int
-	ThisIP               string
-	defaultConfigWritten bool
+	RobotPort           int
+	DBHost              string
+	DBPort              int
+	DBName              string
+	DBUser              string
+	DBPassword          string
+	DFGameR             string
+	ConfigDir           string
+	RobotInnerIP        string
+	RobotConnectIP      string
+	RobotGamePort       int
+	MonitorPort         int
+	AuctionPort         int
+	PointPort           int
+	RelayPort           int
+	PartyRoute0Port     int
+	DBInitSize          int
+	DBMaxSize           int
+	DBConnectionTimeout int
+	WebPort             int
+	WebPassword         string
+	LogMaxSizeMB        int
+	LogMaxBackups       int
+	MaxResponseBytes    int
+	ThisIP              string
 }
 
 // LoadConfig reads config.ini and returns a populated SysConfig.
@@ -207,11 +206,6 @@ func generateDefaultConfig(path string) error {
 	}, "\n"))
 	return err
 }
-
-// ---- ini.go ----
-const (
-	maxValue = 1024
-)
 
 // INIConfig represents a parsed INI configuration file.
 type INIConfig struct {

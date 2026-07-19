@@ -572,17 +572,17 @@ func gameConfigNameForPort(port int) (string, bool) {
 func (s *Server) handleKeypairDownload(w http.ResponseWriter, _ *http.Request) {
 	raw, err := callRobot(s.robotAddr, "keypairStatus", nil, robotCallTimeout("keypairStatus"), s.cfg.MaxResponseBytes)
 	if err != nil {
-		http.Error(w, err.Error(), 502)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	status, ok := parseRobotResult(raw).(map[string]interface{})
 	if !ok {
-		http.Error(w, "invalid keypair status", 502)
+		http.Error(w, "invalid keypair status", http.StatusBadGateway)
 		return
 	}
 	result, ok := status["result"].(map[string]interface{})
 	if !ok {
-		http.Error(w, "invalid keypair result", 502)
+		http.Error(w, "invalid keypair result", http.StatusBadGateway)
 		return
 	}
 	if valid, _ := result["game_valid"].(bool); !valid {

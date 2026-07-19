@@ -2,52 +2,15 @@ package crypto
 
 import (
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/pem"
 	"fmt"
 	"math/big"
 	"math/bits"
-	"os"
 )
-
-var globalPrivateKey *rsa.PrivateKey
 
 func swapByte32(v uint32) uint32 {
 	return bits.ReverseBytes32(v)
-}
-
-func InitPrivateKey(pemPath string) (*rsa.PrivateKey, error) {
-	keyData, err := os.ReadFile(pemPath)
-	if err != nil {
-		return nil, err
-	}
-
-	block, _ := pem.Decode(keyData)
-	if block == nil {
-		return nil, fmt.Errorf("failed to parse PEM block")
-	}
-
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		key, err = x509.ParsePKCS1PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse private key: %w", err)
-		}
-	}
-
-	rsaKey, ok := key.(*rsa.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("key is not an RSA private key")
-	}
-
-	globalPrivateKey = rsaKey
-	return rsaKey, nil
-}
-
-func ClosePrivateKey() {
-	globalPrivateKey = nil
 }
 
 func RSAPrivateEncrypt(key *rsa.PrivateKey, data []byte) ([]byte, error) {

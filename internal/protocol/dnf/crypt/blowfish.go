@@ -5,11 +5,9 @@ type SBlock struct {
 }
 
 type BlowFishCipher struct {
-	P     [18]uint32
-	S     [4][256]uint32
-	chain SBlock
-	c0    SBlock
-	init  bool
+	P    [18]uint32
+	S    [4][256]uint32
+	init bool
 }
 
 var blowfishInitP = [18]uint32{

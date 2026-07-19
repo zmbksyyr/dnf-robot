@@ -95,7 +95,7 @@ type fixedActionExecutorFactory struct {
 }
 
 func (f fixedActionExecutorFactory) NewActionExecutor(Config) ActionExecutor {
-	return fixedActionExecutor{result: f.result, err: f.err}
+	return fixedActionExecutor(f)
 }
 
 type fixedActionExecutor struct {

@@ -348,14 +348,6 @@ func linuxClockTicks() int64 {
 	return 100
 }
 
-func readItemInfoIDs(path string) (map[uint32]bool, error) {
-	entries, err := readItemInfoEntries(path)
-	if err != nil {
-		return nil, err
-	}
-	return itemInfoEntryIDSet(entries), nil
-}
-
 func readItemInfoEntries(path string) (map[uint32]itemInfoEntry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
