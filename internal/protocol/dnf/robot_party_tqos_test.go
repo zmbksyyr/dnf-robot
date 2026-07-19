@@ -128,9 +128,12 @@ func TestReadyPartyRobotPeerDoesNotRestartHandshake(t *testing.T) {
 	peer := partyIPPeer{accID: 17000002, slot: 2, slotKnown: true}
 	vo.partyRobotPeerReady[peer.slot] = true
 
-	replies := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 1, codec), 1, peer)
+	replies := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 3, 1, codec), 1, peer)
 	if len(replies) != 0 || len(vo.partyTQOSReplies[peer.slot][1].packet) != 0 {
 		t.Fatalf("ready peer restarted handshake replies=%x pending=%+v", replies, vo.partyTQOSReplies[peer.slot][1])
+	}
+	if !vo.partyRobotPeerReady[peer.slot] {
+		t.Fatal("ready peer was reset by duplicate state3")
 	}
 }
 
