@@ -2,6 +2,19 @@ package dnf
 
 import "robot/internal/shared"
 
+func robotIsRunning(task *RobotDnfTask, uid int) bool {
+	if task == nil {
+		return false
+	}
+	vo := task.Find(uid)
+	if vo == nil {
+		return false
+	}
+	vo.mu.Lock()
+	defer vo.mu.Unlock()
+	return vo.State == StateRun
+}
+
 func (dt *DnfTableDrive) DispatchLogout(uid int) DnfTableTaskResult {
 	return dt.dispatchLogouts(dt.task, []int{uid})
 }

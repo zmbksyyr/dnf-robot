@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"robot/internal/foundation/crypto"
-	"robot/internal/foundation/message"
 	"robot/internal/shared"
 )
 
@@ -28,72 +27,6 @@ func SetDBPool(db *sql.DB) {
 
 func GetDBPool() *sql.DB {
 	return dbPool
-}
-
-func (dt *DnfTableDrive) handleOnLine(task *RobotDnfTask, robotMsg RobotMsg) DnfTableTaskResult {
-	req := message.NewMsgOnLineRequest()
-	if err := req.ParseFromString(string(robotMsg.JSON)); err != nil || req.UserinfosSize() == 0 {
-		return DnfTableTaskResult{Msg: invalidRequestMessage}
-	}
-
-	users := make([]shared.RuntimeOnlineUser, 0, req.UserinfosSize())
-	resultIDs := make([]int, 0, req.UserinfosSize())
-	for i := 0; i < req.UserinfosSize(); i++ {
-		userInfo := req.Userinfos(i)
-		if !completeOnlineUserInfo(userInfo) {
-			return DnfTableTaskResult{Msg: invalidRequestMessage}
-		}
-		users = append(users, onlineUserFromMessage(userInfo))
-		resultIDs = append(resultIDs, userInfo.Id())
-	}
-
-	result := dt.dispatchOnline(task, users)
-	if result.Code != 200 {
-		return result
-	}
-	respond := message.NewMsgOnLineRespond()
-	for _, id := range resultIDs {
-		item := message.NewMsgOnLineResult()
-		item.SetId(id)
-		item.SetStatus(message.ONLINE_NO_ERROR)
-		respond.AddUserstatus(item)
-	}
-	result.Msg, _ = respond.SerializeToString()
-	return result
-}
-
-func completeOnlineUserInfo(user *message.MsgOnLineUserInfo) bool {
-	if user == nil || !user.HasId() || !user.HasIp() || !user.HasPort() || !user.HasDelay() ||
-		!user.HasUid() || !user.HasCid() || !user.HasMaxreconn() || !user.HasRedelay() ||
-		!user.HasBirthvill() || !user.HasBirtharea() || !user.HasBirthx() || !user.HasBirthy() ||
-		!user.HasDisopen() || !user.HasStoreopen() {
-		return false
-	}
-	if user.Disopen() != 0 && !user.HasDiscost() {
-		return false
-	}
-	return user.Storeopen() == 0 || user.HasStoretitle()
-}
-
-func onlineUserFromMessage(user *message.MsgOnLineUserInfo) shared.RuntimeOnlineUser {
-	return shared.RuntimeOnlineUser{
-		IP:             user.Ip(),
-		Port:           user.GetPort(),
-		DelayMS:        user.GetDelay(),
-		Token:          user.GetToken(),
-		UID:            user.Uid(),
-		CID:            user.Cid(),
-		MaxReconnect:   user.Maxreconn(),
-		ReconnectDelay: user.Redelay(),
-		BirthVillage:   user.Birthvill(),
-		BirthArea:      user.Birtharea(),
-		BirthX:         user.Birthx(),
-		BirthY:         user.Birthy(),
-		DisjointOpen:   user.Disopen() != 0,
-		DisjointCost:   user.Discost(),
-		StoreOpen:      user.Storeopen() != 0,
-		StoreTitle:     user.Storetitle(),
-	}
 }
 
 func (dt *DnfTableDrive) DispatchOnline(users []shared.RuntimeOnlineUser) DnfTableTaskResult {
