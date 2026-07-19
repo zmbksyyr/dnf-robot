@@ -3,6 +3,7 @@ package dnf
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
@@ -209,8 +210,11 @@ type RobotVo struct {
 	partySkillNextAt     time.Time
 	partySkillRecoverAt  time.Time
 	partySkillLoaded     bool
+	partySkillLoading    bool
+	partySkillGeneration uint64
 	partySkillJob        int
 	partySkillCandidates []partySkillCandidate
+	partySkillLoad       partySkillProfileLoadFunc
 
 	GMName [5][100]byte
 
@@ -612,17 +616,16 @@ func (r *RobotVo) onRecvData(data []byte) {
 	copy(r.recvBuffer[r.recvSize:], data)
 	r.recvSize += len(data)
 
-	for r.recvSize >= 7 {
-		if r.recvSize < 7 {
-			break
-		}
-		packetFlag := r.recvBuffer[0]
-		packetType := binary.LittleEndian.Uint16(r.recvBuffer[1:3])
-		packetSize := binary.LittleEndian.Uint32(r.recvBuffer[3:7])
+	consumed := 0
+	for r.recvSize-consumed >= 7 {
+		packet := r.recvBuffer[consumed:r.recvSize]
+		packetFlag := packet[0]
+		packetType := binary.LittleEndian.Uint16(packet[1:3])
+		packetSize := binary.LittleEndian.Uint32(packet[3:7])
 		const maxPacketSize uint32 = 1024 * 1024
 		if packetSize < 7 || packetSize > maxPacketSize {
 			fmt.Printf("[RobotVo] invalid packet uid=%d flag=%d type=%d size=%d recvSize=%d\n",
-				r.UID, packetFlag, packetType, packetSize, r.recvSize)
+				r.UID, packetFlag, packetType, packetSize, r.recvSize-consumed)
 			r.State = StateStop
 			if r.Conn != nil {
 				r.Conn.Close()
@@ -630,34 +633,37 @@ func (r *RobotVo) onRecvData(data []byte) {
 			}
 			return
 		}
-		if uint32(r.recvSize) >= packetSize {
-			if uint32(r.recvSize) <= uint32(r.recvMaxSize) {
-				r.parsePacket(r.recvBuffer[:packetSize])
-			} else {
-				r.recvBuffer = nil
-				r.State = StateStop
-				if r.Conn != nil {
-					r.Conn.Close()
-					r.Conn = nil
-				}
-				return
-			}
-			if uint32(r.recvSize) > packetSize {
-				copy(r.recvBuffer, r.recvBuffer[packetSize:r.recvSize])
-			}
-			r.recvSize = int(uint32(r.recvSize) - packetSize)
-		} else {
+		packetBytes := int(packetSize)
+		if len(packet) < packetBytes {
 			break
 		}
+		r.parsePacket(packet[:packetBytes])
+		consumed += packetBytes
 	}
 
-	if r.recvSize < r.recvMaxSize/4 {
-		for r.recvSize < r.recvMaxSize/4 && r.recvMaxSize > 4096 {
-			r.recvMaxSize /= 2
+	if consumed > 0 {
+		copy(r.recvBuffer, r.recvBuffer[consumed:r.recvSize])
+		r.recvSize -= consumed
+	}
+
+	minBufferSize := r.minBufferSize
+	if minBufferSize <= 0 {
+		minBufferSize = 4096
+	}
+	if r.recvMaxSize > minBufferSize && r.recvSize < r.recvMaxSize/4 {
+		newSize := r.recvMaxSize
+		for r.recvSize < newSize/4 && newSize > minBufferSize {
+			newSize /= 2
 		}
-		newBuf := make([]byte, r.recvMaxSize)
-		copy(newBuf, r.recvBuffer[:r.recvSize])
-		r.recvBuffer = newBuf
+		if newSize < minBufferSize {
+			newSize = minBufferSize
+		}
+		if newSize != r.recvMaxSize {
+			newBuf := make([]byte, newSize)
+			copy(newBuf, r.recvBuffer[:r.recvSize])
+			r.recvBuffer = newBuf
+			r.recvMaxSize = newSize
+		}
 	}
 }
 
@@ -1499,7 +1505,6 @@ func (r *RobotVo) startPartyUDPUnsafe(addr *net.TCPAddr) bool {
 	}
 	r.partyUDPConn = conn
 	go r.partyUDPLoop(conn, r.UID)
-	go r.partyUDPProbeLoop(conn)
 	return true
 }
 
@@ -1512,18 +1517,46 @@ func (r *RobotVo) closePartyUDPUnsafe() {
 
 func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32) {
 	buf := make([]byte, 4096)
+	var nextProbe time.Time
+	var nextFlush time.Time
 	for {
+		now := time.Now()
 		r.mu.Lock()
 		stopped := r.State == StateStop || r.partyUDPConn != conn
-		if !stopped && r.partyActiveUnsafe() {
-			r.startPartyRobotPeerNegotiationUnsafe()
+		active := false
+		if !stopped {
+			active = r.partyActiveUnsafe()
+			if active {
+				if nextProbe.IsZero() || !now.Before(nextProbe) {
+					r.startPartyRobotPeerNegotiationUnsafe()
+					nextProbe = now.Add(time.Second)
+				}
+				if nextFlush.IsZero() || !now.Before(nextFlush) {
+					r.flushPartyDungeonFollowUnsafe(conn, now)
+					r.flushPartyDungeonSkillUnsafe(conn, now)
+					nextFlush = now.Add(100 * time.Millisecond)
+				}
+			} else {
+				nextProbe = time.Time{}
+				nextFlush = time.Time{}
+			}
 		}
 		r.mu.Unlock()
 		if stopped {
 			_ = conn.Close()
 			return
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		readWait := time.Second
+		if active {
+			readWait = time.Until(nextFlush)
+			if probeWait := time.Until(nextProbe); probeWait < readWait {
+				readWait = probeWait
+			}
+			if readWait < time.Millisecond {
+				readWait = time.Millisecond
+			}
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(readWait))
 		n, remote, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
@@ -1540,36 +1573,6 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32) {
 			for _, ack := range acks {
 				writePartyUDPReply(conn, ack, remote, uid)
 			}
-		}
-	}
-}
-
-func (r *RobotVo) partyUDPProbeLoop(conn *net.UDPConn) {
-	probeTicker := time.NewTicker(time.Second)
-	followTicker := time.NewTicker(100 * time.Millisecond)
-	defer probeTicker.Stop()
-	defer followTicker.Stop()
-	for {
-		select {
-		case <-probeTicker.C:
-			r.mu.Lock()
-			if r.State == StateStop || r.partyUDPConn != conn {
-				r.mu.Unlock()
-				return
-			}
-			if r.partyActiveUnsafe() {
-				r.startPartyRobotPeerNegotiationUnsafe()
-			}
-			r.mu.Unlock()
-		case <-followTicker.C:
-			r.mu.Lock()
-			if r.State == StateStop || r.partyUDPConn != conn {
-				r.mu.Unlock()
-				return
-			}
-			r.flushPartyDungeonFollowUnsafe(conn, time.Now())
-			r.flushPartyDungeonSkillUnsafe(conn, time.Now())
-			r.mu.Unlock()
 		}
 	}
 }
@@ -1921,7 +1924,7 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	}
 	r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
 	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_DUE] uid=%d idle=%s\n", r.UID, now.Sub(r.partyDungeonLastAt))
-	if !r.loadPartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
+	if !r.ensurePartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
 		return
 	}
 	peer := r.partyPeerForSlotUnsafe(0)
@@ -1963,40 +1966,64 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 	return true
 }
 
-func (r *RobotVo) loadPartySkillProfileUnsafe() bool {
+func (r *RobotVo) ensurePartySkillProfileUnsafe() bool {
 	if r.partySkillLoaded {
 		return true
+	}
+	if r.partySkillLoading {
+		return false
 	}
 	db := r.DB
 	if db == nil {
 		db = GetDBPool()
 	}
-	if db == nil || r.UID == 0 {
+	loader := r.partySkillLoad
+	if (loader == nil && db == nil) || r.UID == 0 {
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_ERROR] uid=%d cid=%d db_ready=%t\n", r.UID, r.CID, db != nil)
 		return false
 	}
-	var cid int
-	var job int
-	err := db.QueryRow("SELECT c.charac_no,c.job FROM taiwan_cain.charac_info c WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", r.UID, r.CID, r.CID).Scan(&cid, &job)
+	if loader == nil {
+		loader = func(uid uint32, cid int) (partySkillProfile, error) {
+			return queryPartySkillProfile(db, uid, cid)
+		}
+	}
+	r.partySkillLoading = true
+	generation := r.partySkillGeneration
+	uid := r.UID
+	cid := r.CID
+	go r.loadPartySkillProfile(generation, uid, cid, loader)
+	return false
+}
+
+func (r *RobotVo) loadPartySkillProfile(generation uint64, uid uint32, cid int, loader partySkillProfileLoadFunc) {
+	profile, err := loader(uid, cid)
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if generation != r.partySkillGeneration || r.UID != uid || r.State == StateStop {
+		return
+	}
+	r.partySkillLoading = false
 	if err != nil {
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_ERROR] uid=%d cid=%d err=%v\n", r.UID, r.CID, err)
-		return false
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_ERROR] uid=%d cid=%d err=%v\n", uid, cid, err)
+		return
 	}
 	if r.CID == 0 {
-		r.CID = cid
+		r.CID = profile.cid
 	}
 	r.partySkillLoaded = true
-	whitelist := shared.PartySkillStatesForJob(job)
-	pvfStates := shared.SkillStatesForJob(job)
-	r.partySkillJob = job
-	var stats partySkillCandidateStats
-	r.partySkillCandidates, stats = partySkillCandidatesFromCatalog(job, whitelist, pvfStates)
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_missing_pvf=%d\n", r.UID, r.CID, job, len(whitelist), len(pvfStates), stats.PVFMatched, len(r.partySkillCandidates), stats.SkippedMissingPVF)
-	return true
+	r.partySkillJob = profile.job
+	r.partySkillCandidates = profile.candidates
+	if !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= 3*time.Second {
+		r.partySkillNextAt = now
+	}
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_missing_pvf=%d\n", uid, profile.cid, profile.job, profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, len(profile.candidates), profile.stats.SkippedMissingPVF)
 }
 
 func (r *RobotVo) resetPartySkillProfileUnsafe() {
+	r.partySkillGeneration++
 	r.partySkillLoaded = false
+	r.partySkillLoading = false
 	r.partySkillJob = 0
 	r.partySkillCandidates = nil
 }
@@ -3302,9 +3329,36 @@ type partySkillCandidate struct {
 	path       string
 }
 
+type partySkillProfile struct {
+	cid            int
+	job            int
+	whitelistCount int
+	pvfCount       int
+	candidates     []partySkillCandidate
+	stats          partySkillCandidateStats
+}
+
+type partySkillProfileLoadFunc func(uid uint32, cid int) (partySkillProfile, error)
+
 type partySkillCandidateStats struct {
 	PVFMatched        int
 	SkippedMissingPVF int
+}
+
+func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var profile partySkillProfile
+	if err := db.QueryRowContext(ctx, "SELECT c.charac_no,c.job FROM taiwan_cain.charac_info c WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", uid, cid, cid).Scan(&profile.cid, &profile.job); err != nil {
+		return partySkillProfile{}, err
+	}
+	whitelist := shared.PartySkillStatesForJob(profile.job)
+	pvfStates := shared.SkillStatesForJob(profile.job)
+	profile.whitelistCount = len(whitelist)
+	profile.pvfCount = len(pvfStates)
+	profile.candidates, profile.stats = partySkillCandidatesFromCatalog(profile.job, whitelist, pvfStates)
+	return profile, nil
 }
 
 func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
