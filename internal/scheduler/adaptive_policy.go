@@ -62,9 +62,8 @@ type schedulerPolicyDecision struct {
 }
 
 func (m *RobotManager) SchedulerStatus() robotcap.SchedulerStatus {
-	rc := m.loadRobotConfig()
 	signals := m.adaptiveSchedulerSignals()
-	decision := m.policy().ApplyConfig(&rc, signals)
+	rc, decision := m.refreshAdaptiveRobotConfig(signals)
 	if !m.autoActionsEnabled(rc) {
 		decision = schedulerPolicyDecision{Mode: schedulerPolicyManual, Reason: schedulerReasonAutoDisabled}
 	}

@@ -12,6 +12,7 @@ import (
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/shared"
+	"sync/atomic"
 	"time"
 )
 
@@ -59,9 +60,7 @@ type RobotManager struct {
 	structuralOpStarted             time.Time
 	actorContainerOp                string
 	actorContainerOpStarted         time.Time
-	configCache                     robotconfig.RuntimeConfig
-	configMod                       time.Time
-	configCached                    bool
+	configSnapshot                  atomic.Pointer[robotConfigSnapshot]
 	supervisor                      *RobotSupervisor
 	storePointsCoord                *storecap.PointCoordinator
 	positionWrites                  *positionBatcher
@@ -144,17 +143,12 @@ func (m *RobotManager) SetAutoPolicy(policy AutoPolicy) {
 
 type AutoPolicy interface {
 	ApplyConfig(rc *robotconfig.RuntimeConfig, sig adaptiveSchedulerSignals) schedulerPolicyDecision
-	ApplyLive(rc *robotconfig.RuntimeConfig, target int, sig adaptiveSchedulerSignals) schedulerPolicyDecision
 }
 
 type defaultAutoPolicy struct{}
 
 func (defaultAutoPolicy) ApplyConfig(rc *robotconfig.RuntimeConfig, sig adaptiveSchedulerSignals) schedulerPolicyDecision {
 	return applyAdaptiveSchedulerConfig(rc, sig)
-}
-
-func (defaultAutoPolicy) ApplyLive(rc *robotconfig.RuntimeConfig, target int, sig adaptiveSchedulerSignals) schedulerPolicyDecision {
-	return applyLiveSchedulerFeedback(rc, target, sig)
 }
 
 type SchedulerRepository interface {
