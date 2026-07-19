@@ -17,7 +17,7 @@ const (
 func (r *RobotVo) flushPartyTQOSRepliesUnsafe(conn *net.UDPConn, now time.Time) {
 	for slot := byte(0); slot < byte(len(r.partyTQOSReplies)); slot++ {
 		peer := r.partyPeerForSlotUnsafe(slot)
-		if peer.uniqueID == 0 {
+		if peer.uniqueID == 0 && peer.accID == 0 {
 			continue
 		}
 		for route := byte(1); route < byte(len(r.partyTQOSReplies[slot])); route++ {

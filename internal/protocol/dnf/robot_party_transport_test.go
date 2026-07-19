@@ -142,6 +142,24 @@ func TestPartyRobotPeerNegotiationDoesNotDependOnAccountOrder(t *testing.T) {
 	}
 }
 
+func TestPartyPeerForUDPAcceptsAccountOnlyRobotPeer(t *testing.T) {
+	vo := &RobotVo{}
+	remote := &net.UDPAddr{IP: net.IPv4(192, 168, 200, 131), Port: 45678}
+	vo.partyPeers[2] = partyIPPeer{
+		accID:     17000026,
+		slot:      2,
+		slotKnown: true,
+		outerIP:   remote.IP,
+		port:      uint16(remote.Port),
+	}
+
+	slot := byte(2)
+	peer, ok := vo.partyPeerForUDPUnsafe(remote, &slot)
+	if !ok || peer.accID != 17000026 || peer.slot != 2 {
+		t.Fatalf("peer=%+v ok=%t", peer, ok)
+	}
+}
+
 func TestPartyRobotPeerProbeRestartsAfterCooldown(t *testing.T) {
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
