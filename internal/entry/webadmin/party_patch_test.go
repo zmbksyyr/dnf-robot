@@ -192,6 +192,41 @@ func TestSetPartyCompatMemoryRejectsOccupiedCave(t *testing.T) {
 	}
 }
 
+func TestSetPartyCompatMemoryRecoversOwnedOrphanCave(t *testing.T) {
+	layout := testPartyCompatLayout()
+	mem := newPartyCompatMemory(t, layout)
+	cave, err := buildPartyCompatCave(layout, 17000000, 18000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.WriteAt(cave, layout.cave); err != nil {
+		t.Fatal(err)
+	}
+	enabled, start, end, err := inspectPartyCompatMemory(mem, layout)
+	if err != nil || enabled || start != 17000000 || end != 18000000 {
+		t.Fatalf("orphan inspection enabled=%t range=%d..%d err=%v", enabled, start, end, err)
+	}
+	changed, err := setPartyCompatMemory(mem, layout, 17000000, 18000000, false)
+	if err != nil || !changed {
+		t.Fatalf("orphan cleanup changed=%t err=%v", changed, err)
+	}
+	got, err := readMemory(mem, layout.cave, len(partyCompatZeroCave))
+	if err != nil || !allZero(got) {
+		t.Fatalf("orphan cave was not cleared: %x err=%v", got, err)
+	}
+	if _, err := mem.WriteAt(cave, layout.cave); err != nil {
+		t.Fatal(err)
+	}
+	changed, err = setPartyCompatMemory(mem, layout, 17000000, 18000000, true)
+	if err != nil || !changed {
+		t.Fatalf("orphan re-enable changed=%t err=%v", changed, err)
+	}
+	enabled, start, end, err = inspectPartyCompatMemory(mem, layout)
+	if err != nil || !enabled || start != 17000000 || end != 18000000 {
+		t.Fatalf("re-enabled=%t range=%d..%d err=%v", enabled, start, end, err)
+	}
+}
+
 func TestParseGamePIDForPort(t *testing.T) {
 	data := []byte(`LISTEN 0 128 *:10011 *:* users:(("df_game_r",pid=499,fd=27))
 LISTEN 0 128 :::8111 :::* users:(("robot",pid=12,fd=8))`)

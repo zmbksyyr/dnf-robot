@@ -71,6 +71,7 @@ type partyCompatStatus struct {
 	FailCount          int    `json:"fail_count,omitempty"`
 	NextRetrySec       int    `json:"next_retry_sec,omitempty"`
 	processUnavailable bool
+	orphanedCave       bool
 }
 
 type partyCompatRequest struct {
@@ -274,7 +275,7 @@ func (s *Server) reconcilePartyCompat() time.Duration {
 	}
 	status := inspectPartyCompat(s.cfg.RobotGamePort, cfg)
 	if !cfg.Enabled {
-		if status.Enabled {
+		if status.Enabled || status.orphanedCave {
 			if _, err := setPartyCompat(s.cfg.RobotGamePort, cfg, false); err != nil {
 				s.recordPartyCompatFailureLocked(err)
 				foundationlog.Robotf("[PARTY_COMPAT_SUPERVISOR] disable_failed pid=%d err=%v\n", status.PID, err)
@@ -409,6 +410,7 @@ func inspectPartyCompat(port int, cfg partyCompatConfig) partyCompatStatus {
 		return status
 	}
 	status.Enabled = enabled
+	status.orphanedCave = !enabled && start != 0 && end != 0
 	if enabled {
 		status.State = "on"
 		status.AccountStart = start
@@ -516,12 +518,14 @@ func inspectPartyCompatMemory(mem io.ReaderAt, layout partyCompatLayout) (bool, 
 	}
 	switch {
 	case bytes.Equal(site, partyCompatOriginalSite):
-		if !allZero(cave) {
-			if _, _, ok := parsePartyCompatCave(layout, cave); !ok {
-				return false, 0, 0, fmt.Errorf("party compatibility code cave contains unknown data")
-			}
+		if allZero(cave) {
+			return false, 0, 0, nil
 		}
-		return false, 0, 0, nil
+		start, end, ok := parsePartyCompatCave(layout, cave)
+		if !ok {
+			return false, 0, 0, fmt.Errorf("party compatibility code cave contains unknown data")
+		}
+		return false, start, end, nil
 	case bytes.Equal(site, patchedSite):
 		start, end, ok := parsePartyCompatCave(layout, cave)
 		if !ok {
@@ -555,7 +559,9 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 			return false, fmt.Errorf("unexpected bytes at party compatibility patch site: %x", siteBefore)
 		}
 		if bytes.Equal(siteBefore, partyCompatOriginalSite) && !allZero(caveBefore) {
-			return false, fmt.Errorf("party compatibility code cave is occupied")
+			if _, _, ok := parsePartyCompatCave(layout, caveBefore); !ok {
+				return false, fmt.Errorf("party compatibility code cave is occupied")
+			}
 		}
 		if bytes.Equal(siteBefore, patchedSite) {
 			if _, _, ok := parsePartyCompatCave(layout, caveBefore); !ok {
