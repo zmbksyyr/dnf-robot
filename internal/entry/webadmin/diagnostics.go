@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"robot/internal/capability/keypair"
+	"robot/internal/capability/robotconfig"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/dbstatus"
 	"runtime/debug"
@@ -273,12 +274,44 @@ func (b *diagnosticsBuilder) addPartySection() {
 		portDialCheck("relay service", "127.0.0.1", b.cfg.RelayPort),
 		udpListeningCheck("party route0 UDP", b.cfg.PartyRoute0Port),
 	}
-	if cfg.AccountStart > defaultPartyCompatAccountStart || cfg.AccountEnd < defaultPartyCompatAccountEnd {
-		checks = append(checks, diagnosticsCheck{Name: "party account range", Status: diagWarn, Message: "range may not cover the default robot account segment", Expected: fmt.Sprintf("%d..%d", defaultPartyCompatAccountStart, defaultPartyCompatAccountEnd), Observed: fmt.Sprintf("%d..%d", cfg.AccountStart, cfg.AccountEnd)})
-	} else {
-		checks = append(checks, diagnosticsCheck{Name: "party account range", Status: diagOK, Message: "range covers default robot account segment", Observed: fmt.Sprintf("%d..%d", cfg.AccountStart, cfg.AccountEnd)})
-	}
+	checks = append(checks, partyAccountRangeCheck(b.cfg.ConfigDir, status.AccountStart, status.AccountEnd))
 	b.addSection("Party", checks...)
+}
+
+func partyAccountRangeCheck(configDir string, patchStart, patchEnd uint32) diagnosticsCheck {
+	path := filepath.Join(configDir, "robot_config.ini")
+	rc, err := robotconfig.LoadFile(path)
+	if err != nil {
+		return diagnosticsCheck{
+			Name:     "party account range",
+			Status:   diagError,
+			Message:  "cannot load robot account range: " + err.Error(),
+			Expected: path,
+		}
+	}
+
+	observed := map[string]interface{}{
+		"robot_uid_start":     rc.RobotUIDStart,
+		"robot_uid_end":       rc.RobotUIDEnd,
+		"patch_start":         patchStart,
+		"patch_end_exclusive": patchEnd,
+	}
+	covered := uint64(patchStart) <= uint64(rc.RobotUIDStart) && uint64(patchEnd) > uint64(rc.RobotUIDEnd)
+	if !covered {
+		return diagnosticsCheck{
+			Name:     "party account range",
+			Status:   diagError,
+			Message:  "party patch range does not cover the configured robot account range",
+			Expected: map[string]interface{}{"patch_start_lte": rc.RobotUIDStart, "patch_end_exclusive_gt": rc.RobotUIDEnd},
+			Observed: observed,
+		}
+	}
+	return diagnosticsCheck{
+		Name:     "party account range",
+		Status:   diagOK,
+		Message:  "party patch range covers the configured robot account range",
+		Observed: observed,
+	}
 }
 
 func (b *diagnosticsBuilder) addSkillSection() {

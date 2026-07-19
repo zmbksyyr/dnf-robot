@@ -90,8 +90,8 @@ func TestCreateRoomRespectsTargetCapacity(t *testing.T) {
 func TestNormalizeRobotUIDSegment(t *testing.T) {
 	rc := RuntimeConfig{RobotUIDStart: 17000000}
 	Normalize(&rc)
-	if rc.RobotUIDStart != 17000000 || rc.RobotUIDEnd != 17999999 {
-		t.Fatalf("uid segment got %d-%d want 17000000-17999999", rc.RobotUIDStart, rc.RobotUIDEnd)
+	if rc.RobotUIDStart != 17000000 || rc.RobotUIDEnd != 17000999 {
+		t.Fatalf("uid segment got %d-%d want 17000000-17000999", rc.RobotUIDStart, rc.RobotUIDEnd)
 	}
 }
 

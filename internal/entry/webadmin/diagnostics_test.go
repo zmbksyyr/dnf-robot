@@ -68,3 +68,37 @@ func TestSkillCatalogCheckAcceptsPVFStateDataBase64(t *testing.T) {
 		t.Fatalf("status = %s message=%s, want ok", check.Status, check.Message)
 	}
 }
+
+func TestPartyAccountRangeCheckUsesConfiguredRobotRange(t *testing.T) {
+	dir := t.TempDir()
+	raw := "[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18000999\n"
+	if err := os.WriteFile(filepath.Join(dir, "robot_config.ini"), []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name       string
+		patchStart uint32
+		patchEnd   uint32
+		wantStatus string
+	}{
+		{name: "covered", patchStart: 18000000, patchEnd: 18001000, wantStatus: diagOK},
+		{name: "start too high", patchStart: 18000001, patchEnd: 18001000, wantStatus: diagError},
+		{name: "exclusive end too low", patchStart: 18000000, patchEnd: 18000999, wantStatus: diagError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check := partyAccountRangeCheck(dir, tt.patchStart, tt.patchEnd)
+			if check.Status != tt.wantStatus {
+				t.Fatalf("status = %s message=%s, want %s", check.Status, check.Message, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestPartyAccountRangeCheckReportsConfigLoadFailure(t *testing.T) {
+	check := partyAccountRangeCheck(t.TempDir(), 17000000, 17001000)
+	if check.Status != diagError {
+		t.Fatalf("status = %s message=%s, want error", check.Status, check.Message)
+	}
+}
