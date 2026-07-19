@@ -103,21 +103,6 @@ func (rs *RobotSvc) Shout(command shared.RuntimeShoutCommand) error {
 	return rs.enqueue(robotMsgEntry{typ: robotCommandShout, shout: command})
 }
 
-func (rs *RobotSvc) enqueue(entry robotMsgEntry) error {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	if !rs.running || rs.table == nil {
-		return ErrRuntimeStopped
-	}
-	if len(rs.msgQueue) >= maxRobotCommandQueue {
-		robotLogf("[RobotSvc] command_queue_full type=%s len=%d\n", entry.typ, maxRobotCommandQueue)
-		return ErrCommandQueueFull
-	}
-	rs.msgQueue = append(rs.msgQueue, entry)
-	rs.cond.Signal()
-	return nil
-}
-
 func (rs *RobotSvc) run() {
 	defer rs.worker.Done()
 	for {

@@ -149,10 +149,93 @@ func TestRobotServiceRejectsFullBoundedQueue(t *testing.T) {
 	service := &RobotSvc{running: true, table: &recordingDriver{}}
 	service.cond = sync.NewCond(&service.mu)
 	service.msgQueue = make([]robotMsgEntry, maxRobotCommandQueue)
+	for index := range service.msgQueue {
+		service.msgQueue[index] = robotMsgEntry{typ: robotCommandLogout, uid: 18000000 + index}
+	}
 	if err := service.Logout(17000001); !errors.Is(err, ErrCommandQueueFull) {
 		t.Fatalf("full queue error = %v, want %v", err, ErrCommandQueueFull)
 	}
 	if got := len(service.msgQueue); got != maxRobotCommandQueue {
 		t.Fatalf("queue length = %d, want %d", got, maxRobotCommandQueue)
 	}
+}
+
+func TestRobotServiceCoalescesQueuedMovement(t *testing.T) {
+	service := newQueuedRobotServiceForTest()
+	first := shared.RuntimeMoveCommand{UID: 17000001, X: 10}
+	latest := shared.RuntimeMoveCommand{UID: 17000001, X: 20}
+	if err := service.Move(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Move(latest); err != nil {
+		t.Fatal(err)
+	}
+	if len(service.msgQueue) != 1 || service.msgQueue[0].move != latest {
+		t.Fatalf("coalesced queue = %+v", service.msgQueue)
+	}
+}
+
+func TestRobotServiceKeepsMovementAfterLifecycleBoundary(t *testing.T) {
+	service := newQueuedRobotServiceForTest()
+	if err := service.Logout(17000001); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Move(shared.RuntimeMoveCommand{UID: 17000001, X: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Move(shared.RuntimeMoveCommand{UID: 17000001, X: 20}); err != nil {
+		t.Fatal(err)
+	}
+	if len(service.msgQueue) != 2 || service.msgQueue[0].typ != robotCommandLogout || service.msgQueue[1].move.X != 20 {
+		t.Fatalf("queue across logout = %+v", service.msgQueue)
+	}
+}
+
+func TestRobotServiceLogoutSupersedesQueuedUIDWork(t *testing.T) {
+	service := newQueuedRobotServiceForTest()
+	if err := service.Online([]shared.RuntimeOnlineUser{{UID: 17000001}, {UID: 17000002}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Move(shared.RuntimeMoveCommand{UID: 17000001}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Shout(shared.RuntimeShoutCommand{UID: 17000001, Message: "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Move(shared.RuntimeMoveCommand{UID: 17000002}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Logout(17000001); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(service.msgQueue) != 3 {
+		t.Fatalf("queue length = %d, want 3: %+v", len(service.msgQueue), service.msgQueue)
+	}
+	if users := service.msgQueue[0].online; len(users) != 1 || users[0].UID != 17000002 {
+		t.Fatalf("remaining online users = %+v", users)
+	}
+	if service.msgQueue[1].typ != robotCommandMove || service.msgQueue[1].move.UID != 17000002 || service.msgQueue[2].typ != robotCommandLogout {
+		t.Fatalf("remaining queue = %+v", service.msgQueue)
+	}
+}
+
+func TestRobotServiceLifecycleCommandEvictsStaleWork(t *testing.T) {
+	service := newQueuedRobotServiceForTest()
+	service.msgQueue = make([]robotMsgEntry, maxRobotCommandQueue)
+	for index := range service.msgQueue {
+		service.msgQueue[index] = robotMsgEntry{typ: robotCommandMove, move: shared.RuntimeMoveCommand{UID: 18000000 + index}}
+	}
+	if err := service.Logout(17000001); err != nil {
+		t.Fatal(err)
+	}
+	if len(service.msgQueue) != maxRobotCommandQueue || service.msgQueue[len(service.msgQueue)-1].typ != robotCommandLogout {
+		t.Fatalf("full queue after logout = len %d tail %+v", len(service.msgQueue), service.msgQueue[len(service.msgQueue)-1])
+	}
+}
+
+func newQueuedRobotServiceForTest() *RobotSvc {
+	service := &RobotSvc{running: true, table: &recordingDriver{}}
+	service.cond = sync.NewCond(&service.mu)
+	return service
 }
