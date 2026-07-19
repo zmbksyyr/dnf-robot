@@ -7,7 +7,9 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"robot/internal/foundation/config"
 )
@@ -64,6 +66,66 @@ func TestBuildKeypairStatusRejectsMismatchedKeys(t *testing.T) {
 	}
 	if !st.CanReleaseDefault {
 		t.Fatalf("expected default key release to be available")
+	}
+}
+
+func TestCurrentStatusRefreshesWhenKeyFilesChange(t *testing.T) {
+	invalidateStatusCache()
+	t.Cleanup(invalidateStatusCache)
+	cfg, gameDir := testKeypairConfig(t)
+	priv := testPrivateKeyPEM(t)
+	if err := os.WriteFile(filepath.Join(gameDir, "privatekey.pem"), priv, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if st := CurrentStatus(cfg); !st.GameValid {
+		t.Fatalf("initial status should be valid: %+v", st)
+	}
+
+	otherPriv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPub, err := marshalRSAPublicPEM(&otherPriv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPath := filepath.Join(gameDir, "publickey.pem")
+	if err := os.WriteFile(publicPath, otherPub, 0644); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Second)
+	if err := os.Chtimes(publicPath, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if st := CurrentStatus(cfg); st.GameValid || st.KeyState != "invalid" {
+		t.Fatalf("changed public key should invalidate cached status: %+v", st)
+	}
+}
+
+func TestCurrentStatusCoalescesConcurrentValidation(t *testing.T) {
+	invalidateStatusCache()
+	t.Cleanup(invalidateStatusCache)
+	cfg, gameDir := testKeypairConfig(t)
+	if err := os.WriteFile(filepath.Join(gameDir, "privatekey.pem"), testPrivateKeyPEM(t), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	const callers = 24
+	var wg sync.WaitGroup
+	statuses := make(chan KeypairStatus, callers)
+	wg.Add(callers)
+	for range callers {
+		go func() {
+			defer wg.Done()
+			statuses <- CurrentStatus(cfg)
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	for st := range statuses {
+		if !st.GameValid || st.Fingerprint == "" {
+			t.Fatalf("concurrent status should be valid: %+v", st)
+		}
 	}
 }
 

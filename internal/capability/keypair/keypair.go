@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/foundation/rsakey"
 )
@@ -25,6 +26,27 @@ var defaultFiles embed.FS
 type RuntimeKeySink func(*rsa.PrivateKey)
 
 var runtimeKeySink RuntimeKeySink
+
+type statusCacheKey struct {
+	configDir string
+	dfGameR   string
+	files     [4]keypairFileStamp
+	loaded    bool
+}
+
+type keypairFileStamp struct {
+	path    string
+	exists  bool
+	size    int64
+	modTime int64
+}
+
+var currentStatusCache struct {
+	mu     lockhub.Locker
+	valid  bool
+	key    statusCacheKey
+	status KeypairStatus
+}
 
 func SetRuntimeKeySink(sink RuntimeKeySink) {
 	runtimeKeySink = sink
@@ -65,6 +87,7 @@ func EnsureRuntimeKeypair(cfg *config.SysConfig) {
 		if err := copyKeypairToConfig(cfg.ConfigDir, gamePriv, gamePub, pair); err != nil {
 			foundationlog.Robotf("KEYPAIR_CONFIG_SYNC_FAILED err=%v\n", err)
 		}
+		invalidateStatusCache()
 		return
 	} else {
 		foundationlog.Robotf("KEYPAIR_GAME_INVALID private=%s public=%s err=%v action=blocked_until_release_default\n", gamePriv, gamePub, err)
@@ -72,6 +95,7 @@ func EnsureRuntimeKeypair(cfg *config.SysConfig) {
 }
 
 func ReleaseDefault(cfg *config.SysConfig) (KeypairStatus, error) {
+	invalidateStatusCache()
 	if err := writeDefaultKeypairToGameAndConfig(cfg); err != nil {
 		return BuildKeypairStatus(cfg), err
 	}
@@ -82,14 +106,58 @@ func ReleaseDefault(cfg *config.SysConfig) (KeypairStatus, error) {
 	publishRuntimeKey(GetRSAKey())
 	st := BuildKeypairStatus(cfg)
 	st.Loaded = GetRSAKey() != nil
+	invalidateStatusCache()
 	foundationlog.Robotf("KEYPAIR_DEFAULT_RELEASED game_private=%s game_public=%s fingerprint=%s\n", st.GamePrivate, st.GamePublic, st.Fingerprint)
 	return st, nil
 }
 
 func CurrentStatus(cfg *config.SysConfig) KeypairStatus {
+	currentStatusCache.mu.Lock()
+	defer currentStatusCache.mu.Unlock()
+	key := currentStatusCacheKey(cfg)
+	if currentStatusCache.valid && currentStatusCache.key == key {
+		return currentStatusCache.status
+	}
 	st := BuildKeypairStatus(cfg)
 	st.Loaded = GetRSAKey() != nil
+	currentStatusCache.key = currentStatusCacheKey(cfg)
+	currentStatusCache.status = st
+	currentStatusCache.valid = true
 	return st
+}
+
+func currentStatusCacheKey(cfg *config.SysConfig) statusCacheKey {
+	key := statusCacheKey{loaded: GetRSAKey() != nil}
+	if cfg == nil {
+		return key
+	}
+	key.configDir = cfg.ConfigDir
+	key.dfGameR = cfg.DFGameR
+	cfgPriv, cfgPub := keypairConfigPaths(cfg.ConfigDir)
+	gamePriv, gamePub := keypairGamePaths(cfg)
+	paths := [...]string{cfgPriv, cfgPub, gamePriv, gamePub}
+	for i, path := range paths {
+		key.files[i] = statKeypairFile(path)
+	}
+	return key
+}
+
+func statKeypairFile(path string) keypairFileStamp {
+	stamp := keypairFileStamp{path: path}
+	info, err := os.Stat(path)
+	if err != nil {
+		return stamp
+	}
+	stamp.exists = true
+	stamp.size = info.Size()
+	stamp.modTime = info.ModTime().UnixNano()
+	return stamp
+}
+
+func invalidateStatusCache() {
+	currentStatusCache.mu.Lock()
+	currentStatusCache.valid = false
+	currentStatusCache.mu.Unlock()
 }
 
 func BuildKeypairStatus(cfg *config.SysConfig) KeypairStatus {
@@ -401,11 +469,14 @@ func writeDefaultKeypairToGameAndConfig(cfg *config.SysConfig) error {
 }
 
 func InitPrivateKey(keyFile string) error {
-	return rsakey.InitPrivateKey(keyFile)
+	err := rsakey.InitPrivateKey(keyFile)
+	invalidateStatusCache()
+	return err
 }
 
 func ClosePrivateKey() {
 	rsakey.ClosePrivateKey()
+	invalidateStatusCache()
 }
 
 func GetRSAKey() *rsa.PrivateKey {
