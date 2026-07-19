@@ -241,3 +241,12 @@ func writeJSONFile(path string, v interface{}) error {
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0644)
 }
+
+func mergeStringMap(dst *map[string]string, defaults map[string]string) {
+	if *dst == nil {
+		*dst = map[string]string{}
+	}
+	for key, value := range defaults {
+		(*dst)[key] = value
+	}
+}

@@ -1,6 +1,9 @@
 package marketapp
 
-import "strings"
+import (
+	"math/rand"
+	"strings"
+)
 
 const defaultAuctionEquipmentEndurance = 10
 
@@ -254,4 +257,14 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 	if planned > 0 {
 		have[row.ItemID] = planned
 	}
+}
+
+func randRange(rng *rand.Rand, min, max int) int {
+	if min <= 0 {
+		min = 1
+	}
+	if max < min {
+		max = min
+	}
+	return min + rng.Intn(max-min+1)
 }
