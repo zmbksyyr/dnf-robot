@@ -1,6 +1,7 @@
 package robotaction
 
 import (
+	"errors"
 	"testing"
 
 	robotcap "robot/internal/capability/robot"
@@ -17,7 +18,8 @@ type capturedMoveStep struct {
 }
 
 type captureMoveEnv struct {
-	steps []capturedMoveStep
+	steps  []capturedMoveStep
+	failAt int
 }
 
 func (e *captureMoveEnv) DispatchMoveStep(info robotcap.Info, targetVillage, targetArea, targetX, targetY, _, _, _ int, _ robotconfig.RuntimeConfig) error {
@@ -28,6 +30,9 @@ func (e *captureMoveEnv) DispatchMoveStep(info robotcap.Info, targetVillage, tar
 		targetX:       targetX,
 		targetY:       targetY,
 	})
+	if e.failAt > 0 && len(e.steps) == e.failAt {
+		return errors.New("move send failed")
+	}
 	return nil
 }
 
@@ -55,7 +60,9 @@ func TestAutoMovePreservesSourceWhenFollowingAcrossAreas(t *testing.T) {
 	}
 	maps := []shared.MapCatalogItem{{Village: 3, Area: 4, XMin: 400, XMax: 600, YMin: 150, YMax: 250, Use: true}}
 
-	service.AutoMove(source, rc, maps, &target)
+	if err := service.AutoMove(source, rc, maps, &target); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(env.steps) != 2 {
 		t.Fatalf("move steps got %d want 2", len(env.steps))
@@ -67,5 +74,18 @@ func TestAutoMovePreservesSourceWhenFollowingAcrossAreas(t *testing.T) {
 		if step.targetVillage != target.Village || step.targetArea != target.Area {
 			t.Fatalf("target area got %d/%d want %d/%d", step.targetVillage, step.targetArea, target.Village, target.Area)
 		}
+	}
+}
+
+func TestAutoMoveStopsAfterDispatchFailure(t *testing.T) {
+	env := &captureMoveEnv{failAt: 2}
+	service := MoveService{Env: env}
+	rc := robotconfig.RuntimeConfig{MoveSteps: 4, MoveSpeedMin: 100, MoveSpeedMax: 100}
+	err := service.AutoMove(robotcap.Info{UID: 101, X: 10, Y: 10}, rc, nil, nil)
+	if err == nil || err.Error() != "move send failed" {
+		t.Fatalf("AutoMove error = %v", err)
+	}
+	if len(env.steps) != 2 {
+		t.Fatalf("move steps after failure = %d, want 2", len(env.steps))
 	}
 }

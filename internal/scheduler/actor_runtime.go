@@ -114,10 +114,15 @@ func (r *RobotRuntime) AutoMove(uid int) robotcap.ActionResult {
 		maps := r.manager.loadMapCatalog()
 		target, hasTarget := r.manager.currentFollowTarget(rc, maps)
 		info := robotcap.Info{UID: st.UID, CID: st.CID, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y}
+		var err error
 		if hasTarget && target.UID != st.UID {
-			r.manager.moveService().AutoMove(info, rc, maps, &target)
+			err = r.manager.moveService().AutoMove(info, rc, maps, &target)
 		} else {
-			r.manager.moveService().AutoMove(info, rc, maps, nil)
+			err = r.manager.moveService().AutoMove(info, rc, maps, nil)
+		}
+		if err != nil {
+			r.manager.addAutoMove(0, 1)
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()}
 		}
 		r.manager.addAutoMove(1, 0)
 		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: robotcap.ActionStateMoved}
@@ -135,7 +140,10 @@ func (r *RobotRuntime) AutoShout(uid int, world bool, msg string) robotcap.Actio
 		if msg == "" && len(tpl.Messages) > 0 {
 			msg = robottemplate.SafeShoutMessage(tpl.Messages[0])
 		}
-		r.manager.shoutService().AutoShout(uid, msg, world)
+		if err := r.manager.shoutService().AutoShout(uid, msg, world); err != nil {
+			r.manager.addAutoShoutChannel(world, 0, 1)
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()}
+		}
 		r.manager.addAutoShoutChannel(world, 1, 0)
 		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: true, State: robotcap.ActionStateSent}
 	})

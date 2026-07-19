@@ -104,7 +104,7 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 	return result, nil
 }
 
-func (s MoveService) AutoMove(info robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem, follow *FollowTarget) {
+func (s MoveService) AutoMove(info robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem, follow *FollowTarget) error {
 	targetVillage, targetArea := info.Village, info.Area
 	var targetX, targetY int
 	if follow != nil {
@@ -119,15 +119,18 @@ func (s MoveService) AutoMove(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 	steps := s.Env.RandBetween(mathx.MaxInt(2, rc.MoveSteps-1), mathx.MinInt(8, rc.MoveSteps+2))
 	for step := 1; step <= steps; step++ {
 		if st, ok := s.Env.RuntimeStatus(info.UID); ok && (st.RobotType == 2 || st.RobotType == 3 || st.StateName != robotcap.RuntimeStateRunning) {
-			return
+			return nil
 		}
 		speed := s.Env.RandBetween(rc.MoveSpeedMin, rc.MoveSpeedMax)
-		_ = s.Env.DispatchMoveStep(info, targetVillage, targetArea, targetX, targetY, step, steps, speed, rc)
+		if err := s.Env.DispatchMoveStep(info, targetVillage, targetArea, targetX, targetY, step, steps, speed, rc); err != nil {
+			return err
+		}
 		if step < steps && rc.MoveStepDelayMS > 0 {
 			delay := s.Env.RandBetween(mathx.MaxInt(300, rc.MoveStepDelayMS/2), mathx.MaxInt(300, rc.MoveStepDelayMS*3/2))
 			time.Sleep(time.Duration(delay) * time.Millisecond)
 		}
 	}
+	return nil
 }
 
 func (s MoveService) followTarget(info robotcap.Info, target FollowTarget, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem) (int, int) {

@@ -74,16 +74,15 @@ func (s ShoutService) ShoutOne(req robotcap.CommandRequest, world bool) (robotca
 	return result, nil
 }
 
-func (s ShoutService) AutoShout(uid int, msg string, world bool) {
+func (s ShoutService) AutoShout(uid int, msg string, world bool) error {
 	env := s.Env
 	msg = robottemplate.SafeShoutMessage(msg)
 	rc := env.Config()
 	msgType, channel, _ := robottemplate.PrepareShout(msg, world)
 	if !rc.ShoutSendEnabled {
-		_ = env.AppendShout(uid, channel, msgType, msg)
-		return
+		return env.AppendShout(uid, channel, msgType, msg)
 	}
-	_ = s.Send("auto", uid, env.LookupRobotName(uid), env.Templates(), msg, world, rc)
+	return s.Send("auto", uid, env.LookupRobotName(uid), env.Templates(), msg, world, rc)
 }
 
 func (s ShoutService) Send(source string, uid int, senderName string, _ robottemplate.ShoutTemplates, msg string, world bool, rc robotconfig.RuntimeConfig) error {
