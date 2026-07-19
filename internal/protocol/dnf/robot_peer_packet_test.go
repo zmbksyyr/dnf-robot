@@ -435,6 +435,18 @@ func TestPartyIPInfoPacketSupportsEncryptedAndPlainBodies(t *testing.T) {
 	}
 }
 
+func TestPartyIPInfoPacketSupportsTwentyFourByteMembers(t *testing.T) {
+	body := make([]byte, 49)
+	body[0] = 2
+	putPartyPeer(body[1:23], 0x1111, net.IPv4(192, 168, 200, 1), 5063, 18000000, 1, 1472)
+	putPartyPeer(body[25:47], 0x2222, net.IPv4(192, 168, 200, 131), 45678, 17000001, 1, 1472)
+
+	self, peers, source, err := selectPartyIPInfoPacket(newPartyTestCipher(t), makePartyRecvPacket(11, body), false, 17000001)
+	if err != nil || source != recvBodySourcePlain || self.accID != 17000001 || len(peers) != 1 || peers[0].accID != 18000000 {
+		t.Fatalf("self=%+v peers=%+v source=%s err=%v", self, peers, source, err)
+	}
+}
+
 func TestPartyIPInfoRejectsSnapshotWithoutSelf(t *testing.T) {
 	body := make([]byte, 23)
 	body[0] = 1

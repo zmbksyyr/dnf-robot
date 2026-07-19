@@ -99,11 +99,11 @@ func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
 	if count > 4 {
 		return nil, false
 	}
-	const entrySize = 22
-	expectedSize := 1 + count*entrySize
-	if len(packet) < expectedSize || len(packet)-expectedSize >= 8 {
+	entrySize, ok := partyIPInfoEntrySize(len(packet), count)
+	if !ok {
 		return nil, false
 	}
+	expectedSize := 1 + count*entrySize
 	for _, padding := range packet[expectedSize:] {
 		if padding != 0 {
 			return nil, false
@@ -135,6 +135,23 @@ func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
 		offset += entrySize
 	}
 	return peers, true
+}
+
+func partyIPInfoEntrySize(packetSize, count int) (int, bool) {
+	if count == 0 {
+		if packetSize < 1 || packetSize-1 >= 8 {
+			return 0, false
+		}
+		return 22, true
+	}
+	for _, entrySize := range []int{24, 22} {
+		expectedSize := 1 + count*entrySize
+		if packetSize < expectedSize || packetSize-expectedSize >= 8 {
+			continue
+		}
+		return entrySize, true
+	}
+	return 0, false
 }
 
 func parsePartyIPInfoSnapshot(packet []byte, selfAccID uint32) (partyIPPeer, []partyIPPeer, bool) {
