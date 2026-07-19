@@ -2,6 +2,7 @@ package dnf
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
 	"sort"
 	"time"
@@ -282,6 +283,7 @@ const partyPendingTimeout = 15 * time.Second
 
 func (r *RobotVo) partyActiveUnsafe() bool {
 	if r.partyPendingPeer != 0 && (r.partyPendingUntil.IsZero() || !time.Now().Before(r.partyPendingUntil)) {
+		fmt.Printf("[PARTY_SNAPSHOT_TIMEOUT] uid=%d peer_unique_id=%d wait=%s\n", r.UID, r.partyPendingPeer, partyPendingTimeout)
 		r.clearPartyPendingUnsafe()
 	}
 	for _, peer := range r.partyPeers {

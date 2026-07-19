@@ -18,6 +18,7 @@ import (
 const (
 	partyDungeonActivityTimeout = 15 * time.Second
 	partySkillRecoveryGrace     = 2 * time.Second
+	partySkillRecoveryRetry     = 750 * time.Millisecond
 )
 
 func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {
@@ -107,7 +108,13 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	if !r.partySkillRecoverAt.IsZero() && !now.Before(r.partySkillRecoverAt) {
 		if r.sendPartySkillStateUnsafe(conn, now, 0, nil, "RECOVER") {
 			r.partySkillRecoverAt = time.Time{}
+			if !r.partySkillNextAt.IsZero() && !now.Before(r.partySkillNextAt) {
+				r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+			}
+		} else {
+			r.partySkillRecoverAt = now.Add(partySkillRecoveryRetry)
 		}
+		return
 	}
 	idle := now.Sub(r.partyDungeonLastAt)
 	if idle > partyDungeonActivityTimeout {
@@ -118,6 +125,9 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		if idle > partyDungeonActivityTimeout+partySkillRecoveryGrace {
 			r.partySkillRecoverAt = time.Time{}
 		}
+		return
+	}
+	if !r.partySkillRecoverAt.IsZero() {
 		return
 	}
 	if r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
@@ -153,16 +163,17 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 	}
 	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
 	route := r.partyRouteForPeerUnsafe(peer.slot)
-	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, true)
-	if !ok {
+	if peer.slot >= byte(len(r.partyTQOSReliableSeq)) || route >= byte(len(r.partyTQOSReliableSeq[0])) {
 		return false
 	}
+	sequence := r.partyTQOSReliableSeq[peer.slot][route]
 	payload := buildPartyReliablePacket(sequence, r.partySelfPeer.slot, r.partyDungeonFlags, [][]byte{body})
 	destination, err := r.sendPartyTransportUnsafe(conn, peer, route, payload)
 	if err != nil {
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d state=%d data=%x route=%d destination=%s err=%v\n", reason, r.UID, state, stateData, route, destination, err)
 		return false
 	}
+	r.partyTQOSReliableSeq[peer.slot][route]++
 	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s] uid=%d state=%d data=%x sequence=%d route=%d destination=%s\n", reason, r.UID, state, stateData, sequence, route, destination)
 	return true
 }

@@ -3,6 +3,7 @@ package dnf
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -43,6 +44,28 @@ func TestPartyRobotPeersNegotiateOverDynamicUDP(t *testing.T) {
 	}
 	if vo.partyTQOSSeq[2][1] != 1 {
 		t.Fatalf("probe sequence = %d", vo.partyTQOSSeq[2][1])
+	}
+}
+
+func TestPartyUDPReadErrorsUseBoundedRetryBackoff(t *testing.T) {
+	if !partyUDPReadErrorTerminal(net.ErrClosed) {
+		t.Fatal("closed UDP socket was not terminal")
+	}
+	if partyUDPReadErrorTerminal(errors.New("transient UDP receive failure")) {
+		t.Fatal("transient UDP error was treated as terminal")
+	}
+
+	want := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 40 * time.Millisecond, 80 * time.Millisecond}
+	backoff := time.Duration(0)
+	for i, delay := range want {
+		backoff = nextPartyUDPReadBackoff(backoff)
+		if backoff != delay {
+			t.Fatalf("backoff[%d] = %s, want %s", i, backoff, delay)
+		}
+	}
+	backoff = partyUDPReadBackoffMax
+	if got := nextPartyUDPReadBackoff(backoff); got != partyUDPReadBackoffMax {
+		t.Fatalf("max backoff = %s, want %s", got, partyUDPReadBackoffMax)
 	}
 }
 
@@ -238,7 +261,7 @@ func TestPartyRouteFallsBackWhenCachedTransportIsUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer udpConn.Close()
-	vo := &RobotVo{partyUDPConn: udpConn}
+	vo := &RobotVo{partyUDPConn: udpConn, partyUDPRunning: true}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
 	vo.partyPeerRoute[0] = 2
 	vo.partyPeerRouteAt[0] = time.Now()
@@ -407,7 +430,7 @@ func TestPartyRelayWriteFailureDetachesAndFallsBackToUDP(t *testing.T) {
 	}
 	defer udpConn.Close()
 
-	vo := &RobotVo{UID: 17000001, State: StateRun, partyRelayConn: robotConn, partyUDPConn: udpConn}
+	vo := &RobotVo{UID: 17000001, State: StateRun, partyRelayConn: robotConn, partyUDPConn: udpConn, partyUDPRunning: true}
 	peer := partyIPPeer{uniqueID: 7, accID: 18000000, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
 	vo.partyPeers[0] = peer
 	vo.partyPeerRoute[0] = 2
@@ -436,6 +459,26 @@ func TestPartyRelayWriteFailureDetachesAndFallsBackToUDP(t *testing.T) {
 			t.Fatal("relay write failure left a stale connection")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestPartyRouteFallsBackToRelayWhenUDPLoopStopped(t *testing.T) {
+	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpConn.Close()
+	relay, peerConn := net.Pipe()
+	defer relay.Close()
+	defer peerConn.Close()
+
+	vo := &RobotVo{partyUDPConn: udpConn, partyRelayConn: relay}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
+	vo.partyPeerRoute[0] = 1
+	vo.partyPeerRouteAt[0] = time.Now()
+
+	if route := vo.partyRouteForPeerUnsafe(0); route != 2 {
+		t.Fatalf("route with stopped UDP loop = %d, want relay", route)
 	}
 }
 

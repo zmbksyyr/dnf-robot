@@ -257,6 +257,36 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	}
 }
 
+func TestPartySkillRecoveryFailureBacksOffAndBlocksCast(t *testing.T) {
+	now := time.Unix(300, 0)
+	vo := &RobotVo{
+		UID:                  17000001,
+		partySelfPeer:        partyIPPeer{uniqueID: 0x2f3e, slot: 1, slotKnown: true},
+		partyDungeonLastAt:   now,
+		partySkillRecoverAt:  now.Add(-time.Millisecond),
+		partySkillNextAt:     now.Add(-time.Millisecond),
+		partySkillLoaded:     true,
+		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
+
+	vo.flushPartyDungeonSkillUnsafe(nil, now)
+	if vo.partySkillRecoverAt != now.Add(partySkillRecoveryRetry) {
+		t.Fatalf("recovery retry = %s, want %s", vo.partySkillRecoverAt, now.Add(partySkillRecoveryRetry))
+	}
+	if vo.partyTQOSReliableSeq[0][1] != 0 {
+		t.Fatalf("failed recovery consumed reliable sequence: %d", vo.partyTQOSReliableSeq[0][1])
+	}
+	if !vo.partySkillNextAt.Before(now) {
+		t.Fatalf("failed recovery unexpectedly rescheduled cast: %s", vo.partySkillNextAt)
+	}
+
+	vo.flushPartyDungeonSkillUnsafe(nil, now.Add(100*time.Millisecond))
+	if vo.partyTQOSReliableSeq[0][1] != 0 || vo.partySkillRecoverAt != now.Add(partySkillRecoveryRetry) {
+		t.Fatalf("recovery backoff was ignored: sequence=%d retry=%s", vo.partyTQOSReliableSeq[0][1], vo.partySkillRecoverAt)
+	}
+}
+
 func flushQueuedDungeonFollow(t *testing.T, vo *RobotVo, frame []byte, peer partyIPPeer) []byte {
 	t.Helper()
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -397,5 +427,47 @@ func TestPartyDungeonSkillSurvivesRandomDelayOnRelay(t *testing.T) {
 	assertPartyRelayPayload(t, <-skillPacket, vo.UID, vo.partyPeers[0].accID)
 	if vo.partySkillRecoverAt.IsZero() {
 		t.Fatal("skill recovery was not scheduled")
+	}
+}
+
+func TestPartyRelayOnlyLoopFlushesDungeonSkill(t *testing.T) {
+	relay, peerConn := net.Pipe()
+	defer peerConn.Close()
+	now := time.Now()
+	vo := &RobotVo{
+		UID:                  17000001,
+		State:                StateRun,
+		partyRelayConn:       relay,
+		partySelfPeer:        partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partyDungeonLastAt:   now,
+		partySkillNextAt:     now.Add(-time.Millisecond),
+		partySkillLoaded:     true,
+		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
+
+	done := make(chan struct{})
+	go func() {
+		vo.partyRelayLoop(relay, vo.UID)
+		close(done)
+	}()
+	_ = peerConn.SetReadDeadline(time.Now().Add(time.Second))
+	packet := readPartyRelayPacket(t, peerConn)
+	assertPartyRelayPayload(t, packet, vo.UID, vo.partyPeers[0].accID)
+	vo.mu.Lock()
+	recoveryScheduled := !vo.partySkillRecoverAt.IsZero()
+	vo.mu.Unlock()
+	if !recoveryScheduled {
+		t.Fatal("relay-only flush did not schedule skill recovery")
+	}
+
+	vo.mu.Lock()
+	vo.closePartyRelayUnsafe()
+	vo.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("relay loop did not stop")
 	}
 }

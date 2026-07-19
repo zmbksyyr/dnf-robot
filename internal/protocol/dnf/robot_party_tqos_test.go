@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestParsePartyTQOSCapturedPackets(t *testing.T) {
@@ -96,6 +97,99 @@ func TestRobotPartyTQOSRetransmitsPendingReliableReply(t *testing.T) {
 	third := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 1, codec), 1, peer)
 	if len(third) != 1 || !bytes.Equal(third[0], first[0]) || vo.partyTQOSReliableSeq[peer.slot][1] != 1 {
 		t.Fatalf("post-ACK retry changed reply=%x first=%x next=%d", third, first, vo.partyTQOSReliableSeq[peer.slot][1])
+	}
+}
+
+func TestRobotPartyTQOSPeriodicallyRetransmitsOriginalState2UntilACK(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+
+	codec := partyTQOSCodec{key: 0x7e}
+	vo := &RobotVo{UID: 17000001}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 2, accID: 17000001, slot: 1, slotKnown: true}
+	remote := receiver.LocalAddr().(*net.UDPAddr)
+	peer := partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+	vo.partyPeers[0] = peer
+
+	replies := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(7, peer.slot, 0, 1, 1, codec), 1, peer)
+	if len(replies) != 1 {
+		t.Fatalf("state1 replies = %x", replies)
+	}
+	original := append([]byte(nil), replies[0]...)
+	now := time.Unix(400, 0)
+	vo.partyTQOSReplies[peer.slot][1].nextRetry = now
+	vo.flushPartyTQOSRepliesUnsafe(sender, now)
+
+	buf := make([]byte, 128)
+	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
+	n, _, err := receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(buf[:n], original) {
+		t.Fatalf("periodic retry = %x, want original %x", buf[:n], original)
+	}
+	if vo.partyTQOSReliableSeq[peer.slot][1] != 1 || vo.partyTQOSReplies[peer.slot][1].retries != 1 {
+		t.Fatalf("retry state sequence=%d retries=%d", vo.partyTQOSReliableSeq[peer.slot][1], vo.partyTQOSReplies[peer.slot][1].retries)
+	}
+
+	sequence := binary.LittleEndian.Uint32(original[1:5])
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(peer.slot, sequence), 1, peer)
+	if !vo.partyTQOSReplies[peer.slot][1].acknowledged {
+		t.Fatal("matching ACK did not stop the pending state2")
+	}
+	vo.flushPartyTQOSRepliesUnsafe(sender, now.Add(2*partyTQOSRetryInterval))
+	_ = receiver.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, _, err := receiver.ReadFromUDP(buf); err == nil {
+		t.Fatal("acknowledged state2 was retransmitted")
+	}
+}
+
+func TestRobotPartyTQOSPeriodicState2RetryIsBounded(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+
+	vo := &RobotVo{UID: 17000001}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 2, accID: 17000001, slot: 1, slotKnown: true}
+	remote := receiver.LocalAddr().(*net.UDPAddr)
+	peer := partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+	vo.partyPeers[0] = peer
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(7, peer.slot, 0, 1, 1, partyTQOSCodec{key: 0x7e}), 1, peer)
+
+	buf := make([]byte, 128)
+	base := time.Unix(500, 0)
+	for retry := 0; retry < partyTQOSMaxRetries; retry++ {
+		vo.partyTQOSReplies[peer.slot][1].nextRetry = base.Add(time.Duration(retry) * partyTQOSRetryInterval)
+		vo.flushPartyTQOSRepliesUnsafe(sender, base.Add(time.Duration(retry)*partyTQOSRetryInterval))
+		_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
+		if _, _, err := receiver.ReadFromUDP(buf); err != nil {
+			t.Fatalf("retry %d: %v", retry+1, err)
+		}
+	}
+	pending := &vo.partyTQOSReplies[peer.slot][1]
+	vo.flushPartyTQOSRepliesUnsafe(sender, pending.nextRetry)
+	if !pending.exhausted || pending.retries != partyTQOSMaxRetries || !pending.nextRetry.IsZero() {
+		t.Fatalf("bounded retry state = %+v", *pending)
+	}
+	_ = receiver.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, _, err := receiver.ReadFromUDP(buf); err == nil {
+		t.Fatal("exhausted state2 was retransmitted")
 	}
 }
 

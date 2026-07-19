@@ -3,6 +3,7 @@ package dnf
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -15,6 +16,12 @@ import (
 const (
 	partyRelayWriteTimeout   = 500 * time.Millisecond
 	partyRelayWriteQueueSize = 64
+	partyRelayOnlyFlush      = 100 * time.Millisecond
+	partyTQOSRetryInterval   = time.Second
+	partyTQOSMaxRetries      = 6
+	partyUDPReadErrorLogGap  = 5 * time.Second
+	partyUDPReadBackoffMin   = 10 * time.Millisecond
+	partyUDPReadBackoffMax   = time.Second
 )
 
 const partyRobotProbeCooldown = 30 * time.Second
@@ -272,11 +279,28 @@ func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 	pending := make([]byte, 0, 4096)
 	nextHeartbeat := time.Now().Add(10 * time.Second)
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		readWait := 2 * time.Second
+		r.mu.Lock()
+		relayOnly := r.State == StateRun && r.partyRelayConn == conn && r.partyActiveUnsafe() && (r.partyUDPConn == nil || !r.partyUDPRunning)
+		r.mu.Unlock()
+		if relayOnly {
+			readWait = partyRelayOnlyFlush
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(readWait))
 		n, err := conn.Read(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				now := time.Now()
+				r.mu.Lock()
+				stopped := r.State == StateStop || r.partyRelayConn != conn
+				if !stopped && r.partyActiveUnsafe() && (r.partyUDPConn == nil || !r.partyUDPRunning) {
+					r.flushPartyRuntimeUnsafe(nil, now)
+				}
+				r.mu.Unlock()
+				if stopped {
+					_ = conn.Close()
+					return
+				}
 				if now.After(nextHeartbeat) {
 					if err := r.enqueuePartyRelayPacket(conn, buildPartyRelayPacket(1, uid, uid, nil)); err != nil {
 						unexpected := r.detachPartyRelayConn(conn)
@@ -287,13 +311,6 @@ func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 						return
 					}
 					nextHeartbeat = now.Add(10 * time.Second)
-				}
-				r.mu.Lock()
-				stopped := r.State == StateStop || r.partyRelayConn != conn
-				r.mu.Unlock()
-				if stopped {
-					_ = conn.Close()
-					return
 				}
 				continue
 			}
@@ -407,6 +424,8 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 	buf := make([]byte, 4096)
 	var nextProbe time.Time
 	var nextFlush time.Time
+	var readErrorLogAt time.Time
+	var readErrorBackoff time.Duration
 	for {
 		now := time.Now()
 		r.mu.Lock()
@@ -420,8 +439,7 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 					nextProbe = now.Add(time.Second)
 				}
 				if nextFlush.IsZero() || !now.Before(nextFlush) {
-					r.flushPartyDungeonFollowUnsafe(conn, now)
-					r.flushPartyDungeonSkillUnsafe(conn, now)
+					r.flushPartyRuntimeUnsafe(conn, now)
 					nextFlush = now.Add(100 * time.Millisecond)
 				}
 			}
@@ -448,12 +466,25 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 				continue
 			}
 			r.mu.Lock()
-			if r.partyUDPConn == conn && r.partyUDPGeneration == generation {
-				r.partyUDPRunning = false
+			active := r.State != StateStop && r.partyUDPConn == conn && r.partyUDPGeneration == generation && r.partyActiveUnsafe()
+			if !active || partyUDPReadErrorTerminal(err) {
+				if r.partyUDPConn == conn && r.partyUDPGeneration == generation {
+					r.partyUDPRunning = false
+				}
+				r.mu.Unlock()
+				return
+			}
+			now := time.Now()
+			if readErrorLogAt.IsZero() || !now.Before(readErrorLogAt) {
+				fmt.Printf("[PARTY_UDP_READ_ERROR] uid=%d err=%v\n", uid, err)
+				readErrorLogAt = now.Add(partyUDPReadErrorLogGap)
 			}
 			r.mu.Unlock()
-			return
+			readErrorBackoff = nextPartyUDPReadBackoff(readErrorBackoff)
+			time.Sleep(readErrorBackoff)
+			continue
 		}
+		readErrorBackoff = 0
 		if n <= 0 || remote == nil {
 			continue
 		}
@@ -463,6 +494,54 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 			for _, ack := range acks {
 				writePartyUDPReply(conn, ack, remote, uid)
 			}
+		}
+	}
+}
+
+func partyUDPReadErrorTerminal(err error) bool {
+	return errors.Is(err, net.ErrClosed)
+}
+
+func nextPartyUDPReadBackoff(current time.Duration) time.Duration {
+	if current < partyUDPReadBackoffMin {
+		return partyUDPReadBackoffMin
+	}
+	if current >= partyUDPReadBackoffMax/2 {
+		return partyUDPReadBackoffMax
+	}
+	return current * 2
+}
+
+func (r *RobotVo) flushPartyRuntimeUnsafe(conn *net.UDPConn, now time.Time) {
+	r.flushPartyTQOSRepliesUnsafe(conn, now)
+	r.flushPartyDungeonFollowUnsafe(conn, now)
+	r.flushPartyDungeonSkillUnsafe(conn, now)
+}
+
+func (r *RobotVo) flushPartyTQOSRepliesUnsafe(conn *net.UDPConn, now time.Time) {
+	for slot := byte(0); slot < byte(len(r.partyTQOSReplies)); slot++ {
+		peer := r.partyPeerForSlotUnsafe(slot)
+		if peer.uniqueID == 0 {
+			continue
+		}
+		for route := byte(1); route < byte(len(r.partyTQOSReplies[slot])); route++ {
+			pending := &r.partyTQOSReplies[slot][route]
+			if len(pending.packet) == 0 || pending.acknowledged || pending.exhausted || pending.nextRetry.IsZero() || now.Before(pending.nextRetry) {
+				continue
+			}
+			if pending.retries >= partyTQOSMaxRetries {
+				pending.exhausted = true
+				pending.nextRetry = time.Time{}
+				sequence := binary.LittleEndian.Uint32(pending.packet[1:5])
+				fmt.Printf("[PARTY_TQOS_RETRY_EXHAUSTED] uid=%d peer=%d slot=%d route=%d sequence=%d retries=%d\n", r.UID, peer.accID, slot, route, sequence, pending.retries)
+				continue
+			}
+			if _, err := r.sendPartyTransportUnsafe(conn, peer, route, pending.packet); err != nil {
+				pending.nextRetry = now.Add(partyTQOSRetryInterval)
+				continue
+			}
+			pending.retries++
+			pending.nextRetry = now.Add(partyTQOSRetryInterval)
 		}
 	}
 }
@@ -626,11 +705,17 @@ func (r *RobotVo) partyTQOSReplyAcknowledgedUnsafe(frame []byte, route byte, pee
 	if len(frame) != 8 || frame[0] != 0 || frame[1] != peer.slot || peer.slot >= byte(len(r.partyTQOSReplies)) || route >= byte(len(r.partyTQOSReplies[0])) {
 		return false
 	}
-	packet := r.partyTQOSReplies[peer.slot][route].packet
+	pending := &r.partyTQOSReplies[peer.slot][route]
+	packet := pending.packet
 	if len(packet) < 5 {
 		return false
 	}
-	return binary.LittleEndian.Uint32(frame[2:6]) == binary.LittleEndian.Uint32(packet[1:5])+1
+	if binary.LittleEndian.Uint32(frame[2:6]) != binary.LittleEndian.Uint32(packet[1:5])+1 {
+		return false
+	}
+	pending.acknowledged = true
+	pending.nextRetry = time.Time{}
+	return true
 }
 
 func (r *RobotVo) markPartyRobotPeerReadyUnsafe(peer partyIPPeer, reason string) {
@@ -655,6 +740,7 @@ func (r *RobotVo) partyTQOSReliableReplyUnsafe(peerSlot, route byte, request par
 	}
 	packet := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, request.flags, 2, route, request.codec)
 	pending.packet = packet
+	pending.nextRetry = time.Now().Add(partyTQOSRetryInterval)
 	return packet, true
 }
 
@@ -733,7 +819,7 @@ func (r *RobotVo) partyRouteAvailableUnsafe(peer partyIPPeer, route byte) bool {
 	switch route {
 	case 1:
 		_, ok := partyPeerUDPAddr(peer)
-		return ok && r.partyUDPConn != nil
+		return ok && r.partyUDPConn != nil && r.partyUDPRunning
 	case 2:
 		return peer.accID != 0 && r.partyRelayConn != nil
 	default:
@@ -986,7 +1072,11 @@ type partyTQOSPacket struct {
 }
 
 type partyTQOSReliableReply struct {
-	packet []byte
+	packet       []byte
+	nextRetry    time.Time
+	retries      uint8
+	acknowledged bool
+	exhausted    bool
 }
 
 type partyTQOSReceiveWindow struct {
