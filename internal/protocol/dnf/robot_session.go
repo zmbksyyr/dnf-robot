@@ -500,12 +500,12 @@ func (r *RobotVo) connect(dial robotDialFunc) {
 	go r.readLoop(conn)
 }
 
-func dialRobot(gameIP string, gamePort int, localIP string) (net.Conn, error) {
+func dialRobot(gameIP string, gamePort int, _ string) (net.Conn, error) {
 	addr := net.JoinHostPort(gameIP, strconv.Itoa(gamePort))
 	var d net.Dialer
 	d.Timeout = 10 * time.Second
-	if localIPAvailable(localIP) {
-		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(localIP, "0"))
+	if localIPAvailable(gameIP) {
+		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(gameIP, "0"))
 		if err == nil {
 			d.LocalAddr = tcpAddr
 		}
