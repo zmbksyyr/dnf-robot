@@ -96,7 +96,10 @@ func TestLedgerBlockedLeaseRetainsOwnershipForHealthRetry(t *testing.T) {
 		t.Fatal("lease uid 101")
 	}
 
-	if !ledger.BlockLeaseIfCurrent(101, actor) || !ledger.BlockLeaseIfCurrent(101, actor) {
+	if !ledger.BlockLeaseIfCurrent(101, actor) {
+		t.Fatal("block current lease")
+	}
+	if !ledger.BlockLeaseIfCurrent(101, actor) {
 		t.Fatal("blocking the current lease should be idempotent")
 	}
 	if got := ledger.ActorForUID(101); got != actor {
