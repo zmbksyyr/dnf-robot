@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"context"
 	"database/sql"
 	"sync"
 	"sync/atomic"
@@ -10,24 +11,25 @@ import (
 
 func TestLoginStaticRepairCacheCachesSuccessPerDatabaseAndUID(t *testing.T) {
 	var cache loginStaticRepairCache
+	ctx := context.Background()
 	db1 := &sql.DB{}
 	db2 := &sql.DB{}
 	calls := 0
-	repair := func() bool {
+	repair := func(context.Context) bool {
 		calls++
 		return true
 	}
 
-	if !cache.ensure(db1, 101, repair) {
+	if !cache.ensure(ctx, db1, 101, repair) {
 		t.Fatal("initial repair unexpectedly failed")
 	}
-	if !cache.ensure(db1, 101, repair) {
+	if !cache.ensure(ctx, db1, 101, repair) {
 		t.Fatal("cached repair unexpectedly failed")
 	}
 	if calls != 1 {
 		t.Fatalf("same database and UID repair calls got %d want 1", calls)
 	}
-	if !cache.ensure(db1, 102, repair) || !cache.ensure(db2, 101, repair) {
+	if !cache.ensure(ctx, db1, 102, repair) || !cache.ensure(ctx, db2, 101, repair) {
 		t.Fatal("independent repair unexpectedly failed")
 	}
 	if calls != 3 {
@@ -36,6 +38,7 @@ func TestLoginStaticRepairCacheCachesSuccessPerDatabaseAndUID(t *testing.T) {
 }
 
 func TestLoginStaticRepairCacheExpiresSuccess(t *testing.T) {
+	ctx := context.Background()
 	now := time.Unix(1000, 0)
 	cache := loginStaticRepairCache{
 		ttl: time.Minute,
@@ -43,16 +46,16 @@ func TestLoginStaticRepairCacheExpiresSuccess(t *testing.T) {
 	}
 	db := &sql.DB{}
 	calls := 0
-	repair := func() bool {
+	repair := func(context.Context) bool {
 		calls++
 		return true
 	}
 
-	if !cache.ensure(db, 101, repair) {
+	if !cache.ensure(ctx, db, 101, repair) {
 		t.Fatal("initial repair unexpectedly failed")
 	}
 	now = now.Add(time.Minute)
-	if !cache.ensure(db, 101, repair) {
+	if !cache.ensure(ctx, db, 101, repair) {
 		t.Fatal("expired repair unexpectedly failed")
 	}
 	if calls != 2 {
@@ -62,20 +65,21 @@ func TestLoginStaticRepairCacheExpiresSuccess(t *testing.T) {
 
 func TestLoginStaticRepairCacheRetriesFailure(t *testing.T) {
 	var cache loginStaticRepairCache
+	ctx := context.Background()
 	db := &sql.DB{}
 	calls := 0
-	repair := func() bool {
+	repair := func(context.Context) bool {
 		calls++
 		return calls > 1
 	}
 
-	if cache.ensure(db, 101, repair) {
+	if cache.ensure(ctx, db, 101, repair) {
 		t.Fatal("first repair unexpectedly succeeded")
 	}
-	if !cache.ensure(db, 101, repair) {
+	if !cache.ensure(ctx, db, 101, repair) {
 		t.Fatal("successful retry failed")
 	}
-	if !cache.ensure(db, 101, repair) {
+	if !cache.ensure(ctx, db, 101, repair) {
 		t.Fatal("successful retry was not cached")
 	}
 	if calls != 2 {
@@ -85,17 +89,18 @@ func TestLoginStaticRepairCacheRetriesFailure(t *testing.T) {
 
 func TestLoginStaticRepairCacheInvalidatesRecreatedUID(t *testing.T) {
 	var cache loginStaticRepairCache
+	ctx := context.Background()
 	db := &sql.DB{}
 	calls := 0
-	repair := func() bool {
+	repair := func(context.Context) bool {
 		calls++
 		return true
 	}
-	if !cache.ensure(db, 101, repair) || !cache.ensure(db, 102, repair) {
+	if !cache.ensure(ctx, db, 101, repair) || !cache.ensure(ctx, db, 102, repair) {
 		t.Fatal("initial repairs failed")
 	}
 	cache.invalidateUIDs([]int{101})
-	if !cache.ensure(db, 101, repair) || !cache.ensure(db, 102, repair) {
+	if !cache.ensure(ctx, db, 101, repair) || !cache.ensure(ctx, db, 102, repair) {
 		t.Fatal("repairs after invalidation failed")
 	}
 	if calls != 3 {
@@ -105,6 +110,7 @@ func TestLoginStaticRepairCacheInvalidatesRecreatedUID(t *testing.T) {
 
 func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
 	var cache loginStaticRepairCache
+	ctx := context.Background()
 	db := &sql.DB{}
 	staticCalls := 0
 	steps := make(map[string]int)
@@ -123,7 +129,7 @@ func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		if !cache.ensure(db, 101, func() bool {
+		if !cache.ensure(ctx, db, 101, func(context.Context) bool {
 			staticCalls++
 			return true
 		}) {
@@ -147,11 +153,12 @@ func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
 
 func TestLoginStaticRepairCacheSharesConcurrentRepair(t *testing.T) {
 	var cache loginStaticRepairCache
+	ctx := context.Background()
 	db := &sql.DB{}
 	var calls atomic.Int32
 	started := make(chan struct{})
 	release := make(chan struct{})
-	repair := func() bool {
+	repair := func(context.Context) bool {
 		if calls.Add(1) == 1 {
 			close(started)
 		}
@@ -166,7 +173,7 @@ func TestLoginStaticRepairCacheSharesConcurrentRepair(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results <- cache.ensure(db, 101, repair)
+			results <- cache.ensure(ctx, db, 101, repair)
 		}()
 	}
 	<-started
@@ -180,5 +187,32 @@ func TestLoginStaticRepairCacheSharesConcurrentRepair(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("concurrent repair calls got %d want 1", calls.Load())
+	}
+}
+
+func TestLoginStaticRepairCacheWaitHonorsContext(t *testing.T) {
+	var cache loginStaticRepairCache
+	db := &sql.DB{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan bool, 1)
+	go func() {
+		done <- cache.ensure(context.Background(), db, 101, func(context.Context) bool {
+			close(started)
+			<-release
+			return true
+		})
+	}()
+	<-started
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if cache.ensure(ctx, db, 101, func(context.Context) bool { return true }) {
+		t.Fatal("cancelled waiter unexpectedly succeeded")
+	}
+
+	close(release)
+	if !<-done {
+		t.Fatal("shared repair unexpectedly failed")
 	}
 }

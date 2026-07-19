@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -27,7 +28,10 @@ type loginStaticRepairCache struct {
 	now     func() time.Time
 }
 
-const loginStaticRepairTTL = time.Hour
+const (
+	loginStaticRepairTTL = time.Hour
+	loginRepairTimeout   = 5 * time.Second
+)
 
 func (c *loginStaticRepairCache) currentTime() time.Time {
 	if c.now != nil {
@@ -43,15 +47,22 @@ func (c *loginStaticRepairCache) successTTL() time.Duration {
 	return loginStaticRepairTTL
 }
 
-func (c *loginStaticRepairCache) ensure(db *sql.DB, uid int, repair func() bool) bool {
+func (c *loginStaticRepairCache) ensure(ctx context.Context, db *sql.DB, uid int, repair func(context.Context) bool) bool {
 	if db == nil || uid <= 0 || repair == nil {
 		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	key := loginStaticRepairKey{db: db, uid: uid}
 	c.access.Lock()
 	if entry := c.entries[key]; entry != nil {
 		c.access.Unlock()
-		<-entry.done
+		select {
+		case <-entry.done:
+		case <-ctx.Done():
+			return false
+		}
 		if !entry.ok || c.currentTime().Before(entry.expiresAt) {
 			return entry.ok
 		}
@@ -60,7 +71,7 @@ func (c *loginStaticRepairCache) ensure(db *sql.DB, uid int, repair func() bool)
 			delete(c.entries, key)
 		}
 		c.access.Unlock()
-		return c.ensure(db, uid, repair)
+		return c.ensure(ctx, db, uid, repair)
 	}
 	if c.entries == nil {
 		c.entries = make(map[loginStaticRepairKey]*loginStaticRepairEntry)
@@ -69,7 +80,7 @@ func (c *loginStaticRepairCache) ensure(db *sql.DB, uid int, repair func() bool)
 	c.entries[key] = entry
 	c.access.Unlock()
 
-	ok := repair()
+	ok := repair(ctx)
 	c.access.Lock()
 	entry.ok = ok
 	if ok {
@@ -115,21 +126,23 @@ func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 	if db == nil || uid <= 0 {
 		return false
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), loginRepairTimeout)
+	defer cancel()
 
-	capabilities, err := loginRepairCapabilitiesFor(db)
+	capabilities, err := loginRepairCapabilitiesFor(ctx, db)
 	if err != nil {
 		fmt.Printf("MsgOnLine preflight sql failed: inspect login repair schema: %v\n", err)
 		return false
 	}
-	if !loginStaticRepairs.ensure(db, uid, func() bool {
-		return repairStaticLoginPrerequisites(db, uid, capabilities)
+	if !loginStaticRepairs.ensure(ctx, db, uid, func(ctx context.Context) bool {
+		return repairStaticLoginPrerequisites(ctx, db, uid, capabilities)
 	}) {
 		return false
 	}
-	return refreshLoginSession(db, uid, loginIP, capabilities)
+	return refreshLoginSession(ctx, db, uid, loginIP, capabilities)
 }
 
-func repairStaticLoginPrerequisites(db *sql.DB, uid int, capabilities loginRepairCapabilities) bool {
+func repairStaticLoginPrerequisites(ctx context.Context, db *sql.DB, uid int, capabilities loginRepairCapabilities) bool {
 	sqls := []struct {
 		query string
 		args  []interface{}
@@ -144,25 +157,25 @@ func repairStaticLoginPrerequisites(db *sql.DB, uid int, capabilities loginRepai
 	}
 
 	for _, s := range sqls {
-		if !runOnlineRepairSQL(db, s.query, "repair step", s.args...) {
+		if !runOnlineRepairSQL(ctx, db, s.query, "repair step", s.args...) {
 			return false
 		}
 	}
 	for _, table := range capabilities.memberSecurityGradeTables() {
 		query := "INSERT IGNORE INTO " + table + " (m_id) VALUES (?)"
-		if !runOnlineRepairSQL(db, query, "upsert member_security_grade", uid) {
+		if !runOnlineRepairSQL(ctx, db, query, "upsert member_security_grade", uid) {
 			return false
 		}
 	}
 	return true
 }
 
-func refreshLoginSession(db *sql.DB, uid int, loginIP string, capabilities loginRepairCapabilities) bool {
+func refreshLoginSession(ctx context.Context, db *sql.DB, uid int, loginIP string, capabilities loginRepairCapabilities) bool {
 	run := func(query string, step string, args ...interface{}) bool {
-		return runOnlineRepairSQL(db, query, step, args...)
+		return runOnlineRepairSQL(ctx, db, query, step, args...)
 	}
 	return refreshLoginSessionWith(uid, loginIP, capabilities, run, func() bool {
-		return repairOnlineRobotExpBounds(db, uid, capabilities)
+		return repairOnlineRobotExpBounds(ctx, db, uid, capabilities)
 	})
 }
 
@@ -190,7 +203,7 @@ func refreshLoginSessionWith(uid int, loginIP string, capabilities loginRepairCa
 	return run(stmtSQL, "upsert member_login", uid, loginIP)
 }
 
-func repairOnlineRobotExpBounds(db *sql.DB, uid int, capabilities loginRepairCapabilities) bool {
+func repairOnlineRobotExpBounds(ctx context.Context, db *sql.DB, uid int, capabilities loginRepairCapabilities) bool {
 	if !capabilities.robotRegistry {
 		return true
 	}
@@ -201,7 +214,7 @@ func repairOnlineRobotExpBounds(db *sql.DB, uid int, capabilities loginRepairCap
 			LEFT JOIN taiwan_cain.exp_level_ref n ON n.lev=c.lev+1
 			SET c.exp=e.exp
 			WHERE r.uid=? AND (c.exp<e.exp OR (n.exp IS NOT NULL AND c.exp>=n.exp))`
-		if !runOnlineRepairSQL(db, infoSQL, "repair charac_info exp", uid) {
+		if !runOnlineRepairSQL(ctx, db, infoSQL, "repair charac_info exp", uid) {
 			return false
 		}
 		statSQL := `UPDATE taiwan_cain.charac_stat s
@@ -211,11 +224,11 @@ func repairOnlineRobotExpBounds(db *sql.DB, uid int, capabilities loginRepairCap
 			LEFT JOIN taiwan_cain.exp_level_ref n ON n.lev=c.lev+1
 			SET s.exp=e.exp
 			WHERE r.uid=? AND (s.exp<e.exp OR (n.exp IS NOT NULL AND s.exp>=n.exp))`
-		return runOnlineRepairSQL(db, statSQL, "repair charac_stat exp", uid)
+		return runOnlineRepairSQL(ctx, db, statSQL, "repair charac_stat exp", uid)
 	}
 
 	var lev, infoExp, statExp int
-	err := db.QueryRow(`SELECT IFNULL(c.lev,0),IFNULL(c.exp,0),IFNULL(s.exp,0)
+	err := db.QueryRowContext(ctx, `SELECT IFNULL(c.lev,0),IFNULL(c.exp,0),IFNULL(s.exp,0)
 		FROM d_starsky.robot_registry r
 		JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid
 		LEFT JOIN taiwan_cain.charac_stat s ON s.charac_no=r.cid
@@ -231,18 +244,21 @@ func repairOnlineRobotExpBounds(db *sql.DB, uid int, capabilities loginRepairCap
 	if !ok || (infoExp >= minExp && statExp >= minExp) {
 		return true
 	}
-	if !runOnlineRepairSQL(db, "UPDATE taiwan_cain.charac_info c JOIN d_starsky.robot_registry r ON r.cid=c.charac_no SET c.exp=? WHERE r.uid=? AND c.exp<?", "repair charac_info exp fallback", minExp, uid, minExp) {
+	if !runOnlineRepairSQL(ctx, db, "UPDATE taiwan_cain.charac_info c JOIN d_starsky.robot_registry r ON r.cid=c.charac_no SET c.exp=? WHERE r.uid=? AND c.exp<?", "repair charac_info exp fallback", minExp, uid, minExp) {
 		return false
 	}
-	return runOnlineRepairSQL(db, "UPDATE taiwan_cain.charac_stat s JOIN d_starsky.robot_registry r ON r.cid=s.charac_no SET s.exp=? WHERE r.uid=? AND s.exp<?", "repair charac_stat exp fallback", minExp, uid, minExp)
+	return runOnlineRepairSQL(ctx, db, "UPDATE taiwan_cain.charac_stat s JOIN d_starsky.robot_registry r ON r.cid=s.charac_no SET s.exp=? WHERE r.uid=? AND s.exp<?", "repair charac_stat exp fallback", minExp, uid, minExp)
 }
 
-func runOnlineRepairSQL(db *sql.DB, query string, step string, args ...interface{}) bool {
+func runOnlineRepairSQL(ctx context.Context, db *sql.DB, query string, step string, args ...interface{}) bool {
 	if db == nil {
 		fmt.Printf("MsgOnLine preflight sql failed: %s (no db)\n", step)
 		return false
 	}
-	if _, err := db.Exec(query, args...); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		fmt.Printf("MsgOnLine preflight sql failed: %s: %v\n", step, err)
 		return false
 	}

@@ -4,12 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"robot/internal/foundation/lockhub"
 )
-
-const loginRepairSchemaTimeout = 5 * time.Second
 
 type loginRepairCapabilities struct {
 	dTaiwanMemberJoinInfo          bool
@@ -44,41 +41,67 @@ func (c loginRepairCapabilities) memberSecurityGradeTables() []string {
 }
 
 type loginRepairCapabilityCache struct {
-	access       lockhub.Locker
-	db           *sql.DB
-	loaded       bool
-	capabilities loginRepairCapabilities
+	access  lockhub.Locker
+	entries map[*sql.DB]*loginRepairCapabilityEntry
 }
 
-func (c *loginRepairCapabilityCache) get(db *sql.DB, load func(*sql.DB) (loginRepairCapabilities, error)) (loginRepairCapabilities, error) {
+type loginRepairCapabilityEntry struct {
+	done         chan struct{}
+	capabilities loginRepairCapabilities
+	err          error
+}
+
+func (c *loginRepairCapabilityCache) get(ctx context.Context, db *sql.DB, load func(*sql.DB) (loginRepairCapabilities, error)) (loginRepairCapabilities, error) {
 	if db == nil {
 		return loginRepairCapabilities{}, fmt.Errorf("database is not configured")
 	}
-	c.access.Lock()
-	defer c.access.Unlock()
-	if c.loaded && c.db == db {
-		return c.capabilities, nil
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	capabilities, err := load(db)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return loginRepairCapabilities{}, err
 	}
-	c.db = db
-	c.loaded = true
-	c.capabilities = capabilities
-	return capabilities, nil
+	c.access.Lock()
+	if entry := c.entries[db]; entry != nil {
+		c.access.Unlock()
+		select {
+		case <-entry.done:
+			return entry.capabilities, entry.err
+		case <-ctx.Done():
+			return loginRepairCapabilities{}, ctx.Err()
+		}
+	}
+	if c.entries == nil {
+		c.entries = make(map[*sql.DB]*loginRepairCapabilityEntry)
+	}
+	entry := &loginRepairCapabilityEntry{done: make(chan struct{})}
+	c.entries[db] = entry
+	c.access.Unlock()
+
+	capabilities, err := load(db)
+	c.access.Lock()
+	entry.capabilities = capabilities
+	entry.err = err
+	if err != nil {
+		delete(c.entries, db)
+	}
+	close(entry.done)
+	c.access.Unlock()
+	return entry.capabilities, entry.err
 }
 
 var loginRepairSchemaCache loginRepairCapabilityCache
 
-func loginRepairCapabilitiesFor(db *sql.DB) (loginRepairCapabilities, error) {
-	return loginRepairSchemaCache.get(db, inspectLoginRepairCapabilities)
+func loginRepairCapabilitiesFor(ctx context.Context, db *sql.DB) (loginRepairCapabilities, error) {
+	return loginRepairSchemaCache.get(ctx, db, func(db *sql.DB) (loginRepairCapabilities, error) {
+		return inspectLoginRepairCapabilities(ctx, db)
+	})
 }
 
-func inspectLoginRepairCapabilities(db *sql.DB) (loginRepairCapabilities, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), loginRepairSchemaTimeout)
-	defer cancel()
-
+func inspectLoginRepairCapabilities(ctx context.Context, db *sql.DB) (loginRepairCapabilities, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS d_taiwan.member_info_bot_backup LIKE d_taiwan.member_info"); err != nil {
 		return loginRepairCapabilities{}, fmt.Errorf("create member_info_bot_backup: %w", err)
 	}

@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"reflect"
@@ -9,6 +10,7 @@ import (
 
 func TestLoginRepairCapabilityCacheLoadsOncePerDatabase(t *testing.T) {
 	var cache loginRepairCapabilityCache
+	ctx := context.Background()
 	db1 := new(sql.DB)
 	db2 := new(sql.DB)
 	calls := 0
@@ -18,12 +20,12 @@ func TestLoginRepairCapabilityCacheLoadsOncePerDatabase(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		capabilities, err := cache.get(db1, load)
+		capabilities, err := cache.get(ctx, db1, load)
 		if err != nil || !capabilities.robotRegistry {
 			t.Fatalf("db1 load %d: capabilities=%+v err=%v", i, capabilities, err)
 		}
 	}
-	if _, err := cache.get(db2, load); err != nil {
+	if _, err := cache.get(ctx, db2, load); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -33,6 +35,7 @@ func TestLoginRepairCapabilityCacheLoadsOncePerDatabase(t *testing.T) {
 
 func TestLoginRepairCapabilityCacheRetriesFailure(t *testing.T) {
 	var cache loginRepairCapabilityCache
+	ctx := context.Background()
 	db := new(sql.DB)
 	calls := 0
 	load := func(*sql.DB) (loginRepairCapabilities, error) {
@@ -43,12 +46,42 @@ func TestLoginRepairCapabilityCacheRetriesFailure(t *testing.T) {
 		return loginRepairCapabilities{memberPunishInfo: true}, nil
 	}
 
-	if _, err := cache.get(db, load); err == nil {
+	if _, err := cache.get(ctx, db, load); err == nil {
 		t.Fatal("initial load unexpectedly succeeded")
 	}
-	capabilities, err := cache.get(db, load)
+	capabilities, err := cache.get(ctx, db, load)
 	if err != nil || !capabilities.memberPunishInfo || calls != 2 {
 		t.Fatalf("retry capabilities=%+v calls=%d err=%v", capabilities, calls, err)
+	}
+}
+
+func TestLoginRepairCapabilityCacheWaitHonorsContext(t *testing.T) {
+	var cache loginRepairCapabilityCache
+	db := new(sql.DB)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := cache.get(context.Background(), db, func(*sql.DB) (loginRepairCapabilities, error) {
+			close(started)
+			<-release
+			return loginRepairCapabilities{robotRegistry: true}, nil
+		})
+		done <- err
+	}()
+	<-started
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := cache.get(ctx, db, func(*sql.DB) (loginRepairCapabilities, error) {
+		return loginRepairCapabilities{}, nil
+	}); err == nil {
+		t.Fatal("cancelled waiter unexpectedly succeeded")
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("shared capability load failed: %v", err)
 	}
 }
 
