@@ -29,6 +29,7 @@ const (
 	partyCompatMaxRetry                    = 60 * time.Second
 	partyCompatDisableAfterFailures        = 10
 	partyCompatDisableAfter                = 5 * time.Minute
+	partyCompatDefaultAccountLimit  uint64 = 1000
 )
 
 var defaultPartyCompatLayout = partyCompatLayout{
@@ -184,9 +185,28 @@ func (s *Server) defaultPartyCompatConfig() partyCompatConfig {
 	if err != nil || runtimeConfig.RobotUIDStart <= 0 || runtimeConfig.RobotUIDEnd < runtimeConfig.RobotUIDStart || uint64(runtimeConfig.RobotUIDEnd) >= uint64(^uint32(0)) {
 		return cfg
 	}
-	cfg.AccountStart = uint32(runtimeConfig.RobotUIDStart)
-	cfg.AccountEnd = uint32(runtimeConfig.RobotUIDEnd) + 1
+	start, end, ok := partyCompatConfiguredWindow(runtimeConfig.RobotUIDStart, runtimeConfig.RobotUIDEnd)
+	if !ok {
+		return cfg
+	}
+	cfg.AccountStart = start
+	cfg.AccountEnd = end
 	return cfg
+}
+
+func partyCompatConfiguredWindow(start, end int) (uint32, uint32, bool) {
+	if start <= 0 || end < start || uint64(end) >= uint64(^uint32(0)) {
+		return 0, 0, false
+	}
+	exclusiveEnd := uint64(end) + 1
+	limitEnd := uint64(start) + partyCompatDefaultAccountLimit
+	if exclusiveEnd > limitEnd {
+		exclusiveEnd = limitEnd
+	}
+	if exclusiveEnd > uint64(^uint32(0)) {
+		return 0, 0, false
+	}
+	return uint32(start), uint32(exclusiveEnd), true
 }
 
 func (s *Server) savePartyCompatConfig(cfg partyCompatConfig) error {

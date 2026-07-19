@@ -61,6 +61,22 @@ func TestPartyCompatConfigDefaultsToConfiguredRobotRange(t *testing.T) {
 	}
 }
 
+func TestPartyCompatConfigCapsConfiguredRobotRangeAtOneThousand(t *testing.T) {
+	dir := t.TempDir()
+	robotConfig := []byte("[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18001999\n")
+	if err := os.WriteFile(filepath.Join(dir, "robot_config.ini"), robotConfig, 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(&config.SysConfig{ConfigDir: dir}, "", "")
+	cfg, err := s.loadPartyCompatConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AccountStart != 18000000 || cfg.AccountEnd != 18001000 {
+		t.Fatalf("capped default config = %+v", cfg)
+	}
+}
+
 func TestPartyCompatRetryBackoffAndAutoOffThreshold(t *testing.T) {
 	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, 60 * time.Second, 60 * time.Second}
 	for i, delay := range want {

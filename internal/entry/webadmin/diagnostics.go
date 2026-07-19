@@ -296,20 +296,29 @@ func partyAccountRangeCheck(configDir string, patchStart, patchEnd uint32) diagn
 		"patch_start":         patchStart,
 		"patch_end_exclusive": patchEnd,
 	}
-	covered := uint64(patchStart) <= uint64(rc.RobotUIDStart) && uint64(patchEnd) > uint64(rc.RobotUIDEnd)
+	expectedStart, expectedEnd, ok := partyCompatConfiguredWindow(rc.RobotUIDStart, rc.RobotUIDEnd)
+	if !ok {
+		return diagnosticsCheck{
+			Name:     "party account range",
+			Status:   diagError,
+			Message:  "configured robot account range is invalid",
+			Observed: observed,
+		}
+	}
+	covered := patchStart <= expectedStart && patchEnd >= expectedEnd
 	if !covered {
 		return diagnosticsCheck{
 			Name:     "party account range",
 			Status:   diagError,
-			Message:  "party patch range does not cover the configured robot account range",
-			Expected: map[string]interface{}{"patch_start_lte": rc.RobotUIDStart, "patch_end_exclusive_gt": rc.RobotUIDEnd},
+			Message:  "party patch range does not cover the configured party account window",
+			Expected: map[string]interface{}{"patch_start_lte": expectedStart, "patch_end_exclusive_gte": expectedEnd},
 			Observed: observed,
 		}
 	}
 	return diagnosticsCheck{
 		Name:     "party account range",
 		Status:   diagOK,
-		Message:  "party patch range covers the configured robot account range",
+		Message:  "party patch range covers the configured party account window",
 		Observed: observed,
 	}
 }

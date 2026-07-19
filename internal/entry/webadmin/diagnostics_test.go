@@ -71,7 +71,7 @@ func TestSkillCatalogCheckAcceptsPVFStateDataBase64(t *testing.T) {
 
 func TestPartyAccountRangeCheckUsesConfiguredRobotRange(t *testing.T) {
 	dir := t.TempDir()
-	raw := "[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18000999\n"
+	raw := "[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18001999\n"
 	if err := os.WriteFile(filepath.Join(dir, "robot_config.ini"), []byte(raw), 0644); err != nil {
 		t.Fatal(err)
 	}
