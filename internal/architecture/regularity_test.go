@@ -138,7 +138,7 @@ func TestActorLocksUsePurposeNames(t *testing.T) {
 
 func TestStoreLocksUsePurposeNames(t *testing.T) {
 	root := repoRoot(t)
-	assertStructHasNoGenericLockField(t, filepath.Join(root, "internal", "capability", "store", "store_core.go"), "PointCoordinator")
+	assertStructHasNoGenericLockField(t, filepath.Join(root, "internal", "capability", "store", "coordinator.go"), "PointCoordinator")
 }
 
 func assertStructHasNoGenericLockField(t *testing.T, path, structName string) {
