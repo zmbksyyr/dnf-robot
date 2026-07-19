@@ -107,19 +107,9 @@ func main() {
 
 	initRSA(cfg)
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8&timeout=%ds&readTimeout=%ds&writeTimeout=%ds&parseTime=true",
-		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName,
-		cfg.DBConnectionTimeout, cfg.DBConnectionTimeout, cfg.DBConnectionTimeout)
-	db, err = sql.Open("mysql", dsn)
+	db, err = openDatabase(cfg)
 	if err != nil {
 		dnf.PrintfRed("database open failed: %v\n", err)
-		os.Exit(1)
-	}
-	db.SetMaxOpenConns(cfg.DBMaxSize)
-	db.SetMaxIdleConns(cfg.DBInitSize)
-	db.SetConnMaxLifetime(time.Duration(cfg.DBConnectionTimeout) * time.Second)
-	if err := db.Ping(); err != nil {
-		dnf.PrintfRed("database ping failed: %v\n", err)
 		os.Exit(1)
 	}
 	dnf.SetDBPool(db)

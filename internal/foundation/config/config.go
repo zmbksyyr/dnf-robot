@@ -12,31 +12,34 @@ const configFile = "./config/config.ini"
 
 // SysConfig holds all robot configuration from config.ini.
 type SysConfig struct {
-	RobotPort           int
-	DBHost              string
-	DBPort              int
-	DBName              string
-	DBUser              string
-	DBPassword          string
-	DFGameR             string
-	ConfigDir           string
-	RobotInnerIP        string
-	RobotConnectIP      string
-	RobotGamePort       int
-	MonitorPort         int
-	AuctionPort         int
-	PointPort           int
-	RelayPort           int
-	PartyRoute0Port     int
-	DBInitSize          int
-	DBMaxSize           int
-	DBConnectionTimeout int
-	WebPort             int
-	WebPassword         string
-	LogMaxSizeMB        int
-	LogMaxBackups       int
-	MaxResponseBytes    int
-	ThisIP              string
+	RobotPort            int
+	DBHost               string
+	DBPort               int
+	DBName               string
+	DBUser               string
+	DBPassword           string
+	DFGameR              string
+	ConfigDir            string
+	RobotInnerIP         string
+	RobotConnectIP       string
+	RobotGamePort        int
+	MonitorPort          int
+	AuctionPort          int
+	PointPort            int
+	RelayPort            int
+	PartyRoute0Port      int
+	DBInitSize           int
+	DBMaxSize            int
+	DBDialTimeoutSec     int
+	DBReadTimeoutSec     int
+	DBWriteTimeoutSec    int
+	DBConnMaxLifetimeSec int
+	WebPort              int
+	WebPassword          string
+	LogMaxSizeMB         int
+	LogMaxBackups        int
+	MaxResponseBytes     int
+	ThisIP               string
 }
 
 // LoadConfig reads config.ini and returns a populated SysConfig.
@@ -95,10 +98,10 @@ func LoadConfig(path string) (*SysConfig, error) {
 	if cfg.DBMaxSize <= 0 {
 		cfg.DBMaxSize = 64
 	}
-	cfg.DBConnectionTimeout = ini.GetInt("db", "db_connection_time_out", 300)
-	if cfg.DBConnectionTimeout <= 0 {
-		cfg.DBConnectionTimeout = 300
-	}
+	cfg.DBDialTimeoutSec = boundedInt(ini.GetInt("db", "db_dial_timeout_sec", 5), 5, 1, 30)
+	cfg.DBReadTimeoutSec = boundedInt(ini.GetInt("db", "db_read_timeout_sec", 30), 30, 1, 120)
+	cfg.DBWriteTimeoutSec = boundedInt(ini.GetInt("db", "db_write_timeout_sec", 30), 30, 1, 120)
+	cfg.DBConnMaxLifetimeSec = boundedInt(ini.GetInt("db", "db_conn_max_lifetime_sec", 1800), 1800, 60, 86400)
 	if cfg.DBMaxSize < cfg.DBInitSize {
 		cfg.DBMaxSize = cfg.DBInitSize
 	}
@@ -131,6 +134,19 @@ func validPort(port, fallback int) int {
 		return fallback
 	}
 	return port
+}
+
+func boundedInt(value, fallback, minimum, maximum int) int {
+	if value <= 0 {
+		return fallback
+	}
+	if minimum > 0 && value < minimum {
+		return minimum
+	}
+	if maximum > 0 && value > maximum {
+		return maximum
+	}
+	return value
 }
 
 func getLocalIP() string {
@@ -193,7 +209,10 @@ func generateDefaultConfig(path string) error {
 		"db_prot = 3306",
 		"db_init_size = 4",
 		"db_max_Size = 64",
-		"db_connection_time_out = 300",
+		"db_dial_timeout_sec = 5",
+		"db_read_timeout_sec = 30",
+		"db_write_timeout_sec = 30",
+		"db_conn_max_lifetime_sec = 1800",
 		"",
 		"[system]",
 		"log_max_size_mb = 100",
