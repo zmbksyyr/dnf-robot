@@ -10,7 +10,6 @@ import (
 	"robot/internal/foundation/logfile"
 )
 
-// ---- log.go ----
 type LogLevel int
 
 const (

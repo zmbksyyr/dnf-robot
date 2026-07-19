@@ -4,7 +4,6 @@ import (
 	"fmt"
 )
 
-// ---- dispatch.go ----
 type HandlerFunc func(task *RobotDnfTask, robotMsg RobotMsg) DnfTableTaskResult
 
 type DnfTableDrive struct {
