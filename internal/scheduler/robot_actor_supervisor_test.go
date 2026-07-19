@@ -2,12 +2,12 @@ package scheduler
 
 import (
 	"errors"
-	robotcap "robot/internal/capability/robot"
-	robotconfig "robot/internal/capability/robotconfig"
 	"testing"
 	"time"
 
 	actormodel "robot/internal/actor"
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
 )
 
 func TestSupervisorMaintainsAutoActorSlots(t *testing.T) {
@@ -26,11 +26,11 @@ func TestSupervisorMaintainsAutoActorSlots(t *testing.T) {
 
 func TestSupervisorLeaseUIDSkipsDuplicatesAndBlocked(t *testing.T) {
 	ledger := actormodel.NewLedger()
-	a := testRobotActor(1, 0, 0)
+	a := testRobotActor(t, 1, 0, 0)
 	if !ledger.TryLeaseUID(101, a) {
 		t.Fatalf("first lease should succeed")
 	}
-	if ledger.TryLeaseUID(101, testRobotActor(2, 0, 0)) {
+	if ledger.TryLeaseUID(101, testRobotActor(t, 2, 0, 0)) {
 		t.Fatalf("duplicate lease should fail")
 	}
 	ledger.UnleaseUID(101, a)
@@ -44,12 +44,8 @@ func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
 	registry := newSupervisorActorRegistry(s)
-	a1 := newRobotActor(1, actormodel.ModeAuto, s.runtime)
-	a2 := newRobotActor(2, actormodel.ModeAuto, s.runtime)
-	a1.Start()
-	a2.Start()
-	addLedgerActor(t, &s.ledger, a1)
-	addLedgerActor(t, &s.ledger, a2)
+	actors := ensureSupervisorActors(t, s, 2)
+	a1, a2 := actors[0], actors[1]
 	s.ledger.TryLeaseUID(101, a1)
 	s.ledger.TryLeaseUID(102, a2)
 	s.ledger.BlockUID(101)
@@ -57,10 +53,11 @@ func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
 	if got := registry.StopUIDs([]int{101, 102, 102}, false); got != 2 {
 		t.Fatalf("StopUIDs got %d want 2", got)
 	}
-	if actors, leases := ledgerActorCount(t, &s.ledger), ledgerLeaseCount(t, &s.ledger); actors != 0 || leases != 0 {
-		t.Fatalf("StopUIDs should remove actors and leases, actors=%d leases=%d", actors, leases)
+	counts := s.ledger.Counts(time.Now(), robotconfig.RuntimeConfig{})
+	if counts.Auto != 0 || counts.Leased != 0 {
+		t.Fatalf("StopUIDs should remove actors and leases, actors=%d leases=%d", counts.Auto, counts.Leased)
 	}
-	if ledgerIsBlocked(t, &s.ledger, 101) {
+	if s.ledger.BlockedCount() != 0 {
 		t.Fatalf("StopUIDs should clear blocked marker for removed uid")
 	}
 }
@@ -95,8 +92,10 @@ func TestReleaseBrokenLeasesHonorsInterval(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	m.database = nil
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
-	a := testRobotActor(1, actormodel.ModeAuto, 101)
-	addLedgerActor(t, &s.ledger, a)
+	a := ensureSupervisorActors(t, s, 1)[0]
+	if !a.AssignAndWait(101, time.Second) {
+		t.Fatalf("assign actor uid 101")
+	}
 	s.ledger.TryLeaseUID(101, a)
 	s.nextLeaseHealth = time.Now().Add(time.Minute)
 
@@ -109,9 +108,10 @@ func TestReleaseBrokenLeasesHonorsInterval(t *testing.T) {
 func TestSupervisorActorOwnsUIDWithoutLease(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
-	a := newRobotActor(1, actormodel.ModeAuto, s.runtime)
-	a.ResetForUID(101)
-	addLedgerActor(t, &s.ledger, a)
+	a := ensureSupervisorActors(t, s, 1)[0]
+	if !a.AssignAndWait(101, time.Second) {
+		t.Fatalf("assign actor uid 101")
+	}
 	if !s.actorOwnsUID(101) {
 		t.Fatalf("actorOwnsUID should see uid held by actor even without lease")
 	}
@@ -119,24 +119,6 @@ func TestSupervisorActorOwnsUIDWithoutLease(t *testing.T) {
 		t.Fatalf("actorOwnsUID should reject uid not held by actor")
 	}
 }
-
-func TestRobotActorOfflineKeepsUIDAttached(t *testing.T) {
-	a := testRobotActor(1, actormodel.ModeAuto, 0)
-	a.ResetForUID(101)
-	if snap := a.Snapshot(); snap.UID != 101 || !snap.OnlineDesired || snap.State != actormodel.StateAssigned {
-		t.Fatalf("assigned snapshot uid=%d desired=%v state=%s", snap.UID, snap.OnlineDesired, snap.State)
-	}
-	a.SetOnlineDesired(false)
-	a.Tick(time.Now())
-	if snap := a.Snapshot(); snap.UID != 101 || snap.OnlineDesired || snap.State != actormodel.StateOffline {
-		t.Fatalf("offline snapshot uid=%d desired=%v state=%s", snap.UID, snap.OnlineDesired, snap.State)
-	}
-	a.SetOnlineDesired(true)
-	if snap := a.Snapshot(); snap.UID != 101 || !snap.OnlineDesired {
-		t.Fatalf("online desired should re-open without detaching uid, uid=%d desired=%v", snap.UID, snap.OnlineDesired)
-	}
-}
-
 func TestRobotActorControlReturnsWhenStopped(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	a := newRobotActor(1, actormodel.ModeAuto, NewRobotRuntime(m))
@@ -151,10 +133,7 @@ func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
 	registry := newSupervisorActorRegistry(s)
-	a := newRobotActor(1, actormodel.ModeAuto, s.runtime)
-	a.Start()
-	defer a.StopAndWait(time.Second)
-	addLedgerActor(t, &s.ledger, a)
+	a := ensureSupervisorActors(t, s, 1)[0]
 
 	if !registry.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should use empty actor")
@@ -174,10 +153,7 @@ func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
 	registry := newSupervisorActorRegistry(s)
-	a := newRobotActor(1, actormodel.ModeAuto, s.runtime)
-	a.Start()
-	defer a.StopAndWait(time.Second)
-	addLedgerActor(t, &s.ledger, a)
+	ensureSupervisorActors(t, s, 1)
 
 	if !registry.AttachUID(101, time.Second) {
 		t.Fatalf("AttachUID should attach uid")
@@ -244,16 +220,11 @@ func TestUserActorCommandBusyFollowsAutoAndManualPolicy(t *testing.T) {
 
 func TestUserActorCommandBusyRejectsContainerTransitions(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
-	s := NewRobotSupervisor(m, NewRobotRuntime(m))
-	registry := newSupervisorActorRegistry(s)
 	rc := robotconfig.RuntimeConfig{AutoActions: false, AutoTargetOnlineCount: 1}
 	m.autoEnabled = false
 
 	for _, state := range []actormodel.State{actormodel.StateAssigned, actormodel.StateOnline, actormodel.StateReleasing} {
-		s.ledger = actormodel.NewLedger()
-		actor := testRobotActorState(1, 101, state)
-		addLedgerActor(t, &s.ledger, actor)
-		s.ledger.TryLeaseUID(101, actor)
+		registry := snapshotActorRegistry{snapshots: []actormodel.Snapshot{{UID: 101, State: state}}}
 		if busy, reason := m.userActorCommandBusy(registry, rc); !busy || reason != "actor_state="+string(state) {
 			t.Fatalf("state %s busy=%v reason=%q", state, busy, reason)
 		}
@@ -280,101 +251,5 @@ func TestRobotActorSnapshotHelpers(t *testing.T) {
 		if got := actormodel.SnapshotEmpty(tc.snap); got != tc.empty {
 			t.Fatalf("%s empty got %v want %v", tc.name, got, tc.empty)
 		}
-	}
-}
-
-func TestRobotActorUnhealthyByFailureCount(t *testing.T) {
-	now := time.Now()
-	a := testRobotActorHealth(801, 5, now.Add(-10*time.Second))
-	status := a.Status(now, robotconfig.RuntimeConfig{SchedulerBadFailures: 5, SchedulerBadRecoverSec: 300})
-	if !status.RecycleUID || status.HealthReason != "failure_count" {
-		t.Fatalf("actor status got recycle=%v reason=%q, want failure_count recycle", status.RecycleUID, status.HealthReason)
-	}
-	testSetActorBusy(a, true)
-	status = a.Status(now, robotconfig.RuntimeConfig{SchedulerBadFailures: 5, SchedulerBadRecoverSec: 300})
-	if status.RecycleUID || status.Health != actormodel.HealthBusy {
-		t.Fatalf("busy actor status got recycle=%v health=%s, want busy without recycle", status.RecycleUID, status.Health)
-	}
-}
-
-func TestRobotActorBadByFailureCount(t *testing.T) {
-	a := testRobotActorHealth(1001, 3, time.Time{})
-	status := a.Status(time.Now(), robotconfig.RuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60})
-	if !status.RecycleUID || status.HealthReason != "failure_count" {
-		t.Fatalf("actor status got recycle=%v reason=%q, want failure_count recycle", status.RecycleUID, status.HealthReason)
-	}
-
-	testSetActorFailures(a, 2)
-	status = a.Status(time.Now(), robotconfig.RuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60})
-	if status.RecycleUID {
-		t.Fatalf("actor should not recycle below failure threshold")
-	}
-}
-
-func TestRobotActorBadByRecoveryWindow(t *testing.T) {
-	now := time.Now()
-	a := testRobotActorHealth(1001, 1, now.Add(-61*time.Second))
-	status := a.Status(now, robotconfig.RuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60})
-	if status.RecycleUID {
-		t.Fatalf("single old failure should not recycle, reason=%q", status.HealthReason)
-	}
-
-	testSetActorFirstFailureAt(a, now.Add(-59*time.Second))
-	status = a.Status(now, robotconfig.RuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60})
-	if status.RecycleUID {
-		t.Fatalf("actor should not recycle before recovery window expires")
-	}
-
-	testSetActorFailures(a, 0)
-	testSetActorFirstFailureAt(a, now.Add(-61*time.Second))
-	status = a.Status(now, robotconfig.RuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60})
-	if status.RecycleUID {
-		t.Fatalf("actor should not recycle by failure window without failures, reason=%q", status.HealthReason)
-	}
-}
-
-func TestRobotActorPendingOnlineUsesConfirmTimeout(t *testing.T) {
-	now := time.Now()
-	a := testRobotActorState(1, 1001, actormodel.StateOnline)
-	testSetActorLastOnlineTry(a, now.Add(-61*time.Second))
-	a.MarkOnlinePending(now.Add(-61 * time.Second))
-	status := a.Status(now, robotconfig.RuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
-	if status.RecycleUID || status.HealthReason != "online_confirm_timeout" {
-		t.Fatalf("pending actor status got recycle=%v reason=%q, want timeout without recycle", status.RecycleUID, status.HealthReason)
-	}
-}
-
-func TestRobotActorHealthyClearsOnlineConfirmTimer(t *testing.T) {
-	a := testRobotActorHealth(1001, 0, time.Now().Add(-2*time.Minute))
-	testSetActorLastOnlineTry(a, time.Now().Add(-2*time.Minute))
-	a.MarkOnlineHealthy()
-	s := a.Snapshot()
-	if !s.LastOnlineTry.IsZero() || !s.FirstFailureAt.IsZero() {
-		t.Fatalf("healthy actor should clear online timers, got last=%s first_failure=%s", s.LastOnlineTry, s.FirstFailureAt)
-	}
-}
-
-func TestRobotActorStoreFailedCooldownDoesNotPoisonHealth(t *testing.T) {
-	now := time.Now()
-	a := testRobotActorHealth(1001, 1, now.Add(-2*time.Minute))
-	testSetActorLastOnlineTry(a, now.Add(-2*time.Minute))
-	a.MarkOnlineHealthy()
-	testSetActorNextStore(a, now.Add(60*time.Second))
-	status := a.Status(now, robotconfig.RuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
-	if status.RecycleUID {
-		t.Fatalf("store failure cooldown should not recycle actor, reason=%q", status.HealthReason)
-	}
-	if !status.LastOnlineTry.IsZero() || !status.FirstFailureAt.IsZero() || status.Failures != 0 {
-		t.Fatalf("store failure cooldown should clear health timers, got last=%s first=%s failures=%d", status.LastOnlineTry, status.FirstFailureAt, status.Failures)
-	}
-}
-
-func TestRobotActorOnlineAttemptWithoutPendingStillTimesOut(t *testing.T) {
-	now := time.Now()
-	a := testRobotActorState(1, 1001, actormodel.StateOnline)
-	testSetActorLastOnlineTry(a, now.Add(-2*time.Minute))
-	status := a.Status(now, robotconfig.RuntimeConfig{SchedulerBadFailures: 3, SchedulerBadRecoverSec: 60, OnlineConfirmTimeoutMS: 60000})
-	if status.RecycleUID || status.HealthReason != "online_confirm_timeout" {
-		t.Fatalf("online attempt timeout got recycle=%v reason=%q, want timeout without recycle", status.RecycleUID, status.HealthReason)
 	}
 }

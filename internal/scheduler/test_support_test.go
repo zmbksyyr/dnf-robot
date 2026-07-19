@@ -4,16 +4,65 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"robot/internal/shared"
 	"testing"
 	"time"
 
 	actormodel "robot/internal/actor"
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/foundation/config"
+	"robot/internal/shared"
 )
 
 func newRobotActor(slotID int, mode actormodel.Mode, runtime actormodel.RobotRuntime) *actormodel.Actor {
 	return actormodel.NewActor(slotID, mode, runtime)
+}
+
+type actorTestRuntime struct{}
+
+func (actorTestRuntime) Config() robotconfig.RuntimeConfig {
+	return robotconfig.RuntimeConfig{SystemActorPollMS: 60_000}
+}
+func (actorTestRuntime) Status(int) (robotcap.RuntimeStatus, bool) {
+	return robotcap.RuntimeStatus{}, false
+}
+func (actorTestRuntime) PartyActive(int) bool                              { return false }
+func (actorTestRuntime) IsActive(int) bool                                 { return false }
+func (actorTestRuntime) FinishStoreState(int, int, string)                 {}
+func (actorTestRuntime) AddAutoOnline(int, int)                            {}
+func (actorTestRuntime) AutoActionsEnabled(robotconfig.RuntimeConfig) bool { return false }
+func (actorTestRuntime) RandomShoutMessage(func(int) int) string           { return "" }
+func (actorTestRuntime) OnlineNoConfirm(uid int) robotcap.ActionResult {
+	return robotcap.ActionResult{UID: uid}
+}
+func (actorTestRuntime) Logout(uid int) robotcap.ActionResult {
+	return robotcap.ActionResult{UID: uid, OK: true}
+}
+func (actorTestRuntime) Move(uid int) robotcap.ActionResult { return robotcap.ActionResult{UID: uid} }
+func (actorTestRuntime) Shout(uid int, _ bool) robotcap.ActionResult {
+	return robotcap.ActionResult{UID: uid}
+}
+func (actorTestRuntime) Store(uid int) robotcap.ActionResult { return robotcap.ActionResult{UID: uid} }
+func (actorTestRuntime) AutoMove(uid int) robotcap.ActionResult {
+	return robotcap.ActionResult{UID: uid}
+}
+func (actorTestRuntime) AutoShout(uid int, _ bool, _ string) robotcap.ActionResult {
+	return robotcap.ActionResult{UID: uid}
+}
+func (actorTestRuntime) AutoStore(uid int, _ func() bool) robotcap.ActionResult {
+	return robotcap.ActionResult{UID: uid}
+}
+func (actorTestRuntime) ExpireStore(uid int) robotcap.ActionResult {
+	return robotcap.ActionResult{UID: uid}
+}
+
+type snapshotActorRegistry struct {
+	actorRegistry
+	snapshots []actormodel.Snapshot
+}
+
+func (r snapshotActorRegistry) actorSnapshots() []actormodel.Snapshot {
+	return r.snapshots
 }
 
 func testRobotManagerWithConfig(t *testing.T, robotConfig string) *RobotManager {
@@ -39,66 +88,26 @@ func assertIntSlice(t *testing.T, got, want []int) {
 	}
 }
 
-func addLedgerActor(t *testing.T, ledger *actormodel.Ledger, actor *actormodel.Actor) {
+func testRobotActor(t *testing.T, slotID int, mode actormodel.Mode, uid int) *actormodel.Actor {
 	t.Helper()
-	ledger.AddActorForTest(actor)
-}
-
-func testRobotActor(slotID int, mode actormodel.Mode, uid int) *actormodel.Actor {
-	a := newRobotActor(slotID, mode, nil)
-	a.ResetForUID(uid)
-	if uid <= 0 {
-		a.SetStateForTest(actormodel.StateIdle)
+	a := newRobotActor(slotID, mode, actorTestRuntime{})
+	a.Start()
+	t.Cleanup(func() { a.StopAndWait(time.Second) })
+	if uid > 0 && !a.AssignAndWait(uid, time.Second) {
+		t.Fatalf("assign actor slot=%d uid=%d", slotID, uid)
 	}
 	return a
 }
 
-func testRobotActorState(slotID int, uid int, state actormodel.State) *actormodel.Actor {
-	a := testRobotActor(slotID, actormodel.ModeAuto, uid)
-	a.SetStateForTest(state)
-	return a
-}
-
-func testRobotActorHealth(uid int, failures int, firstFailureAt time.Time) *actormodel.Actor {
-	a := testRobotActor(1, actormodel.ModeAuto, uid)
-	a.SetFailuresForTest(failures)
-	a.SetFirstFailureAtForTest(firstFailureAt)
-	return a
-}
-
-func testSetActorBusy(a *actormodel.Actor, busy bool) {
-	a.SetBusyForTest(busy)
-}
-
-func testSetActorFailures(a *actormodel.Actor, failures int) {
-	a.SetFailuresForTest(failures)
-}
-
-func testSetActorFirstFailureAt(a *actormodel.Actor, firstFailureAt time.Time) {
-	a.SetFirstFailureAtForTest(firstFailureAt)
-}
-
-func testSetActorLastOnlineTry(a *actormodel.Actor, lastOnlineTry time.Time) {
-	a.SetLastOnlineTryForTest(lastOnlineTry)
-}
-
-func testSetActorNextStore(a *actormodel.Actor, nextStore time.Time) {
-	a.SetNextStoreForTest(nextStore)
-}
-
-func ledgerActorCount(t *testing.T, ledger *actormodel.Ledger) int {
+func ensureSupervisorActors(t *testing.T, supervisor *RobotSupervisor, count int) []*actormodel.Actor {
 	t.Helper()
-	return ledger.ActorCountForTest()
-}
-
-func ledgerLeaseCount(t *testing.T, ledger *actormodel.Ledger) int {
-	t.Helper()
-	return ledger.LeaseCountForTest()
-}
-
-func ledgerIsBlocked(t *testing.T, ledger *actormodel.Ledger, uid int) bool {
-	t.Helper()
-	return ledger.IsBlockedForTest(uid)
+	supervisor.ensureAutoActorSlots(robotconfig.RuntimeConfig{SchedulerOnlineBatchSize: count}, count)
+	actors := supervisor.ledger.ActorPointers()
+	if len(actors) != count {
+		t.Fatalf("supervisor actors got %d want %d", len(actors), count)
+	}
+	t.Cleanup(func() { supervisor.stopAll(false) })
+	return actors
 }
 
 func containsInt(values []int, want int) bool {

@@ -1,0 +1,241 @@
+package actor
+
+import (
+	"time"
+
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
+)
+
+func (a *Actor) status(now time.Time, rc robotconfig.RuntimeConfig) Status {
+	s := a.snapshot()
+	var lookup RuntimeStatusLookup
+	if a.runtime != nil {
+		lookup = a.runtime.Status
+	}
+	return EvaluateStatus(s, now, StatusConfig{
+		BadFailures:            rc.SchedulerBadFailures,
+		OnlineConfirmTimeoutMS: rc.OnlineConfirmTimeoutMS,
+	}, lookup)
+}
+
+func (a *Actor) resetForUID(uid int) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	a.uid = uid
+	a.clearAutoScheduleLocked()
+	a.lastOnlineTry = time.Time{}
+	a.firstFailureAt = time.Time{}
+	a.failures = 0
+	a.busy = false
+	a.busyKind = ""
+	a.releaseRequested = false
+	a.onlineDesired = uid > 0
+	if uid > 0 {
+		a.state = StateAssigned
+	} else {
+		a.state = StateIdle
+	}
+}
+
+func (a *Actor) setReleaseRequested(v bool) {
+	a.stateMu.Lock()
+	a.releaseRequested = v
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) releaseRequestedValue() bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.releaseRequested
+}
+
+func (a *Actor) setOnlineDesired(v bool) {
+	a.stateMu.Lock()
+	a.onlineDesired = v
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) onlineDesiredValue() bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.onlineDesired
+}
+
+func (a *Actor) markOnlineHealthy() {
+	a.stateMu.Lock()
+	a.failures = 0
+	a.firstFailureAt = time.Time{}
+	a.lastOnlineTry = time.Time{}
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) clearOnlineAttempt() {
+	a.stateMu.Lock()
+	a.lastOnlineTry = time.Time{}
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) markOnlinePending(now time.Time) {
+	a.stateMu.Lock()
+	if a.firstFailureAt.IsZero() {
+		a.firstFailureAt = now
+	}
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) onlineConfirmPending(uid int, now time.Time, rc robotconfig.RuntimeConfig) bool {
+	lastOnlineTry := a.lastOnlineTryValue()
+	if lastOnlineTry.IsZero() {
+		return false
+	}
+	timeout := time.Duration(rc.OnlineConfirmTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if now.Sub(lastOnlineTry) >= timeout {
+		return false
+	}
+	st, ok := a.runtime.Status(uid)
+	if !ok {
+		return true
+	}
+	return st.DisconnectReason == 0 && (st.StateName == robotcap.RuntimeStateInit || st.StateName == robotcap.RuntimeStateLogin)
+}
+
+func (a *Actor) onlineAttemptTimedOut(uid int, now time.Time, rc robotconfig.RuntimeConfig) bool {
+	lastOnlineTry := a.lastOnlineTryValue()
+	if lastOnlineTry.IsZero() {
+		return false
+	}
+	timeout := time.Duration(rc.OnlineConfirmTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if now.Sub(lastOnlineTry) < timeout {
+		return false
+	}
+	st, ok := a.runtime.Status(uid)
+	if !ok {
+		return true
+	}
+	return st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0
+}
+
+func (a *Actor) lastOnlineTryValue() time.Time {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.lastOnlineTry
+}
+
+func (a *Actor) setLastOnlineTry(t time.Time) {
+	a.stateMu.Lock()
+	a.lastOnlineTry = t
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) recordFailure(now time.Time) int {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	a.failures++
+	if a.firstFailureAt.IsZero() {
+		a.firstFailureAt = now
+	}
+	return a.failures
+}
+
+func (a *Actor) runBusy(kind string, fn func()) {
+	a.setBusy(true, kind)
+	defer a.setBusy(false, "")
+	fn()
+}
+
+func (a *Actor) setBusy(v bool, kind string) {
+	a.stateMu.Lock()
+	a.busy = v
+	a.busyKind = kind
+	if v {
+		a.state = StateBusy
+	} else if a.uid > 0 {
+		if a.onlineDesired {
+			a.state = StateRunning
+		} else {
+			a.state = StateOffline
+		}
+	}
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) busyValue() bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.busy
+}
+
+func (a *Actor) setState(state State) {
+	a.stateMu.Lock()
+	a.state = state
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) snapshot() Snapshot {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return Snapshot{
+		SlotID:         a.slotID,
+		UID:            a.uid,
+		Mode:           a.mode,
+		State:          a.state,
+		Busy:           a.busy,
+		BusyKind:       a.busyKind,
+		OnlineDesired:  a.onlineDesired,
+		LastOnlineTry:  a.lastOnlineTry,
+		FirstFailureAt: a.firstFailureAt,
+		Failures:       a.failures,
+	}
+}
+
+func (a *Actor) uidValue() int {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.uid
+}
+
+func (a *Actor) slotIDValue() int {
+	if a == nil {
+		return 0
+	}
+	return a.slotID
+}
+
+func (a *Actor) modeValue() Mode {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.mode
+}
+
+func (a *Actor) stateValue() State {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.state
+}
+
+func (a *Actor) Status(now time.Time, rc robotconfig.RuntimeConfig) Status {
+	return a.status(now, rc)
+}
+
+func (a *Actor) Snapshot() Snapshot {
+	return a.snapshot()
+}
+
+func (a *Actor) UIDValue() int {
+	return a.uidValue()
+}
+
+func (a *Actor) SlotIDValue() int {
+	return a.slotIDValue()
+}
+
+func (a *Actor) ModeValue() Mode {
+	return a.modeValue()
+}

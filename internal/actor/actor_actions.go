@@ -1,0 +1,372 @@
+package actor
+
+import (
+	"time"
+
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
+	foundationlog "robot/internal/foundation/log"
+)
+
+func (a *Actor) logoutCurrentUID() robotcap.ActionResult {
+	uid := a.uidValue()
+	if uid <= 0 {
+		a.setState(StateIdle)
+		return robotcap.ActionResult{OK: true, State: robotcap.ActionStateIdle}
+	}
+	cid := 0
+	if st, ok := a.runtime.Status(uid); ok {
+		cid = st.CID
+	}
+	a.runtime.FinishStoreState(uid, cid, "logout")
+	a.setOnlineDesired(false)
+	a.clearAutoSchedule()
+	a.setBusy(true, "logout")
+	defer a.setBusy(false, "")
+	res := a.runtime.Logout(uid)
+	if res.UID == 0 {
+		res.UID = uid
+	}
+	if res.OK {
+		res.State = robotcap.ActionStateAttachedOffline
+	}
+	a.setState(StateOffline)
+	return res
+}
+
+func (a *Actor) handleCommand(cmd Command) robotcap.ActionResult {
+	uid := a.uidValue()
+	if uid <= 0 {
+		return robotcap.ActionResult{OK: false, State: robotcap.ActionStateIdle, Message: "actor has no uid"}
+	}
+	switch cmd {
+	case CommandOnline:
+		a.setOnlineDesired(true)
+		a.setState(StateAssigned)
+		return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateAccepted}
+	case CommandLogout:
+		return a.logoutCurrentUID()
+	}
+	switch cmd {
+	case CommandMove, CommandShoutLocal, CommandShoutWorld, CommandStore:
+		st, _ := a.runtime.Status(uid)
+		if st.PartyActive || a.runtime.PartyActive(uid) {
+			return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateCancelled, Message: "party active"}
+		}
+	}
+	a.setBusy(true, "command")
+	defer a.setBusy(false, "")
+	switch cmd {
+	case CommandMove:
+		if res, ok := a.ensureOnlineForCommand(); !ok {
+			return res
+		}
+		return a.runtime.Move(uid)
+	case CommandShoutLocal:
+		if res, ok := a.ensureOnlineForCommand(); !ok {
+			return res
+		}
+		return a.runtime.Shout(uid, false)
+	case CommandShoutWorld:
+		if res, ok := a.ensureOnlineForCommand(); !ok {
+			return res
+		}
+		return a.runtime.Shout(uid, true)
+	case CommandStore:
+		if res, ok := a.ensureOnlineForCommand(); !ok {
+			return res
+		}
+		res := a.runtime.Store(uid)
+		if res.OK {
+			rc := a.runtime.Config()
+			a.setStoreUntil(time.Now().Add(time.Duration(rc.AutoStoreDurationSec) * time.Second))
+		}
+		return res
+	}
+	return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateUnknownCommand}
+}
+
+func (a *Actor) ensureOnlineForCommand() (robotcap.ActionResult, bool) {
+	uid := a.uidValue()
+	if uid <= 0 {
+		return robotcap.ActionResult{OK: false, State: robotcap.ActionStateIdle, Message: "actor has no uid"}, false
+	}
+	if a.runtime.IsActive(uid) {
+		return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateRunning}, true
+	}
+	a.setOnlineDesired(true)
+	a.setState(StateAssigned)
+	rc := a.runtime.Config()
+	timeout := time.Duration(rc.OnlineConfirmTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if a.releaseRequestedValue() {
+			return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateCancelled}, false
+		}
+		if a.runtime.IsActive(uid) {
+			return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateRunning}, true
+		}
+		a.ensureOnline(time.Now())
+		time.Sleep(500 * time.Millisecond)
+	}
+	return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOnlineTimeout, Message: "not confirmed running"}, false
+}
+
+func (a *Actor) tick(now time.Time) {
+	if a.releaseRequestedValue() || a.stateValue() == StateReleasing {
+		return
+	}
+	uid := a.uidValue()
+	if uid <= 0 {
+		return
+	}
+	if !a.onlineDesiredValue() {
+		if a.stateValue() != StateOffline && !a.busyValue() {
+			a.setState(StateOffline)
+		}
+		return
+	}
+	rc := a.runtime.Config()
+	if !a.runtime.IsActive(uid) {
+		a.ensureOnline(now)
+		return
+	}
+	st, ok := a.runtime.Status(uid)
+	if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
+		return
+	}
+	if a.stateValue() != StateRunning {
+		a.runtime.AddAutoOnline(1, 0)
+	}
+	a.markOnlineHealthy()
+	a.setState(StateRunning)
+	if st.PartyActive || a.runtime.PartyActive(uid) {
+		a.clearAutoActionSchedule()
+		return
+	}
+	isStore := st.RobotType == 2 || st.RobotType == 3
+	if isStore && a.storeUntilMissing() {
+		rc := a.runtime.Config()
+		grace := time.Duration(rc.AutoStoreTickSec) * time.Second
+		if grace <= 0 {
+			grace = 10 * time.Second
+		}
+		a.setStoreUntil(now.Add(grace))
+		foundationlog.Robotf("[Actor] store_expire_recovered slot=%d uid=%d grace=%s\n", a.slotIDValue(), uid, grace)
+	}
+	if isStore && a.storeExpired(now) {
+		a.runBusy("store_expire", func() {
+			a.runtime.ExpireStore(uid)
+		})
+		a.clearStoreUntil()
+		return
+	}
+	if a.modeValue() != ModeAuto {
+		return
+	}
+	if !a.runtime.AutoActionsEnabled(rc) {
+		return
+	}
+	if a.nextWorldShoutDue(now, rc) {
+		a.runBusy("shout_world", func() {
+			a.runtime.AutoShout(uid, true, a.randomShoutMessage())
+		})
+	}
+	if a.nextLocalShoutDue(now, rc) {
+		a.runBusy("shout_local", func() {
+			a.runtime.AutoShout(uid, false, a.randomShoutMessage())
+		})
+	}
+	if !isStore && a.nextStoreDue(now, rc) {
+		if rc.AutoStoreProbabilityPercent > 0 && a.randIntn(100) < rc.AutoStoreProbabilityPercent {
+			var res robotcap.ActionResult
+			a.runBusy("store", func() {
+				defer a.clearOnlineAttempt()
+				res = a.runtime.AutoStore(uid, a.shouldStopAutoStore)
+			})
+			if res.OK {
+				a.setStoreUntil(time.Now().Add(time.Duration(rc.AutoStoreDurationSec) * time.Second))
+			} else if res.State == robotcap.ActionStateStoreBusy {
+				a.markOnlineHealthy()
+				a.setNextStore(time.Now().Add(time.Duration(rc.AutoStoreFailCooldownSec) * time.Second))
+			} else if res.State == robotcap.ActionStateStoreFailed {
+				a.markOnlineHealthy()
+				a.setNextStore(time.Now().Add(time.Duration(rc.AutoStoreFailCooldownSec) * time.Second))
+			} else if res.State != robotcap.ActionStateCancelled {
+				a.recordFailure(time.Now())
+			}
+			return
+		}
+	}
+	if !isStore && a.nextMoveDue(now, rc) {
+		a.runBusy("move", func() {
+			a.runtime.AutoMove(uid)
+		})
+	}
+}
+
+func (a *Actor) clearAutoSchedule() {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	a.clearAutoScheduleLocked()
+}
+
+func (a *Actor) clearAutoActionSchedule() {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	a.nextMove = time.Time{}
+	a.nextLocalShout = time.Time{}
+	a.nextWorldShout = time.Time{}
+	a.nextStore = time.Time{}
+}
+
+func (a *Actor) clearAutoScheduleLocked() {
+	a.nextMove = time.Time{}
+	a.nextLocalShout = time.Time{}
+	a.nextWorldShout = time.Time{}
+	a.nextStore = time.Time{}
+	a.storeUntil = time.Time{}
+}
+
+func (a *Actor) storeExpired(now time.Time) bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return !a.storeUntil.IsZero() && now.After(a.storeUntil)
+}
+
+func (a *Actor) storeUntilMissing() bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.storeUntil.IsZero()
+}
+
+func (a *Actor) clearStoreUntil() {
+	a.stateMu.Lock()
+	a.storeUntil = time.Time{}
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) setStoreUntil(t time.Time) {
+	a.stateMu.Lock()
+	a.storeUntil = t
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) setNextStore(t time.Time) {
+	a.stateMu.Lock()
+	a.nextStore = t
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) nextWorldShoutDue(now time.Time, rc robotconfig.RuntimeConfig) bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.randomizedDue(&a.nextWorldShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
+}
+
+func (a *Actor) nextLocalShoutDue(now time.Time, rc robotconfig.RuntimeConfig) bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.randomizedDue(&a.nextLocalShout, now, rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
+}
+
+func (a *Actor) nextStoreDue(now time.Time, rc robotconfig.RuntimeConfig) bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.randomizedDue(&a.nextStore, now, rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec)
+}
+
+func (a *Actor) nextMoveDue(now time.Time, rc robotconfig.RuntimeConfig) bool {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.randomizedDue(&a.nextMove, now, rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
+}
+
+func (a *Actor) randIntn(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if a.rand == nil {
+		return 0
+	}
+	return a.rand.Intn(n)
+}
+
+func (a *Actor) randBetween(min, max int) int {
+	if max < min {
+		min, max = max, min
+	}
+	return min + a.randIntn(max-min+1)
+}
+
+func (a *Actor) randomizedDue(next *time.Time, now time.Time, minSec, maxSec int) bool {
+	return RandomizedDue(next, now, minSec, maxSec, a.randBetween)
+}
+
+func (a *Actor) randomShoutMessage() string {
+	return a.runtime.RandomShoutMessage(a.randIntn)
+}
+
+func (a *Actor) shouldStopAutoStore() bool {
+	if a.releaseRequestedValue() {
+		return true
+	}
+	uid := a.uidValue()
+	if uid <= 0 {
+		return true
+	}
+	if a.runtime.PartyActive(uid) {
+		return true
+	}
+	st, ok := a.runtime.Status(uid)
+	return ok && st.PartyActive
+}
+
+func (a *Actor) ensureOnline(now time.Time) {
+	uid := a.uidValue()
+	if uid <= 0 {
+		return
+	}
+	if a.runtime.IsActive(uid) {
+		a.markOnlineHealthy()
+		a.setState(StateRunning)
+		a.runtime.AddAutoOnline(1, 0)
+		return
+	}
+	rc := a.runtime.Config()
+	if a.onlineAttemptTimedOut(uid, now, rc) {
+		failures := a.recordFailure(now)
+		a.runtime.AddAutoOnline(0, 1)
+		foundationlog.Robotf("[Actor] online_confirm_timeout slot=%d uid=%d failures=%d\n", a.slotIDValue(), uid, failures)
+		a.clearOnlineAttempt()
+		return
+	}
+	if a.onlineConfirmPending(uid, now, rc) {
+		a.markOnlinePending(now)
+		return
+	}
+	if now.Sub(a.lastOnlineTryValue()) < time.Duration(rc.ReconnectDelayMS)*time.Millisecond {
+		return
+	}
+	a.setLastOnlineTry(now)
+	a.setState(StateOnline)
+	res := a.runtime.OnlineNoConfirm(uid)
+	if a.releaseRequestedValue() {
+		return
+	}
+	if res.OK || res.State == robotcap.ActionStateRunning {
+		a.markOnlineHealthy()
+		a.runtime.AddAutoOnline(1, 0)
+		return
+	}
+	if res.State == robotcap.ActionStateAccepted || res.State == robotcap.RuntimeStateInit || res.State == robotcap.RuntimeStateLogin {
+		a.markOnlinePending(now)
+		return
+	}
+	failures := a.recordFailure(now)
+	a.runtime.AddAutoOnline(0, 1)
+	foundationlog.Robotf("[Actor] online_failed slot=%d uid=%d failures=%d state=%s msg=%s\n", a.slotIDValue(), uid, failures, res.State, res.Message)
+}

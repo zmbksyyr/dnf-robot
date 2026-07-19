@@ -9,17 +9,21 @@ import (
 func testLedgerActor(slotID int, mode Mode, uid int) *Actor {
 	actor := NewActor(slotID, mode, nil)
 	if uid > 0 {
-		actor.ResetForUID(uid)
+		actor.resetForUID(uid)
 	}
 	return actor
+}
+
+func addTestLedgerActor(ledger *Ledger, actor *Actor) {
+	ledger.actors[actor.slotIDValue()] = actor
 }
 
 func TestLedgerReserveEmptyAutoActor(t *testing.T) {
 	ledger := NewLedger()
 	a1 := testLedgerActor(1, ModeAuto, 0)
 	a2 := testLedgerActor(2, ModeAuto, 202)
-	ledger.AddActorForTest(a1)
-	ledger.AddActorForTest(a2)
+	addTestLedgerActor(&ledger, a1)
+	addTestLedgerActor(&ledger, a2)
 
 	actor, existing, ok := ledger.ReserveEmptyAutoActor(101)
 	if !ok || existing || actor != a1 {
@@ -44,8 +48,8 @@ func TestLedgerDetachUIDsDeduplicatesAndClearsBlocked(t *testing.T) {
 	ledger := NewLedger()
 	a1 := testLedgerActor(1, ModeAuto, 0)
 	a2 := testLedgerActor(2, ModeAuto, 0)
-	ledger.AddActorForTest(a1)
-	ledger.AddActorForTest(a2)
+	addTestLedgerActor(&ledger, a1)
+	addTestLedgerActor(&ledger, a2)
 	ledger.TryLeaseUID(101, a1)
 	ledger.TryLeaseUID(102, a2)
 	ledger.BlockUID(101)
@@ -57,10 +61,10 @@ func TestLedgerDetachUIDsDeduplicatesAndClearsBlocked(t *testing.T) {
 	if len(missing) != 1 || missing[0] != 999 {
 		t.Fatalf("missing got %v want [999]", missing)
 	}
-	if actors, leases := ledger.ActorCountForTest(), ledger.LeaseCountForTest(); actors != 0 || leases != 0 {
+	if actors, leases := len(ledger.actors), len(ledger.uidActors); actors != 0 || leases != 0 {
 		t.Fatalf("ledger not empty after detach, actors=%d leases=%d", actors, leases)
 	}
-	if ledger.IsBlockedForTest(101) {
+	if _, blocked := ledger.blockedUID[101]; blocked {
 		t.Fatalf("DetachUIDs should clear blocked marker for detached uid")
 	}
 }
@@ -84,13 +88,13 @@ func TestLedgerFilterBlockedRuntimeStatus(t *testing.T) {
 func TestLedgerDetachSomeAutoActorsHonorsFloor(t *testing.T) {
 	ledger := NewLedger()
 	for i := 1; i <= 5; i++ {
-		ledger.AddActorForTest(testLedgerActor(i, ModeAuto, 100+i))
+		addTestLedgerActor(&ledger, testLedgerActor(i, ModeAuto, 100+i))
 	}
 	actors := ledger.DetachSomeAutoActors(nil, 4, 3)
 	if len(actors) != 2 {
 		t.Fatalf("detached actors got %d want 2 due to floor", len(actors))
 	}
-	if got := ledger.ActorCountForTest(); got != 3 {
+	if got := len(ledger.actors); got != 3 {
 		t.Fatalf("remaining actors got %d want 3", got)
 	}
 }

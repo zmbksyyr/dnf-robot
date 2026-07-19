@@ -2,14 +2,14 @@ package actor
 
 import (
 	"math/rand"
+	"sync"
+	"time"
+
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/foundation/lockhub"
-	"sync"
-	"time"
 )
 
-// ---- core.go ----
 type Actor struct {
 	slotID  int
 	uid     int
@@ -90,11 +90,11 @@ const (
 	CommandLogout
 )
 
-type ControlKind int
+type controlKind int
 
 const (
-	ControlAssign ControlKind = iota
-	ControlRelease
+	controlAssign controlKind = iota
+	controlRelease
 )
 
 type State string

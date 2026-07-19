@@ -50,6 +50,19 @@ func TestEvaluateStatusBusyDoesNotRecycle(t *testing.T) {
 	}
 }
 
+func TestEvaluateStatusDoesNotRecycleBelowFailureThreshold(t *testing.T) {
+	now := time.Now()
+	for _, snapshot := range []Snapshot{
+		{Mode: ModeAuto, UID: 1001, Failures: 1, FirstFailureAt: now.Add(-61 * time.Second)},
+		{Mode: ModeAuto, UID: 1001, Failures: 0, FirstFailureAt: now.Add(-61 * time.Second)},
+	} {
+		status := EvaluateStatus(snapshot, now, StatusConfig{BadFailures: 3}, nil)
+		if status.RecycleUID {
+			t.Fatalf("status below failure threshold should not recycle: %+v", status)
+		}
+	}
+}
+
 func TestEvaluateStatusOnlineTimeout(t *testing.T) {
 	now := time.Now()
 	status := EvaluateStatus(Snapshot{

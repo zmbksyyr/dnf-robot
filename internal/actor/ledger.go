@@ -44,34 +44,6 @@ func NewLedger() Ledger {
 	}
 }
 
-func (l *Ledger) AddActorForTest(actor *Actor) {
-	if actor == nil {
-		return
-	}
-	l.indexMu.Lock()
-	l.actors[actor.SlotIDValue()] = actor
-	l.indexMu.Unlock()
-}
-
-func (l *Ledger) ActorCountForTest() int {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
-	return len(l.actors)
-}
-
-func (l *Ledger) LeaseCountForTest() int {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
-	return len(l.uidActors)
-}
-
-func (l *Ledger) IsBlockedForTest(uid int) bool {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
-	_, ok := l.blockedUID[uid]
-	return ok
-}
-
 func (l *Ledger) LeaseSnapshots() []LeaseSnapshot {
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()

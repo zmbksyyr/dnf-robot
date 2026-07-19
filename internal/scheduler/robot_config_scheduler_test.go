@@ -1,11 +1,11 @@
 package scheduler
 
 import (
-	robotcap "robot/internal/capability/robot"
 	"testing"
 	"time"
 
 	actormodel "robot/internal/actor"
+	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 )
 
@@ -34,11 +34,11 @@ func TestSchedulerPolicyReasonConstants(t *testing.T) {
 
 func TestSortActorsForStopByPolicy(t *testing.T) {
 	actors := []*actormodel.Actor{
-		testRobotActor(1, actormodel.ModeAuto, 17000001),
-		testRobotActor(2, actormodel.ModeAuto, 17000002),
-		testRobotActor(3, actormodel.ModeAuto, 17000003),
-		testRobotActor(4, actormodel.ModeAuto, 0),
-		testRobotActor(5, actormodel.ModeAuto, 17000004),
+		testRobotActor(t, 1, actormodel.ModeAuto, 17000001),
+		testRobotActor(t, 2, actormodel.ModeAuto, 17000002),
+		testRobotActor(t, 3, actormodel.ModeAuto, 17000003),
+		testRobotActor(t, 4, actormodel.ModeAuto, 0),
+		testRobotActor(t, 5, actormodel.ModeAuto, 17000004),
 	}
 	status := map[int]robotcap.RuntimeStatus{
 		17000001: {UID: 17000001, StateName: robotcap.RuntimeStateRunning, DisconnectReason: 0},
