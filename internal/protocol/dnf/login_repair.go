@@ -83,7 +83,33 @@ func (c *loginStaticRepairCache) ensure(db *sql.DB, uid int, repair func() bool)
 	return ok
 }
 
+func (c *loginStaticRepairCache) invalidateUIDs(uids []int) {
+	if len(uids) == 0 {
+		return
+	}
+	invalid := make(map[int]struct{}, len(uids))
+	for _, uid := range uids {
+		if uid > 0 {
+			invalid[uid] = struct{}{}
+		}
+	}
+	if len(invalid) == 0 {
+		return
+	}
+	c.access.Lock()
+	for key := range c.entries {
+		if _, ok := invalid[key.uid]; ok {
+			delete(c.entries, key)
+		}
+	}
+	c.access.Unlock()
+}
+
 var loginStaticRepairs loginStaticRepairCache
+
+func InvalidateLoginRepairs(uids []int) {
+	loginStaticRepairs.invalidateUIDs(uids)
+}
 
 func repairLoginPrerequisites(db *sql.DB, uid int, loginIP string) bool {
 	if db == nil || uid <= 0 {

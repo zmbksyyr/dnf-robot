@@ -87,6 +87,10 @@ func (rs *RobotSvc) ForceClose(uid int) bool {
 	return true
 }
 
+func (rs *RobotSvc) InvalidateLoginRepairs(uids []int) {
+	dnf.InvalidateLoginRepairs(uids)
+}
+
 func (rs *RobotSvc) Move(command shared.RuntimeMoveCommand) error {
 	return rs.enqueue(robotMsgEntry{typ: robotCommandMove, move: command})
 }

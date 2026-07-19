@@ -41,6 +41,7 @@ func (e lifecycleCreateEnv) CreateBaseCharacter(info robotcap.Info, rc robotconf
 }
 
 func (e lifecycleCreateEnv) EnsureAccount(uid int, innerIP string) error {
+	e.manager.invalidateLoginRepairs([]int{uid})
 	return e.manager.schemaRepo().EnsureAccount(uid, innerIP)
 }
 
@@ -127,6 +128,7 @@ func (e lifecycleCleanupEnv) BatchDeleteRobotData(uids, cids []int) error {
 	for _, cid := range cids {
 		e.manager.worldHornCache.Invalidate(cid)
 	}
+	e.manager.invalidateLoginRepairs(uids)
 	return nil
 }
 

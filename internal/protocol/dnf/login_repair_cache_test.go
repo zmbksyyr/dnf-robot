@@ -83,6 +83,26 @@ func TestLoginStaticRepairCacheRetriesFailure(t *testing.T) {
 	}
 }
 
+func TestLoginStaticRepairCacheInvalidatesRecreatedUID(t *testing.T) {
+	var cache loginStaticRepairCache
+	db := &sql.DB{}
+	calls := 0
+	repair := func() bool {
+		calls++
+		return true
+	}
+	if !cache.ensure(db, 101, repair) || !cache.ensure(db, 102, repair) {
+		t.Fatal("initial repairs failed")
+	}
+	cache.invalidateUIDs([]int{101})
+	if !cache.ensure(db, 101, repair) || !cache.ensure(db, 102, repair) {
+		t.Fatal("repairs after invalidation failed")
+	}
+	if calls != 3 {
+		t.Fatalf("repair calls got %d want 3", calls)
+	}
+}
+
 func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
 	var cache loginStaticRepairCache
 	db := &sql.DB{}
