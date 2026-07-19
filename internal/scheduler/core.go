@@ -55,6 +55,9 @@ type RobotManager struct {
 	runtimeStatusSummary            robotcap.RuntimeStatusSummary
 	runtimeStatusSummaryAt          time.Time
 	runtimeStatusRefresh            chan struct{}
+	followLookupMu                  lockhub.Locker
+	followLookup                    followAccountLookup
+	followLookupInFlight            string
 	schedulerStatus                 robotcap.SchedulerStatus
 	nextOperationID                 int64
 	operations                      []robotcap.OperationStatus

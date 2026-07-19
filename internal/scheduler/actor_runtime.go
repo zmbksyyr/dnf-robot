@@ -375,23 +375,23 @@ func (m *RobotManager) currentFollowTarget(rc robotconfig.RuntimeConfig, maps []
 		return robotaction.FollowTarget{}, false
 	}
 
-	uids, err := m.schemaRepo().FollowAccountUIDs(account)
-	if err == nil {
-		if len(uids) > 0 {
-			status := m.runtimeStatusMap()
-			for _, uid := range uids {
-				if st, ok := status[uid]; ok && robotcap.ActiveRuntimeStatus(st) {
-					return robotaction.FollowTarget{UID: uid, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y}, true
-				}
+	lookup, ok := m.loadFollowAccount(account)
+	if !ok {
+		return robotaction.FollowTarget{}, false
+	}
+	if len(lookup.uids) > 0 {
+		status := m.runtimeStatusMap()
+		for _, uid := range lookup.uids {
+			if st, ok := status[uid]; ok && robotcap.ActiveRuntimeStatus(st) {
+				return robotaction.FollowTarget{UID: uid, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y}, true
 			}
 		}
 	}
 
-	village, ok, err := m.schemaRepo().FollowAccountVillageLastPlayed(account)
-	if err != nil || !ok {
+	if !lookup.villageOK {
 		return robotaction.FollowTarget{}, false
 	}
-	info := robotcap.Info{Village: village, Area: rc.SpawnArea, X: m.randBetween(rc.SpawnXMin, rc.SpawnXMax), Y: m.randBetween(rc.SpawnYMin, rc.SpawnYMax), Level: rc.LevelMax}
+	info := robotcap.Info{Village: lookup.village, Area: rc.SpawnArea, X: m.randBetween(rc.SpawnXMin, rc.SpawnXMax), Y: m.randBetween(rc.SpawnYMin, rc.SpawnYMax), Level: rc.LevelMax}
 	robotspawn.ApplyVillageLocation(spawnEnv{manager: m}, &info, info.Village, rc, maps)
 	return robotaction.FollowTarget{Village: info.Village, Area: info.Area, X: info.X, Y: info.Y}, true
 }
