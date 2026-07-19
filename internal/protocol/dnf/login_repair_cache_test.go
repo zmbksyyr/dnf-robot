@@ -83,6 +83,48 @@ func TestLoginStaticRepairCacheRetriesFailure(t *testing.T) {
 	}
 }
 
+func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
+	var cache loginStaticRepairCache
+	db := &sql.DB{}
+	staticCalls := 0
+	steps := make(map[string]int)
+	expRepairs := 0
+	capabilities := loginRepairCapabilities{
+		dTaiwanMemberJoinInfo: true,
+		memberPunishInfo:      true,
+	}
+	run := func(_ string, step string, _ ...interface{}) bool {
+		steps[step]++
+		return true
+	}
+	repairExp := func() bool {
+		expRepairs++
+		return true
+	}
+
+	for i := 0; i < 2; i++ {
+		if !cache.ensure(db, 101, func() bool {
+			staticCalls++
+			return true
+		}) {
+			t.Fatal("static repair unexpectedly failed")
+		}
+		if !refreshLoginSessionWith(101, "127.0.0.1", capabilities, run, repairExp) {
+			t.Fatal("session refresh unexpectedly failed")
+		}
+	}
+
+	if staticCalls != 1 {
+		t.Fatalf("static repair calls got %d want 1", staticCalls)
+	}
+	if steps["clear trade punish"] != 2 {
+		t.Fatalf("trade punish repair calls got %d want 2", steps["clear trade punish"])
+	}
+	if expRepairs != 2 {
+		t.Fatalf("exp repair calls got %d want 2", expRepairs)
+	}
+}
+
 func TestLoginStaticRepairCacheSharesConcurrentRepair(t *testing.T) {
 	var cache loginStaticRepairCache
 	db := &sql.DB{}

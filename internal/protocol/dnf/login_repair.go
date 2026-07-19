@@ -128,34 +128,40 @@ func repairStaticLoginPrerequisites(db *sql.DB, uid int, capabilities loginRepai
 			return false
 		}
 	}
-	if capabilities.memberPunishInfo && !runOnlineRepairSQL(db, "DELETE FROM d_taiwan.member_punish_info WHERE m_id=? AND punish_type=11", "clear trade punish", uid) {
-		return false
-	}
-	if !repairOnlineRobotExpBounds(db, uid, capabilities) {
-		return false
-	}
 	return true
 }
 
 func refreshLoginSession(db *sql.DB, uid int, loginIP string, capabilities loginRepairCapabilities) bool {
-	if !runOnlineRepairSQL(db, "UPDATE taiwan_login.login_account_3 SET login_status=0 WHERE m_id=?", "reset login status", uid) {
+	run := func(query string, step string, args ...interface{}) bool {
+		return runOnlineRepairSQL(db, query, step, args...)
+	}
+	return refreshLoginSessionWith(uid, loginIP, capabilities, run, func() bool {
+		return repairOnlineRobotExpBounds(db, uid, capabilities)
+	})
+}
+
+type loginRepairExec func(query string, step string, args ...interface{}) bool
+
+func refreshLoginSessionWith(uid int, loginIP string, capabilities loginRepairCapabilities, run loginRepairExec, repairExp func() bool) bool {
+	if !run("UPDATE taiwan_login.login_account_3 SET login_status=0 WHERE m_id=?", "reset login status", uid) {
 		return false
 	}
 	joinArgs := []interface{}{uid, time.Now().Year(), loginIP, loginIP}
 	for _, table := range capabilities.memberJoinInfoTables() {
 		query := "INSERT INTO " + table + " (m_id,reg_date,ip,contry_code,login_time,error_type,login_ip,game_use_history) VALUES (?,?,?,0,UNIX_TIMESTAMP(),0,?,1) ON DUPLICATE KEY UPDATE ip=VALUES(ip),login_time=VALUES(login_time),error_type=0,login_ip=VALUES(login_ip),game_use_history=1"
-		if !runOnlineRepairSQL(db, query, "upsert member_join_info", joinArgs...) {
+		if !run(query, "upsert member_join_info", joinArgs...) {
 			return false
 		}
 	}
-
-	stmtSQL := "INSERT INTO taiwan_login.member_login (m_id,login_time,expire_time,last_play_time,login_ip,cleanpad_point,tutorial_skipable) VALUES (?,UNIX_TIMESTAMP(),2147483647,UNIX_TIMESTAMP(),?,1,'1') ON DUPLICATE KEY UPDATE login_time=UNIX_TIMESTAMP(),expire_time=2147483647,last_play_time=UNIX_TIMESTAMP(),login_ip=VALUES(login_ip),cleanpad_point=1,tutorial_skipable='1'"
-	if _, err := db.Exec(stmtSQL, uid, loginIP); err != nil {
-		fmt.Printf("MsgOnLine preflight sql failed: upsert member_login: %v\n", err)
+	if capabilities.memberPunishInfo && !run("DELETE FROM d_taiwan.member_punish_info WHERE m_id=? AND punish_type=11", "clear trade punish", uid) {
+		return false
+	}
+	if repairExp == nil || !repairExp() {
 		return false
 	}
 
-	return true
+	stmtSQL := "INSERT INTO taiwan_login.member_login (m_id,login_time,expire_time,last_play_time,login_ip,cleanpad_point,tutorial_skipable) VALUES (?,UNIX_TIMESTAMP(),2147483647,UNIX_TIMESTAMP(),?,1,'1') ON DUPLICATE KEY UPDATE login_time=UNIX_TIMESTAMP(),expire_time=2147483647,last_play_time=UNIX_TIMESTAMP(),login_ip=VALUES(login_ip),cleanpad_point=1,tutorial_skipable='1'"
+	return run(stmtSQL, "upsert member_login", uid, loginIP)
 }
 
 func repairOnlineRobotExpBounds(db *sql.DB, uid int, capabilities loginRepairCapabilities) bool {
