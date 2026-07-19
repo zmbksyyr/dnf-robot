@@ -20,6 +20,7 @@ import (
 	"robot/internal/foundation/config"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/foundation/network"
+	"robot/internal/foundation/process"
 	"robot/internal/protocol/dnf"
 	"robot/internal/protocol/dnfruntime"
 	"robot/internal/protocol/monitor"
@@ -75,15 +76,6 @@ func main() {
 	})
 	defer dnf.LogClose()
 	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("ROBOT_CONFIG path=%s config_dir=%s\n", configPath, cfg.ConfigDir))
-	dnf.ConfigurePartyRelayPort(cfg.RelayPort)
-	route0Sink, err := dnf.StartPartyRoute0Sink(cfg.PartyRoute0Port)
-	if err != nil {
-		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ROUTE0_SINK_FAILED addr=0.0.0.0:%d err=%v\n", cfg.PartyRoute0Port, err))
-		dnf.PrintfRed("party route0 sink failed: %v\n", err)
-		os.Exit(1)
-	}
-	defer route0Sink.Close()
-	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ROUTE0_SINK_READY addr=0.0.0.0:%d\n", cfg.PartyRoute0Port))
 
 	if err := runtimeinit.Init(cfg); err != nil {
 		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("ROBOT_RUNTIME_INIT_FAILED err=%v\n", err))
@@ -95,6 +87,20 @@ func main() {
 		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ACCOUNT_RANGE_DEFAULTED err=%v\n", err))
 		robotRuntimeConfig = robotconfig.Default()
 	}
+	if err := process.EnsureOpenFileLimit(robotRuntimeConfig.MaxOnlineRobots, cfg.DBMaxSize); err != nil {
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("OPEN_FILE_CAPACITY_FAILED err=%v\n", err))
+		dnf.PrintfRed("open file capacity check failed: %v\n", err)
+		os.Exit(1)
+	}
+	dnf.ConfigurePartyRelayPort(cfg.RelayPort)
+	route0Sink, err := dnf.StartPartyRoute0Sink(cfg.PartyRoute0Port)
+	if err != nil {
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ROUTE0_SINK_FAILED addr=0.0.0.0:%d err=%v\n", cfg.PartyRoute0Port, err))
+		dnf.PrintfRed("party route0 sink failed: %v\n", err)
+		os.Exit(1)
+	}
+	defer route0Sink.Close()
+	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ROUTE0_SINK_READY addr=0.0.0.0:%d\n", cfg.PartyRoute0Port))
 	dnf.ConfigurePartyRobotAccountRange(robotRuntimeConfig.RobotUIDStart, robotRuntimeConfig.RobotUIDEnd)
 	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ACCOUNT_RANGE start=%d end=%d\n", robotRuntimeConfig.RobotUIDStart, robotRuntimeConfig.RobotUIDEnd))
 	keypair.SetRuntimeKeySink(dnf.SetRSAKey)

@@ -128,19 +128,20 @@ func (c *DNFCipher) DecryptAnti(data []byte) ([]byte, error) {
 	if int(packetSize) > len(data) {
 		return nil, ErrInvalidBlockSize
 	}
-	antiDataSize := int(packetSize) - 17
-	antiDataBuf := make([]byte, antiDataSize+4096)
-	copy(antiDataBuf, data[17:])
-
 	protocolType := pHeader.ProtocolType
 	nType := pBody.CryptoType
-	dwKeySeed := pBody.KeySeed
-
 	if protocolType != 17 || (nType != 18 && nType != 19) {
 		return nil, ErrInvalidBlockSize
 	}
 
-	pbyKey := GenKey(int(nType), dwKeySeed)
+	antiDataSize := int(packetSize) - 17
+	if antiDataSize < 9 {
+		return nil, ErrInvalidBlockSize
+	}
+	antiDataBuf := make([]byte, antiDataSize)
+	copy(antiDataBuf, data[17:int(packetSize)])
+
+	pbyKey := GenKey(int(nType), pBody.KeySeed)
 	GeneNew(pbyKey, false, antiDataBuf, antiDataSize)
 
 	offset := 4 + 4 + 1 + int(antiDataBuf[8])
@@ -155,6 +156,8 @@ func (c *DNFCipher) DecryptAnti(data []byte) ([]byte, error) {
 		if antiDataSize-offset < 13 {
 			return nil, ErrInvalidBlockSize
 		}
+	} else if antiDataSize-offset < 7 {
+		return nil, ErrInvalidBlockSize
 	}
 
 	sizeCheck := binary.LittleEndian.Uint32(antiDataBuf[offset+3 : offset+7])
@@ -162,9 +165,7 @@ func (c *DNFCipher) DecryptAnti(data []byte) ([]byte, error) {
 		return nil, ErrInvalidBlockSize
 	}
 
-	result := make([]byte, antiDataSize-offset)
-	copy(result, antiDataBuf[offset:])
-	return result, nil
+	return antiDataBuf[offset:], nil
 }
 
 func (c *DNFCipher) GetTotalKeyLength() int {

@@ -152,7 +152,6 @@ func NewRefHub() *RefHub {
 
 func (h *RefHub) Acquire(uid int) *RefLock {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.locks == nil {
 		h.locks = make(map[int]*RefLock)
 	}
@@ -162,6 +161,8 @@ func (h *RefHub) Acquire(uid int) *RefLock {
 		h.locks[uid] = lock
 	}
 	lock.refs++
+	h.mu.Unlock()
+
 	lock.mu.Lock()
 	return lock
 }
