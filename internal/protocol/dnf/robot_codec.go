@@ -235,19 +235,20 @@ func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, 
 		return candidate.data, candidate.typ, candidate.source, nil
 	}
 	if len(valid) > 1 && knownUniqueID != nil {
+		known := make([]peerResponseCandidate, 0, len(valid))
 		for _, candidate := range valid {
 			if knownUniqueID(binary.LittleEndian.Uint16(candidate.data[:2])) {
-				return candidate.data, candidate.typ, candidate.source, nil
+				known = append(known, candidate)
 			}
 		}
-	}
-	if len(valid) > 1 && !isAnti && len(raw) >= 15 {
-		shapeSource := recvBodySourceDecrypted
-		if len(raw)-15 <= 8 {
-			shapeSource = recvBodySourcePlain
+		if len(known) == 1 {
+			candidate := known[0]
+			return candidate.data, candidate.typ, candidate.source, nil
 		}
+	}
+	if len(valid) > 1 && !isAnti && len(raw) > 15+8 {
 		for _, candidate := range valid {
-			if candidate.source == shapeSource {
+			if candidate.source == recvBodySourceDecrypted {
 				return candidate.data, candidate.typ, candidate.source, nil
 			}
 		}
@@ -259,14 +260,8 @@ func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, 
 			}
 		}
 	}
-	for _, candidate := range valid {
-		if candidate.source == recvBodySourcePlain {
-			return candidate.data, candidate.typ, candidate.source, nil
-		}
-	}
-	if len(valid) > 0 {
-		candidate := valid[0]
-		return candidate.data, candidate.typ, candidate.source, nil
+	if len(valid) > 1 {
+		return nil, 0, recvBodySourceUnknown, fmt.Errorf("peer request body is ambiguous between plain and decrypted forms")
 	}
 	if decryptErr != nil {
 		return nil, 0, recvBodySourceUnknown, decryptErr
