@@ -156,6 +156,7 @@ type RobotVo struct {
 	partyTQOSReliableSeq [4][3]uint32
 	partyTQOSReplies     [4][3]partyTQOSReliableReply
 	partyTQOSReceived    [4][3]partyTQOSReceiveWindow
+	partyTQOSEpochs      [4][3]partyTQOSEpoch
 	partyTQOSCodecs      [4][3]partyTQOSCodec
 	partyTQOSCodecKnown  [4][3]bool
 	partyRobotProbeAt    [4]time.Time

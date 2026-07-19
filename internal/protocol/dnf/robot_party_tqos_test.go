@@ -316,6 +316,9 @@ func TestRobotPartyTQOSState3StartsNewReceiveEpoch(t *testing.T) {
 
 			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(100, peer.slot, 0, 2, route, codec), route, peer)
 			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(101, peer.slot, 0, 1, route, codec), route, peer)
+			vo.partyTQOSSeq[peer.slot][route] = 9
+			vo.partyTQOSReliableSeq[peer.slot][route] = 11
+			vo.partyRobotPeerReady[peer.slot] = true
 			if window := vo.partyTQOSReceived[peer.slot][route]; !window.initialized || window.latest != 100 {
 				t.Fatalf("advanced receive window = %+v", window)
 			}
@@ -323,16 +326,31 @@ func TestRobotPartyTQOSState3StartsNewReceiveEpoch(t *testing.T) {
 				t.Fatal("state2 reply was not pending before reconnect")
 			}
 
-			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(1, peer.slot, 0, 3, route, codec), route, peer)
+			state3 := buildPartyTQOSPacket(1, peer.slot, 0, 3, route, codec)
+			vo.buildPartyTQOSRepliesUnsafe(state3, route, peer)
 			if window := vo.partyTQOSReceived[peer.slot][route]; window.initialized {
 				t.Fatalf("state3 retained old receive window = %+v", window)
 			}
 			if pending := vo.partyTQOSReplies[peer.slot][route]; len(pending.packet) != 0 {
 				t.Fatalf("state3 retained old state2 reply = %+v", pending)
 			}
+			if vo.partyTQOSSeq[peer.slot][route] != 1 || vo.partyTQOSReliableSeq[peer.slot][route] != 0 || vo.partyRobotPeerReady[peer.slot] {
+				t.Fatalf("state3 did not reset outbound epoch: seq=%d reliable=%d ready=%t", vo.partyTQOSSeq[peer.slot][route], vo.partyTQOSReliableSeq[peer.slot][route], vo.partyRobotPeerReady[peer.slot])
+			}
 
-			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(2, peer.slot, 0, 2, route, codec), route, peer)
-			if window := vo.partyTQOSReceived[peer.slot][route]; !window.initialized || window.latest != 2 {
+			state1 := buildPartyTQOSPacket(2, peer.slot, 0, 1, route, codec)
+			replies := vo.buildPartyTQOSRepliesUnsafe(state1, route, peer)
+			if len(replies) != 1 || binary.LittleEndian.Uint32(replies[0][1:5]) != 0 || vo.partyTQOSReliableSeq[peer.slot][route] != 1 {
+				t.Fatalf("new epoch state2 did not restart at zero: replies=%x next=%d", replies, vo.partyTQOSReliableSeq[peer.slot][route])
+			}
+			pending := append([]byte(nil), vo.partyTQOSReplies[peer.slot][route].packet...)
+			vo.buildPartyTQOSRepliesUnsafe(state3, route, peer)
+			if !bytes.Equal(vo.partyTQOSReplies[peer.slot][route].packet, pending) || vo.partyTQOSReliableSeq[peer.slot][route] != 1 {
+				t.Fatalf("duplicate state3 reset active epoch: pending=%x next=%d", vo.partyTQOSReplies[peer.slot][route].packet, vo.partyTQOSReliableSeq[peer.slot][route])
+			}
+
+			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(3, peer.slot, 0, 2, route, codec), route, peer)
+			if window := vo.partyTQOSReceived[peer.slot][route]; !window.initialized || window.latest != 3 {
 				t.Fatalf("low reconnect sequence was rejected: %+v", window)
 			}
 		})
