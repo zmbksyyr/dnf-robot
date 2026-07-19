@@ -17,7 +17,6 @@ import (
 	"robot/internal/composition/auctionapp"
 	"robot/internal/entry/tcpapi"
 	"robot/internal/entry/webadmin"
-	entrywebadmin "robot/internal/entry/webadmin"
 	"robot/internal/foundation/config"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/foundation/network"
@@ -137,7 +136,7 @@ func main() {
 		marketApp.StartAuto()
 	}
 	tcpapi.SetMarketApp(marketApp)
-	stopWebAdmin := entrywebadmin.StartSupervisor(cfg)
+	stopWebAdmin := webadmin.StartSupervisor(cfg)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.RobotPort)
 	tcpServer := network.NewTCPServer(addr)
