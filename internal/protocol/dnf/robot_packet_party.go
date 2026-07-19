@@ -61,7 +61,8 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		}
 		self, peers, source, err := selectPartyIPInfoPacket(r.Cipher, packet.data, packet.isAnti, uint32(r.UID))
 		if err != nil {
-			fmt.Printf("[PARTY_IPINFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, packet.isAnti, packet.size)
+			fmt.Printf("[PARTY_IPINFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d candidates=%s\n",
+				r.UID, err, packet.isAnti, packet.size, partyIPInfoDebugSummary(r.Cipher, packet.data, packet.isAnti))
 			return
 		}
 		r.rememberPartyRecvSourceUnsafe(source)

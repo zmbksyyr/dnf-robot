@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -112,29 +113,70 @@ func parsePartyIPInfoMembers(packet []byte) ([]partyIPPeer, bool) {
 	peers := make([]partyIPPeer, 0, count)
 	offset := 1
 	for i := 0; i < count; i++ {
-		id := binary.LittleEndian.Uint16(packet[offset : offset+2])
-		innerIP := net.IPv4(packet[offset+2], packet[offset+3], packet[offset+4], packet[offset+5])
-		outerIP := net.IPv4(packet[offset+6], packet[offset+7], packet[offset+8], packet[offset+9])
-		port := binary.BigEndian.Uint16(packet[offset+10 : offset+12])
-		accID := binary.LittleEndian.Uint32(packet[offset+12 : offset+16])
-		natType := packet[offset+16]
-		mtu := binary.LittleEndian.Uint32(packet[offset+17 : offset+21])
-		if id != 0 {
+		entry := packet[offset : offset+entrySize]
+		peer, ok := parsePartyIPInfoMember(entry, byte(i))
+		if ok && (peer.uniqueID != 0 || peer.accID != 0) {
 			peers = append(peers, partyIPPeer{
-				uniqueID:  id,
-				accID:     accID,
-				slot:      byte(i),
+				uniqueID:  peer.uniqueID,
+				accID:     peer.accID,
+				slot:      peer.slot,
 				slotKnown: true,
-				innerIP:   innerIP,
-				outerIP:   outerIP,
-				port:      port,
-				natType:   natType,
-				mtu:       mtu,
+				innerIP:   peer.innerIP,
+				outerIP:   peer.outerIP,
+				port:      peer.port,
+				natType:   peer.natType,
+				mtu:       peer.mtu,
 			})
 		}
 		offset += entrySize
 	}
 	return peers, true
+}
+
+func parsePartyIPInfoMember(entry []byte, slot byte) (partyIPPeer, bool) {
+	switch len(entry) {
+	case 22:
+		return partyIPInfoMemberWithID(entry, slot), true
+	case 24:
+		if partyIPInfoMemberStartsWithIP(entry) {
+			return partyIPInfoMemberWithoutID(entry, slot), true
+		}
+		return partyIPInfoMemberWithID(entry, slot), true
+	default:
+		return partyIPPeer{}, false
+	}
+}
+
+func partyIPInfoMemberWithID(entry []byte, slot byte) partyIPPeer {
+	return partyIPPeer{
+		uniqueID: binary.LittleEndian.Uint16(entry[0:2]),
+		accID:    binary.LittleEndian.Uint32(entry[12:16]),
+		slot:     slot,
+		innerIP:  net.IPv4(entry[2], entry[3], entry[4], entry[5]),
+		outerIP:  net.IPv4(entry[6], entry[7], entry[8], entry[9]),
+		port:     binary.BigEndian.Uint16(entry[10:12]),
+		natType:  entry[16],
+		mtu:      binary.LittleEndian.Uint32(entry[17:21]),
+	}
+}
+
+func partyIPInfoMemberWithoutID(entry []byte, slot byte) partyIPPeer {
+	return partyIPPeer{
+		accID:   binary.LittleEndian.Uint32(entry[10:14]),
+		slot:    slot,
+		innerIP: net.IPv4(entry[0], entry[1], entry[2], entry[3]),
+		outerIP: net.IPv4(entry[4], entry[5], entry[6], entry[7]),
+		port:    binary.BigEndian.Uint16(entry[8:10]),
+		natType: entry[14],
+		mtu:     binary.LittleEndian.Uint32(entry[15:19]),
+	}
+}
+
+func partyIPInfoMemberStartsWithIP(entry []byte) bool {
+	if len(entry) < 4 {
+		return false
+	}
+	return entry[0] == 10 || (entry[0] == 192 && entry[1] == 168) || (entry[0] == 172 && entry[1] >= 16 && entry[1] <= 31)
 }
 
 func partyIPInfoEntrySize(packetSize, count int) (int, bool) {
@@ -361,6 +403,33 @@ func selectPartyIPInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, s
 		return partyIPPeer{}, nil, recvBodySourceUnknown, decryptErr
 	}
 	return partyIPPeer{}, nil, recvBodySourceUnknown, fmt.Errorf("party IP info has no valid body")
+}
+
+func partyIPInfoDebugSummary(cipher *crypt.DNFCipher, raw []byte, isAnti bool) string {
+	candidates, err := recvBodyCandidates(cipher, raw, isAnti)
+	if len(candidates) == 0 {
+		if err != nil {
+			return "none err=" + err.Error()
+		}
+		return "none"
+	}
+	text := ""
+	for _, candidate := range candidates {
+		if text != "" {
+			text += ";"
+		}
+		body := candidate.body
+		head := body
+		if len(head) > 96 {
+			head = head[:96]
+		}
+		count := 0
+		if len(body) > 0 {
+			count = int(body[0])
+		}
+		text += fmt.Sprintf("%s len=%d count=%d hex=%s", candidate.source, len(body), count, hex.EncodeToString(head))
+	}
+	return text
 }
 
 func partyInfoPacketClearsParty(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (bool, recvBodySource, error) {

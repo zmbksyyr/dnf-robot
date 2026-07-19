@@ -447,6 +447,18 @@ func TestPartyIPInfoPacketSupportsTwentyFourByteMembers(t *testing.T) {
 	}
 }
 
+func TestPartyIPInfoPacketSupportsMixedTwentyFourByteMembers(t *testing.T) {
+	body := mustPartyHex(t, "02f700c0a8c801c0a8c80113c780a8120101c0050000644704c0a8c883c0a8c883878c0867030101c005000064a8b1c270")
+
+	self, peers, source, err := selectPartyIPInfoPacket(newPartyTestCipher(t), makePartyRecvPacket(11, body), false, 17000200)
+	if err != nil || source != recvBodySourcePlain || self.accID != 17000200 || self.slot != 1 || len(peers) != 1 {
+		t.Fatalf("self=%+v peers=%+v source=%s err=%v", self, peers, source, err)
+	}
+	if peers[0].uniqueID != 247 || peers[0].accID != 18000000 || peers[0].port != 5063 {
+		t.Fatalf("leader peer parsed incorrectly: %+v", peers[0])
+	}
+}
+
 func TestPartyIPInfoRejectsSnapshotWithoutSelf(t *testing.T) {
 	body := make([]byte, 23)
 	body[0] = 1
