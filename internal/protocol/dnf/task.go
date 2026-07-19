@@ -46,7 +46,21 @@ const (
 	maxMessageQueueSize      = 5000
 	maxMessageTimerQueueSize = 10000
 	connectLaunchInterval    = 35 * time.Millisecond
+	messageDispatchShards    = 32
+	messageShardQueueSize    = (maxMessageQueueSize + messageDispatchShards - 1) / messageDispatchShards
 )
+
+type messageDispatchShard struct {
+	queue []MsgQueueData
+	mu    lockhub.Locker
+	cond  *sync.Cond
+}
+
+func newMessageDispatchShard() *messageDispatchShard {
+	shard := &messageDispatchShard{queue: make([]MsgQueueData, 0, messageShardQueueSize)}
+	shard.cond = sync.NewCond(&shard.mu)
+	return shard
+}
 
 type RobotStallConfig struct {
 	CfgContent   string
@@ -72,9 +86,7 @@ type publicMsgInternalData struct {
 }
 
 type RobotDnfTask struct {
-	messageQueue []MsgQueueData
-	messageMutex lockhub.Locker
-	messageCond  *sync.Cond
+	messageShards [messageDispatchShards]*messageDispatchShard
 
 	messageTimerQueue []MsgQueueData
 	timerMutex        lockhub.Locker
@@ -82,8 +94,7 @@ type RobotDnfTask struct {
 	robotVoMap   map[int]*RobotVo
 	robotVoMutex lockhub.RWLocker
 
-	keyToHandle   map[string]func(task *RobotDnfTask, data interface{}) bool
-	keyToHandleMu lockhub.Locker
+	keyToHandle map[string]func(task *RobotDnfTask, data interface{}) bool
 
 	done         chan struct{}
 	shutdownOnce sync.Once
@@ -95,7 +106,6 @@ type RobotDnfTask struct {
 
 func NewRobotDnfTask() *RobotDnfTask {
 	t := &RobotDnfTask{
-		messageQueue:      make([]MsgQueueData, 0),
 		messageTimerQueue: make([]MsgQueueData, 0),
 		robotVoMap:        make(map[int]*RobotVo),
 		keyToHandle:       make(map[string]func(task *RobotDnfTask, data interface{}) bool),
@@ -103,13 +113,14 @@ func NewRobotDnfTask() *RobotDnfTask {
 		connectQueue:      make(chan *RobotVo, maxMessageQueueSize),
 		connectQueued:     make(map[uint32]struct{}),
 	}
-	t.messageCond = sync.NewCond(&t.messageMutex)
-
 	t.initKeyCall()
+	for i := range t.messageShards {
+		t.messageShards[i] = newMessageDispatchShard()
+		go t.dispatchLoop(t.messageShards[i])
+	}
 
 	go t.connectLoop()
 	go t.timerLoop()
-	go t.dispatchLoop()
 
 	return t
 }
@@ -141,43 +152,35 @@ func (t *RobotDnfTask) initKeyCall() {
 	t.keyToHandle["MsgOnLineAsyncTaskVec"] = t.msgOnLineAsyncTaskVec
 }
 
-func (t *RobotDnfTask) dispatchLoop() {
+func (t *RobotDnfTask) dispatchLoop(shard *messageDispatchShard) {
 	for {
+		shard.mu.Lock()
+		for len(shard.queue) == 0 {
+			select {
+			case <-t.done:
+				shard.mu.Unlock()
+				return
+			default:
+			}
+			shard.cond.Wait()
+		}
 		select {
 		case <-t.done:
+			shard.mu.Unlock()
 			return
 		default:
 		}
-
-		t.messageMutex.Lock()
-		for len(t.messageQueue) == 0 {
-			select {
-			case <-t.done:
-				t.messageMutex.Unlock()
-				return
-			default:
-			}
-			t.messageCond.Wait()
-			select {
-			case <-t.done:
-				t.messageMutex.Unlock()
-				return
-			default:
-			}
-		}
-
-		msg := t.messageQueue[0]
-		t.messageQueue = t.messageQueue[1:]
-		t.messageMutex.Unlock()
+		msg := shard.queue[0]
+		shard.queue[0] = MsgQueueData{}
+		shard.queue = shard.queue[1:]
+		shard.mu.Unlock()
 
 		t.handleMessage(msg)
 	}
 }
 
 func (t *RobotDnfTask) handleMessage(msg MsgQueueData) {
-	t.keyToHandleMu.Lock()
 	handler, ok := t.keyToHandle[msg.Type]
-	t.keyToHandleMu.Unlock()
 	if !ok {
 		return
 	}
@@ -221,24 +224,57 @@ func (t *RobotDnfTask) AddMessage(typ string, data interface{}) {
 }
 
 func (t *RobotDnfTask) TryAddMessage(typ string, data interface{}) bool {
+	select {
+	case <-t.done:
+		return false
+	default:
+	}
 	msg := MsgQueueData{Type: typ, Data: data}
-	t.messageMutex.Lock()
-	defer t.messageMutex.Unlock()
-	if len(t.messageQueue) >= maxMessageQueueSize {
+	shard := t.messageShards[messageShardIndex(typ, data)]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	select {
+	case <-t.done:
+		return false
+	default:
+	}
+	if len(shard.queue) >= messageShardQueueSize {
 		if typ == "MsgOnLine" {
-			fmt.Printf("[RobotDnfTask] message_queue_full reject_online len=%d\n", len(t.messageQueue))
+			fmt.Printf("[RobotDnfTask] message_queue_full reject_online shard_len=%d\n", len(shard.queue))
 			return false
 		}
 		if typ == "MsgLogout" {
-			fmt.Printf("[RobotDnfTask] message_queue_full enqueue_logout_drop_oldest len=%d\n", len(t.messageQueue))
+			fmt.Printf("[RobotDnfTask] message_queue_full enqueue_logout_drop_oldest shard_len=%d\n", len(shard.queue))
 		} else {
-			fmt.Printf("[RobotDnfTask] message_queue_overflow drop_oldest type=%s len=%d\n", typ, len(t.messageQueue))
+			fmt.Printf("[RobotDnfTask] message_queue_overflow drop_oldest type=%s shard_len=%d\n", typ, len(shard.queue))
 		}
-		t.messageQueue = t.messageQueue[1:]
+		shard.queue[0] = MsgQueueData{}
+		shard.queue = shard.queue[1:]
 	}
-	t.messageQueue = append(t.messageQueue, msg)
-	t.messageCond.Signal()
+	shard.queue = append(shard.queue, msg)
+	shard.cond.Signal()
 	return true
+}
+
+func messageShardIndex(typ string, data interface{}) int {
+	uid := 0
+	switch typ {
+	case "MsgOnLine", "MsgOnLineAsyncTaskVec":
+		if vo, ok := data.(*RobotVo); ok && vo != nil {
+			uid = int(vo.UID)
+		}
+	case "MsgMove":
+		if move, ok := data.(*moveInternalData); ok && move != nil {
+			uid = move.ID
+		}
+	case "MsgLogout":
+		uid, _ = data.(int)
+	case "MsgPublicMsg":
+		if msg, ok := data.(*publicMsgInternalData); ok && msg != nil {
+			uid = msg.ID
+		}
+	}
+	return int(uint32(uid) * 2654435761 % messageDispatchShards)
 }
 
 func (t *RobotDnfTask) AddMessageDelay(typ string, data interface{}, sleepVal int) {
@@ -308,7 +344,11 @@ func (t *RobotDnfTask) GetRobotVoMap() map[int]*RobotVo {
 func (t *RobotDnfTask) Shutdown() {
 	t.shutdownOnce.Do(func() {
 		close(t.done)
-		t.messageCond.Broadcast()
+		for _, shard := range t.messageShards {
+			shard.mu.Lock()
+			shard.cond.Broadcast()
+			shard.mu.Unlock()
+		}
 	})
 }
 
@@ -362,14 +402,16 @@ func (t *RobotDnfTask) enqueueConnect(vo *RobotVo) bool {
 }
 
 func (t *RobotDnfTask) onlineBacklog() int {
-	t.messageMutex.Lock()
 	pendingMessages := 0
-	for _, msg := range t.messageQueue {
-		if msg.Type == "MsgOnLine" {
-			pendingMessages++
+	for _, shard := range t.messageShards {
+		shard.mu.Lock()
+		for _, msg := range shard.queue {
+			if msg.Type == "MsgOnLine" {
+				pendingMessages++
+			}
 		}
+		shard.mu.Unlock()
 	}
-	t.messageMutex.Unlock()
 	return pendingMessages + len(t.connectQueue)
 }
 
