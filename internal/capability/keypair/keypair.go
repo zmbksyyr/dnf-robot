@@ -482,15 +482,3 @@ func ClosePrivateKey() {
 func GetRSAKey() *rsa.PrivateKey {
 	return rsakey.GetRSAKey()
 }
-
-func BuildLoginKeyPlainHex(uid int) string {
-	return rsakey.BuildLoginKeyPlainHex(uid)
-}
-
-func Hex2Bin(hexStr string) []byte {
-	return rsakey.Hex2Bin(hexStr)
-}
-
-func GetLoginKey(uid int) string {
-	return rsakey.GetLoginKey(uid)
-}

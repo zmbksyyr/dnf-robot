@@ -70,8 +70,6 @@ type RobotManager struct {
 	storePointsCoord                *storecap.PointCoordinator
 	worldHornCache                  *storecap.WorldHornCache
 	positionWrites                  *positionBatcher
-	repository                      SchedulerRepository
-	autoPolicy                      AutoPolicy
 }
 
 func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Runtime) *RobotManager {
@@ -96,9 +94,6 @@ func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Run
 }
 
 func (m *RobotManager) repo() SchedulerRepository {
-	if m.repository != nil {
-		return m.repository
-	}
 	if repository, ok := m.database.(SchedulerRepository); ok {
 		return repository
 	}
@@ -131,31 +126,6 @@ func (m *RobotManager) withCache(reason string, fn func()) {
 		fn()
 		return nil
 	})
-}
-
-func (m *RobotManager) policy() AutoPolicy {
-	if m.autoPolicy != nil {
-		return m.autoPolicy
-	}
-	return defaultAutoPolicy{}
-}
-
-func (m *RobotManager) SetRepository(repository SchedulerRepository) {
-	m.repository = repository
-}
-
-func (m *RobotManager) SetAutoPolicy(policy AutoPolicy) {
-	m.autoPolicy = policy
-}
-
-type AutoPolicy interface {
-	ApplyConfig(rc *robotconfig.RuntimeConfig, sig adaptiveSchedulerSignals) schedulerPolicyDecision
-}
-
-type defaultAutoPolicy struct{}
-
-func (defaultAutoPolicy) ApplyConfig(rc *robotconfig.RuntimeConfig, sig adaptiveSchedulerSignals) schedulerPolicyDecision {
-	return applyAdaptiveSchedulerConfig(rc, sig)
 }
 
 type SchedulerRepository interface {

@@ -137,7 +137,7 @@ func (m *RobotManager) refreshRobotConfig(now time.Time) robotconfig.RuntimeConf
 		robotconfig.Normalize(&rc)
 		base := robotconfig.Clone(rc)
 		effective := base
-		m.policy().ApplyConfig(&effective, m.adaptiveSchedulerSignals())
+		applyAdaptiveSchedulerConfig(&effective, m.adaptiveSchedulerSignals())
 		snapshot := &robotConfigSnapshot{base: base, effective: effective, modTime: configMod, checkedAt: now}
 		m.configSnapshot.Store(snapshot)
 		out = snapshot.effective
@@ -155,7 +155,7 @@ func (m *RobotManager) refreshAdaptiveRobotConfig(signals adaptiveSchedulerSigna
 			return
 		}
 		effective := snapshot.base
-		decision = m.policy().ApplyConfig(&effective, signals)
+		decision = applyAdaptiveSchedulerConfig(&effective, signals)
 		updated := &robotConfigSnapshot{
 			base: snapshot.base, effective: effective,
 			modTime: snapshot.modTime, checkedAt: snapshot.checkedAt,
