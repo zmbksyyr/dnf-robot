@@ -9,11 +9,14 @@ import (
 )
 
 var defaultPartyCompatLayout = partyCompatLayout{
-	site:       0x0864811a,
-	cave:       0x08af75e4,
-	rawSend:    0x086483e3,
-	resumeSite: 0x08648124,
-	getPacket:  0x0822b702,
+	site:                0x0864811a,
+	cave:                0x08af75e4,
+	rawSend:             0x086483e3,
+	resumeSite:          0x08648124,
+	getPacket:           0x0822b702,
+	getPacketSignature:  []byte{0x55, 0x89, 0xe5, 0x83, 0xec, 0x28, 0x81, 0x7d, 0x0c, 0x17, 0x73, 0x01, 0x00, 0x7e, 0x46},
+	resumeSiteSignature: []byte{0x89, 0xe0, 0x89, 0x85, 0x54, 0x8c, 0xfe, 0xff, 0x8d, 0x45, 0x9c, 0x89, 0x04, 0x24, 0xe8, 0x15, 0x5c, 0xf4, 0xff},
+	rawSendSignature:    []byte{0x8d, 0x85, 0x64, 0x8c, 0xfe, 0xff, 0x89, 0x04, 0x24, 0xe8, 0xcf, 0x44, 0xf4, 0xff, 0xc7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00},
 }
 
 var (
@@ -22,11 +25,14 @@ var (
 )
 
 type partyCompatLayout struct {
-	site       int64
-	cave       int64
-	rawSend    int64
-	resumeSite int64
-	getPacket  int64
+	site                int64
+	cave                int64
+	rawSend             int64
+	resumeSite          int64
+	getPacket           int64
+	getPacketSignature  []byte
+	resumeSiteSignature []byte
+	rawSendSignature    []byte
 }
 
 type memoryReadWriter interface {
@@ -35,6 +41,9 @@ type memoryReadWriter interface {
 }
 
 func inspectPartyCompatMemory(mem io.ReaderAt, layout partyCompatLayout) (bool, uint32, uint32, error) {
+	if err := validatePartyCompatTarget(mem, layout); err != nil {
+		return false, 0, 0, err
+	}
 	site, err := readMemory(mem, layout.site, len(partyCompatOriginalSite))
 	if err != nil {
 		return false, 0, 0, err
@@ -70,6 +79,9 @@ func inspectPartyCompatMemory(mem io.ReaderAt, layout partyCompatLayout) (bool, 
 
 func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start, end uint32, enable bool) (bool, error) {
 	if err := validatePartyCompatRange(start, end); err != nil {
+		return false, err
+	}
+	if err := validatePartyCompatTarget(mem, layout); err != nil {
 		return false, err
 	}
 	siteBefore, err := readMemory(mem, layout.site, len(partyCompatOriginalSite))
@@ -141,6 +153,31 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 		return true, fmt.Errorf("patch disabled but code cave cleanup failed: %w", err)
 	}
 	return true, nil
+}
+
+func validatePartyCompatTarget(mem io.ReaderAt, layout partyCompatLayout) error {
+	targets := []struct {
+		name      string
+		address   int64
+		signature []byte
+	}{
+		{name: "getPacket", address: layout.getPacket, signature: layout.getPacketSignature},
+		{name: "resume site", address: layout.resumeSite, signature: layout.resumeSiteSignature},
+		{name: "raw send", address: layout.rawSend, signature: layout.rawSendSignature},
+	}
+	for _, target := range targets {
+		if len(target.signature) == 0 {
+			continue
+		}
+		got, err := readMemory(mem, target.address, len(target.signature))
+		if err != nil {
+			return fmt.Errorf("read party compatibility %s signature: %w", target.name, err)
+		}
+		if !bytes.Equal(got, target.signature) {
+			return fmt.Errorf("unsupported df_game_r: unexpected bytes at party compatibility %s: %x", target.name, got)
+		}
+	}
+	return nil
 }
 
 func buildPartyCompatSite(layout partyCompatLayout) ([]byte, error) {

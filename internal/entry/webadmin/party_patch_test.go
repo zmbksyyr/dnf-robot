@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,6 +206,22 @@ func TestSetPartyCompatMemoryRejectsOccupiedCave(t *testing.T) {
 	}
 	if _, err := setPartyCompatMemory(mem, layout, 17000000, 18000000, true); err == nil {
 		t.Fatal("occupied cave was accepted")
+	}
+}
+
+func TestPartyCompatMemoryRejectsMismatchedTargetLayout(t *testing.T) {
+	layout := testPartyCompatLayout()
+	layout.getPacketSignature = []byte{0x55, 0x89, 0xe5}
+	mem := newPartyCompatMemory(t, layout)
+	if _, err := mem.WriteAt([]byte{0x90, 0x90, 0x90}, layout.getPacket); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, _, err := inspectPartyCompatMemory(mem, layout); err == nil || !strings.Contains(err.Error(), "unsupported df_game_r") {
+		t.Fatalf("inspection error = %v", err)
+	}
+	if _, err := setPartyCompatMemory(mem, layout, 17000000, 17001000, true); err == nil || !strings.Contains(err.Error(), "unsupported df_game_r") {
+		t.Fatalf("patch error = %v", err)
 	}
 }
 
