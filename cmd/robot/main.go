@@ -13,6 +13,7 @@ import (
 	runtimeinit "robot/internal/bootstrap/runtime"
 	"robot/internal/capability/keypair"
 	"robot/internal/capability/marketapp"
+	"robot/internal/capability/robotconfig"
 	"robot/internal/composition/auctionapp"
 	"robot/internal/entry/tcpapi"
 	"robot/internal/entry/webadmin"
@@ -90,6 +91,13 @@ func main() {
 		dnf.PrintfRed("runtime init failed: %v\n", err)
 		os.Exit(1)
 	}
+	robotRuntimeConfig, err := robotconfig.LoadFile(filepath.Join(cfg.ConfigDir, "robot_config.ini"))
+	if err != nil {
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ACCOUNT_RANGE_DEFAULTED err=%v\n", err))
+		robotRuntimeConfig = robotconfig.Default()
+	}
+	dnf.ConfigurePartyRobotAccountRange(robotRuntimeConfig.RobotUIDStart, robotRuntimeConfig.RobotUIDEnd)
+	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ACCOUNT_RANGE start=%d end=%d\n", robotRuntimeConfig.RobotUIDStart, robotRuntimeConfig.RobotUIDEnd))
 	keypair.SetRuntimeKeySink(dnf.SetRSAKey)
 	dnfruntime.SetLoginKeyProvider(keypair.GetLoginKey)
 

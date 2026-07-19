@@ -21,17 +21,7 @@ import (
 	"robot/internal/shared"
 )
 
-// ---- robot.go ----
-var partyRelayPort = 7200
-
 const partyRelayWriteTimeout = 500 * time.Millisecond
-
-func ConfigurePartyRelayPort(port int) {
-	if port <= 0 || port > 65535 {
-		port = 7200
-	}
-	partyRelayPort = port
-}
 
 type ClientState int
 
@@ -1306,7 +1296,7 @@ func (r *RobotVo) ensurePartyRelayUnsafe() {
 		return
 	}
 	r.partyRelayAt = now
-	relayAddr := net.JoinHostPort(host, strconv.Itoa(partyRelayPort))
+	relayAddr := net.JoinHostPort(host, strconv.Itoa(currentPartyRelayPort()))
 	r.partyRelayConnecting = true
 	generation := r.partyRelayGeneration
 	uid := r.UID
@@ -1835,10 +1825,6 @@ func (r *RobotVo) sendPartyRobotPeerProbeUnsafe(peer partyIPPeer, attempt int) b
 	}
 	fmt.Printf("[PARTY_ROBOT_PROBE] uid=%d peer=%d slot=%d attempt=%d sequence=%d remote=%s\n", r.UID, peer.accID, peer.slot, attempt, sequence, remote.String())
 	return true
-}
-
-func isPartyRobotAccount(accID uint32) bool {
-	return accID >= 17000000 && accID < 18000000
 }
 
 func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -41,6 +42,22 @@ func TestPartyCompatConfigDefaultsDesiredOn(t *testing.T) {
 	}
 	if !cfg.Enabled {
 		t.Fatalf("legacy config without enabled should default on: %+v", cfg)
+	}
+}
+
+func TestPartyCompatConfigDefaultsToConfiguredRobotRange(t *testing.T) {
+	dir := t.TempDir()
+	robotConfig := []byte("[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18000999\n")
+	if err := os.WriteFile(filepath.Join(dir, "robot_config.ini"), robotConfig, 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(&config.SysConfig{ConfigDir: dir}, "", "")
+	cfg, err := s.loadPartyCompatConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Enabled || cfg.AccountStart != 18000000 || cfg.AccountEnd != 18001000 {
+		t.Fatalf("default config = %+v", cfg)
 	}
 }
 

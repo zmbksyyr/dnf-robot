@@ -13,10 +13,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	foundationlog "robot/internal/foundation/log"
 	"strconv"
 	"strings"
 	"time"
+
+	"robot/internal/capability/robotconfig"
+	foundationlog "robot/internal/foundation/log"
 )
 
 const (
@@ -141,7 +143,7 @@ func (s *Server) partyCompatConfigPath() string {
 }
 
 func (s *Server) loadPartyCompatConfig() (partyCompatConfig, error) {
-	cfg := partyCompatConfig{Enabled: true, AccountStart: defaultPartyCompatAccountStart, AccountEnd: defaultPartyCompatAccountEnd}
+	cfg := s.defaultPartyCompatConfig()
 	data, err := os.ReadFile(s.partyCompatConfigPath())
 	if os.IsNotExist(err) {
 		return cfg, nil
@@ -170,6 +172,20 @@ func (s *Server) loadPartyCompatConfig() (partyCompatConfig, error) {
 		return cfg, fmt.Errorf("read party compatibility config: %w", err)
 	}
 	return cfg, nil
+}
+
+func (s *Server) defaultPartyCompatConfig() partyCompatConfig {
+	cfg := partyCompatConfig{Enabled: true, AccountStart: defaultPartyCompatAccountStart, AccountEnd: defaultPartyCompatAccountEnd}
+	if s == nil || s.cfg == nil || s.cfg.ConfigDir == "" {
+		return cfg
+	}
+	runtimeConfig, err := robotconfig.LoadFile(filepath.Join(s.cfg.ConfigDir, "robot_config.ini"))
+	if err != nil || runtimeConfig.RobotUIDStart <= 0 || runtimeConfig.RobotUIDEnd < runtimeConfig.RobotUIDStart || uint64(runtimeConfig.RobotUIDEnd) >= uint64(^uint32(0)) {
+		return cfg
+	}
+	cfg.AccountStart = uint32(runtimeConfig.RobotUIDStart)
+	cfg.AccountEnd = uint32(runtimeConfig.RobotUIDEnd) + 1
+	return cfg
 }
 
 func (s *Server) savePartyCompatConfig(cfg partyCompatConfig) error {
