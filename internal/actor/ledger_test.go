@@ -88,6 +88,29 @@ func TestLedgerFilterBlockedRuntimeStatus(t *testing.T) {
 	}
 }
 
+func TestLedgerBlockedLeaseRetainsOwnershipForHealthRetry(t *testing.T) {
+	ledger := NewLedger()
+	actor := testLedgerActor(1, ModeAuto, 101)
+	addTestLedgerActor(&ledger, actor)
+	if !ledger.TryLeaseUID(101, actor) {
+		t.Fatal("lease uid 101")
+	}
+
+	if !ledger.BlockLeaseIfCurrent(101, actor) || !ledger.BlockLeaseIfCurrent(101, actor) {
+		t.Fatal("blocking the current lease should be idempotent")
+	}
+	if got := ledger.ActorForUID(101); got != actor {
+		t.Fatalf("blocked lease lost actor ownership: got %v want %v", got, actor)
+	}
+	leases := ledger.LeaseSnapshots()
+	if len(leases) != 1 || leases[0].UID != 101 || leases[0].Actor != actor || !leases[0].Blocked {
+		t.Fatalf("blocked lease snapshot = %+v", leases)
+	}
+	if reserved, existing, ok := ledger.ReserveEmptyAutoActor(101); ok || existing || reserved != nil {
+		t.Fatalf("blocked lease became assignable: actor=%v existing=%v ok=%v", reserved, existing, ok)
+	}
+}
+
 func TestLedgerBeginDrainSomeAutoActorsHonorsFloor(t *testing.T) {
 	ledger := NewLedger()
 	for i := 1; i <= 5; i++ {

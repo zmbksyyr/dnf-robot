@@ -19,8 +19,9 @@ type Ledger struct {
 }
 
 type LeaseSnapshot struct {
-	UID   int
-	Actor *Actor
+	UID     int
+	Actor   *Actor
+	Blocked bool
 }
 
 type LedgerCounts struct {
@@ -53,7 +54,8 @@ func (l *Ledger) LeaseSnapshots() []LeaseSnapshot {
 	leases := make([]LeaseSnapshot, 0, len(l.uidActors))
 	for uid, actor := range l.uidActors {
 		if uid > 0 && actor != nil && l.draining[actor.slotIDValue()] != actor {
-			leases = append(leases, LeaseSnapshot{UID: uid, Actor: actor})
+			_, blocked := l.blockedUID[uid]
+			leases = append(leases, LeaseSnapshot{UID: uid, Actor: actor, Blocked: blocked})
 		}
 	}
 	return leases
@@ -117,7 +119,6 @@ func (l *Ledger) BlockLeaseIfCurrent(uid int, actor *Actor) bool {
 	if l.uidActors[uid] != actor {
 		return false
 	}
-	delete(l.uidActors, uid)
 	l.blockedUID[uid] = struct{}{}
 	return true
 }
@@ -290,11 +291,11 @@ func (l *Ledger) ReserveEmptyAutoActor(uid int) (*Actor, bool, bool) {
 	}
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
-	if existing := l.uidActors[uid]; existing != nil {
-		return existing, true, true
-	}
 	if _, blocked := l.blockedUID[uid]; blocked {
 		return nil, false, false
+	}
+	if existing := l.uidActors[uid]; existing != nil {
+		return existing, true, true
 	}
 	var actor *Actor
 	for slotID, candidate := range l.actors {

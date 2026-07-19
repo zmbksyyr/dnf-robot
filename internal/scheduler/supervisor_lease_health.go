@@ -35,7 +35,7 @@ func (s *RobotSupervisor) releaseBrokenLeases(now time.Time, rc robotconfig.Runt
 		return
 	}
 	for _, item := range leases {
-		if alive[item.UID] {
+		if alive[item.UID] && !item.Blocked {
 			continue
 		}
 		if !s.ledger.BlockLeaseIfCurrent(item.UID, item.Actor) {
@@ -46,7 +46,8 @@ func (s *RobotSupervisor) releaseBrokenLeases(now time.Time, rc robotconfig.Runt
 		if released != item.UID && released > 0 {
 			s.ledger.UnleaseUID(released, item.Actor)
 		}
-		if released == item.UID || !s.actorOwnsUID(item.UID) {
+		if released == item.UID || item.Actor.UIDValue() != item.UID {
+			s.ledger.RemoveLeaseIfActor(item.UID, item.Actor)
 			s.cleanupBrokenUID(item.UID)
 		}
 	}
