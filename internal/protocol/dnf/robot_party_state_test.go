@@ -205,6 +205,47 @@ func TestPartyPeerUpdateResetsOnlyChangedSlotTransport(t *testing.T) {
 	}
 }
 
+func TestPartyPeerAdvertisedEndpointChangeResetsTransport(t *testing.T) {
+	oldOuter := net.IPv4(192, 168, 200, 1)
+	observed := net.IPv4(192, 168, 200, 2)
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{
+		uniqueID:     1,
+		slot:         0,
+		slotKnown:    true,
+		outerIP:      oldOuter,
+		port:         5063,
+		observedIP:   observed,
+		observedPort: 62000,
+	}
+	vo.partyTQOSSeq[0][1] = 7
+	vo.partyTQOSReceived[0][1] = partyTQOSReceiveWindow{latest: 9, seen: 1, initialized: true}
+	vo.partyTQOSReplies[0][1] = partyTQOSReliableReply{packet: []byte{1}}
+	vo.partyTQOSCodecKnown[0][1] = true
+
+	newOuter := net.IPv4(192, 168, 200, 3)
+	vo.setPartyPeersUnsafe([]partyIPPeer{{
+		uniqueID:  1,
+		slot:      0,
+		slotKnown: true,
+		outerIP:   newOuter,
+		port:      5064,
+	}})
+
+	peer := vo.partyPeerForSlotUnsafe(0)
+	if !peer.outerIP.Equal(newOuter) || peer.port != 5064 {
+		t.Fatalf("advertised endpoint = %s:%d", peer.outerIP, peer.port)
+	}
+	if peer.observedIP != nil || peer.observedPort != 0 {
+		t.Fatalf("stale observed endpoint was retained: %s:%d", peer.observedIP, peer.observedPort)
+	}
+	if vo.partyTQOSSeq[0][1] != 0 || vo.partyTQOSReceived[0][1].initialized || len(vo.partyTQOSReplies[0][1].packet) != 0 || vo.partyTQOSCodecKnown[0][1] {
+		t.Fatalf("changed endpoint retained TQOS state: seq=%d window=%+v pending=%+v codec=%t",
+			vo.partyTQOSSeq[0][1], vo.partyTQOSReceived[0][1], vo.partyTQOSReplies[0][1], vo.partyTQOSCodecKnown[0][1])
+	}
+}
+
 func TestRepeatedPartyInvitePreservesConfirmedTransport(t *testing.T) {
 	robotConn, peerConn := net.Pipe()
 	defer robotConn.Close()
@@ -259,12 +300,19 @@ func TestPartyUDPAuthenticatesBeforeLearningNATEndpoint(t *testing.T) {
 	if vo.partyPeers[0].observedPort != 0 || vo.partyPeers[1].observedPort != 62000 || !vo.partyPeers[1].observedIP.Equal(sharedIP) {
 		t.Fatalf("observed endpoints=%+v", vo.partyPeers)
 	}
+	advertised := &net.UDPAddr{IP: sharedIP, Port: 5064}
+	if replies := vo.buildPartyUDPAcks(buildPartyTQOSPacket(8, 1, 0, 3, 1, partyTQOSCodec{key: 0x7e}), advertised); len(replies) == 0 {
+		t.Fatal("advertised endpoint produced no reply")
+	}
+	if vo.partyPeers[1].observedPort != 5064 || !vo.partyPeers[1].observedIP.Equal(sharedIP) {
+		t.Fatalf("advertised endpoint did not refresh observed endpoint: %+v", vo.partyPeers[1])
+	}
 
 	unknown := &net.UDPAddr{IP: net.IPv4(203, 0, 113, 9), Port: 62001}
 	if replies := vo.buildPartyUDPAcks(payload, unknown); len(replies) != 0 {
 		t.Fatalf("unknown IP was accepted: %x", replies)
 	}
-	if vo.partyPeers[1].observedPort != 62000 {
+	if vo.partyPeers[1].observedPort != 5064 {
 		t.Fatalf("unknown IP rewrote observed endpoint: %+v", vo.partyPeers[1])
 	}
 

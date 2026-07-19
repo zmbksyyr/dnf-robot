@@ -55,12 +55,15 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 		r.tracePartyUDPUnsafe("DROP_PEER", remote, senderSlot, 0, 0)
 		return nil
 	}
-	exactEndpoint := partyPeerEndpointMatches(peer.observedIP, peer.observedPort, remote) || partyPeerEndpointMatches(peer.outerIP, peer.port, remote)
-	if !exactEndpoint {
+	observedEndpoint := partyPeerEndpointMatches(peer.observedIP, peer.observedPort, remote)
+	advertisedEndpoint := partyPeerEndpointMatches(peer.outerIP, peer.port, remote)
+	if !observedEndpoint && !advertisedEndpoint {
 		if senderSlot == nil || !r.partyTQOSPayloadAuthenticatesPeerUnsafe(payload, 1, peer) {
 			r.tracePartyUDPUnsafe("DROP_ENDPOINT", remote, senderSlot, peer.accID, len(payload))
 			return nil
 		}
+	}
+	if !observedEndpoint {
 		peer = r.learnPartyPeerEndpointUnsafe(peer, remote)
 	}
 	if len(payload) == 8 && payload[0] == 0x00 {
@@ -145,6 +148,9 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		request, ok := parsePartyTQOSPacketWithCodec(frame, route, preferred)
 		if !ok {
 			continue
+		}
+		if request.state == 3 {
+			r.beginPartyTQOSEpochUnsafe(peer.slot, route)
 		}
 		if request.state == 2 {
 			r.markPartyRobotPeerReadyUnsafe(peer, "state2")
@@ -241,6 +247,14 @@ func (p *partyTQOSReliableReply) matchesRequestEpoch(request partyTQOSPacket) bo
 
 func partyTQOSSequenceAfter(sequence, previous uint32) bool {
 	return int32(sequence-previous) > 0
+}
+
+func (r *RobotVo) beginPartyTQOSEpochUnsafe(peerSlot, route byte) {
+	if peerSlot >= byte(len(r.partyTQOSReplies)) || route >= byte(len(r.partyTQOSReplies[0])) {
+		return
+	}
+	r.partyTQOSReplies[peerSlot][route] = partyTQOSReliableReply{}
+	r.partyTQOSReceived[peerSlot][route] = partyTQOSReceiveWindow{}
 }
 
 func (r *RobotVo) tracePartyUDPUnsafe(reason string, remote *net.UDPAddr, senderSlot *byte, peer uint32, size int) {
@@ -422,13 +436,4 @@ func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
 		}
 		r.partyDungeonFollow = kept
 	}
-}
-
-func partyPeerUniqueIDForSlot(peers [4]partyIPPeer, slot byte) uint16 {
-	for _, peer := range peers {
-		if peer.slotKnown && peer.slot == slot {
-			return peer.uniqueID
-		}
-	}
-	return 0
 }

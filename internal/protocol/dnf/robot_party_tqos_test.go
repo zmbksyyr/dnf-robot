@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -302,6 +303,39 @@ func TestRobotPartyTQOSSequencesAreIsolatedByPeerAndRoute(t *testing.T) {
 	}
 	if vo.partyRobotPeerReady[1] {
 		t.Fatal("robot peer was marked ready before state2 or ACK")
+	}
+}
+
+func TestRobotPartyTQOSState3StartsNewReceiveEpoch(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	for _, route := range []byte{1, 2} {
+		t.Run(fmt.Sprintf("route%d", route), func(t *testing.T) {
+			vo := &RobotVo{}
+			vo.partySelfPeer = partyIPPeer{slot: 1, slotKnown: true}
+			peer := partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true}
+
+			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(100, peer.slot, 0, 2, route, codec), route, peer)
+			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(101, peer.slot, 0, 1, route, codec), route, peer)
+			if window := vo.partyTQOSReceived[peer.slot][route]; !window.initialized || window.latest != 100 {
+				t.Fatalf("advanced receive window = %+v", window)
+			}
+			if len(vo.partyTQOSReplies[peer.slot][route].packet) == 0 {
+				t.Fatal("state2 reply was not pending before reconnect")
+			}
+
+			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(1, peer.slot, 0, 3, route, codec), route, peer)
+			if window := vo.partyTQOSReceived[peer.slot][route]; window.initialized {
+				t.Fatalf("state3 retained old receive window = %+v", window)
+			}
+			if pending := vo.partyTQOSReplies[peer.slot][route]; len(pending.packet) != 0 {
+				t.Fatalf("state3 retained old state2 reply = %+v", pending)
+			}
+
+			vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(2, peer.slot, 0, 2, route, codec), route, peer)
+			if window := vo.partyTQOSReceived[peer.slot][route]; !window.initialized || window.latest != 2 {
+				t.Fatalf("low reconnect sequence was rejected: %+v", window)
+			}
+		})
 	}
 }
 

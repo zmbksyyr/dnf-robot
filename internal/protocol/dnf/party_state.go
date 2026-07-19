@@ -11,7 +11,11 @@ import (
 )
 
 func (r *RobotVo) partyPeerForSlotUnsafe(slot byte) partyIPPeer {
-	for _, peer := range r.partyPeers {
+	return partyPeerForSlot(r.partyPeers, slot)
+}
+
+func partyPeerForSlot(peers [4]partyIPPeer, slot byte) partyIPPeer {
+	for _, peer := range peers {
 		if peer.slotKnown && peer.slot == slot {
 			return peer
 		}
@@ -347,6 +351,10 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 		for _, old := range previous {
 			if old.uniqueID == peers[i].uniqueID {
 				peers[i] = mergePartyPeer(old, peers[i])
+				if !partyPeerAdvertisedEndpointEqual(old, peers[i]) {
+					peers[i].observedIP = nil
+					peers[i].observedPort = 0
+				}
 				break
 			}
 		}
@@ -354,9 +362,11 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 	r.rememberPartyPeersUnsafe(peers)
 	r.ensurePartyUDPLoopUnsafe()
 	for slot := byte(0); slot < 4; slot++ {
-		before := partyPeerUniqueIDForSlot(previous, slot)
-		after := partyPeerUniqueIDForSlot(r.partyPeers, slot)
-		if before != after && (before != 0 || after != 0) {
+		before := partyPeerForSlot(previous, slot)
+		after := partyPeerForSlot(r.partyPeers, slot)
+		identityChanged := before.uniqueID != after.uniqueID && (before.uniqueID != 0 || after.uniqueID != 0)
+		endpointChanged := before.uniqueID != 0 && before.uniqueID == after.uniqueID && !partyPeerAdvertisedEndpointEqual(before, after)
+		if identityChanged || endpointChanged {
 			r.resetPartyTQOSPeerUnsafe(slot)
 		}
 	}
@@ -424,6 +434,17 @@ func mergePartyPeer(old, next partyIPPeer) partyIPPeer {
 		next.mtu = old.mtu
 	}
 	return next
+}
+
+func partyPeerAdvertisedEndpointEqual(left, right partyIPPeer) bool {
+	return partyIPEqual(left.outerIP, right.outerIP) && left.port == right.port
+}
+
+func partyIPEqual(left, right net.IP) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return len(left) == 0 && len(right) == 0
+	}
+	return left.Equal(right)
 }
 
 type partyIPPeer struct {
