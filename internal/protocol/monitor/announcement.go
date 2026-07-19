@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"robot/internal/foundation/charset"
@@ -21,13 +22,24 @@ const (
 
 type Client struct {
 	Address string
+
+	mu       sync.Mutex
+	failures int
+	retryAt  time.Time
+	dial     func(network, address string, timeout time.Duration) (net.Conn, error)
+	now      func() time.Time
 }
 
-func (c Client) SendWorldShout(msg, name string, senderID uint16) error {
+const (
+	monitorRetryMin = time.Second
+	monitorRetryMax = 30 * time.Second
+)
+
+func (c *Client) SendWorldShout(msg, name string, senderID uint16) error {
 	return c.SendMonitorAnnouncement(KindMegaphone, msg, name, senderID)
 }
 
-func (c Client) SendMonitorAnnouncement(kind, msg, name string, senderID uint16) error {
+func (c *Client) SendMonitorAnnouncement(kind, msg, name string, senderID uint16) error {
 	packet, err := BuildAnnouncementPacket(kind, msg, name, senderID)
 	if err != nil {
 		return err
@@ -35,31 +47,64 @@ func (c Client) SendMonitorAnnouncement(kind, msg, name string, senderID uint16)
 	return c.send(packet, kind)
 }
 
-func (c Client) send(packet []byte, kind string) error {
+func (c *Client) send(packet []byte, kind string) error {
+	if c == nil {
+		return fmt.Errorf("monitor client is nil")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if c.now != nil {
+		now = c.now()
+	}
+	if now.Before(c.retryAt) {
+		return fmt.Errorf("monitor %s retry is backed off for %s", kind, c.retryAt.Sub(now).Round(time.Millisecond))
+	}
+
 	addr := c.Address
 	if addr == "" {
 		addr = defaultAddress
 	}
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	dial := c.dial
+	if dial == nil {
+		dial = net.DialTimeout
+	}
+	conn, err := dial("tcp", addr, 3*time.Second)
 	if err != nil {
+		c.recordFailure(now)
 		return fmt.Errorf("connect monitor %s: %w", kind, err)
 	}
 	defer conn.Close()
 	_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	if _, err := conn.Write(packet); err != nil {
+		c.recordFailure(now)
 		return fmt.Errorf("send monitor %s: %w", kind, err)
 	}
+	c.failures = 0
+	c.retryAt = time.Time{}
 	return nil
+}
+
+func (c *Client) recordFailure(now time.Time) {
+	c.failures++
+	delay := monitorRetryMin
+	for i := 1; i < c.failures && delay < monitorRetryMax; i++ {
+		delay *= 2
+	}
+	if delay > monitorRetryMax {
+		delay = monitorRetryMax
+	}
+	c.retryAt = now.Add(delay)
 }
 
 type Megaphone = Client
 
 func SendMegaphone(msg, name string, senderID uint16) error {
-	return Client{}.SendWorldShout(msg, name, senderID)
+	return (&Client{}).SendWorldShout(msg, name, senderID)
 }
 
 func SendWebNoticeSingle(msg string) error {
-	return Client{}.SendMonitorAnnouncement(KindWebNoticeSingle, msg, "", 0)
+	return (&Client{}).SendMonitorAnnouncement(KindWebNoticeSingle, msg, "", 0)
 }
 
 func BuildAnnouncementPacket(kind, msg, name string, senderID uint16) ([]byte, error) {

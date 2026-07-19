@@ -2,7 +2,10 @@ package monitor
 
 import (
 	"encoding/binary"
+	"errors"
+	"net"
 	"testing"
+	"time"
 )
 
 func TestBuildMegaphonePacket(t *testing.T) {
@@ -18,6 +21,39 @@ func TestBuildMegaphonePacket(t *testing.T) {
 	}
 	if packet[0x0b] != 11 || binary.LittleEndian.Uint16(packet[0x0c:0x0e]) != 7 || packet[0x2d] != 5 {
 		t.Fatalf("unexpected megaphone payload")
+	}
+}
+
+func TestClientBacksOffSharedMonitorFailures(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	calls := 0
+	client := &Client{
+		Address: "127.0.0.1:30303",
+		now:     func() time.Time { return now },
+		dial: func(string, string, time.Duration) (net.Conn, error) {
+			calls++
+			return nil, errors.New("connection refused")
+		},
+	}
+	if err := client.SendWorldShout("hello", "robot", 1); err == nil {
+		t.Fatal("first monitor failure was not returned")
+	}
+	if err := client.SendWorldShout("hello", "robot", 1); err == nil {
+		t.Fatal("backoff failure was not returned")
+	}
+	if calls != 1 {
+		t.Fatalf("dial calls during backoff = %d, want 1", calls)
+	}
+
+	now = now.Add(monitorRetryMin)
+	if err := client.SendWorldShout("hello", "robot", 1); err == nil {
+		t.Fatal("retry failure was not returned")
+	}
+	if calls != 2 {
+		t.Fatalf("dial calls after retry = %d, want 2", calls)
+	}
+	if got := client.retryAt.Sub(now); got != 2*monitorRetryMin {
+		t.Fatalf("second retry delay = %s, want %s", got, 2*monitorRetryMin)
 	}
 }
 

@@ -126,7 +126,7 @@ func main() {
 
 	robotSvc := dnfruntime.NewRobotService()
 	manager := scheduler.NewRobotManager(schedulerrepo.NewSQLRepository(db), cfg, robotSvc)
-	manager.SetWorldShout(monitor.Client{Address: fmt.Sprintf("127.0.0.1:%d", cfg.MonitorPort)})
+	manager.SetWorldShout(&monitor.Client{Address: fmt.Sprintf("127.0.0.1:%d", cfg.MonitorPort)})
 	manager.StartAutoActions()
 	marketApp, err = marketapp.New(db, cfg, auctionapp.NewFactory())
 	if err != nil {
