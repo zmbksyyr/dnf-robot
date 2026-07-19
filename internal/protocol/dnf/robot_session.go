@@ -13,7 +13,10 @@ import (
 	"robot/internal/protocol/dnf/crypt"
 )
 
-const robotSocketReadBufferSize = 32 * 1024
+const (
+	robotSocketReadBufferSize = 32 * 1024
+	robotSocketWriteTimeout   = 2 * time.Second
+)
 
 type ClientState int
 
@@ -596,18 +599,25 @@ func (r *RobotVo) sendRaw(pkt []byte) bool {
 	r.sendMu.Lock()
 	defer r.sendMu.Unlock()
 
-	if r.Conn == nil || len(pkt) == 0 {
+	conn := r.Conn
+	if conn == nil || len(pkt) == 0 {
 		return false
 	}
 	for written := 0; written < len(pkt); {
-		_ = r.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		n, err := r.Conn.Write(pkt[written:])
+		if err := conn.SetWriteDeadline(time.Now().Add(robotSocketWriteTimeout)); err != nil {
+			fmt.Printf("[RobotVo] set write deadline failed uid=%d err=%v\n", r.UID, err)
+			_ = conn.Close()
+			return false
+		}
+		n, err := conn.Write(pkt[written:])
 		if err != nil {
 			fmt.Printf("[RobotVo] write failed uid=%d err=%v\n", r.UID, err)
+			_ = conn.Close()
 			return false
 		}
 		if n == 0 {
 			fmt.Printf("[RobotVo] write made no progress uid=%d\n", r.UID)
+			_ = conn.Close()
 			return false
 		}
 		written += n
