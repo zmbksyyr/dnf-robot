@@ -9,6 +9,7 @@ import (
 	"robot/internal/capability/keypair"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
+	"robot/internal/foundation/lockhub"
 )
 
 type RobotSupervisor struct {
@@ -17,9 +18,13 @@ type RobotSupervisor struct {
 
 	ledger actormodel.Ledger
 
-	stop chan struct{}
-	done chan struct{}
-	once sync.Once
+	stop   chan struct{}
+	done   chan struct{}
+	once   sync.Once
+	stopWG sync.WaitGroup
+
+	pressureMu      lockhub.Locker
+	pressureRunning bool
 
 	nextMetrics      time.Time
 	nextKeyLog       time.Time
@@ -56,20 +61,48 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 	if limit <= 0 {
 		return
 	}
+	s.pressureMu.Lock()
+	if s.pressureRunning {
+		s.pressureMu.Unlock()
+		return
+	}
+	s.pressureRunning = true
+	s.pressureMu.Unlock()
+
 	status := s.manager.runtimeStatusMap()
 	actors := s.ledger.DetachSomeAutoActors(status, limit, floor)
 	if len(actors) == 0 {
+		s.pressureMu.Lock()
+		s.pressureRunning = false
+		s.pressureMu.Unlock()
 		return
 	}
 	robotLogf("[RobotSupervisor] pressure_release actors=%d floor=%d logout=%v\n", len(actors), floor, logout)
-	go stopActorsConcurrent(actors, logout)
+	s.stopWG.Add(1)
+	go func() {
+		defer func() {
+			s.pressureMu.Lock()
+			s.pressureRunning = false
+			s.pressureMu.Unlock()
+			s.stopWG.Done()
+		}()
+		stopActorsConcurrent(actors, logout)
+	}()
 }
 
 func (s *RobotSupervisor) stopAll(logout bool) {
-	stopActorsConcurrent(s.ledger.DetachAllActors(), logout)
+	stopActorsConcurrentFully(s.ledger.DetachAllActors(), logout)
 }
 
 func stopActorsConcurrent(actors []*actormodel.Actor, logout bool) {
+	stopActorsConcurrentWithWait(actors, logout, 5*time.Second)
+}
+
+func stopActorsConcurrentFully(actors []*actormodel.Actor, logout bool) {
+	stopActorsConcurrentWithWait(actors, logout, 0)
+}
+
+func stopActorsConcurrentWithWait(actors []*actormodel.Actor, logout bool, stopWait time.Duration) {
 	if len(actors) == 0 {
 		return
 	}
@@ -87,7 +120,7 @@ func stopActorsConcurrent(actors []*actormodel.Actor, logout bool) {
 				if logout {
 					actor.ReleaseAndWait(10 * time.Second)
 				}
-				actor.StopAndWait(5 * time.Second)
+				actor.StopAndWait(stopWait)
 			}
 		}()
 	}
@@ -192,6 +225,7 @@ func (s *RobotSupervisor) loop() {
 		select {
 		case <-s.stop:
 			s.stopAll(true)
+			s.stopWG.Wait()
 			return
 		case now := <-ticker.C:
 			s.tick(now)

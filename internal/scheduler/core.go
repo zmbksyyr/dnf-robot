@@ -64,6 +64,7 @@ type RobotManager struct {
 	configCached                    bool
 	supervisor                      *RobotSupervisor
 	storePointsCoord                *storecap.PointCoordinator
+	positionWrites                  *positionBatcher
 	repository                      SchedulerRepository
 	autoPolicy                      AutoPolicy
 }
@@ -72,7 +73,7 @@ func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Run
 	if doll == nil {
 		doll = noopRuntime{}
 	}
-	return &RobotManager{
+	manager := &RobotManager{
 		database:            database,
 		cfg:                 cfg,
 		doll:                doll,
@@ -84,6 +85,8 @@ func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Run
 		sessionLastLogout:   make(map[int]time.Time),
 		sessionReloginDelay: 15 * time.Second,
 	}
+	manager.positionWrites = newPositionBatcher(manager.positionRepo(), defaultPositionBatchOptions())
+	return manager
 }
 
 func (m *RobotManager) repo() SchedulerRepository {
@@ -101,6 +104,13 @@ func (m *RobotManager) schemaRepo() SchemaRepository {
 		return repository
 	}
 	return missingSchemaRepository{}
+}
+
+func (m *RobotManager) positionRepo() robotPositionWriter {
+	if repository, ok := m.database.(robotPositionWriter); ok {
+		return repository
+	}
+	return missingPositionRepository{}
 }
 
 func (m *RobotManager) lockHub() *lockhub.Hub {
@@ -183,7 +193,6 @@ type SchemaRepository interface {
 	EnsureDisjointProfession(info robotcap.Info) error
 	RepairRobotExpBounds(uid, cid int) (storecap.ExpRepairResult, error)
 	RevokeStorePermission(uid, cid int) error
-	UpdateRobotPosition(info robotcap.Info, x, y int) error
 	FollowAccountUIDs(account string) ([]int, error)
 	FollowAccountVillageLastPlayed(account string) (int, bool, error)
 	RobotCharacterName(uid int) (string, error)
@@ -369,12 +378,14 @@ func (missingSchemaRepository) RevokeStorePermission(int, int) error {
 	return errors.New("scheduler schema repository is not configured")
 }
 
-func (missingSchemaRepository) UpdateRobotPosition(robotcap.Info, int, int) error {
-	return errors.New("scheduler schema repository is not configured")
-}
-
 func (missingSchemaRepository) FollowAccountUIDs(string) ([]int, error) {
 	return nil, errors.New("scheduler schema repository is not configured")
+}
+
+type missingPositionRepository struct{}
+
+func (missingPositionRepository) UpdateRobotPositions([]robotcap.PositionUpdate) error {
+	return errors.New("scheduler position repository is not configured")
 }
 
 func (missingSchemaRepository) FollowAccountVillageLastPlayed(string) (int, bool, error) {

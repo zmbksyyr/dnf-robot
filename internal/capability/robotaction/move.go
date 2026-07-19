@@ -13,7 +13,7 @@ type MoveService struct {
 }
 
 type MoveEnv interface {
-	DispatchMoveStep(info robotcap.Info, targetX, targetY, step, steps, speed int, rc robotconfig.RuntimeConfig) error
+	DispatchMoveStep(info robotcap.Info, targetVillage, targetArea, targetX, targetY, step, steps, speed int, rc robotconfig.RuntimeConfig) error
 	LoadMapCatalog() []shared.MapCatalogItem
 	RandBetween(min, max int) int
 	RuntimeStatus(uid int) (robotcap.RuntimeStatus, bool)
@@ -72,7 +72,7 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 			if step > plan.steps {
 				continue
 			}
-			if err := env.DispatchMoveStep(plan.robot, plan.target[0], plan.target[1], step, plan.steps, plan.speeds[step-1], rc); err != nil {
+			if err := env.DispatchMoveStep(plan.robot, plan.robot.Village, plan.robot.Area, plan.target[0], plan.target[1], step, plan.steps, plan.speeds[step-1], rc); err != nil {
 				result.Failed++
 			}
 		}
@@ -105,11 +105,16 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 }
 
 func (s MoveService) AutoMove(info robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem, follow *FollowTarget) {
-	targetX, targetY := s.randomTarget(info, rc, maps)
+	targetVillage, targetArea := info.Village, info.Area
+	var targetX, targetY int
 	if follow != nil {
-		info.Village = follow.Village
-		info.Area = follow.Area
-		targetX, targetY = s.followTarget(info, *follow, rc, maps)
+		targetVillage, targetArea = follow.Village, follow.Area
+		targetInfo := info
+		targetInfo.Village = targetVillage
+		targetInfo.Area = targetArea
+		targetX, targetY = s.followTarget(targetInfo, *follow, rc, maps)
+	} else {
+		targetX, targetY = s.randomTarget(info, rc, maps)
 	}
 	steps := s.Env.RandBetween(mathx.MaxInt(2, rc.MoveSteps-1), mathx.MinInt(8, rc.MoveSteps+2))
 	for step := 1; step <= steps; step++ {
@@ -117,7 +122,7 @@ func (s MoveService) AutoMove(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 			return
 		}
 		speed := s.Env.RandBetween(rc.MoveSpeedMin, rc.MoveSpeedMax)
-		_ = s.Env.DispatchMoveStep(info, targetX, targetY, step, steps, speed, rc)
+		_ = s.Env.DispatchMoveStep(info, targetVillage, targetArea, targetX, targetY, step, steps, speed, rc)
 		if step < steps && rc.MoveStepDelayMS > 0 {
 			delay := s.Env.RandBetween(mathx.MaxInt(300, rc.MoveStepDelayMS/2), mathx.MaxInt(300, rc.MoveStepDelayMS*3/2))
 			time.Sleep(time.Duration(delay) * time.Millisecond)

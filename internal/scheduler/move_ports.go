@@ -15,13 +15,13 @@ type moveActionEnv struct {
 	manager *RobotManager
 }
 
-func (e moveActionEnv) DispatchMoveStep(info robotcap.Info, targetX, targetY, step, steps, speed int, rc robotconfig.RuntimeConfig) error {
+func (e moveActionEnv) DispatchMoveStep(info robotcap.Info, targetVillage, targetArea, targetX, targetY, step, steps, speed int, rc robotconfig.RuntimeConfig) error {
 	x := info.X + (targetX-info.X)*step/steps
 	y := info.Y + (targetY-info.Y)*step/steps
 	command := shared.RuntimeMoveCommand{
 		UID:      info.UID,
-		Village:  info.Village,
-		Area:     info.Area,
+		Village:  targetVillage,
+		Area:     targetArea,
 		X:        x,
 		Y:        y,
 		MoveType: rc.MoveType,
@@ -30,8 +30,8 @@ func (e moveActionEnv) DispatchMoveStep(info robotcap.Info, targetX, targetY, st
 	if err := e.manager.doll.Move(command); err != nil {
 		return err
 	}
-	if step == steps {
-		_ = e.manager.schemaRepo().UpdateRobotPosition(info, targetX, targetY)
+	if step == steps && e.manager.positionWrites != nil {
+		_ = e.manager.positionWrites.Queue(info, targetVillage, targetArea, targetX, targetY)
 	}
 	return nil
 }

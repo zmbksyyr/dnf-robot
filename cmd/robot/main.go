@@ -168,7 +168,10 @@ func main() {
 	}
 	stopWebAdmin()
 	marketApp.Shutdown()
-	manager.StopAutoActions()
+	if err := manager.Shutdown(); err != nil {
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("ROBOT_MANAGER_SHUTDOWN_FAILED err=%v\n", err))
+		dnf.PrintfRed("robot manager shutdown error: %v\n", err)
+	}
 	robotSvc.Shutdown()
 	if err := db.Close(); err != nil {
 		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("DATABASE_CLOSE_FAILED err=%v\n", err))

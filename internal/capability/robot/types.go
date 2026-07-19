@@ -27,6 +27,19 @@ type Info struct {
 	Y       int    `json:"y"`
 }
 
+type PositionUpdate struct {
+	UID         int
+	CID         int
+	FromVillage int
+	FromArea    int
+	FromX       int
+	FromY       int
+	Village     int
+	Area        int
+	X           int
+	Y           int
+}
+
 type StatusItem struct {
 	UID              int               `json:"uid"`
 	CID              int               `json:"cid"`

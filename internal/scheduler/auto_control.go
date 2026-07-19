@@ -38,6 +38,14 @@ func (m *RobotManager) StopAutoActions() {
 	}
 }
 
+func (m *RobotManager) Shutdown() error {
+	m.StopAutoActions()
+	if m.positionWrites == nil {
+		return nil
+	}
+	return m.positionWrites.Close()
+}
+
 func (m *RobotManager) SetAutoEnabled(enabled bool) robotcap.AutoStatus {
 	_ = m.writeRobotConfigValues(map[string]string{
 		"auto.auto_actions": strconv.FormatBool(enabled),

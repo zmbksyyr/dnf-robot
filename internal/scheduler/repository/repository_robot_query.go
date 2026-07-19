@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+
 	robotcap "robot/internal/capability/robot"
 	foundsql "robot/internal/foundation/sql"
 )
@@ -35,11 +36,6 @@ func (r *SQLRepository) SelectRobots(req robotcap.CommandRequest) ([]robotcap.In
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-func (r *SQLRepository) UpdateRobotPosition(info robotcap.Info, x, y int) error {
-	_, err := r.Exec("UPDATE d_starsky.Dummylist SET curvill=?,curarea=?,curx=?,cury=? WHERE UID=?", info.Village, info.Area, x, y, info.UID)
-	return err
 }
 
 func (r *SQLRepository) FollowAccountUIDs(account string) ([]int, error) {
