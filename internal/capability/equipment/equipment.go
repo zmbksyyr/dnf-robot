@@ -106,34 +106,41 @@ func SelectEquipment(items []shared.EquipmentCatalogItem, level int, job int, rc
 	if len(slots) == 0 {
 		slots = []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
 	}
-	candidatesBySlot := make(map[int][]shared.EquipmentCatalogItem)
+	candidatesBySlot := make(map[int][]shared.EquipmentCatalogItem, len(slots))
+	slotByItemType := make(map[int]int, len(slots))
+	bestLevelBySlot := make(map[int]int, len(slots))
 	for _, slot := range slots {
 		itemType := SlotToItemType(slot)
 		if itemType == 0 {
 			continue
 		}
-		var candidates []shared.EquipmentCatalogItem
-		bestLevel := 0
-		for _, item := range items {
-			if item.ID == 0 || item.Expire || item.ItemType != itemType || item.Level > level {
-				continue
-			}
-			if rc.EquipRarityMax > 0 && (item.Rarity < rc.EquipRarityMin || item.Rarity > rc.EquipRarityMax) {
-				continue
-			}
-			if !UsableByJob(item.UseJob, job) {
-				continue
-			}
-			if item.Level > bestLevel {
-				bestLevel = item.Level
-			}
-			candidates = append(candidates, item)
-		}
-		if len(candidates) == 0 {
+		slotByItemType[itemType] = slot
+		candidatesBySlot[slot] = nil
+	}
+	for _, item := range items {
+		slot, wanted := slotByItemType[item.ItemType]
+		if !wanted || item.ID == 0 || item.Expire || item.Level > level {
 			continue
 		}
+		if rc.EquipRarityMax > 0 && (item.Rarity < rc.EquipRarityMin || item.Rarity > rc.EquipRarityMax) {
+			continue
+		}
+		if !UsableByJob(item.UseJob, job) {
+			continue
+		}
+		if item.Level > bestLevelBySlot[slot] {
+			bestLevelBySlot[slot] = item.Level
+		}
+		candidatesBySlot[slot] = append(candidatesBySlot[slot], item)
+	}
+	for slot, candidates := range candidatesBySlot {
+		if len(candidates) == 0 {
+			delete(candidatesBySlot, slot)
+			continue
+		}
+		bestLevel := bestLevelBySlot[slot]
 		if bestLevel > 0 {
-			var near []shared.EquipmentCatalogItem
+			near := candidates[:0]
 			for _, item := range candidates {
 				if item.Level >= bestLevel-10 {
 					near = append(near, item)
@@ -158,20 +165,21 @@ func SelectAvatar(items []shared.EquipmentCatalogItem, job int, rc robotconfig.R
 	if len(slots) == 0 {
 		slots = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	}
-	candidatesBySlot := make(map[int][]shared.EquipmentCatalogItem)
+	candidatesBySlot := make(map[int][]shared.EquipmentCatalogItem, len(slots))
+	slotByItemType := make(map[int]int, len(slots))
 	for _, slot := range slots {
-		itemType := slot + 20
-		var candidates []shared.EquipmentCatalogItem
-		for _, item := range items {
-			if item.ID == 0 || item.Expire || item.ItemType != itemType {
-				continue
-			}
-			if !AvatarUsableByJob(item, job) {
-				continue
-			}
-			candidates = append(candidates, item)
+		if slot < 0 || slot > 9 {
+			continue
 		}
-		candidatesBySlot[slot] = candidates
+		slotByItemType[slot+20] = slot
+		candidatesBySlot[slot] = nil
+	}
+	for _, item := range items {
+		slot, wanted := slotByItemType[item.ItemType]
+		if !wanted || item.ID == 0 || item.Expire || !AvatarUsableByJob(item, job) {
+			continue
+		}
+		candidatesBySlot[slot] = append(candidatesBySlot[slot], item)
 	}
 	selected := make(map[int]shared.EquipmentCatalogItem)
 	if rc.PreferAvatarSets {

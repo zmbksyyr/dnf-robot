@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
+	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/shared"
 )
 
@@ -63,6 +64,38 @@ func TestEquipmentSetSelectionKeepsHighestScore(t *testing.T) {
 		if item.SetKey != "quality" {
 			t.Fatalf("selected set %q want quality", item.SetKey)
 		}
+	}
+}
+
+func TestSelectEquipmentScansCatalogAcrossConfiguredSlots(t *testing.T) {
+	items := []shared.EquipmentCatalogItem{
+		{ID: 101, ItemType: 1, Level: 50, UseJob: []int{1}},
+		{ID: 102, ItemType: 1, Level: 90, UseJob: []int{1}},
+		{ID: 103, ItemType: 1, Level: 100, UseJob: []int{1}},
+		{ID: 104, ItemType: 1, Level: 100, UseJob: []int{2}},
+		{ID: 201, ItemType: 2, Level: 80, UseJob: []int{100}},
+		{ID: 301, ItemType: 3, Level: 80, UseJob: []int{1}},
+	}
+
+	selected := SelectEquipment(items, 100, 1, robotconfig.RuntimeConfig{EquipSlots: []int{1, 2}}, func(int) int { return 0 })
+
+	if len(selected) != 2 || selected[1].ID != 102 || selected[2].ID != 201 {
+		t.Fatalf("selected equipment = %+v", selected)
+	}
+}
+
+func TestSelectAvatarScansCatalogAcrossConfiguredSlots(t *testing.T) {
+	items := []shared.EquipmentCatalogItem{
+		{ID: 100, ItemType: 20, UseJob: []int{1}},
+		{ID: 101, ItemType: 20, UseJob: []int{2}},
+		{ID: 200, ItemType: 21, UseJob: []int{2}},
+		{ID: 900, ItemType: 29},
+	}
+
+	selected := SelectAvatar(items, 1, robotconfig.RuntimeConfig{AvatarSlots: []int{0, 1, 9}}, func(int) int { return 0 })
+
+	if len(selected) != 2 || selected[0].ID != 100 || selected[9].ID != 900 {
+		t.Fatalf("selected avatar = %+v", selected)
 	}
 }
 
