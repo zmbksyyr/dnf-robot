@@ -6,26 +6,27 @@ import (
 	"testing"
 )
 
-func TestAnubisKernelVectors(t *testing.T) {
+func TestAnubisLibTomCryptOriginalVectors(t *testing.T) {
 	tests := []struct {
-		keyByte   byte
 		keySize   int
-		plainByte byte
 		cipherHex string
 	}{
-		{keyByte: 0xfe, keySize: 16, plainByte: 0xfe, cipherHex: "6dc5daa2267d626f08b7528e6e6e8690"},
-		{keyByte: 0x03, keySize: 20, plainByte: 0x03, cipherHex: "dbf142f4d18ac74987416f820a9864ae"},
-		{keyByte: 0x24, keySize: 28, plainByte: 0x24, cipherHex: "fd1b4ae3bff0ad3d06d36127fd139ede"},
-		{keyByte: 0x25, keySize: 32, plainByte: 0x25, cipherHex: "1a91fb2bb7786bc417d9ff403b0ee5fe"},
-		{keyByte: 0x35, keySize: 40, plainByte: 0x35, cipherHex: "a52c856f9cbaa0979ec6840f172107ee"},
+		{keySize: 16, cipherHex: "f06860fc6730e818f132c78af4132afe"},
+		{keySize: 20, cipherHex: "bd5e32be5167a8e272d7950f83c68c31"},
+		{keySize: 24, cipherHex: "17ac57449d596166d0c79e047cc758f0"},
+		{keySize: 28, cipherHex: "a2f0a6b917932a3bef08e87a58d6f853"},
+		{keySize: 32, cipherHex: "e086ac456b3ce513edf5dfddd63b7193"},
+		{keySize: 36, cipherHex: "e8f4af2b21a0879b4195b9717579047c"},
+		{keySize: 40, cipherHex: "1704d72cc68576024bcc3980d822eaa4"},
 	}
 	for _, tt := range tests {
 		cipher := NewAnubisCipher()
-		key := bytes.Repeat([]byte{tt.keyByte}, tt.keySize)
+		key := make([]byte, tt.keySize)
+		key[0] = 0x80
 		if err := cipher.SetKey(key); err != nil {
 			t.Fatalf("SetKey(%d): %v", tt.keySize, err)
 		}
-		plain := bytes.Repeat([]byte{tt.plainByte}, cipher.BlockSize())
+		plain := make([]byte, cipher.BlockSize())
 		want, err := hex.DecodeString(tt.cipherHex)
 		if err != nil {
 			t.Fatal(err)
