@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -10,10 +11,10 @@ import (
 	"robot/internal/foundation/lockhub"
 )
 
-type positionWriterFunc func([]robotcap.PositionUpdate) error
+type positionWriterFunc func(context.Context, []robotcap.PositionUpdate) error
 
-func (f positionWriterFunc) UpdateRobotPositions(batch []robotcap.PositionUpdate) error {
-	return f(batch)
+func (f positionWriterFunc) UpdateRobotPositions(ctx context.Context, batch []robotcap.PositionUpdate) error {
+	return f(ctx, batch)
 }
 
 type fakePositionTimer struct {
@@ -80,10 +81,12 @@ func (c *fakePositionClock) Delays() []time.Duration {
 
 func newTestPositionBatcher(writer robotPositionWriter, clock *fakePositionClock) *positionBatcher {
 	return newPositionBatcher(writer, positionBatchOptions{
-		flushDelay: time.Second,
-		retryMin:   10 * time.Millisecond,
-		retryMax:   40 * time.Millisecond,
-		afterFunc:  clock.AfterFunc,
+		flushDelay:   time.Second,
+		retryMin:     10 * time.Millisecond,
+		retryMax:     40 * time.Millisecond,
+		writeTimeout: time.Second,
+		closeTimeout: time.Second,
+		afterFunc:    clock.AfterFunc,
 	})
 }
 
@@ -94,7 +97,7 @@ func copyPositionBatch(batch []robotcap.PositionUpdate) []robotcap.PositionUpdat
 func TestPositionBatcherKeepsLatestPerUIDAndCombinesUIDs(t *testing.T) {
 	clock := &fakePositionClock{}
 	var calls [][]robotcap.PositionUpdate
-	batcher := newTestPositionBatcher(positionWriterFunc(func(batch []robotcap.PositionUpdate) error {
+	batcher := newTestPositionBatcher(positionWriterFunc(func(_ context.Context, batch []robotcap.PositionUpdate) error {
 		calls = append(calls, copyPositionBatch(batch))
 		return nil
 	}), clock)
@@ -138,7 +141,7 @@ func TestPositionBatcherKeepsLatestPerUIDAndCombinesUIDs(t *testing.T) {
 func TestPositionBatcherPreservesCrossAreaSourceAndTarget(t *testing.T) {
 	clock := &fakePositionClock{}
 	var got robotcap.PositionUpdate
-	batcher := newTestPositionBatcher(positionWriterFunc(func(batch []robotcap.PositionUpdate) error {
+	batcher := newTestPositionBatcher(positionWriterFunc(func(_ context.Context, batch []robotcap.PositionUpdate) error {
 		if len(batch) != 1 {
 			t.Fatalf("batch size got %d want 1", len(batch))
 		}
@@ -166,7 +169,7 @@ func TestPositionBatcherFailureDoesNotOverwriteNewerPendingPosition(t *testing.T
 	releaseFirst := make(chan struct{})
 	var mu lockhub.Locker
 	var calls [][]robotcap.PositionUpdate
-	writer := positionWriterFunc(func(batch []robotcap.PositionUpdate) error {
+	writer := positionWriterFunc(func(_ context.Context, batch []robotcap.PositionUpdate) error {
 		mu.Lock()
 		call := len(calls)
 		calls = append(calls, copyPositionBatch(batch))
@@ -215,7 +218,7 @@ func TestPositionBatcherSuccessfulInFlightFlushPreservesNextCASSource(t *testing
 	releaseFirst := make(chan struct{})
 	var mu lockhub.Locker
 	var calls [][]robotcap.PositionUpdate
-	writer := positionWriterFunc(func(batch []robotcap.PositionUpdate) error {
+	writer := positionWriterFunc(func(_ context.Context, batch []robotcap.PositionUpdate) error {
 		mu.Lock()
 		call := len(calls)
 		calls = append(calls, copyPositionBatch(batch))
@@ -260,7 +263,7 @@ func TestPositionBatcherSuccessfulInFlightFlushPreservesNextCASSource(t *testing
 func TestPositionBatcherRetryBackoffIsBounded(t *testing.T) {
 	clock := &fakePositionClock{}
 	failures := 0
-	batcher := newTestPositionBatcher(positionWriterFunc(func([]robotcap.PositionUpdate) error {
+	batcher := newTestPositionBatcher(positionWriterFunc(func(_ context.Context, _ []robotcap.PositionUpdate) error {
 		failures++
 		if failures <= 4 {
 			return errors.New("database unavailable")
@@ -296,7 +299,7 @@ func TestPositionBatcherCloseWaitsForCallbackThenFlushesPending(t *testing.T) {
 	defer release()
 	var mu lockhub.Locker
 	var calls [][]robotcap.PositionUpdate
-	writer := positionWriterFunc(func(batch []robotcap.PositionUpdate) error {
+	writer := positionWriterFunc(func(_ context.Context, batch []robotcap.PositionUpdate) error {
 		mu.Lock()
 		call := len(calls)
 		calls = append(calls, copyPositionBatch(batch))
@@ -343,7 +346,7 @@ func TestPositionBatcherCloseWaitsForCallbackThenFlushesPending(t *testing.T) {
 func TestPositionBatcherCloseReturnsFinalFlushError(t *testing.T) {
 	clock := &fakePositionClock{}
 	wantErr := errors.New("final write failed")
-	batcher := newTestPositionBatcher(positionWriterFunc(func([]robotcap.PositionUpdate) error {
+	batcher := newTestPositionBatcher(positionWriterFunc(func(_ context.Context, _ []robotcap.PositionUpdate) error {
 		return wantErr
 	}), clock)
 	_ = batcher.Queue(robotcap.Info{UID: 101}, 0, 0, 10, 20)
@@ -355,11 +358,76 @@ func TestPositionBatcherCloseReturnsFinalFlushError(t *testing.T) {
 	}
 }
 
+func TestPositionBatcherCloseHasBoundedWaitForInFlightFlush(t *testing.T) {
+	clock := &fakePositionClock{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	writer := positionWriterFunc(func(_ context.Context, _ []robotcap.PositionUpdate) error {
+		close(started)
+		<-release
+		return nil
+	})
+	batcher := newPositionBatcher(writer, positionBatchOptions{
+		flushDelay:   time.Second,
+		retryMin:     10 * time.Millisecond,
+		retryMax:     40 * time.Millisecond,
+		writeTimeout: time.Second,
+		closeTimeout: 30 * time.Millisecond,
+		afterFunc:    clock.AfterFunc,
+	})
+	_ = batcher.Queue(robotcap.Info{UID: 101}, 0, 0, 10, 20)
+	fired := make(chan struct{})
+	go func() {
+		clock.FireNext()
+		close(fired)
+	}()
+	<-started
+
+	start := time.Now()
+	err := batcher.Close()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("close error got %v want deadline exceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+		t.Fatalf("bounded close took %s", elapsed)
+	}
+	close(release)
+	<-fired
+}
+
+func TestPositionBatcherCloseTimeoutPreservesPendingFinalFlush(t *testing.T) {
+	clock := &fakePositionClock{}
+	writer := positionWriterFunc(func(ctx context.Context, _ []robotcap.PositionUpdate) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	batcher := newPositionBatcher(writer, positionBatchOptions{
+		flushDelay:   time.Second,
+		retryMin:     10 * time.Millisecond,
+		retryMax:     40 * time.Millisecond,
+		writeTimeout: time.Second,
+		closeTimeout: 30 * time.Millisecond,
+		afterFunc:    clock.AfterFunc,
+	})
+	_ = batcher.Queue(robotcap.Info{UID: 101}, 0, 0, 10, 20)
+
+	err := batcher.Close()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("close error got %v want deadline exceeded", err)
+	}
+	batcher.mu.Lock()
+	pending := len(batcher.pending)
+	batcher.mu.Unlock()
+	if pending != 1 {
+		t.Fatalf("pending updates got %d want 1 after failed final flush", pending)
+	}
+}
+
 func TestRobotManagerShutdownFlushesPendingPositions(t *testing.T) {
 	clock := &fakePositionClock{}
 	var calls [][]robotcap.PositionUpdate
 	manager := testRobotManagerWithConfig(t, "")
-	manager.positionWrites = newTestPositionBatcher(positionWriterFunc(func(batch []robotcap.PositionUpdate) error {
+	manager.positionWrites = newTestPositionBatcher(positionWriterFunc(func(_ context.Context, batch []robotcap.PositionUpdate) error {
 		calls = append(calls, copyPositionBatch(batch))
 		return nil
 	}), clock)

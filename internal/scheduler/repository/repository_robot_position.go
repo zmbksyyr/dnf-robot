@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"strconv"
 	"strings"
@@ -10,29 +11,35 @@ import (
 
 const robotPositionBatchSize = 128
 
-func (r *SQLRepository) UpdateRobotPositions(updates []robotcap.PositionUpdate) error {
+func (r *SQLRepository) UpdateRobotPositions(ctx context.Context, updates []robotcap.PositionUpdate) error {
 	if len(updates) == 0 {
 		return nil
 	}
-	tx, err := r.Begin()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := executeRobotPositionUpdates(updates, tx.Exec); err != nil {
+	if err := executeRobotPositionUpdates(ctx, updates, tx.ExecContext); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
 }
 
-func executeRobotPositionUpdates(updates []robotcap.PositionUpdate, exec func(string, ...interface{}) (sql.Result, error)) error {
+func executeRobotPositionUpdates(ctx context.Context, updates []robotcap.PositionUpdate, exec func(context.Context, string, ...interface{}) (sql.Result, error)) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	for start := 0; start < len(updates); start += robotPositionBatchSize {
 		end := start + robotPositionBatchSize
 		if end > len(updates) {
 			end = len(updates)
 		}
 		query, args := buildRobotPositionUpdate(updates[start:end])
-		if _, err := exec(query, args...); err != nil {
+		if _, err := exec(ctx, query, args...); err != nil {
 			return err
 		}
 	}

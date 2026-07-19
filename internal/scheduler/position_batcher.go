@@ -1,7 +1,9 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -11,15 +13,17 @@ import (
 )
 
 const (
-	defaultPositionFlushDelay = time.Second
-	defaultPositionRetryMin   = 250 * time.Millisecond
-	defaultPositionRetryMax   = 2 * time.Second
+	defaultPositionFlushDelay   = time.Second
+	defaultPositionRetryMin     = 250 * time.Millisecond
+	defaultPositionRetryMax     = 2 * time.Second
+	defaultPositionWriteTimeout = 5 * time.Second
+	defaultPositionCloseTimeout = 10 * time.Second
 )
 
 var errPositionBatcherClosed = errors.New("robot position batcher is closed")
 
 type robotPositionWriter interface {
-	UpdateRobotPositions([]robotcap.PositionUpdate) error
+	UpdateRobotPositions(context.Context, []robotcap.PositionUpdate) error
 }
 
 type positionTimer interface {
@@ -27,17 +31,21 @@ type positionTimer interface {
 }
 
 type positionBatchOptions struct {
-	flushDelay time.Duration
-	retryMin   time.Duration
-	retryMax   time.Duration
-	afterFunc  func(time.Duration, func()) positionTimer
+	flushDelay   time.Duration
+	retryMin     time.Duration
+	retryMax     time.Duration
+	writeTimeout time.Duration
+	closeTimeout time.Duration
+	afterFunc    func(time.Duration, func()) positionTimer
 }
 
 func defaultPositionBatchOptions() positionBatchOptions {
 	return positionBatchOptions{
-		flushDelay: defaultPositionFlushDelay,
-		retryMin:   defaultPositionRetryMin,
-		retryMax:   defaultPositionRetryMax,
+		flushDelay:   defaultPositionFlushDelay,
+		retryMin:     defaultPositionRetryMin,
+		retryMax:     defaultPositionRetryMax,
+		writeTimeout: defaultPositionWriteTimeout,
+		closeTimeout: defaultPositionCloseTimeout,
 		afterFunc: func(delay time.Duration, callback func()) positionTimer {
 			return time.AfterFunc(delay, callback)
 		},
@@ -45,22 +53,25 @@ func defaultPositionBatchOptions() positionBatchOptions {
 }
 
 type positionBatcher struct {
-	writer     robotPositionWriter
-	flushDelay time.Duration
-	retryMin   time.Duration
-	retryMax   time.Duration
-	afterFunc  func(time.Duration, func()) positionTimer
+	writer       robotPositionWriter
+	flushDelay   time.Duration
+	retryMin     time.Duration
+	retryMax     time.Duration
+	writeTimeout time.Duration
+	closeTimeout time.Duration
+	afterFunc    func(time.Duration, func()) positionTimer
 
-	mu           lockhub.Locker
-	pending      map[int]robotcap.PositionUpdate
-	timer        positionTimer
-	flushing     bool
-	closed       bool
-	retryDelay   time.Duration
-	failureCount int
-	callbackWG   sync.WaitGroup
-	closeOnce    sync.Once
-	closeErr     error
+	mu            lockhub.Locker
+	pending       map[int]robotcap.PositionUpdate
+	timer         positionTimer
+	flushing      bool
+	closed        bool
+	retryDelay    time.Duration
+	failureCount  int
+	callbackCount int
+	callbacksIdle chan struct{}
+	closeOnce     sync.Once
+	closeErr      error
 }
 
 func newPositionBatcher(writer robotPositionWriter, options positionBatchOptions) *positionBatcher {
@@ -80,16 +91,24 @@ func newPositionBatcher(writer robotPositionWriter, options positionBatchOptions
 	if options.retryMax < options.retryMin {
 		options.retryMax = options.retryMin
 	}
+	if options.writeTimeout <= 0 {
+		options.writeTimeout = defaults.writeTimeout
+	}
+	if options.closeTimeout <= 0 {
+		options.closeTimeout = defaults.closeTimeout
+	}
 	if options.afterFunc == nil {
 		options.afterFunc = defaults.afterFunc
 	}
 	return &positionBatcher{
-		writer:     writer,
-		flushDelay: options.flushDelay,
-		retryMin:   options.retryMin,
-		retryMax:   options.retryMax,
-		afterFunc:  options.afterFunc,
-		pending:    make(map[int]robotcap.PositionUpdate),
+		writer:       writer,
+		flushDelay:   options.flushDelay,
+		retryMin:     options.retryMin,
+		retryMax:     options.retryMax,
+		writeTimeout: options.writeTimeout,
+		closeTimeout: options.closeTimeout,
+		afterFunc:    options.afterFunc,
+		pending:      make(map[int]robotcap.PositionUpdate),
 	}
 }
 
@@ -124,24 +143,41 @@ func (b *positionBatcher) Queue(info robotcap.Info, village, area, x, y int) err
 
 func (b *positionBatcher) Close() error {
 	b.closeOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), b.closeTimeout)
+		defer cancel()
+
 		b.mu.Lock()
 		b.closed = true
 		if b.timer != nil {
 			timer := b.timer
 			b.timer = nil
 			if timer.Stop() {
-				b.callbackWG.Done()
+				b.finishCallbackLocked()
 			}
 		}
+		callbacksIdle := b.callbacksIdle
+		callbacksActive := b.callbackCount > 0
 		b.mu.Unlock()
 
-		b.callbackWG.Wait()
+		if callbacksActive {
+			select {
+			case <-callbacksIdle:
+			case <-ctx.Done():
+				b.closeErr = fmt.Errorf("wait for in-flight position flush: %w", ctx.Err())
+				return
+			}
+		}
 
 		b.mu.Lock()
 		batch := b.takePendingLocked()
 		b.mu.Unlock()
 		if len(batch) > 0 {
-			b.closeErr = b.writer.UpdateRobotPositions(batch)
+			if err := b.writePositions(ctx, batch); err != nil {
+				b.mu.Lock()
+				b.mergeFailedLocked(batch)
+				b.mu.Unlock()
+				b.closeErr = fmt.Errorf("flush pending robot positions during close: %w", err)
+			}
 		}
 	})
 	return b.closeErr
@@ -151,9 +187,9 @@ func (b *positionBatcher) scheduleLocked(delay time.Duration) {
 	if b.closed || b.flushing || b.timer != nil || len(b.pending) == 0 {
 		return
 	}
-	b.callbackWG.Add(1)
+	b.startCallbackLocked()
 	b.timer = b.afterFunc(delay, func() {
-		defer b.callbackWG.Done()
+		defer b.finishCallback()
 		b.flushTimer()
 	})
 }
@@ -173,7 +209,7 @@ func (b *positionBatcher) flushTimer() {
 	b.flushing = true
 	b.mu.Unlock()
 
-	err := b.writer.UpdateRobotPositions(batch)
+	err := b.writePositions(context.Background(), batch)
 
 	b.mu.Lock()
 	b.flushing = false
@@ -199,6 +235,41 @@ func (b *positionBatcher) flushTimer() {
 	}
 	if logRecovery {
 		robotLogf("[PositionBatch] flush_recovered count=%d\n", len(batch))
+	}
+}
+
+func (b *positionBatcher) writePositions(parent context.Context, batch []robotcap.PositionUpdate) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, b.writeTimeout)
+	defer cancel()
+	return b.writer.UpdateRobotPositions(ctx, batch)
+}
+
+func (b *positionBatcher) startCallbackLocked() {
+	if b.callbackCount == 0 {
+		b.callbacksIdle = make(chan struct{})
+	}
+	b.callbackCount++
+}
+
+func (b *positionBatcher) finishCallback() {
+	b.mu.Lock()
+	b.finishCallbackLocked()
+	b.mu.Unlock()
+}
+
+func (b *positionBatcher) finishCallbackLocked() {
+	if b.callbackCount <= 0 {
+		return
+	}
+	b.callbackCount--
+	if b.callbackCount == 0 {
+		close(b.callbacksIdle)
 	}
 }
 

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"math/rand"
 	robotcap "robot/internal/capability/robot"
@@ -355,7 +356,7 @@ func (missingSchemaRepository) FollowAccountUIDs(string) ([]int, error) {
 
 type missingPositionRepository struct{}
 
-func (missingPositionRepository) UpdateRobotPositions([]robotcap.PositionUpdate) error {
+func (missingPositionRepository) UpdateRobotPositions(context.Context, []robotcap.PositionUpdate) error {
 	return errors.New("scheduler position repository is not configured")
 }
 

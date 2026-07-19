@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	robotcap "robot/internal/capability/robot"
 )
@@ -37,7 +39,7 @@ func makePositionUpdates(count int) []robotcap.PositionUpdate {
 func TestExecuteRobotPositionUpdatesSplitsAtBatchBoundary(t *testing.T) {
 	updates := makePositionUpdates(robotPositionBatchSize + 1)
 	var calls []positionExecCall
-	err := executeRobotPositionUpdates(updates, func(query string, args ...interface{}) (sql.Result, error) {
+	err := executeRobotPositionUpdates(context.Background(), updates, func(_ context.Context, query string, args ...interface{}) (sql.Result, error) {
 		calls = append(calls, positionExecCall{query: query, args: append([]interface{}(nil), args...)})
 		return nil, nil
 	})
@@ -90,7 +92,7 @@ func TestBuildRobotPositionUpdateHasOptimisticGuards(t *testing.T) {
 func TestExecuteRobotPositionUpdatesStopsAtFirstError(t *testing.T) {
 	wantErr := errors.New("write failed")
 	calls := 0
-	err := executeRobotPositionUpdates(makePositionUpdates(robotPositionBatchSize*3), func(string, ...interface{}) (sql.Result, error) {
+	err := executeRobotPositionUpdates(context.Background(), makePositionUpdates(robotPositionBatchSize*3), func(context.Context, string, ...interface{}) (sql.Result, error) {
 		calls++
 		if calls == 2 {
 			return nil, wantErr
@@ -107,7 +109,7 @@ func TestExecuteRobotPositionUpdatesStopsAtFirstError(t *testing.T) {
 
 func TestExecuteRobotPositionUpdatesEmptyBatchDoesNotExec(t *testing.T) {
 	calls := 0
-	err := executeRobotPositionUpdates(nil, func(string, ...interface{}) (sql.Result, error) {
+	err := executeRobotPositionUpdates(context.Background(), nil, func(context.Context, string, ...interface{}) (sql.Result, error) {
 		calls++
 		return nil, nil
 	})
@@ -116,5 +118,17 @@ func TestExecuteRobotPositionUpdatesEmptyBatchDoesNotExec(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("exec calls got %d want 0", calls)
+	}
+}
+
+func TestExecuteRobotPositionUpdatesHonorsContextDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := executeRobotPositionUpdates(ctx, makePositionUpdates(1), func(ctx context.Context, _ string, _ ...interface{}) (sql.Result, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("execute error got %v want deadline exceeded", err)
 	}
 }
