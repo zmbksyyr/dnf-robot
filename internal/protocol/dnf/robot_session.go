@@ -133,6 +133,9 @@ type RobotVo struct {
 	partyPeers           [4]partyIPPeer
 	partyPendingPeer     uint16
 	partyPendingUntil    time.Time
+	partyInviteFallback  partyInviteFallbackState
+	partyInviteTimer     *time.Timer
+	partyInviteEpoch     uint64
 	townEntityPositions  map[uint16]townEntityPosition
 	townEntitySweepAt    time.Time
 	partyUDPConn         *net.UDPConn
@@ -391,6 +394,7 @@ func (r *RobotVo) closeOutUnsafe() {
 	}
 	r.closePartyUDPUnsafe()
 	r.closePartyRelayUnsafe()
+	r.clearPartyPendingUnsafe()
 	r.recvBuffer = nil
 	r.recvSize = 0
 	r.invalidateTradeQuoteUnsafe()

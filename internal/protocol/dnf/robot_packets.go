@@ -70,6 +70,8 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			}
 			if clears {
 				r.clearPartyUnsafe()
+			} else {
+				r.clearPartyInviteFallbackUnsafe()
 			}
 		}
 		return
@@ -274,6 +276,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			itemID := int32(binary.LittleEndian.Uint32(decData[2:6]))
 			itemNum := int32(binary.LittleEndian.Uint32(decData[6:10]))
 			itemType := int32(binary.LittleEndian.Uint32(decData[11:15]))
+			r.clearConfirmedTradeFallbackUnsafe()
 
 			idx := int(itemPos) - 3
 			if itemID < 0 {
@@ -296,11 +299,12 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 
 	if packetFlag == 0 && packetType == 7 && r.State == StateRun {
-		data, typ, source, err := selectPeerResponsePacket(r.Cipher, pInBuf, isAnti, r.partyRecvSource, r.partyEntityKnownUnsafe)
+		selected, alternate, err := selectPeerResponsePackets(r.Cipher, pInBuf, isAnti, r.partyRecvSource, r.partyConfirmedPeerUnsafe)
 		if err != nil {
 			fmt.Printf("[PEER_REQUEST_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
 			return
 		}
+		data, typ, source := selected.data, selected.typ, selected.source
 		if source == recvBodySourcePlain {
 			fmt.Printf("[PEER_REQUEST_PLAIN] uid=%d size=%d\n", r.UID, dInSize)
 		}
@@ -324,6 +328,9 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 					r.setPartyPendingUnsafe(uniqueID)
 					r.ensurePartyRelayUnsafe()
 				}
+				if sent {
+					r.schedulePartyInviteFallbackUnsafe(selected, alternate)
+				}
 			}
 			if typ == peerRequestTrade {
 				r.invalidateTradeQuoteUnsafe()
@@ -334,6 +341,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 
 	if packetFlag == 0 && packetType == 16 && r.State == StateRun {
+		r.clearConfirmedTradeFallbackUnsafe()
 		r.invalidateTradeQuoteUnsafe()
 		r.clearTradeUnsafe()
 		return
@@ -342,6 +350,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	if packetFlag == 0 && packetType == 17 && r.State == StateRun {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
 		if err == nil && len(decData) >= 3 {
+			r.clearConfirmedTradeFallbackUnsafe()
 			uniqueID := binary.LittleEndian.Uint16(decData[0:2])
 			state := decData[2]
 			if uniqueID == r.LastTradeID && state == 1 {

@@ -55,6 +55,9 @@ func buildPeerResponse(request []byte) ([]byte, byte, bool) {
 	if len(request) < 7 {
 		return nil, 0, false
 	}
+	if binary.LittleEndian.Uint16(request[:2]) == 0 {
+		return nil, 0, false
+	}
 	typ := request[2]
 	if typ != peerRequestParty && typ != peerRequestTrade {
 		return nil, typ, false
@@ -216,23 +219,28 @@ func recvBodyCandidates(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]rec
 }
 
 type peerResponseCandidate struct {
-	data   []byte
-	typ    byte
-	source recvBodySource
+	data      []byte
+	typ       byte
+	source    recvBodySource
+	canonical bool
 }
 
-func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, preferred recvBodySource, knownUniqueID func(uint16) bool) ([]byte, byte, recvBodySource, error) {
+func selectPeerResponsePackets(cipher *crypt.DNFCipher, raw []byte, isAnti bool, preferred recvBodySource, knownUniqueID func(uint16) bool) (peerResponseCandidate, *peerResponseCandidate, error) {
 	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
 	valid := make([]peerResponseCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		response, typ, ok := buildPeerResponse(candidate.body)
 		if ok {
-			valid = append(valid, peerResponseCandidate{data: response, typ: typ, source: candidate.source})
+			valid = append(valid, peerResponseCandidate{
+				data:      response,
+				typ:       typ,
+				source:    candidate.source,
+				canonical: canonicalPeerRequestBody(candidate.body),
+			})
 		}
 	}
 	if len(valid) == 1 {
-		candidate := valid[0]
-		return candidate.data, candidate.typ, candidate.source, nil
+		return valid[0], nil, nil
 	}
 	if len(valid) > 1 && knownUniqueID != nil {
 		known := make([]peerResponseCandidate, 0, len(valid))
@@ -242,8 +250,18 @@ func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, 
 			}
 		}
 		if len(known) == 1 {
-			candidate := known[0]
-			return candidate.data, candidate.typ, candidate.source, nil
+			return known[0], alternatePartyResponse(valid, known[0]), nil
+		}
+	}
+	if len(valid) > 1 {
+		canonical := make([]peerResponseCandidate, 0, len(valid))
+		for _, candidate := range valid {
+			if candidate.canonical {
+				canonical = append(canonical, candidate)
+			}
+		}
+		if len(canonical) == 1 {
+			return canonical[0], alternatePartyResponse(valid, canonical[0]), nil
 		}
 	}
 	if len(valid) > 1 && !isAnti && len(raw) >= 15 {
@@ -253,24 +271,61 @@ func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, 
 		}
 		for _, candidate := range valid {
 			if candidate.source == shapeSource {
-				return candidate.data, candidate.typ, candidate.source, nil
+				return candidate, alternatePartyResponse(valid, candidate), nil
 			}
 		}
 	}
 	if len(valid) > 1 && preferred != recvBodySourceUnknown {
 		for _, candidate := range valid {
 			if candidate.source == preferred {
-				return candidate.data, candidate.typ, candidate.source, nil
+				return candidate, alternatePartyResponse(valid, candidate), nil
 			}
 		}
 	}
 	if len(valid) > 1 {
-		return nil, 0, recvBodySourceUnknown, fmt.Errorf("peer request body is ambiguous between plain and decrypted forms")
+		return peerResponseCandidate{}, nil, fmt.Errorf("peer request body is ambiguous between plain and decrypted forms")
 	}
 	if decryptErr != nil {
-		return nil, 0, recvBodySourceUnknown, decryptErr
+		return peerResponseCandidate{}, nil, decryptErr
 	}
-	return nil, 0, recvBodySourceUnknown, fmt.Errorf("peer request has no valid body")
+	return peerResponseCandidate{}, nil, fmt.Errorf("peer request has no valid body")
+}
+
+func canonicalPeerRequestBody(body []byte) bool {
+	if len(body) < 7 {
+		return false
+	}
+	if len(body) == 7 {
+		return true
+	}
+	for _, padding := range body[7:] {
+		if padding != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, preferred recvBodySource, knownUniqueID func(uint16) bool) ([]byte, byte, recvBodySource, error) {
+	selected, _, err := selectPeerResponsePackets(cipher, raw, isAnti, preferred, knownUniqueID)
+	return selected.data, selected.typ, selected.source, err
+}
+
+func alternatePartyResponse(candidates []peerResponseCandidate, selected peerResponseCandidate) *peerResponseCandidate {
+	if selected.typ != peerRequestParty && (selected.typ != peerRequestTrade || !selected.canonical) {
+		return nil
+	}
+	for _, candidate := range candidates {
+		if candidate.source == selected.source || candidate.typ != peerRequestParty || bytes.Equal(candidate.data, selected.data) {
+			continue
+		}
+		if selected.typ == peerRequestTrade && !candidate.canonical {
+			continue
+		}
+		alternate := candidate
+		return &alternate
+	}
+	return nil
 }
 
 func selectPartyIPInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, selfAccID uint32) (partyIPPeer, []partyIPPeer, recvBodySource, error) {

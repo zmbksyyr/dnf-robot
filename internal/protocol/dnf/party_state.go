@@ -36,6 +36,14 @@ func (r *RobotVo) partyPeerForAccountUnsafe(accID uint32) (partyIPPeer, bool) {
 }
 
 func (r *RobotVo) partyEntityKnownUnsafe(uniqueID uint16) bool {
+	if r.partyConfirmedPeerUnsafe(uniqueID) {
+		return true
+	}
+	_, ok := r.townEntityPositions[uniqueID]
+	return ok
+}
+
+func (r *RobotVo) partyConfirmedPeerUnsafe(uniqueID uint16) bool {
 	if uniqueID == 0 {
 		return false
 	}
@@ -47,8 +55,7 @@ func (r *RobotVo) partyEntityKnownUnsafe(uniqueID uint16) bool {
 			return true
 		}
 	}
-	_, ok := r.townEntityPositions[uniqueID]
-	return ok
+	return false
 }
 
 func (r *RobotVo) rememberPartyRecvSourceUnsafe(source recvBodySource) {
@@ -283,7 +290,18 @@ func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPositio
 	return r.setPositionUnsafe(position.x, position.y, moveType, speed)
 }
 
-const partyPendingTimeout = 15 * time.Second
+const (
+	partyPendingTimeout      = 15 * time.Second
+	partyInviteFallbackDelay = 3 * time.Second
+)
+
+type partyInviteFallbackState struct {
+	data        [8]byte
+	source      recvBodySource
+	primaryPeer uint16
+	primaryType byte
+	due         time.Time
+}
 
 func (r *RobotVo) partyActiveUnsafe() bool {
 	if r.partyPendingPeer != 0 && (r.partyPendingUntil.IsZero() || !time.Now().Before(r.partyPendingUntil)) {
@@ -311,6 +329,84 @@ func (r *RobotVo) setPartyPendingUnsafe(uniqueID uint16) {
 func (r *RobotVo) clearPartyPendingUnsafe() {
 	r.partyPendingPeer = 0
 	r.partyPendingUntil = time.Time{}
+	r.clearPartyInviteFallbackUnsafe()
+}
+
+func (r *RobotVo) schedulePartyInviteFallbackUnsafe(selected peerResponseCandidate, candidate *peerResponseCandidate) {
+	r.clearPartyInviteFallbackUnsafe()
+	if len(selected.data) < 2 || candidate == nil || candidate.typ != peerRequestParty || len(candidate.data) < 8 {
+		return
+	}
+	if selected.typ != peerRequestParty && (selected.typ != peerRequestTrade || !selected.canonical || !candidate.canonical) {
+		return
+	}
+	primaryPeer := binary.LittleEndian.Uint16(selected.data[:2])
+	copy(r.partyInviteFallback.data[:], candidate.data[:8])
+	r.partyInviteFallback.source = candidate.source
+	r.partyInviteFallback.primaryPeer = primaryPeer
+	r.partyInviteFallback.primaryType = selected.typ
+	r.partyInviteFallback.due = time.Now().Add(partyInviteFallbackDelay)
+	epoch := r.partyInviteEpoch
+	r.partyInviteTimer = time.AfterFunc(partyInviteFallbackDelay, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.flushPartyInviteFallbackUnsafe(time.Now(), epoch)
+	})
+}
+
+func (r *RobotVo) clearPartyInviteFallbackUnsafe() {
+	r.partyInviteEpoch++
+	if r.partyInviteTimer != nil {
+		r.partyInviteTimer.Stop()
+		r.partyInviteTimer = nil
+	}
+	r.partyInviteFallback = partyInviteFallbackState{}
+}
+
+func (r *RobotVo) flushPartyInviteFallbackUnsafe(now time.Time, epoch uint64) bool {
+	if epoch != r.partyInviteEpoch || r.partyInviteFallback.due.IsZero() || now.Before(r.partyInviteFallback.due) {
+		return false
+	}
+	fallback := r.partyInviteFallback
+	r.clearPartyInviteFallbackUnsafe()
+	if r.State != StateRun || (fallback.primaryType == peerRequestParty && r.partyPendingPeer != fallback.primaryPeer) {
+		return false
+	}
+	if fallback.primaryType == peerRequestTrade && (!r.LastTradeState || r.LastTradeID != fallback.primaryPeer) {
+		return false
+	}
+	for _, peer := range r.partyPeers {
+		if peer.uniqueID != 0 {
+			return false
+		}
+	}
+	pkt, err := buildSendPacket(11, uint16(r.PacketID), fallback.data[:], r.Cipher)
+	r.PacketID++
+	if err != nil {
+		fmt.Printf("[PARTY_FALLBACK_BUILD_ERROR] uid=%d err=%v\n", r.UID, err)
+		return false
+	}
+	if !r.sendRaw(pkt) {
+		fmt.Printf("[PARTY_FALLBACK_SEND_ERROR] uid=%d\n", r.UID)
+		return false
+	}
+	if fallback.primaryType == peerRequestTrade && r.LastTradeState && r.LastTradeID == fallback.primaryPeer {
+		r.invalidateTradeQuoteUnsafe()
+		r.clearTradeUnsafe()
+	}
+	uniqueID := binary.LittleEndian.Uint16(fallback.data[:2])
+	r.rememberPartyRecvSourceUnsafe(fallback.source)
+	r.setPartyPendingUnsafe(uniqueID)
+	r.ensurePartyRelayUnsafe()
+	fmt.Printf("[PARTY_FALLBACK_ACCEPT] uid=%d peer_unique_id=%d request_id=%d source=%s\n",
+		r.UID, uniqueID, binary.LittleEndian.Uint32(fallback.data[3:7]), fallback.source)
+	return true
+}
+
+func (r *RobotVo) clearConfirmedTradeFallbackUnsafe() {
+	if r.partyInviteFallback.primaryType == peerRequestTrade {
+		r.clearPartyInviteFallbackUnsafe()
+	}
 }
 
 func (r *RobotVo) rememberPartyPeersUnsafe(peers []partyIPPeer) {
