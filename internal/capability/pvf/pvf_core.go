@@ -30,12 +30,18 @@ const pvfItemInfoExportName = "pvf_iteminfo.dat"
 const pvfSkillStateExportName = "pvf_skill_state_catalog.json"
 
 func EnsureExports(dfGameR, configDir string) error {
-	if dfGameR == "" || configDir == "" {
+	if configDir == "" {
+		return nil
+	}
+	skillCatalogPath := filepath.Join(configDir, pvfSkillStateExportName)
+	if dfGameR == "" {
+		_ = loadSkillStateCatalog(skillCatalogPath)
 		return nil
 	}
 	pvfPath := filepath.Join(filepath.Dir(dfGameR), "Script.pvf")
 	stat, err := os.Stat(pvfPath)
 	if err != nil {
+		_ = loadSkillStateCatalog(skillCatalogPath)
 		return nil
 	}
 	manifest, err := buildPVFManifest(pvfPath, stat)
@@ -44,7 +50,7 @@ func EnsureExports(dfGameR, configDir string) error {
 	}
 	manifestPath := filepath.Join(configDir, "pvf_manifest.json")
 	if pvfExportsCurrent(manifestPath, manifest, configDir) {
-		if err := loadSkillStateCatalog(filepath.Join(configDir, pvfSkillStateExportName)); err == nil {
+		if err := loadSkillStateCatalog(skillCatalogPath); err == nil {
 			return nil
 		}
 	}

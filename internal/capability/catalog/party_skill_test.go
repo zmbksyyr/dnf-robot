@@ -46,3 +46,27 @@ func TestLoadPartySkillsRejectsInvalidStateData(t *testing.T) {
 		t.Fatal("invalid state_data was accepted")
 	}
 }
+
+func TestLoadPartySkillsCannotRaiseSafeLevelLimit(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte(`{
+  "max_skill_level": 85,
+  "skills": [
+    {"job":2,"skill_index":6,"state":25,"level":70,"state_data":[0]},
+    {"job":2,"skill_index":7,"state":26,"level":71,"state_data":[0]}
+  ]
+}`)
+	if err := os.WriteFile(filepath.Join(dir, "party_skill_catalog.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	previous := shared.PartySkillStatesForJob(2)
+	t.Cleanup(func() { shared.SetPartySkillStates(previous) })
+
+	if err := LoadPartySkills(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := shared.PartySkillStatesForJob(2)
+	if len(got) != 1 || got[0].SkillIndex != 6 || got[0].Level != maxSafePartySkillLevel {
+		t.Fatalf("safe-level catalog = %+v", got)
+	}
+}

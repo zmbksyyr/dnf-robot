@@ -28,6 +28,8 @@ type partySkillCatalogEntry struct {
 	Risk       int    `json:"risk,omitempty"`
 }
 
+const maxSafePartySkillLevel = 70
+
 func LoadPartySkills(configDir string) error {
 	var cfg partySkillCatalogFile
 	path := filepath.Join(configDir, "party_skill_catalog.json")
@@ -35,8 +37,8 @@ func LoadPartySkills(configDir string) error {
 		return err
 	}
 	maxLevel := cfg.MaxSkillLevel
-	if maxLevel <= 0 {
-		maxLevel = 70
+	if maxLevel <= 0 || maxLevel > maxSafePartySkillLevel {
+		maxLevel = maxSafePartySkillLevel
 	}
 	entries := make([]shared.PartySkillState, 0, len(cfg.Skills))
 	for _, entry := range cfg.Skills {
