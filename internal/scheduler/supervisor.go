@@ -19,6 +19,11 @@ type RobotSupervisor struct {
 	once   sync.Once
 	stopWG sync.WaitGroup
 
+	shutdownMu         lockhub.Locker
+	shutdownErr        error
+	shutdownTimeout    time.Duration
+	shutdownForceGrace time.Duration
+
 	pressureMu      lockhub.Locker
 	pressureRunning bool
 
@@ -30,11 +35,13 @@ type RobotSupervisor struct {
 
 func NewRobotSupervisor(manager *RobotManager, runtime actormodel.RobotRuntime) *RobotSupervisor {
 	return &RobotSupervisor{
-		manager: manager,
-		runtime: runtime,
-		ledger:  actormodel.NewLedger(),
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		manager:            manager,
+		runtime:            runtime,
+		ledger:             actormodel.NewLedger(),
+		stop:               make(chan struct{}),
+		done:               make(chan struct{}),
+		shutdownTimeout:    defaultSupervisorShutdownTimeout,
+		shutdownForceGrace: defaultSupervisorForceGrace,
 	}
 }
 
@@ -43,8 +50,17 @@ func (s *RobotSupervisor) Start() {
 }
 
 func (s *RobotSupervisor) Stop() {
+	if err := s.StopWithError(); err != nil {
+		robotLogf("[RobotSupervisor] shutdown_incomplete err=%v\n", err)
+	}
+}
+
+func (s *RobotSupervisor) StopWithError() error {
 	s.once.Do(func() { close(s.stop) })
 	<-s.done
+	s.shutdownMu.Lock()
+	defer s.shutdownMu.Unlock()
+	return s.shutdownErr
 }
 
 func (s *RobotSupervisor) loop() {
@@ -54,8 +70,9 @@ func (s *RobotSupervisor) loop() {
 	for {
 		select {
 		case <-s.stop:
-			s.stopAll(true)
-			s.stopWG.Wait()
+			s.shutdownMu.Lock()
+			s.shutdownErr = s.shutdownActors()
+			s.shutdownMu.Unlock()
 			return
 		case now := <-ticker.C:
 			s.tick(now)
@@ -64,6 +81,7 @@ func (s *RobotSupervisor) loop() {
 }
 
 func (s *RobotSupervisor) tick(now time.Time) {
+	s.ledger.ReapDoneDraining()
 	signals := s.manager.adaptiveSchedulerSignals()
 	rc, decision := s.manager.refreshAdaptiveRobotConfig(signals)
 	s.manager.updateSchedulerStatus(rc, signals, decision)

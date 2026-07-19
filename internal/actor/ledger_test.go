@@ -44,7 +44,7 @@ func TestLedgerReserveEmptyAutoActor(t *testing.T) {
 	}
 }
 
-func TestLedgerDetachUIDsDeduplicatesAndClearsBlocked(t *testing.T) {
+func TestLedgerBeginDrainUIDsRetainsActorsAndLeases(t *testing.T) {
 	ledger := NewLedger()
 	a1 := testLedgerActor(1, ModeAuto, 0)
 	a2 := testLedgerActor(2, ModeAuto, 0)
@@ -54,18 +54,21 @@ func TestLedgerDetachUIDsDeduplicatesAndClearsBlocked(t *testing.T) {
 	ledger.TryLeaseUID(102, a2)
 	ledger.BlockUID(101)
 
-	actors, missing := ledger.DetachUIDs([]int{101, 102, 102, 999})
+	actors, missing := ledger.BeginDrainUIDs([]int{101, 102, 102, 999})
 	if len(actors) != 2 {
 		t.Fatalf("detached actors got %d want 2", len(actors))
 	}
 	if len(missing) != 1 || missing[0] != 999 {
 		t.Fatalf("missing got %v want [999]", missing)
 	}
-	if actors, leases := len(ledger.actors), len(ledger.uidActors); actors != 0 || leases != 0 {
-		t.Fatalf("ledger not empty after detach, actors=%d leases=%d", actors, leases)
+	if actorCount, leases := len(ledger.actors), len(ledger.uidActors); actorCount != 2 || leases != 2 {
+		t.Fatalf("draining actors must retain ownership, actors=%d leases=%d", actorCount, leases)
 	}
-	if _, blocked := ledger.blockedUID[101]; blocked {
-		t.Fatalf("DetachUIDs should clear blocked marker for detached uid")
+	if got := ledger.DrainingCount(); got != 2 {
+		t.Fatalf("draining actors got %d want 2", got)
+	}
+	if _, blocked := ledger.blockedUID[101]; !blocked {
+		t.Fatalf("blocked marker must remain until actor exit")
 	}
 }
 
@@ -85,16 +88,19 @@ func TestLedgerFilterBlockedRuntimeStatus(t *testing.T) {
 	}
 }
 
-func TestLedgerDetachSomeAutoActorsHonorsFloor(t *testing.T) {
+func TestLedgerBeginDrainSomeAutoActorsHonorsFloor(t *testing.T) {
 	ledger := NewLedger()
 	for i := 1; i <= 5; i++ {
 		addTestLedgerActor(&ledger, testLedgerActor(i, ModeAuto, 100+i))
 	}
-	actors := ledger.DetachSomeAutoActors(nil, 4, 3)
+	actors := ledger.BeginDrainSomeAutoActors(nil, 4, 3)
 	if len(actors) != 2 {
 		t.Fatalf("detached actors got %d want 2 due to floor", len(actors))
 	}
-	if got := len(ledger.actors); got != 3 {
-		t.Fatalf("remaining actors got %d want 3", got)
+	if got := len(ledger.actors); got != 5 {
+		t.Fatalf("draining actors must remain in capacity, got %d want 5", got)
+	}
+	if got := ledger.DrainingCount(); got != 2 {
+		t.Fatalf("draining actors got %d want 2", got)
 	}
 }

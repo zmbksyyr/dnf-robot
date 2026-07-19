@@ -70,6 +70,19 @@ func (rs *RobotSvc) Logout(uid int) error {
 	return rs.enqueue(robotMsgEntry{typ: robotCommandLogout, uid: uid})
 }
 
+func (rs *RobotSvc) ForceClose(uid int) bool {
+	task := rs.task()
+	if task == nil || uid <= 0 {
+		return false
+	}
+	vo := task.Find(uid)
+	if vo == nil || !task.DeleteByInt(uid) {
+		return false
+	}
+	go vo.CloseOut()
+	return true
+}
+
 func (rs *RobotSvc) Move(command shared.RuntimeMoveCommand) error {
 	return rs.enqueue(robotMsgEntry{typ: robotCommandMove, move: command})
 }

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"net"
 	"strconv"
 	"time"
@@ -28,22 +29,29 @@ func (m *RobotManager) StartAutoActions() {
 }
 
 func (m *RobotManager) StopAutoActions() {
+	if err := m.stopAutoActions(); err != nil {
+		robotLogf("[RobotManager] stop_auto_incomplete err=%v\n", err)
+	}
+}
+
+func (m *RobotManager) stopAutoActions() error {
 	m.autoMu.Lock()
 	supervisor := m.supervisor
 	m.supervisor = nil
 	m.autoEnabled = false
 	m.autoMu.Unlock()
 	if supervisor != nil {
-		supervisor.Stop()
+		return supervisor.StopWithError()
 	}
+	return nil
 }
 
 func (m *RobotManager) Shutdown() error {
-	m.StopAutoActions()
+	autoErr := m.stopAutoActions()
 	if m.positionWrites == nil {
-		return nil
+		return autoErr
 	}
-	return m.positionWrites.Close()
+	return errors.Join(autoErr, m.positionWrites.Close())
 }
 
 func (m *RobotManager) SetAutoEnabled(enabled bool) robotcap.AutoStatus {

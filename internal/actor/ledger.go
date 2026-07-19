@@ -13,6 +13,7 @@ type Ledger struct {
 	indexMu    lockhub.Locker
 	actors     map[int]*Actor
 	uidActors  map[int]*Actor
+	draining   map[int]*Actor
 	blockedUID map[int]struct{}
 	nextSlotID int
 }
@@ -26,6 +27,7 @@ type LedgerCounts struct {
 	Auto           int
 	Leased         int
 	Idle           int
+	Draining       int
 	Releasing      int
 	Blocked        int
 	StateIdle      int
@@ -40,6 +42,7 @@ func NewLedger() Ledger {
 	return Ledger{
 		actors:     make(map[int]*Actor),
 		uidActors:  make(map[int]*Actor),
+		draining:   make(map[int]*Actor),
 		blockedUID: make(map[int]struct{}),
 	}
 }
@@ -49,7 +52,7 @@ func (l *Ledger) LeaseSnapshots() []LeaseSnapshot {
 	defer l.indexMu.Unlock()
 	leases := make([]LeaseSnapshot, 0, len(l.uidActors))
 	for uid, actor := range l.uidActors {
-		if uid > 0 && actor != nil {
+		if uid > 0 && actor != nil && l.draining[actor.slotIDValue()] != actor {
 			leases = append(leases, LeaseSnapshot{UID: uid, Actor: actor})
 		}
 	}
@@ -58,13 +61,32 @@ func (l *Ledger) LeaseSnapshots() []LeaseSnapshot {
 
 func (l *Ledger) Counts(now time.Time, rc robotconfig.RuntimeConfig) LedgerCounts {
 	counts := LedgerCounts{Blocked: l.BlockedCount()}
-	for _, actor := range l.AutoActorPointers() {
+	l.indexMu.Lock()
+	actors := make([]*Actor, 0, len(l.actors))
+	draining := make(map[int]*Actor, len(l.draining))
+	for slotID, actor := range l.actors {
+		if actor.ModeValue() == ModeAuto {
+			actors = append(actors, actor)
+		}
+		if current := l.draining[slotID]; current != nil {
+			draining[slotID] = current
+		}
+	}
+	l.indexMu.Unlock()
+	for _, actor := range actors {
 		status := actor.Status(now, rc)
 		counts.Auto++
 		if status.UID > 0 {
 			counts.Leased++
 		} else {
 			counts.Idle++
+		}
+		isDraining := draining[actor.SlotIDValue()] == actor
+		if isDraining {
+			counts.Draining++
+			counts.Releasing++
+			counts.StateReleasing++
+			continue
 		}
 		if status.State == StateReleasing {
 			counts.Releasing++
@@ -129,11 +151,14 @@ func (l *Ledger) BlockedCount() int {
 }
 
 func (l *Ledger) TryLeaseUID(uid int, actor *Actor) bool {
-	if uid <= 0 {
+	if uid <= 0 || actor == nil {
 		return false
 	}
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
+	if l.draining[actor.SlotIDValue()] == actor {
+		return false
+	}
 	if _, blocked := l.blockedUID[uid]; blocked {
 		return false
 	}
@@ -177,12 +202,13 @@ func (l *Ledger) EnsureAutoActorSlots(runtime RobotRuntime, rc robotconfig.Runti
 		target = 0
 	}
 	l.indexMu.Lock()
+	l.reapDoneDrainingLocked()
 	current := 0
 	pending := 0
-	for _, actor := range l.actors {
+	for slotID, actor := range l.actors {
 		if actor.ModeValue() == ModeAuto {
 			current++
-			if SnapshotSchedulerPending(actor.Snapshot()) {
+			if l.draining[slotID] != actor && SnapshotSchedulerPending(actor.Snapshot()) {
 				pending++
 			}
 		}
@@ -212,8 +238,8 @@ func (l *Ledger) EnsureAutoActorSlots(runtime RobotRuntime, rc robotconfig.Runti
 		return nil
 	}
 	var candidates []*Actor
-	for _, actor := range l.actors {
-		if actor.ModeValue() == ModeAuto {
+	for slotID, actor := range l.actors {
+		if actor.ModeValue() == ModeAuto && l.draining[slotID] != actor {
 			candidates = append(candidates, actor)
 		}
 	}
@@ -227,10 +253,7 @@ func (l *Ledger) EnsureAutoActorSlots(runtime RobotRuntime, rc robotconfig.Runti
 	}
 	extra := candidates[:removeCount]
 	for _, actor := range extra {
-		delete(l.actors, actor.SlotIDValue())
-		if uid := actor.UIDValue(); uid > 0 {
-			delete(l.uidActors, uid)
-		}
+		l.draining[actor.SlotIDValue()] = actor
 	}
 	l.indexMu.Unlock()
 	return extra
@@ -274,7 +297,10 @@ func (l *Ledger) ReserveEmptyAutoActor(uid int) (*Actor, bool, bool) {
 		return nil, false, false
 	}
 	var actor *Actor
-	for _, candidate := range l.actors {
+	for slotID, candidate := range l.actors {
+		if l.draining[slotID] == candidate {
+			continue
+		}
 		snap := candidate.Snapshot()
 		if snap.Mode == ModeAuto && snap.UID <= 0 {
 			actor = candidate
@@ -292,8 +318,8 @@ func (l *Ledger) AutoActorPointers() []*Actor {
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
 	actors := make([]*Actor, 0, len(l.actors))
-	for _, actor := range l.actors {
-		if actor.ModeValue() == ModeAuto {
+	for slotID, actor := range l.actors {
+		if actor.ModeValue() == ModeAuto && l.draining[slotID] != actor {
 			actors = append(actors, actor)
 		}
 	}
@@ -322,32 +348,29 @@ func (l *Ledger) FilterBlockedRuntimeStatus(status map[int]robotcap.RuntimeStatu
 	}
 }
 
-func (l *Ledger) DetachAutoActors() []*Actor {
+func (l *Ledger) BeginDrainAutoActors() []*Actor {
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
 	actors := make([]*Actor, 0, len(l.actors))
 	for slotID, actor := range l.actors {
-		if actor.ModeValue() != ModeAuto {
+		if actor.ModeValue() != ModeAuto || l.draining[slotID] == actor {
 			continue
 		}
 		actors = append(actors, actor)
-		delete(l.actors, slotID)
-		if uid := actor.UIDValue(); uid > 0 {
-			delete(l.uidActors, uid)
-		}
+		l.draining[slotID] = actor
 	}
 	return actors
 }
 
-func (l *Ledger) DetachSomeAutoActors(status map[int]robotcap.RuntimeStatus, limit, floor int) []*Actor {
+func (l *Ledger) BeginDrainSomeAutoActors(status map[int]robotcap.RuntimeStatus, limit, floor int) []*Actor {
 	if limit <= 0 {
 		return nil
 	}
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
 	var candidates []*Actor
-	for _, actor := range l.actors {
-		if actor.ModeValue() == ModeAuto {
+	for slotID, actor := range l.actors {
+		if actor.ModeValue() == ModeAuto && l.draining[slotID] != actor {
 			candidates = append(candidates, actor)
 		}
 	}
@@ -367,38 +390,33 @@ func (l *Ledger) DetachSomeAutoActors(status map[int]robotcap.RuntimeStatus, lim
 	}
 	actors := candidates[:limit]
 	for _, actor := range actors {
-		delete(l.actors, actor.SlotIDValue())
-		if uid := actor.UIDValue(); uid > 0 {
-			delete(l.uidActors, uid)
-		}
+		l.draining[actor.SlotIDValue()] = actor
 	}
 	return actors
 }
 
-func (l *Ledger) DetachAllActors() []*Actor {
+func (l *Ledger) BeginDrainAllActors() []*Actor {
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
 	actors := make([]*Actor, 0, len(l.actors))
 	for slotID, actor := range l.actors {
 		actors = append(actors, actor)
-		delete(l.actors, slotID)
+		l.draining[slotID] = actor
 	}
-	l.uidActors = make(map[int]*Actor)
 	return actors
 }
 
-func (l *Ledger) DetachUID(uid int) *Actor {
+func (l *Ledger) BeginDrainUID(uid int) *Actor {
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
 	actor := l.uidActors[uid]
 	if actor != nil {
-		delete(l.uidActors, uid)
-		delete(l.actors, actor.SlotIDValue())
+		l.draining[actor.SlotIDValue()] = actor
 	}
 	return actor
 }
 
-func (l *Ledger) DetachUIDs(uids []int) ([]*Actor, []int) {
+func (l *Ledger) BeginDrainUIDs(uids []int) ([]*Actor, []int) {
 	if len(uids) == 0 {
 		return nil, nil
 	}
@@ -420,12 +438,80 @@ func (l *Ledger) DetachUIDs(uids []int) ([]*Actor, []int) {
 			missing = append(missing, uid)
 			continue
 		}
-		delete(l.uidActors, uid)
-		delete(l.actors, actor.SlotIDValue())
-		delete(l.blockedUID, uid)
+		l.draining[actor.SlotIDValue()] = actor
 		actors = append(actors, actor)
 	}
 	return actors, missing
+}
+
+func (l *Ledger) ReapActor(actor *Actor) bool {
+	if actor == nil || !actorDone(actor) {
+		return false
+	}
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
+	if l.draining[actor.SlotIDValue()] != actor {
+		return true
+	}
+	return l.reapActorLocked(actor)
+}
+
+func (l *Ledger) ReapDoneDraining() int {
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
+	return l.reapDoneDrainingLocked()
+}
+
+func (l *Ledger) IsDraining(actor *Actor) bool {
+	if actor == nil {
+		return false
+	}
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
+	return l.draining[actor.SlotIDValue()] == actor
+}
+
+func (l *Ledger) DrainingCount() int {
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
+	return len(l.draining)
+}
+
+func (l *Ledger) reapDoneDrainingLocked() int {
+	reaped := 0
+	for _, actor := range l.draining {
+		if actorDone(actor) && l.reapActorLocked(actor) {
+			reaped++
+		}
+	}
+	return reaped
+}
+
+func (l *Ledger) reapActorLocked(actor *Actor) bool {
+	slotID := actor.SlotIDValue()
+	if l.draining[slotID] != actor || !actorDone(actor) {
+		return false
+	}
+	delete(l.draining, slotID)
+	if l.actors[slotID] == actor {
+		delete(l.actors, slotID)
+	}
+	for uid, leased := range l.uidActors {
+		if leased == actor {
+			delete(l.uidActors, uid)
+			delete(l.blockedUID, uid)
+		}
+	}
+	return true
+}
+
+func actorDone(actor *Actor) bool {
+	select {
+	case <-actor.Done():
+		return true
+	default:
+		return false
+	}
 }
 
 func (l *Ledger) ActorOwnsUID(uid int) bool {

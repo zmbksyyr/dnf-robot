@@ -83,6 +83,11 @@ func (r *RobotRuntime) Logout(uid int) robotcap.ActionResult {
 	})
 }
 
+func (r *RobotRuntime) ForceClose(uid int) bool {
+	closer, ok := r.manager.doll.(interface{ ForceClose(int) bool })
+	return ok && closer.ForceClose(uid)
+}
+
 func (r *RobotRuntime) Move(uid int) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
 		res, err := r.manager.moveService().Move(robotcap.CommandRequest{UIDs: []int{uid}}, r.Config())

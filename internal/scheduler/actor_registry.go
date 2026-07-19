@@ -72,19 +72,20 @@ func (r *supervisorActorRegistry) actorSnapshots() []actormodel.Snapshot {
 	actors := s.ledger.ActorPointers()
 	out := make([]actormodel.Snapshot, 0, len(actors))
 	for _, actor := range actors {
-		out = append(out, actor.Snapshot())
+		snapshot := actor.Snapshot()
+		if s.ledger.IsDraining(actor) {
+			snapshot.State = actormodel.StateReleasing
+		}
+		out = append(out, snapshot)
 	}
 	return out
 }
 
 func (r *supervisorActorRegistry) StopUID(uid int, logout bool) bool {
 	s := r.supervisor
-	actor := s.ledger.DetachUID(uid)
+	actor := s.ledger.BeginDrainUID(uid)
 	if actor != nil {
-		if logout {
-			actor.ReleaseAndWait(10 * time.Second)
-		}
-		actor.StopAndWait(5 * time.Second)
+		s.stopDrainingActors([]*actormodel.Actor{actor}, actorStopWait)
 		return true
 	}
 	if logout && s.runtime != nil {
@@ -95,13 +96,13 @@ func (r *supervisorActorRegistry) StopUID(uid int, logout bool) bool {
 
 func (r *supervisorActorRegistry) StopUIDs(uids []int, logout bool) int {
 	s := r.supervisor
-	actors, missing := s.ledger.DetachUIDs(uids)
+	actors, missing := s.ledger.BeginDrainUIDs(uids)
 	if logout && s.runtime != nil {
 		for _, uid := range missing {
 			s.runtime.Logout(uid)
 		}
 	}
-	stopActorsConcurrent(actors, logout)
+	s.stopDrainingActors(actors, actorStopWait)
 	return len(actors)
 }
 

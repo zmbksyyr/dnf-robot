@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"sort"
-	"sync"
 	"time"
 
 	actormodel "robot/internal/actor"
@@ -10,10 +9,12 @@ import (
 	robotconfig "robot/internal/capability/robotconfig"
 )
 
-const actorStopConcurrency = 60
+const actorStopWait = 5 * time.Second
 
 func (s *RobotSupervisor) stopAutoActors(logout bool) {
-	stopActorsConcurrent(s.ledger.DetachAutoActors(), logout)
+	_ = logout
+	actors := s.ledger.BeginDrainAutoActors()
+	s.stopDrainingActors(actors, actorStopWait)
 }
 
 func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
@@ -29,7 +30,7 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 	s.pressureMu.Unlock()
 
 	status := s.manager.runtimeStatusMap()
-	actors := s.ledger.DetachSomeAutoActors(status, limit, floor)
+	actors := s.ledger.BeginDrainSomeAutoActors(status, limit, floor)
 	if len(actors) == 0 {
 		s.pressureMu.Lock()
 		s.pressureRunning = false
@@ -45,49 +46,50 @@ func (s *RobotSupervisor) stopSomeAutoActors(logout bool, limit, floor int) {
 			s.pressureMu.Unlock()
 			s.stopWG.Done()
 		}()
-		stopActorsConcurrent(actors, logout)
+		s.stopDrainingActors(actors, actorStopWait)
 	}()
 }
 
 func (s *RobotSupervisor) stopAll(logout bool) {
-	stopActorsConcurrentFully(s.ledger.DetachAllActors(), logout)
+	_ = logout
+	actors := s.ledger.BeginDrainAllActors()
+	s.stopDrainingActors(actors, actorStopWait)
 }
 
-func stopActorsConcurrent(actors []*actormodel.Actor, logout bool) {
-	stopActorsConcurrentWithWait(actors, logout, 5*time.Second)
-}
-
-func stopActorsConcurrentFully(actors []*actormodel.Actor, logout bool) {
-	stopActorsConcurrentWithWait(actors, logout, 0)
-}
-
-func stopActorsConcurrentWithWait(actors []*actormodel.Actor, logout bool, stopWait time.Duration) {
+func (s *RobotSupervisor) stopDrainingActors(actors []*actormodel.Actor, wait time.Duration) []*actormodel.Actor {
+	requestActorStops(actors)
 	if len(actors) == 0 {
-		return
+		return nil
 	}
-	workers := actorStopConcurrency
-	if len(actors) < workers {
-		workers = len(actors)
-	}
-	jobs := make(chan *actormodel.Actor)
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for actor := range jobs {
-				if logout {
-					actor.ReleaseAndWait(10 * time.Second)
-				}
-				actor.StopAndWait(stopWait)
-			}
-		}()
-	}
+	return s.waitForDrainingActorsUntil(actors, time.Now().Add(wait))
+}
+
+func requestActorStops(actors []*actormodel.Actor) {
 	for _, actor := range actors {
-		jobs <- actor
+		actor.RequestStop()
 	}
-	close(jobs)
-	wg.Wait()
+}
+
+func (s *RobotSupervisor) waitForDrainingActorsUntil(actors []*actormodel.Actor, deadline time.Time) []*actormodel.Actor {
+	pending := append([]*actormodel.Actor(nil), actors...)
+	for len(pending) > 0 {
+		next := make([]*actormodel.Actor, 0, len(pending))
+		for _, actor := range pending {
+			if !s.ledger.ReapActor(actor) {
+				next = append(next, actor)
+			}
+		}
+		pending = next
+		if len(pending) == 0 || !time.Now().Before(deadline) {
+			return pending
+		}
+		wait := time.Until(deadline)
+		if wait > 10*time.Millisecond {
+			wait = 10 * time.Millisecond
+		}
+		time.Sleep(wait)
+	}
+	return nil
 }
 
 func (s *RobotSupervisor) assignIdleAutoActors(rc robotconfig.RuntimeConfig) {
@@ -187,5 +189,5 @@ func (s *RobotSupervisor) maintainTarget(rc robotconfig.RuntimeConfig) {
 func (s *RobotSupervisor) ensureAutoActorSlots(rc robotconfig.RuntimeConfig, target int) {
 	status := s.manager.runtimeStatusMap()
 	extra := s.ledger.EnsureAutoActorSlots(s.runtime, rc, target, status)
-	stopActorsConcurrent(extra, true)
+	s.stopDrainingActors(extra, actorStopWait)
 }

@@ -69,8 +69,7 @@ func (a *Actor) controlAndWait(ctrl control, timeout time.Duration) controlResul
 }
 
 func (a *Actor) stopAndWait(timeout time.Duration) {
-	a.setReleaseRequested(true)
-	a.once.Do(func() { close(a.stop) })
+	a.requestStop()
 	if timeout <= 0 {
 		<-a.done
 		return
@@ -80,6 +79,11 @@ func (a *Actor) stopAndWait(timeout time.Duration) {
 	case <-time.After(timeout):
 		foundationlog.Robotf("[Actor] stop_timeout slot=%d uid=%d timeout=%s\n", a.slotIDValue(), a.uidValue(), timeout)
 	}
+}
+
+func (a *Actor) requestStop() {
+	a.setReleaseRequested(true)
+	a.once.Do(func() { close(a.stop) })
 }
 
 func (a *Actor) enqueue(cmd Command, timeout time.Duration) (robotcap.ActionResult, bool) {
@@ -174,6 +178,14 @@ func (a *Actor) ReleaseAndWait(timeout time.Duration) int {
 
 func (a *Actor) StopAndWait(timeout time.Duration) {
 	a.stopAndWait(timeout)
+}
+
+func (a *Actor) RequestStop() {
+	a.requestStop()
+}
+
+func (a *Actor) Done() <-chan struct{} {
+	return a.done
 }
 
 func (a *Actor) Enqueue(cmd Command, timeout time.Duration) (robotcap.ActionResult, bool) {
