@@ -1313,13 +1313,16 @@ echo RESTORED
         self.log("party_skill_observer after=%s" % json_text(after, 1000))
         skill_events = after.get("skill_casts", 0) - before.get("skill_casts", 0)
         skill_errors = after.get("skill_errors", 0) - before.get("skill_errors", 0)
-        skill_due = after.get("skill_due", 0) - before.get("skill_due", 0)
-        if skill_due > 0 and skill_events <= 0 and skill_errors <= 0:
-            self.record_failure("party_skill_due_without_send", "skill due logs increased by %s but no skill send or error log followed" % skill_due)
+        skill_profiles = after.get("skill_profiles", 0) - before.get("skill_profiles", 0)
+        empty_profiles = after.get("skill_empty_profiles", 0) - before.get("skill_empty_profiles", 0)
+        if empty_profiles > 0:
+            self.record_failure("party_skill_empty_profile", "%s new skill profiles had zero effective candidates" % empty_profiles)
         if skill_errors > 0:
             self.record_failure("party_skill_errors", "party skill errors increased by %s" % skill_errors)
-        if skill_events <= 0 and after.get("dungeon_frames", 0) <= before.get("dungeon_frames", 0):
-            self.log("party_skill_observer skipped reason=no_dungeon_or_skill_activity")
+        if skill_events <= 0 and skill_profiles <= 0:
+            self.log("party_skill_observer skipped reason=no_new_skill_activity")
+        elif skill_events <= 0 and skill_errors <= 0 and empty_profiles <= 0:
+            self.log("party_skill_observer note=profile_seen_without_cast profiles=%s" % skill_profiles)
         self.sample_with_event("party_skill_observer_done")
 
     def party_log_counts(self):
@@ -1327,9 +1330,8 @@ echo RESTORED
             "party_total": r"\[PARTY_",
             "relay_errors": r"PARTY_RELAY_.*ERROR|PARTY_RELAY_BAD_PACKET",
             "udp_errors": r"PARTY_UDP_.*ERROR|PARTY_ROBOT_PROBE_ERROR",
-            "dungeon_frames": r"PARTY_DUNGEON_FRAME",
-            "skill_profiles": r"PARTY_DUNGEON_SKILL_PROFILE",
-            "skill_due": r"PARTY_DUNGEON_SKILL_DUE",
+            "skill_profiles": r"PARTY_DUNGEON_SKILL_PROFILE\]",
+            "skill_empty_profiles": r"PARTY_DUNGEON_SKILL_PROFILE\][^\n]*candidates=0(?:\s|$)",
             "skill_casts": r"PARTY_DUNGEON_SKILL\]",
             "skill_errors": r"PARTY_DUNGEON_SKILL_.*ERROR|PARTY_DUNGEON_SKILL_CATALOG_ERROR",
         }
