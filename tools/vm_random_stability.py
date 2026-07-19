@@ -133,6 +133,7 @@ SAMPLE_FIELDS = [
     "party_probe_cycle_hits",
     "party_peer_ready_hits",
     "party_self_id_refresh_hits",
+    "party_self_id_recovered_hits",
     "party_self_id_recycle_hits",
     "party_udp_recycle_hits",
     "party_transport_cleared_hits",
@@ -1414,6 +1415,7 @@ echo RESTORED
             "probe_cycles": r"PARTY_ROBOT_PROBE_CYCLE",
             "peer_ready": r"PARTY_ROBOT_TQOS_READY",
             "self_id_refresh": r"PARTY_SELF_ID_REFRESH",
+            "self_id_recovered": r"PARTY_SELF_ID_RECOVERED",
             "self_id_recycle": r"PARTY_SELF_ID_RECYCLE",
             "udp_recycles": r"PARTY_UDP_(?:RECYCLE|RECOVERED)",
             "transport_cleared": r"PARTY_TRANSPORT_CLEARED",
@@ -3034,6 +3036,7 @@ echo "KEYS_RESTORED"
             row["party_probe_cycle_hits"] = counts.get("probe_cycles", "")
             row["party_peer_ready_hits"] = counts.get("peer_ready", "")
             row["party_self_id_refresh_hits"] = counts.get("self_id_refresh", "")
+            row["party_self_id_recovered_hits"] = counts.get("self_id_recovered", "")
             row["party_self_id_recycle_hits"] = counts.get("self_id_recycle", "")
             row["party_udp_recycle_hits"] = counts.get("udp_recycles", "")
             row["party_transport_cleared_hits"] = counts.get("transport_cleared", "")

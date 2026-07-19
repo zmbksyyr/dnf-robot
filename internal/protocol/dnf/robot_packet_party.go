@@ -76,9 +76,22 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		tracePartyIPInfo(r.UID, self, peers)
 		r.setPartySelfPeerUnsafe(self)
 		r.setPartyPeersUnsafe(peers)
+		r.applyPartyRealtimeIdentitiesUnsafe()
 		r.ensurePartyRelayUnsafe()
 		r.followCachedPartyLeaderTownPositionUnsafe()
 		r.startPartyRobotPeerNegotiationUnsafe()
+
+	case 153:
+		if r.State != StateRun || packet.flag != 0 {
+			return
+		}
+		identities, source, err := selectPartyRealtimeInfoPacket(r.Cipher, packet.data, packet.isAnti, r.partyRecvSource)
+		if err != nil {
+			fmt.Printf("[PARTY_REALTIME_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, packet.isAnti, packet.size)
+			return
+		}
+		r.rememberPartyRecvSourceUnsafe(source)
+		r.rememberPartyRealtimeIdentitiesUnsafe(identities)
 
 	case 6:
 		if r.State != StateRun || packet.flag != 0 {

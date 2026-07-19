@@ -242,6 +242,43 @@ func TestRobotPartyTQOSPeriodicallyRetransmitsOriginalState2UntilACK(t *testing.
 	}
 }
 
+func TestRobotPartyUDPStandaloneACKStopsState2Retry(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	remote := &net.UDPAddr{IP: net.IPv4(192, 168, 200, 1), Port: 5063}
+	vo := &RobotVo{UID: 17000001}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 2, accID: 17000001, slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+	vo.partyPeers[0] = peer
+
+	replies := vo.buildPartyUDPAcks(buildPartyTQOSPacket(7, peer.slot, 0, 1, 1, codec), remote)
+	if len(replies) != 1 {
+		t.Fatalf("state1 replies = %x", replies)
+	}
+	sequence := binary.LittleEndian.Uint32(replies[0][1:5])
+	if got := vo.buildPartyUDPAcks(buildPartyTQOSAck(peer.slot, sequence), remote); len(got) != 0 {
+		t.Fatalf("standalone ACK generated replies: %x", got)
+	}
+	if !vo.partyTQOSReplies[peer.slot][1].acknowledged {
+		t.Fatal("standalone UDP ACK did not stop the pending state2")
+	}
+}
+
+func TestRobotPartyUDPStandaloneACKDrainsReliableFrame(t *testing.T) {
+	remote := &net.UDPAddr{IP: net.IPv4(192, 168, 200, 1), Port: 5063}
+	vo := &RobotVo{UID: 17000001}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 2, accID: 17000001, slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+	vo.partyPeers[0] = peer
+	vo.partyReliablePending[peer.slot][1] = []partyReliablePending{{sequence: 7, purpose: "follow"}}
+
+	if got := vo.buildPartyUDPAcks(buildPartyTQOSAck(peer.slot, 7), remote); len(got) != 0 {
+		t.Fatalf("standalone ACK generated replies: %x", got)
+	}
+	if len(vo.partyReliablePending[peer.slot][1]) != 0 {
+		t.Fatalf("standalone UDP ACK left reliable pending: %+v", vo.partyReliablePending[peer.slot][1])
+	}
+}
+
 func TestRobotPartyTQOSPeriodicState2RetryIsBounded(t *testing.T) {
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {

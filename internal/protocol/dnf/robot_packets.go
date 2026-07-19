@@ -35,7 +35,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 
 	switch packet.typ {
-	case 6, 7, 9, 11, 22, 23, 28, 29, 173:
+	case 6, 7, 9, 11, 22, 23, 28, 29, 153, 173:
 		r.handlePartyPacketUnsafe(packet)
 	case 1, 53, 272, 300:
 		r.handleLoginPacketUnsafe(packet)

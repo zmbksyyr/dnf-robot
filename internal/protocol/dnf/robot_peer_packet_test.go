@@ -512,6 +512,23 @@ func TestPartyInfoPacketSupportsEncryptedAndPlainZlib(t *testing.T) {
 	}
 }
 
+func TestPartyRealtimeInfoPacketParsesPatchedPlainPayload(t *testing.T) {
+	cipher := newPartyTestCipher(t)
+	body := []byte{
+		3,
+		0x34, 0x12, 1, 0, 0,
+		0x78, 0x56, 1, 0, 1,
+		0xbc, 0x9a, 1, 0, 3,
+	}
+	identities, source, err := selectPartyRealtimeInfoPacket(cipher, makePartyRecvPacket(153, body), false, recvBodySourcePlain)
+	if err != nil || source != recvBodySourcePlain || len(identities) != 3 {
+		t.Fatalf("identities=%+v source=%s err=%v", identities, source, err)
+	}
+	if identities[0].uniqueID != 0x1234 || identities[0].slot != 0 || identities[2].uniqueID != 0x9abc || identities[2].slot != 3 {
+		t.Fatalf("parsed identities = %+v", identities)
+	}
+}
+
 func TestParseRecvPacketDoesNotTreatDamagedCiphertextAsPlain(t *testing.T) {
 	cipher := newPartyTestCipher(t)
 	packet := makePartyRecvPacket(22, []byte{1, 2, 3, 4, 5, 6, 7})

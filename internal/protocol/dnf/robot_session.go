@@ -132,6 +132,7 @@ type RobotVo struct {
 	partySelfRefreshAt       time.Time
 	partySelfRefreshBackoff  time.Duration
 	partySelfRefreshAttempts uint8
+	partyRealtimeUnique      [4]uint16
 	partyPeers               [4]partyIPPeer
 	partyPendingPeer         uint16
 	partyPendingUntil        time.Time
@@ -374,6 +375,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.partySelfRefreshAt = time.Time{}
 	r.partySelfRefreshBackoff = 0
 	r.partySelfRefreshAttempts = 0
+	r.partyRealtimeUnique = [4]uint16{}
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)

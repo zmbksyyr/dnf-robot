@@ -75,9 +75,6 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 	if !observedEndpoint {
 		peer = r.learnPartyPeerEndpointUnsafe(peer, remote)
 	}
-	if len(payload) == 8 && payload[0] == 0x00 {
-		return nil
-	}
 	return r.buildPartyTQOSRepliesUnsafe(payload, 1, peer)
 }
 

@@ -197,6 +197,51 @@ func TestPartySelfSnapshotMergesAnonymousEndpointUpdate(t *testing.T) {
 	}
 }
 
+func TestPartyRealtimeIdentityCompletesPartialIPSnapshot(t *testing.T) {
+	vo := &RobotVo{UID: 17000026, State: StateRun}
+	vo.rememberPartyRealtimeIdentitiesUnsafe([]partyRealtimeIdentity{
+		{uniqueID: 0x1111, slot: 0},
+		{uniqueID: 0x2222, slot: 2},
+		{uniqueID: 0x3333, slot: 3},
+	})
+	vo.setPartySelfPeerUnsafe(partyIPPeer{accID: 17000026, slot: 3, slotKnown: true, port: 46000})
+	vo.setPartyPeersUnsafe([]partyIPPeer{
+		{accID: 18000000, slot: 0, slotKnown: true, port: 5063},
+		{accID: 17000027, slot: 2, slotKnown: true, port: 47000},
+	})
+	vo.applyPartyRealtimeIdentitiesUnsafe()
+
+	if vo.partySelfPeer.uniqueID != 0x3333 || !vo.partySelfRefreshAt.IsZero() || vo.partySelfRefreshAttempts != 0 {
+		t.Fatalf("self identity was not completed: %+v refresh_at=%s attempts=%d", vo.partySelfPeer, vo.partySelfRefreshAt, vo.partySelfRefreshAttempts)
+	}
+	if peer := vo.partyPeerForSlotUnsafe(0); peer.uniqueID != 0x1111 || peer.accID != 18000000 {
+		t.Fatalf("leader identity was not completed: %+v", peer)
+	}
+	if peer := vo.partyPeerForSlotUnsafe(2); peer.uniqueID != 0x2222 || peer.accID != 17000027 {
+		t.Fatalf("robot identity was not completed: %+v", peer)
+	}
+}
+
+func TestPartyRealtimePacketDispatchCompletesIdentities(t *testing.T) {
+	vo := &RobotVo{UID: 17000026, State: StateRun, Cipher: newPartyTestCipher(t)}
+	vo.partySelfPeer = partyIPPeer{accID: 17000026, slot: 2, slotKnown: true, port: 46000}
+	vo.partyPeers[0] = partyIPPeer{accID: 18000000, slot: 0, slotKnown: true, port: 5063}
+	body := []byte{
+		2,
+		0x11, 0x11, 1, 0, 0,
+		0x22, 0x22, 1, 0, 2,
+	}
+
+	vo.parsePacket(makePartyRecvPacket(153, body))
+
+	if vo.partySelfPeer.uniqueID != 0x2222 {
+		t.Fatalf("self identity = %+v", vo.partySelfPeer)
+	}
+	if peer := vo.partyPeerForSlotUnsafe(0); peer.uniqueID != 0x1111 {
+		t.Fatalf("leader identity = %+v", peer)
+	}
+}
+
 func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}

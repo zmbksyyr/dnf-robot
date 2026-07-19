@@ -462,6 +462,75 @@ func partyInfoPacketClearsParty(cipher *crypt.DNFCipher, raw []byte, isAnti bool
 	return false, recvBodySourceUnknown, fmt.Errorf("party info has no valid zlib body")
 }
 
+type partyRealtimeIdentity struct {
+	uniqueID uint16
+	slot     byte
+}
+
+func parsePartyRealtimeInfo(data []byte) ([]partyRealtimeIdentity, bool) {
+	if len(data) < 1 {
+		return nil, false
+	}
+	count := int(data[0])
+	if count < 1 || count > 4 {
+		return nil, false
+	}
+	expected := 1 + count*5
+	if len(data) < expected || len(data)-expected > 7 {
+		return nil, false
+	}
+	for _, padding := range data[expected:] {
+		if padding != 0 {
+			return nil, false
+		}
+	}
+	identities := make([]partyRealtimeIdentity, 0, count)
+	seenSlots := [4]bool{}
+	for i := 0; i < count; i++ {
+		offset := 1 + i*5
+		uniqueID := binary.LittleEndian.Uint16(data[offset : offset+2])
+		slot := data[offset+4]
+		if uniqueID == 0 || slot >= 4 || seenSlots[slot] {
+			return nil, false
+		}
+		seenSlots[slot] = true
+		identities = append(identities, partyRealtimeIdentity{uniqueID: uniqueID, slot: slot})
+	}
+	return identities, true
+}
+
+func selectPartyRealtimeInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, preferred recvBodySource) ([]partyRealtimeIdentity, recvBodySource, error) {
+	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
+	type validCandidate struct {
+		identities []partyRealtimeIdentity
+		source     recvBodySource
+	}
+	valid := make([]validCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		identities, ok := parsePartyRealtimeInfo(candidate.body)
+		if ok {
+			valid = append(valid, validCandidate{identities: identities, source: candidate.source})
+		}
+	}
+	for _, candidate := range valid {
+		if preferred != recvBodySourceUnknown && candidate.source == preferred {
+			return candidate.identities, candidate.source, nil
+		}
+	}
+	for _, candidate := range valid {
+		if candidate.source == recvBodySourcePlain {
+			return candidate.identities, candidate.source, nil
+		}
+	}
+	if len(valid) > 0 {
+		return valid[0].identities, valid[0].source, nil
+	}
+	if decryptErr != nil {
+		return nil, recvBodySourceUnknown, decryptErr
+	}
+	return nil, recvBodySourceUnknown, fmt.Errorf("party realtime info has no valid body")
+}
+
 func parseRecvPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (dataType uint16, dataSize int, decrypted []byte, err error) {
 	if len(raw) < 15 {
 		return 0, 0, nil, fmt.Errorf("packet too short: %d bytes", len(raw))

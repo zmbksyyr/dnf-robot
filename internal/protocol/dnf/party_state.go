@@ -505,6 +505,50 @@ func (r *RobotVo) setPartySelfPeerUnsafe(peer partyIPPeer) {
 	}
 }
 
+func (r *RobotVo) rememberPartyRealtimeIdentitiesUnsafe(identities []partyRealtimeIdentity) {
+	next := [4]uint16{}
+	for _, identity := range identities {
+		if identity.slot < 4 {
+			next[identity.slot] = identity.uniqueID
+		}
+	}
+	r.partyRealtimeUnique = next
+	r.applyPartyRealtimeIdentitiesUnsafe()
+}
+
+func (r *RobotVo) applyPartyRealtimeIdentitiesUnsafe() {
+	self := r.partySelfPeer
+	selfRecovered := false
+	if self.slotKnown && self.slot < 4 {
+		if uniqueID := r.partyRealtimeUnique[self.slot]; uniqueID != 0 && uniqueID != self.uniqueID {
+			selfRecovered = self.uniqueID == 0
+			self.uniqueID = uniqueID
+			r.setPartySelfPeerUnsafe(self)
+		}
+	}
+
+	peers := make([]partyIPPeer, 0, len(r.partyPeers))
+	peersChanged := false
+	for _, peer := range r.partyPeers {
+		if !partyPeerIdentityKnown(peer) {
+			continue
+		}
+		if peer.slotKnown && peer.slot < 4 {
+			if uniqueID := r.partyRealtimeUnique[peer.slot]; uniqueID != 0 && uniqueID != peer.uniqueID {
+				peer.uniqueID = uniqueID
+				peersChanged = true
+			}
+		}
+		peers = append(peers, peer)
+	}
+	if peersChanged {
+		r.setPartyPeersUnsafe(peers)
+	}
+	if selfRecovered {
+		fmt.Printf("[PARTY_SELF_ID_RECOVERED] uid=%d slot=%d unique=%d source=realtime\n", r.UID, self.slot, self.uniqueID)
+	}
+}
+
 func (r *RobotVo) removePartyPeerUnsafe(uniqueID uint16) {
 	if uniqueID != 0 {
 		r.clearPartyPendingUnsafe()
@@ -534,6 +578,7 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.partySelfRefreshAt = time.Time{}
 	r.partySelfRefreshBackoff = 0
 	r.partySelfRefreshAttempts = 0
+	r.partyRealtimeUnique = [4]uint16{}
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
