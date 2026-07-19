@@ -3,6 +3,7 @@ package dnf
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -202,6 +203,46 @@ func TestPartyPeerUpdateResetsOnlyChangedSlotTransport(t *testing.T) {
 	})
 	if vo.partyTQOSSeq[0][1] != 0 || vo.partyTQOSCodecKnown[0][1] {
 		t.Fatalf("replaced leader transport was not reset: seq=%d codec=%t", vo.partyTQOSSeq[0][1], vo.partyTQOSCodecKnown[0][1])
+	}
+}
+
+func TestRepeatedPartyInvitePreservesConfirmedTransport(t *testing.T) {
+	robotConn, peerConn := net.Pipe()
+	defer robotConn.Close()
+	defer peerConn.Close()
+	vo := &RobotVo{
+		UID:                 17000001,
+		State:               StateRun,
+		Conn:                robotConn,
+		Cipher:              newPartyTestCipher(t),
+		townEntityPositions: map[uint16]townEntityPosition{7: {uniqueID: 7}},
+	}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true}
+	vo.partyTQOSSeq[0][1] = 7
+	vo.partyTQOSReliableSeq[0][1] = 5
+	vo.partyTQOSCodecKnown[0][1] = true
+	vo.partyPeerRoute[0] = 1
+
+	readDone := make(chan error, 1)
+	go func() {
+		response := make([]byte, 21)
+		_, err := io.ReadFull(peerConn, response)
+		readDone <- err
+	}()
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint16(body[:2], 7)
+	body[2] = peerRequestParty
+	binary.LittleEndian.PutUint32(body[3:7], 99)
+	vo.parsePacket(makePartyRecvPacket(7, body))
+	if err := <-readDone; err != nil {
+		t.Fatal(err)
+	}
+	if vo.partyTQOSSeq[0][1] != 7 || vo.partyTQOSReliableSeq[0][1] != 5 || !vo.partyTQOSCodecKnown[0][1] || vo.partyPeerRoute[0] != 1 {
+		t.Fatalf("confirmed transport was reset: seq=%d reliable=%d codec=%t route=%d", vo.partyTQOSSeq[0][1], vo.partyTQOSReliableSeq[0][1], vo.partyTQOSCodecKnown[0][1], vo.partyPeerRoute[0])
+	}
+	if vo.partyRecvSource != recvBodySourcePlain {
+		t.Fatalf("party receive source = %s", vo.partyRecvSource)
 	}
 }
 

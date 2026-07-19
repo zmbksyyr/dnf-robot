@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"net"
@@ -72,6 +73,49 @@ func TestRobotPartyTQOSStateMachine(t *testing.T) {
 	}
 }
 
+func TestRobotPartyTQOSRetransmitsPendingReliableReply(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true}
+	request := buildPartyTQOSPacket(7, peer.slot, 0, 1, 1, codec)
+
+	first := vo.buildPartyTQOSRepliesUnsafe(request, 1, peer)
+	second := vo.buildPartyTQOSRepliesUnsafe(request, 1, peer)
+	if len(first) != 1 || len(second) != 1 || !bytes.Equal(first[0], second[0]) {
+		t.Fatalf("reliable retry changed reply: first=%x second=%x", first, second)
+	}
+	if vo.partyTQOSReliableSeq[peer.slot][1] != 1 {
+		t.Fatalf("reliable sequence advanced on retry: %d", vo.partyTQOSReliableSeq[peer.slot][1])
+	}
+
+	sequence := binary.LittleEndian.Uint32(first[0][1:5])
+	if replies := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(peer.slot, sequence), 1, peer); len(replies) != 0 {
+		t.Fatalf("ACK generated replies: %x", replies)
+	}
+	third := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 1, codec), 1, peer)
+	if len(third) != 1 || !bytes.Equal(third[0], first[0]) || vo.partyTQOSReliableSeq[peer.slot][1] != 1 {
+		t.Fatalf("post-ACK retry changed reply=%x first=%x next=%d", third, first, vo.partyTQOSReliableSeq[peer.slot][1])
+	}
+}
+
+func TestRobotPartyReliableRetransmitOnlyQueuesFollowOnce(t *testing.T) {
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0xee9f, slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 0xf4a1, slot: 0, slotKnown: true}
+	body := mustPartyHex(t, "015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000")
+	frame := buildPartyReliablePacket(7, peer.slot, 0, [][]byte{body})
+
+	first := vo.buildPartyTQOSRepliesUnsafe(frame, 1, peer)
+	second := vo.buildPartyTQOSRepliesUnsafe(frame, 1, peer)
+	if len(first) != 1 || len(second) != 1 || len(vo.partyDungeonFollow) != 1 {
+		t.Fatalf("first=%x second=%x queued=%d", first, second, len(vo.partyDungeonFollow))
+	}
+	if !bytes.Equal(first[0], second[0]) {
+		t.Fatalf("retransmit ACK changed: first=%x second=%x", first, second)
+	}
+}
+
 func TestRobotPartyTQOSSequencesAreIsolatedByPeerAndRoute(t *testing.T) {
 	codec := partyTQOSCodec{key: 0x7e}
 	vo := &RobotVo{}
@@ -104,8 +148,36 @@ func TestRobotPartyTQOSSequencesAreIsolatedByPeerAndRoute(t *testing.T) {
 	if vo.partyTQOSSeq[0][1] != 2 || vo.partyTQOSSeq[1][1] != 1 || vo.partyTQOSSeq[0][2] != 1 {
 		t.Fatalf("isolated sequences = %+v", vo.partyTQOSSeq)
 	}
-	if !vo.partyRobotPeerReady[1] {
-		t.Fatal("robot peer TQOS was not marked ready")
+	if vo.partyRobotPeerReady[1] {
+		t.Fatal("robot peer was marked ready before state2 or ACK")
+	}
+}
+
+func TestRobotPartyTQOSReadyRequiresState2OrReplyACK(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	vo := &RobotVo{UID: 17000001}
+	vo.partySelfPeer = partyIPPeer{accID: 17000001, slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, accID: 17000002, slot: 0, slotKnown: true}
+
+	state3 := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(1, peer.slot, 0, 3, 1, codec), 1, peer)
+	if len(state3) != 1 || vo.partyRobotPeerReady[peer.slot] {
+		t.Fatalf("state3 replies=%x ready=%t", state3, vo.partyRobotPeerReady[peer.slot])
+	}
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(2, peer.slot, 0, 0, 1, codec), 1, peer)
+	state1 := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(3, peer.slot, 0, 1, 1, codec), 1, peer)
+	if len(state1) != 1 || vo.partyRobotPeerReady[peer.slot] {
+		t.Fatalf("state1 replies=%x ready=%t", state1, vo.partyRobotPeerReady[peer.slot])
+	}
+	sequence := binary.LittleEndian.Uint32(state1[0][1:5])
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(peer.slot, sequence), 1, peer)
+	if !vo.partyRobotPeerReady[peer.slot] {
+		t.Fatal("state2 ACK did not mark robot peer ready")
+	}
+
+	vo.resetPartyTQOSPeerUnsafe(peer.slot)
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(4, peer.slot, 0, 2, 1, codec), 1, peer)
+	if !vo.partyRobotPeerReady[peer.slot] {
+		t.Fatal("received state2 did not mark robot peer ready")
 	}
 }
 

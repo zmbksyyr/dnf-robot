@@ -14,6 +14,8 @@ import (
 
 const partyRelayWriteTimeout = 500 * time.Millisecond
 
+const partyRobotProbeCooldown = 30 * time.Second
+
 type partyRelayDialFunc func(network, address string, timeout time.Duration) (net.Conn, error)
 
 func (r *RobotVo) sendPartyOptionUnsafe() bool {
@@ -265,6 +267,7 @@ func (r *RobotVo) startPartyUDPUnsafe(addr *net.TCPAddr) bool {
 	}
 	if r.partyUDPConn != nil {
 		if udpAddr, ok := r.partyUDPConn.LocalAddr().(*net.UDPAddr); ok && udpAddr.Port == addr.Port {
+			r.ensurePartyUDPLoopUnsafe()
 			return true
 		}
 		r.closePartyUDPUnsafe()
@@ -282,25 +285,40 @@ func (r *RobotVo) startPartyUDPUnsafe(addr *net.TCPAddr) bool {
 		fmt.Printf("[PARTY_UDP_PORT_FALLBACK] uid=%d requested=%d actual=%d\n", r.UID, addr.Port, actual.Port)
 	}
 	r.partyUDPConn = conn
-	go r.partyUDPLoop(conn, r.UID)
+	r.partyUDPGeneration++
+	r.partyUDPRunning = false
+	r.ensurePartyUDPLoopUnsafe()
 	return true
 }
 
 func (r *RobotVo) closePartyUDPUnsafe() {
+	r.partyUDPGeneration++
+	r.partyUDPRunning = false
 	if r.partyUDPConn != nil {
 		_ = r.partyUDPConn.Close()
 		r.partyUDPConn = nil
 	}
 }
 
-func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32) {
+func (r *RobotVo) ensurePartyUDPLoopUnsafe() bool {
+	if r.partyUDPConn == nil || r.partyUDPRunning || !r.partyActiveUnsafe() {
+		return false
+	}
+	conn := r.partyUDPConn
+	generation := r.partyUDPGeneration
+	r.partyUDPRunning = true
+	go r.partyUDPLoop(conn, r.UID, generation)
+	return true
+}
+
+func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64) {
 	buf := make([]byte, 4096)
 	var nextProbe time.Time
 	var nextFlush time.Time
 	for {
 		now := time.Now()
 		r.mu.Lock()
-		stopped := r.State == StateStop || r.partyUDPConn != conn
+		stopped := r.State == StateStop || r.partyUDPConn != conn || r.partyUDPGeneration != generation
 		active := false
 		if !stopped {
 			active = r.partyActiveUnsafe()
@@ -314,25 +332,22 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32) {
 					r.flushPartyDungeonSkillUnsafe(conn, now)
 					nextFlush = now.Add(100 * time.Millisecond)
 				}
-			} else {
-				nextProbe = time.Time{}
-				nextFlush = time.Time{}
 			}
 		}
-		r.mu.Unlock()
-		if stopped {
-			_ = conn.Close()
+		if stopped || !active {
+			if r.partyUDPConn == conn && r.partyUDPGeneration == generation {
+				r.partyUDPRunning = false
+			}
+			r.mu.Unlock()
 			return
 		}
-		readWait := time.Second
-		if active {
-			readWait = time.Until(nextFlush)
-			if probeWait := time.Until(nextProbe); probeWait < readWait {
-				readWait = probeWait
-			}
-			if readWait < time.Millisecond {
-				readWait = time.Millisecond
-			}
+		r.mu.Unlock()
+		readWait := time.Until(nextFlush)
+		if probeWait := time.Until(nextProbe); probeWait < readWait {
+			readWait = probeWait
+		}
+		if readWait < time.Millisecond {
+			readWait = time.Millisecond
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(readWait))
 		n, remote, err := conn.ReadFromUDP(buf)
@@ -340,6 +355,11 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32) {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				continue
 			}
+			r.mu.Lock()
+			if r.partyUDPConn == conn && r.partyUDPGeneration == generation {
+				r.partyUDPRunning = false
+			}
+			r.mu.Unlock()
 			return
 		}
 		if n <= 0 || remote == nil {
@@ -441,7 +461,7 @@ func (r *RobotVo) buildPartyRelayReplies(payload []byte, src uint32) [][]byte {
 }
 
 func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer partyIPPeer) [][]byte {
-	if !r.partySelfPeer.slotKnown || !peer.slotKnown {
+	if !r.partySelfPeer.slotKnown || !peer.slotKnown || peer.slot >= 4 || route >= 3 {
 		return nil
 	}
 	frames, ok := splitPartyTransportFrames(payload)
@@ -452,6 +472,9 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 	now := time.Now()
 	for _, frame := range frames {
 		if frame[0] == 0x00 {
+			if route == 1 && r.partyTQOSReplyAcknowledgedUnsafe(frame, route, peer) {
+				r.markPartyRobotPeerReadyUnsafe(peer, "ack")
+			}
 			continue
 		}
 		if frame[7] != peer.slot {
@@ -461,6 +484,9 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		if frame[0] == 0x01 {
 			sequence := binary.LittleEndian.Uint32(frame[1:5])
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
+			if !r.partyTQOSReceived[peer.slot][route].accept(sequence) {
+				continue
+			}
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
 			r.rememberPartyDungeonActivityUnsafe(frame, route, peer, now)
@@ -476,9 +502,8 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		if !ok {
 			continue
 		}
-		if route == 1 && peer.slot < 4 && isPartyRobotAccount(peer.accID) && !r.partyRobotPeerReady[peer.slot] {
-			r.partyRobotPeerReady[peer.slot] = true
-			fmt.Printf("[PARTY_ROBOT_TQOS_READY] uid=%d peer=%d slot=%d state=%d\n", r.UID, peer.accID, peer.slot, request.state)
+		if route == 1 && request.state == 2 {
+			r.markPartyRobotPeerReadyUnsafe(peer, "state2")
 		}
 		if peer.slot < 4 && route < 3 {
 			r.partyTQOSCodecs[peer.slot][route] = request.codec
@@ -486,15 +511,59 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		nextState, hasNextState := nextPartyTQOSState(request.state)
 		if hasNextState {
-			sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, nextState == 2)
+			var reply []byte
+			if nextState == 2 {
+				reply, ok = r.partyTQOSReliableReplyUnsafe(peer.slot, route, request)
+			} else {
+				var sequence uint32
+				sequence, ok = r.nextPartyTQOSSequenceUnsafe(peer.slot, route, false)
+				if ok {
+					reply = buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, request.flags, nextState, route, request.codec)
+				}
+			}
 			if !ok {
 				continue
 			}
-			reply := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, request.flags, nextState, route, request.codec)
 			replies = append(replies, reply)
 		}
 	}
 	return replies
+}
+
+func (r *RobotVo) partyTQOSReplyAcknowledgedUnsafe(frame []byte, route byte, peer partyIPPeer) bool {
+	if len(frame) != 8 || frame[0] != 0 || frame[1] != peer.slot || peer.slot >= byte(len(r.partyTQOSReplies)) || route >= byte(len(r.partyTQOSReplies[0])) {
+		return false
+	}
+	packet := r.partyTQOSReplies[peer.slot][route].packet
+	if len(packet) < 5 {
+		return false
+	}
+	return binary.LittleEndian.Uint32(frame[2:6]) == binary.LittleEndian.Uint32(packet[1:5])+1
+}
+
+func (r *RobotVo) markPartyRobotPeerReadyUnsafe(peer partyIPPeer, reason string) {
+	if peer.slot >= 4 || !isPartyRobotAccount(peer.accID) || r.partyRobotPeerReady[peer.slot] {
+		return
+	}
+	r.partyRobotPeerReady[peer.slot] = true
+	fmt.Printf("[PARTY_ROBOT_TQOS_READY] uid=%d peer=%d slot=%d reason=%s\n", r.UID, peer.accID, peer.slot, reason)
+}
+
+func (r *RobotVo) partyTQOSReliableReplyUnsafe(peerSlot, route byte, request partyTQOSPacket) ([]byte, bool) {
+	if peerSlot >= byte(len(r.partyTQOSReplies)) || route >= byte(len(r.partyTQOSReplies[0])) {
+		return nil, false
+	}
+	pending := &r.partyTQOSReplies[peerSlot][route]
+	if pending.packet != nil {
+		return pending.packet, true
+	}
+	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peerSlot, route, true)
+	if !ok {
+		return nil, false
+	}
+	packet := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, request.flags, 2, route, request.codec)
+	pending.packet = packet
+	return packet, true
 }
 
 func (r *RobotVo) tracePartyUDPUnsafe(reason string, remote *net.UDPAddr, senderSlot *byte, peer uint32, size int) {
@@ -552,13 +621,32 @@ func (r *RobotVo) rememberPartyPeerRouteUnsafe(peerSlot, route byte, now time.Ti
 }
 
 func (r *RobotVo) partyRouteForPeerUnsafe(peerSlot byte) byte {
+	peer := r.partyPeerForSlotUnsafe(peerSlot)
 	if peerSlot < byte(len(r.partyPeerRoute)) && !r.partyPeerRouteAt[peerSlot].IsZero() {
 		route := r.partyPeerRoute[peerSlot]
-		if route == 1 || route == 2 {
+		if r.partyRouteAvailableUnsafe(peer, route) {
 			return route
 		}
 	}
+	if r.partyRouteAvailableUnsafe(peer, 1) {
+		return 1
+	}
+	if r.partyRouteAvailableUnsafe(peer, 2) {
+		return 2
+	}
 	return 1
+}
+
+func (r *RobotVo) partyRouteAvailableUnsafe(peer partyIPPeer, route byte) bool {
+	switch route {
+	case 1:
+		_, ok := partyPeerUDPAddr(peer)
+		return ok && r.partyUDPConn != nil
+	case 2:
+		return peer.accID != 0 && r.partyRelayConn != nil
+	default:
+		return false
+	}
 }
 
 func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
@@ -566,7 +654,7 @@ func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 		return
 	}
 	for _, peer := range r.partyPeers {
-		if !peer.slotKnown || peer.slot >= 4 || r.partyRobotPeerReady[peer.slot] || r.partyRobotProbeCount[peer.slot] >= 4 || !isPartyRobotAccount(peer.accID) {
+		if !peer.slotKnown || peer.slot >= 4 || r.partyRobotPeerReady[peer.slot] || !isPartyRobotAccount(peer.accID) {
 			continue
 		}
 		if r.partySelfPeer.accID == peer.accID {
@@ -576,6 +664,12 @@ func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 			continue
 		}
 		now := time.Now()
+		if r.partyRobotProbeCount[peer.slot] >= 4 {
+			if now.Sub(r.partyRobotProbeAt[peer.slot]) < partyRobotProbeCooldown {
+				continue
+			}
+			r.partyRobotProbeCount[peer.slot] = 0
+		}
 		if !r.partyRobotProbeAt[peer.slot].IsZero() && now.Sub(r.partyRobotProbeAt[peer.slot]) < 750*time.Millisecond {
 			continue
 		}
@@ -629,6 +723,12 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 			return "relay", fmt.Errorf("party relay is unavailable")
 		}
 		err := r.writePartyRelayConn(relay, buildPartyRelayPacket(1, r.UID, peer.accID, payload))
+		if err != nil && r.partyRelayConn == relay {
+			r.partyRelayConn = nil
+			r.partyRelayConnecting = false
+			r.partyRelayGeneration++
+			_ = relay.Close()
+		}
 		return "relay", err
 	default:
 		return "", fmt.Errorf("unsupported party route %d", route)
@@ -705,6 +805,8 @@ func partyPeerUDPAddr(peer partyIPPeer) (*net.UDPAddr, bool) {
 func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyTQOSSeq = [4][3]uint32{}
 	r.partyTQOSReliableSeq = [4][3]uint32{}
+	r.partyTQOSReplies = [4][3]partyTQOSReliableReply{}
+	r.partyTQOSReceived = [4][3]partyTQOSReceiveWindow{}
 	r.partyTQOSCodecs = [4][3]partyTQOSCodec{}
 	r.partyTQOSCodecKnown = [4][3]bool{}
 	r.partyRobotProbeAt = [4]time.Time{}
@@ -725,6 +827,8 @@ func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
 	}
 	r.partyTQOSSeq[slot] = [3]uint32{}
 	r.partyTQOSReliableSeq[slot] = [3]uint32{}
+	r.partyTQOSReplies[slot] = [3]partyTQOSReliableReply{}
+	r.partyTQOSReceived[slot] = [3]partyTQOSReceiveWindow{}
 	r.partyTQOSCodecs[slot] = [3]partyTQOSCodec{}
 	r.partyTQOSCodecKnown[slot] = [3]bool{}
 	r.partyRobotProbeAt[slot] = time.Time{}
@@ -789,6 +893,45 @@ type partyTQOSPacket struct {
 	state      byte
 	route      byte
 	codec      partyTQOSCodec
+}
+
+type partyTQOSReliableReply struct {
+	packet []byte
+}
+
+type partyTQOSReceiveWindow struct {
+	latest      uint32
+	seen        uint64
+	initialized bool
+}
+
+func (w *partyTQOSReceiveWindow) accept(sequence uint32) bool {
+	if !w.initialized {
+		w.latest = sequence
+		w.seen = 1
+		w.initialized = true
+		return true
+	}
+	delta := int32(sequence - w.latest)
+	if delta > 0 {
+		if delta >= 64 {
+			w.seen = 1
+		} else {
+			w.seen = (w.seen << uint(delta)) | 1
+		}
+		w.latest = sequence
+		return true
+	}
+	behind := uint32(w.latest - sequence)
+	if behind >= 64 {
+		return false
+	}
+	mask := uint64(1) << behind
+	if w.seen&mask != 0 {
+		return false
+	}
+	w.seen |= mask
+	return true
 }
 
 func splitPartyTransportFrames(payload []byte) ([][]byte, bool) {

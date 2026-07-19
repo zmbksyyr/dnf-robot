@@ -8,10 +8,16 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strings"
 	"time"
 
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/shared"
+)
+
+const (
+	partyDungeonActivityTimeout = 15 * time.Second
+	partySkillRecoveryGrace     = 2 * time.Second
 )
 
 func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {
@@ -90,7 +96,7 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 }
 
 func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time) {
-	if conn == nil || r.partyDungeonLastAt.IsZero() || now.Sub(r.partyDungeonLastAt) > 3*time.Second {
+	if r.partyDungeonLastAt.IsZero() {
 		if !r.partySkillNextAt.IsZero() || !r.partySkillRecoverAt.IsZero() {
 			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_EXPIRED] uid=%d idle=%s due_in=%s recover_in=%s\n", r.UID, now.Sub(r.partyDungeonLastAt), r.partySkillNextAt.Sub(now), r.partySkillRecoverAt.Sub(now))
 		}
@@ -102,6 +108,17 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		if r.sendPartySkillStateUnsafe(conn, now, 0, nil, "RECOVER") {
 			r.partySkillRecoverAt = time.Time{}
 		}
+	}
+	idle := now.Sub(r.partyDungeonLastAt)
+	if idle > partyDungeonActivityTimeout {
+		if !r.partySkillNextAt.IsZero() || !r.partySkillRecoverAt.IsZero() {
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_EXPIRED] uid=%d idle=%s due_in=%s recover_in=%s\n", r.UID, idle, r.partySkillNextAt.Sub(now), r.partySkillRecoverAt.Sub(now))
+		}
+		r.partySkillNextAt = time.Time{}
+		if idle > partyDungeonActivityTimeout+partySkillRecoveryGrace {
+			r.partySkillRecoverAt = time.Time{}
+		}
+		return
 	}
 	if r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
 		return
@@ -198,10 +215,10 @@ func (r *RobotVo) loadPartySkillProfile(generation uint64, uid uint32, cid int, 
 	r.partySkillLoaded = true
 	r.partySkillJob = profile.job
 	r.partySkillCandidates = profile.candidates
-	if !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= 3*time.Second {
+	if !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= partyDungeonActivityTimeout {
 		r.partySkillNextAt = now
 	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_missing_pvf=%d\n", uid, profile.cid, profile.job, profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, len(profile.candidates), profile.stats.SkippedMissingPVF)
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_missing_pvf=%d skipped_path_mismatch=%d\n", uid, profile.cid, profile.job, profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, len(profile.candidates), profile.stats.SkippedMissingPVF, profile.stats.SkippedPathMismatch)
 }
 
 func (r *RobotVo) resetPartySkillProfileUnsafe() {
@@ -330,8 +347,9 @@ type partySkillProfile struct {
 type partySkillProfileLoadFunc func(uid uint32, cid int) (partySkillProfile, error)
 
 type partySkillCandidateStats struct {
-	PVFMatched        int
-	SkippedMissingPVF int
+	PVFMatched          int
+	SkippedMissingPVF   int
+	SkippedPathMismatch int
 }
 
 func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile, error) {
@@ -351,12 +369,18 @@ func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile,
 }
 
 func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
-	pvfIndex := make(map[[3]int]bool, len(pvfStates))
+	pvfIndex := make(map[[3]int]map[string]struct{}, len(pvfStates))
 	for _, entry := range pvfStates {
 		if entry.Job != job || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
 			continue
 		}
-		pvfIndex[[3]int{entry.Job, entry.SkillIndex, entry.State}] = true
+		key := [3]int{entry.Job, entry.SkillIndex, entry.State}
+		paths := pvfIndex[key]
+		if paths == nil {
+			paths = make(map[string]struct{})
+			pvfIndex[key] = paths
+		}
+		paths[normalizeSkillScriptPath(entry.ScriptPath)] = struct{}{}
 	}
 	candidates := make([]partySkillCandidate, 0, len(whitelist))
 	stats := partySkillCandidateStats{}
@@ -364,9 +388,16 @@ func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState
 		if entry.Job != job || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
 			continue
 		}
-		if !pvfIndex[[3]int{entry.Job, entry.SkillIndex, entry.State}] {
+		paths, ok := pvfIndex[[3]int{entry.Job, entry.SkillIndex, entry.State}]
+		if !ok {
 			stats.SkippedMissingPVF++
 			continue
+		}
+		if scriptPath := normalizeSkillScriptPath(entry.ScriptPath); scriptPath != "" {
+			if _, ok := paths[scriptPath]; !ok {
+				stats.SkippedPathMismatch++
+				continue
+			}
 		}
 		stats.PVFMatched++
 		candidates = append(candidates, partySkillCandidate{
@@ -389,6 +420,12 @@ func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState
 		return candidates[i].state < candidates[j].state
 	})
 	return candidates, stats
+}
+
+func normalizeSkillScriptPath(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	value = strings.Trim(value, "/")
+	return strings.ToLower(value)
 }
 
 const partyDungeonStateCommand = 0x0004

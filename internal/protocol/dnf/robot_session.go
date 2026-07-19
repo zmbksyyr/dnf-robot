@@ -124,13 +124,17 @@ type RobotVo struct {
 	partyOptionReady     bool
 	partyOptionSent      bool
 	partyOptionData      [gameEtcOptionSize]byte
+	partyRecvSource      recvBodySource
 	natInfoSent          bool
 	partySelfPeer        partyIPPeer
 	partyPeers           [4]partyIPPeer
 	partyPendingPeer     uint16
 	partyPendingUntil    time.Time
 	townEntityPositions  map[uint16]townEntityPosition
+	townEntitySweepAt    time.Time
 	partyUDPConn         *net.UDPConn
+	partyUDPRunning      bool
+	partyUDPGeneration   uint64
 	partyRelayConn       net.Conn
 	partyRelayConnecting bool
 	partyRelayGeneration uint64
@@ -139,6 +143,8 @@ type RobotVo struct {
 	partyRelaySendMu     lockhub.Locker
 	partyTQOSSeq         [4][3]uint32
 	partyTQOSReliableSeq [4][3]uint32
+	partyTQOSReplies     [4][3]partyTQOSReliableReply
+	partyTQOSReceived    [4][3]partyTQOSReceiveWindow
 	partyTQOSCodecs      [4][3]partyTQOSCodec
 	partyTQOSCodecKnown  [4][3]bool
 	partyRobotProbeAt    [4]time.Time
@@ -337,11 +343,13 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	copy(r.partyOptionData[:], defaultPartyAcceptGameOptions())
 	r.partyOptionReady = true
 	r.partyOptionSent = false
+	r.partyRecvSource = recvBodySourceUnknown
 	r.natInfoSent = false
 	r.partySelfPeer = partyIPPeer{}
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
+	r.townEntitySweepAt = time.Time{}
 	r.partyRelayAt = time.Time{}
 	r.resetPartyTQOSTransportUnsafe()
 	r.resetPartySkillProfileUnsafe()

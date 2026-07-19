@@ -63,11 +63,14 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		clears, source, err := partyInfoPacketClearsParty(r.Cipher, pInBuf, isAnti)
 		if err != nil {
 			fmt.Printf("[PARTY_INFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
-		} else if clears {
-			if source == "plain" {
+		} else {
+			r.rememberPartyRecvSourceUnsafe(source)
+			if clears && source == recvBodySourcePlain {
 				fmt.Printf("[PARTY_INFO_PLAIN] uid=%d size=%d\n", r.UID, dInSize)
 			}
-			r.clearPartyUnsafe()
+			if clears {
+				r.clearPartyUnsafe()
+			}
 		}
 		return
 	}
@@ -78,7 +81,8 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			fmt.Printf("[PARTY_IPINFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
 			return
 		}
-		if source == "plain" {
+		r.rememberPartyRecvSourceUnsafe(source)
+		if source == recvBodySourcePlain {
 			fmt.Printf("[PARTY_IPINFO_PLAIN] uid=%d size=%d\n", r.UID, dInSize)
 		}
 		tracePartyIPInfo(r.UID, self, peers)
@@ -100,6 +104,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			if uniqueID == 0 || !r.partyEntityKnownUnsafe(uniqueID) {
 				continue
 			}
+			r.rememberPartyRecvSourceUnsafe(candidate.source)
 			delete(r.townEntityPositions, uniqueID)
 			break
 		}
@@ -340,14 +345,15 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 
 	if packetFlag == 0 && packetType == 7 && r.State == StateRun {
-		data, typ, source, err := selectPeerResponsePacket(r.Cipher, pInBuf, isAnti)
+		data, typ, source, err := selectPeerResponsePacket(r.Cipher, pInBuf, isAnti, r.partyRecvSource, r.partyEntityKnownUnsafe)
 		if err != nil {
 			fmt.Printf("[PEER_REQUEST_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
 			return
 		}
-		if source == "plain" {
+		if source == recvBodySourcePlain {
 			fmt.Printf("[PEER_REQUEST_PLAIN] uid=%d size=%d\n", r.UID, dInSize)
 		}
+		r.rememberPartyRecvSourceUnsafe(source)
 		if typ == peerRequestParty || (!r.LastTradeState && r.LastTradeID == 0) {
 			uniqueID := binary.LittleEndian.Uint16(data[0:2])
 			pkt, err := buildSendPacket(11, uint16(r.PacketID), data, r.Cipher)
@@ -364,7 +370,6 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 				if sent && typ == peerRequestParty {
 					fmt.Printf("[PARTY_AUTO_ACCEPT] uid=%d peer_unique_id=%d request_id=%d\n",
 						r.UID, uniqueID, binary.LittleEndian.Uint32(data[3:7]))
-					r.resetPartyTQOSTransportUnsafe()
 					r.setPartyPendingUnsafe(uniqueID)
 					r.ensurePartyRelayUnsafe()
 				}

@@ -85,6 +85,19 @@ func TestRobotDoesNotRewriteMultiEntityDungeonState(t *testing.T) {
 	}
 }
 
+func TestRobotDoesNotFollowPartySkillState(t *testing.T) {
+	now := time.Now()
+	peer := partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true}
+	vo := &RobotVo{UID: 17000001, partySelfPeer: partyIPPeer{uniqueID: 0x2222, slot: 1, slotKnown: true}}
+	body := buildPartySkillStateBody(peer.uniqueID, 22, []byte{3, 0, 0}, 7)
+	if vo.queuePartyDungeonFollowUnsafe(buildPartyUnreliablePacket(1, peer.slot, 0, body), peer, now) {
+		t.Fatal("standalone skill state entered the follow queue")
+	}
+	if vo.queuePartyDungeonFollowUnsafe(buildPartyReliablePacket(1, peer.slot, 0, [][]byte{body}), peer, now) {
+		t.Fatal("reliable skill state entered the follow queue")
+	}
+}
+
 func TestRobotBuildsReliableDungeonEnvelope(t *testing.T) {
 	record := mustPartyHex(t, "0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff")
 	frame := buildPartyReliablePacket(42, 0, 3, [][]byte{record})
@@ -152,11 +165,13 @@ func TestPartySkillCandidatesRequireWhitelistAndPVF(t *testing.T) {
 		{Job: 6, SkillIndex: 3, State: 22, Level: 5, Name: "ok", StateData: []byte{3, 0, 0}, Risk: 1, ScriptPath: "ok.nut"},
 		{Job: 6, SkillIndex: 4, State: 23, Level: 10, Name: "unlearned", StateData: []byte{0, 0, 0}, Risk: 1},
 		{Job: 6, SkillIndex: 5, State: 24, Level: 10, Name: "missing_pvf", StateData: []byte{0, 0, 0}, Risk: 1},
+		{Job: 6, SkillIndex: 7, State: 26, Level: 10, Name: "wrong_path", StateData: []byte{0, 0, 0}, Risk: 1, ScriptPath: "expected/skill.nut"},
 		{Job: 2, SkillIndex: 6, State: 25, Level: 10, StateData: []byte{0, 0, 0}, Risk: 1},
 	}
 	pvfStates := []shared.SkillState{
-		{Job: 6, SkillIndex: 3, State: 22},
+		{Job: 6, SkillIndex: 3, State: 22, ScriptPath: "OK.NUT"},
 		{Job: 6, SkillIndex: 4, State: 23},
+		{Job: 6, SkillIndex: 7, State: 26, ScriptPath: "other/skill.nut"},
 		{Job: 2, SkillIndex: 6, State: 25},
 	}
 	got, stats := partySkillCandidatesFromCatalog(6, whitelist, pvfStates)
@@ -166,7 +181,7 @@ func TestPartySkillCandidatesRequireWhitelistAndPVF(t *testing.T) {
 	if got[1].skillIndex != 4 || got[1].state != 23 {
 		t.Fatalf("second whitelist candidate = %+v", got[1])
 	}
-	if stats.PVFMatched != 2 || stats.SkippedMissingPVF != 1 {
+	if stats.PVFMatched != 2 || stats.SkippedMissingPVF != 1 || stats.SkippedPathMismatch != 1 {
 		t.Fatalf("stats = %+v", stats)
 	}
 }
@@ -356,5 +371,31 @@ func TestPartyDungeonSkillAndFollowUseRecentRelayRoute(t *testing.T) {
 	assertPartyRelayPayload(t, <-followPacket, vo.UID, vo.partyPeers[0].accID)
 	if vo.partyTQOSSeq[0][2] != 1 || vo.partyTQOSSeq[0][1] != 0 {
 		t.Fatalf("follow route sequences=%+v", vo.partyTQOSSeq[0])
+	}
+}
+
+func TestPartyDungeonSkillSurvivesRandomDelayOnRelay(t *testing.T) {
+	relay, peerConn := net.Pipe()
+	defer relay.Close()
+	defer peerConn.Close()
+	now := time.Now()
+	vo := &RobotVo{
+		UID:                  17000001,
+		partyRelayConn:       relay,
+		partySelfPeer:        partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partyDungeonLastAt:   now.Add(-5 * time.Second),
+		partySkillNextAt:     now,
+		partySkillLoaded:     true,
+		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
+
+	skillPacket := make(chan []byte, 1)
+	go func() { skillPacket <- readPartyRelayPacket(t, peerConn) }()
+	vo.flushPartyDungeonSkillUnsafe(nil, now)
+	assertPartyRelayPayload(t, <-skillPacket, vo.UID, vo.partyPeers[0].accID)
+	if vo.partySkillRecoverAt.IsZero() {
+		t.Fatal("skill recovery was not scheduled")
 	}
 }

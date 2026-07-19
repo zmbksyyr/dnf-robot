@@ -389,6 +389,7 @@ func (r *RobotVo) CheckUserState() bool {
 	}
 	partyActive := r.partyActiveUnsafe()
 	if partyActive {
+		r.ensurePartyUDPLoopUnsafe()
 		r.ensurePartyRelayUnsafe()
 		r.startPartyRobotPeerNegotiationUnsafe()
 	} else if r.partyRelayConn != nil {

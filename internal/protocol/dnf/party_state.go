@@ -3,6 +3,7 @@ package dnf
 import (
 	"encoding/binary"
 	"net"
+	"sort"
 	"time"
 
 	"robot/internal/protocol/dnf/crypt"
@@ -45,7 +46,18 @@ func (r *RobotVo) partyEntityKnownUnsafe(uniqueID uint16) bool {
 	return ok
 }
 
-const partyTownPositionMaxAge = 15 * time.Second
+func (r *RobotVo) rememberPartyRecvSourceUnsafe(source recvBodySource) {
+	if source == recvBodySourceDecrypted || source == recvBodySourcePlain {
+		r.partyRecvSource = source
+	}
+}
+
+const (
+	partyTownPositionMaxAge      = 15 * time.Second
+	partyTownEntitySweepInterval = 2 * time.Second
+	partyTownEntitySoftLimit     = 1024
+	partyTownEntityHardLimit     = 2048
+)
 
 type townEntityPosition struct {
 	uniqueID uint16
@@ -101,40 +113,74 @@ func parseTownEntityArea(data []byte) (townEntityArea, bool) {
 
 func (r *RobotVo) selectTownEntityPositionBodyUnsafe(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]byte, bool) {
 	candidates, _ := recvBodyCandidates(cipher, raw, isAnti)
-	var fallback []byte
+	valid := make([]recvBodyCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		position, ok := parseTownEntityPosition(candidate.body)
 		if !ok {
 			continue
 		}
+		valid = append(valid, candidate)
 		if r.partyEntityKnownUnsafe(position.uniqueID) {
+			r.rememberPartyRecvSourceUnsafe(candidate.source)
 			return candidate.body, true
 		}
-		if fallback == nil {
-			fallback = candidate.body
+	}
+	if len(valid) == 1 {
+		r.rememberPartyRecvSourceUnsafe(valid[0].source)
+		return valid[0].body, true
+	}
+	for _, candidate := range valid {
+		if candidate.source == r.partyRecvSource && r.partyRecvSource != recvBodySourceUnknown {
+			return candidate.body, true
 		}
 	}
-	return fallback, fallback != nil
+	for _, candidate := range valid {
+		if candidate.source == recvBodySourcePlain {
+			return candidate.body, true
+		}
+	}
+	if len(valid) > 0 {
+		return valid[0].body, true
+	}
+	return nil, false
 }
 
 func (r *RobotVo) selectTownEntityAreaUnsafe(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (townEntityArea, bool) {
 	candidates, _ := recvBodyCandidates(cipher, raw, isAnti)
-	var fallback townEntityArea
-	hasFallback := false
+	type areaCandidate struct {
+		area   townEntityArea
+		source recvBodySource
+	}
+	valid := make([]areaCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		area, ok := parseTownEntityArea(candidate.body)
 		if !ok {
 			continue
 		}
+		valid = append(valid, areaCandidate{area: area, source: candidate.source})
 		if r.partyEntityKnownUnsafe(area.uniqueID) {
+			r.rememberPartyRecvSourceUnsafe(candidate.source)
 			return area, true
 		}
-		if !hasFallback {
-			fallback = area
-			hasFallback = true
+	}
+	if len(valid) == 1 {
+		r.rememberPartyRecvSourceUnsafe(valid[0].source)
+		return valid[0].area, true
+	}
+	for _, candidate := range valid {
+		if candidate.source == r.partyRecvSource && r.partyRecvSource != recvBodySourceUnknown {
+			return candidate.area, true
 		}
 	}
-	return fallback, hasFallback
+	for _, candidate := range valid {
+		if candidate.source == recvBodySourcePlain {
+			return candidate.area, true
+		}
+	}
+	if len(valid) > 0 {
+		return valid[0].area, true
+	}
+	return townEntityArea{}, false
 }
 
 func (r *RobotVo) rememberTownEntityUnsafe(data []byte) (townEntityPosition, bool) {
@@ -146,15 +192,35 @@ func (r *RobotVo) rememberTownEntityUnsafe(data []byte) (townEntityPosition, boo
 		r.townEntityPositions = make(map[uint16]townEntityPosition)
 	}
 	r.townEntityPositions[position.uniqueID] = position
-	if len(r.townEntityPositions) > 512 {
-		cutoff := position.seenAt.Add(-partyTownPositionMaxAge)
-		for uniqueID, cached := range r.townEntityPositions {
-			if cached.seenAt.Before(cutoff) {
-				delete(r.townEntityPositions, uniqueID)
-			}
+	r.pruneTownEntitiesUnsafe(position.seenAt)
+	return position, true
+}
+
+func (r *RobotVo) pruneTownEntitiesUnsafe(now time.Time) {
+	if len(r.townEntityPositions) <= partyTownEntitySoftLimit {
+		return
+	}
+	if len(r.townEntityPositions) <= partyTownEntityHardLimit && now.Before(r.townEntitySweepAt) {
+		return
+	}
+	r.townEntitySweepAt = now.Add(partyTownEntitySweepInterval)
+	cutoff := now.Add(-partyTownPositionMaxAge)
+	for uniqueID, cached := range r.townEntityPositions {
+		if cached.seenAt.Before(cutoff) {
+			delete(r.townEntityPositions, uniqueID)
 		}
 	}
-	return position, true
+	if len(r.townEntityPositions) <= partyTownEntityHardLimit {
+		return
+	}
+	entries := make([]townEntityPosition, 0, len(r.townEntityPositions))
+	for _, cached := range r.townEntityPositions {
+		entries = append(entries, cached)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].seenAt.Before(entries[j].seenAt) })
+	for _, cached := range entries[:len(entries)-partyTownEntitySoftLimit] {
+		delete(r.townEntityPositions, cached.uniqueID)
+	}
 }
 
 func (r *RobotVo) partyLeaderUniqueIDUnsafe() (uint16, bool) {
@@ -233,6 +299,7 @@ func (r *RobotVo) setPartyPendingUnsafe(uniqueID uint16) {
 	}
 	r.partyPendingPeer = uniqueID
 	r.partyPendingUntil = time.Now().Add(partyPendingTimeout)
+	r.ensurePartyUDPLoopUnsafe()
 }
 
 func (r *RobotVo) clearPartyPendingUnsafe() {
@@ -283,6 +350,7 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 		}
 	}
 	r.rememberPartyPeersUnsafe(peers)
+	r.ensurePartyUDPLoopUnsafe()
 	for slot := byte(0); slot < 4; slot++ {
 		before := partyPeerUniqueIDForSlot(previous, slot)
 		after := partyPeerUniqueIDForSlot(r.partyPeers, slot)
@@ -319,6 +387,7 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
+	r.townEntitySweepAt = time.Time{}
 	r.partyDungeonTraceAt = time.Time{}
 	r.closePartyRelayUnsafe()
 	r.resetPartyTQOSTransportUnsafe()

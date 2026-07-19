@@ -61,7 +61,9 @@ func TestPartyUDPLoopRetriesRobotPeerProbe(t *testing.T) {
 	vo.partySelfPeer = partyIPPeer{uniqueID: 1, accID: 17000001, slot: 1, slotKnown: true}
 	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
-	go vo.partyUDPLoop(sender, vo.UID)
+	if !vo.ensurePartyUDPLoopUnsafe() {
+		t.Fatal("active party UDP loop did not start")
+	}
 	defer func() {
 		vo.mu.Lock()
 		vo.State = StateStop
@@ -117,6 +119,38 @@ func TestPartyRobotPeerNegotiationDoesNotDependOnAccountOrder(t *testing.T) {
 	}
 }
 
+func TestPartyRobotPeerProbeRestartsAfterCooldown(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+
+	vo := &RobotVo{partyUDPConn: sender}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 1, accID: 17000001, slot: 1, slotKnown: true}
+	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
+	vo.partyRobotProbeCount[2] = 4
+	vo.partyRobotProbeAt[2] = time.Now().Add(-partyRobotProbeCooldown - time.Second)
+	vo.startPartyRobotPeerNegotiationUnsafe()
+
+	if err := receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	if _, _, err := receiver.ReadFromUDP(buf); err != nil {
+		t.Fatal(err)
+	}
+	if vo.partyRobotProbeCount[2] != 1 {
+		t.Fatalf("probe count after cooldown = %d", vo.partyRobotProbeCount[2])
+	}
+}
+
 func TestPartyUDPPortFallsBackWhenRequestedPortIsBusy(t *testing.T) {
 	busy, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -133,6 +167,46 @@ func TestPartyUDPPortFallsBackWhenRequestedPortIsBusy(t *testing.T) {
 	if actual.Port == requested.Port || actual.Port == 0 {
 		t.Fatalf("fallback port = %d, requested %d", actual.Port, requested.Port)
 	}
+}
+
+func TestPartyUDPLoopRunsOnlyWhilePartyActive(t *testing.T) {
+	vo := &RobotVo{UID: 17000001, State: StateRun}
+	vo.mu.Lock()
+	if !vo.startPartyUDPUnsafe(&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)}) {
+		vo.mu.Unlock()
+		t.Fatal("UDP bind failed")
+	}
+	conn := vo.partyUDPConn
+	if vo.partyUDPRunning {
+		vo.mu.Unlock()
+		t.Fatal("idle robot started a party UDP loop")
+	}
+	vo.setPartyPendingUnsafe(7)
+	if !vo.partyUDPRunning {
+		vo.mu.Unlock()
+		t.Fatal("party pending did not start the UDP loop")
+	}
+	vo.clearPartyUnsafe()
+	vo.mu.Unlock()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		vo.mu.Lock()
+		running := vo.partyUDPRunning
+		bound := vo.partyUDPConn == conn
+		vo.mu.Unlock()
+		if !running {
+			if !bound {
+				t.Fatal("party clear closed the bound NAT socket")
+			}
+			vo.mu.Lock()
+			vo.closePartyUDPUnsafe()
+			vo.mu.Unlock()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("party UDP loop did not stop after clear")
 }
 
 func TestShouldReplyPartyUDP(t *testing.T) {
@@ -155,6 +229,31 @@ func TestBuildPartyRelayPacket(t *testing.T) {
 	want := []byte{1, 0, 15, 0, 0x80, 0xa8, 0x12, 0x01, 0x46, 0x66, 0x03, 0x01, 1, 2, 3}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("packet = %x, want %x", got, want)
+	}
+}
+
+func TestPartyRouteFallsBackWhenCachedTransportIsUnavailable(t *testing.T) {
+	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpConn.Close()
+	vo := &RobotVo{partyUDPConn: udpConn}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
+	vo.partyPeerRoute[0] = 2
+	vo.partyPeerRouteAt[0] = time.Now()
+	if route := vo.partyRouteForPeerUnsafe(0); route != 1 {
+		t.Fatalf("route with unavailable relay = %d", route)
+	}
+
+	relay, peerConn := net.Pipe()
+	defer relay.Close()
+	defer peerConn.Close()
+	vo.partyUDPConn = nil
+	vo.partyRelayConn = relay
+	vo.partyPeerRoute[0] = 1
+	if route := vo.partyRouteForPeerUnsafe(0); route != 2 {
+		t.Fatalf("route with unavailable UDP = %d", route)
 	}
 }
 

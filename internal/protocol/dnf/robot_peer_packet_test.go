@@ -18,20 +18,21 @@ func TestBuildPeerResponse(t *testing.T) {
 	}{
 		{
 			name:    "party",
-			request: []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0xaa},
+			request: []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0},
 			typ:     peerRequestParty,
 			want:    []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0},
 			ok:      true,
 		},
 		{
 			name:    "trade",
-			request: []byte{0xcd, 0xab, peerRequestTrade, 4, 3, 2, 1},
+			request: []byte{0xcd, 0xab, peerRequestTrade, 4, 3, 2, 1, 0},
 			typ:     peerRequestTrade,
 			want:    []byte{0xcd, 0xab, peerRequestTrade, 4, 3, 2, 1, 0},
 			ok:      true,
 		},
 		{name: "short", request: []byte{1, 2, 3}},
-		{name: "unsupported", request: []byte{1, 2, 4, 5, 6, 7, 8}, typ: 4},
+		{name: "unsupported", request: []byte{1, 2, 4, 5, 6, 7, 8, 0}, typ: 4},
+		{name: "nonzero padding", request: []byte{0x34, 0x12, peerRequestParty, 1, 2, 3, 4, 1}, typ: peerRequestParty},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,7 +45,7 @@ func TestBuildPeerResponse(t *testing.T) {
 }
 
 func TestPlainRecvBodySupportsPartyNotify(t *testing.T) {
-	body := []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0xaa}
+	body := []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0}
 	raw := make([]byte, 15+len(body))
 	raw[0] = 0
 	binary.LittleEndian.PutUint16(raw[1:3], 7)
@@ -63,18 +64,49 @@ func TestPlainRecvBodySupportsPartyNotify(t *testing.T) {
 
 func TestSelectPeerResponsePacketSupportsEncryptedAndPlainBodies(t *testing.T) {
 	cipher := newPartyTestCipher(t)
-	body := []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0xaa}
+	body := []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0}
 
 	plain := makePartyRecvPacket(7, body)
-	response, typ, source, err := selectPeerResponsePacket(cipher, plain, false)
-	if err != nil || source != "plain" || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != 0x1234 {
-		t.Fatalf("plain response=%x typ=%d source=%q err=%v", response, typ, source, err)
+	response, typ, source, err := selectPeerResponsePacket(cipher, plain, false, recvBodySourceUnknown, nil)
+	if err != nil || source != recvBodySourcePlain || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != 0x1234 {
+		t.Fatalf("plain response=%x typ=%d source=%s err=%v", response, typ, source, err)
 	}
 
 	encrypted := makeEncryptedPartyRecvPacket(t, cipher, 7, body)
-	response, typ, source, err = selectPeerResponsePacket(cipher, encrypted, false)
-	if err != nil || source != "decrypted" || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != 0x1234 {
-		t.Fatalf("encrypted response=%x typ=%d source=%q err=%v", response, typ, source, err)
+	response, typ, source, err = selectPeerResponsePacket(cipher, encrypted, false, recvBodySourceUnknown, nil)
+	if err != nil || source != recvBodySourceDecrypted || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != 0x1234 {
+		t.Fatalf("encrypted response=%x typ=%d source=%s err=%v", response, typ, source, err)
+	}
+}
+
+func TestSelectPeerResponsePacketUsesKnownEntityForAmbiguousPlainBody(t *testing.T) {
+	cipher := newPartyTestCipher(t)
+	const knownUniqueID = uint16(0x1234)
+	var body []byte
+	for requestID := uint32(1); requestID < 1<<20; requestID++ {
+		candidate := make([]byte, 8)
+		binary.LittleEndian.PutUint16(candidate[:2], knownUniqueID)
+		candidate[2] = peerRequestParty
+		binary.LittleEndian.PutUint32(candidate[3:7], requestID)
+		decrypted, err := cipher.Decrypt(7, candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, _, ok := buildPeerResponse(decrypted)
+		if ok && binary.LittleEndian.Uint16(response[:2]) != knownUniqueID {
+			body = candidate
+			break
+		}
+	}
+	if body == nil {
+		t.Fatal("failed to construct an ambiguous plain peer request")
+	}
+	vo := &RobotVo{townEntityPositions: map[uint16]townEntityPosition{
+		knownUniqueID: {uniqueID: knownUniqueID},
+	}}
+	response, typ, source, err := selectPeerResponsePacket(cipher, makePartyRecvPacket(7, body), false, recvBodySourceUnknown, vo.partyEntityKnownUnsafe)
+	if err != nil || source != recvBodySourcePlain || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != knownUniqueID {
+		t.Fatalf("response=%x typ=%d source=%s err=%v", response, typ, source, err)
 	}
 }
 
@@ -88,17 +120,27 @@ func TestPartyIPInfoPacketSupportsEncryptedAndPlainBodies(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		packet []byte
-		source string
+		source recvBodySource
 	}{
-		{name: "plain", packet: makePartyRecvPacket(11, body), source: "plain"},
-		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 11, padPartyBlock(body)), source: "decrypted"},
+		{name: "plain", packet: makePartyRecvPacket(11, body), source: recvBodySourcePlain},
+		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 11, padPartyBlock(body)), source: recvBodySourceDecrypted},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			self, peers, source, err := selectPartyIPInfoPacket(cipher, tt.packet, false, 17000001)
 			if err != nil || source != tt.source || self.accID != 17000001 || len(peers) != 1 || peers[0].accID != 18000000 {
-				t.Fatalf("self=%+v peers=%+v source=%q err=%v", self, peers, source, err)
+				t.Fatalf("self=%+v peers=%+v source=%s err=%v", self, peers, source, err)
 			}
 		})
+	}
+}
+
+func TestPartyIPInfoRejectsSnapshotWithoutSelf(t *testing.T) {
+	body := make([]byte, 23)
+	body[0] = 1
+	putPartyPeer(body[1:], 0x1111, net.IPv4(192, 168, 200, 1), 5063, 18000000, 1, 1472)
+	_, _, _, err := selectPartyIPInfoPacket(newPartyTestCipher(t), makePartyRecvPacket(11, body), false, 17000001)
+	if err == nil {
+		t.Fatal("party IP snapshot without the robot account was accepted")
 	}
 }
 
@@ -116,15 +158,15 @@ func TestPartyInfoPacketSupportsEncryptedAndPlainZlib(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		packet []byte
-		source string
+		source recvBodySource
 	}{
-		{name: "plain", packet: makePartyRecvPacket(9, compressed.Bytes()), source: "plain"},
-		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 9, padPartyBlock(compressed.Bytes())), source: "decrypted"},
+		{name: "plain", packet: makePartyRecvPacket(9, compressed.Bytes()), source: recvBodySourcePlain},
+		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 9, padPartyBlock(compressed.Bytes())), source: recvBodySourceDecrypted},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			clears, source, err := partyInfoPacketClearsParty(cipher, tt.packet, false)
 			if err != nil || !clears || source != tt.source {
-				t.Fatalf("clears=%t source=%q err=%v", clears, source, err)
+				t.Fatalf("clears=%t source=%s err=%v", clears, source, err)
 			}
 		})
 	}

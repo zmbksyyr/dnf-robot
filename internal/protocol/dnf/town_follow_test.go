@@ -5,9 +5,10 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
-	"robot/internal/protocol/dnf/crypt"
 	"testing"
 	"time"
+
+	"robot/internal/protocol/dnf/crypt"
 )
 
 func TestParseTownEntityPackets(t *testing.T) {
@@ -170,5 +171,37 @@ func TestTownEntityRemovalPreservesPartyState(t *testing.T) {
 	}
 	if _, ok := vo.townEntityPositions[0x9692]; ok {
 		t.Fatal("removed town entity position remained cached")
+	}
+}
+
+func TestTownEntityPruningIsRateLimitedAndBounded(t *testing.T) {
+	now := time.Now()
+	vo := &RobotVo{townEntityPositions: make(map[uint16]townEntityPosition)}
+	for i := 1; i <= partyTownEntitySoftLimit+100; i++ {
+		seenAt := now
+		if i <= 100 {
+			seenAt = now.Add(-partyTownPositionMaxAge - time.Second)
+		}
+		vo.townEntityPositions[uint16(i)] = townEntityPosition{uniqueID: uint16(i), seenAt: seenAt}
+	}
+	vo.pruneTownEntitiesUnsafe(now)
+	if len(vo.townEntityPositions) != partyTownEntitySoftLimit {
+		t.Fatalf("expired prune size = %d", len(vo.townEntityPositions))
+	}
+	firstSweep := vo.townEntitySweepAt
+	vo.townEntityPositions[60000] = townEntityPosition{uniqueID: 60000, seenAt: now}
+	vo.pruneTownEntitiesUnsafe(now.Add(time.Second))
+	if vo.townEntitySweepAt != firstSweep {
+		t.Fatal("town entity cache swept again before the interval")
+	}
+
+	vo.townEntityPositions = make(map[uint16]townEntityPosition)
+	vo.townEntitySweepAt = time.Time{}
+	for i := 1; i <= partyTownEntityHardLimit+100; i++ {
+		vo.townEntityPositions[uint16(i)] = townEntityPosition{uniqueID: uint16(i), seenAt: now.Add(time.Duration(i) * time.Millisecond)}
+	}
+	vo.pruneTownEntitiesUnsafe(now.Add(10 * time.Second))
+	if len(vo.townEntityPositions) != partyTownEntitySoftLimit {
+		t.Fatalf("hard-limit prune size = %d", len(vo.townEntityPositions))
 	}
 }

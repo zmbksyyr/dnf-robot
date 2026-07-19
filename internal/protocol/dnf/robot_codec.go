@@ -52,12 +52,17 @@ const (
 )
 
 func buildPeerResponse(request []byte) ([]byte, byte, bool) {
-	if len(request) < 7 {
+	if len(request) < 8 {
 		return nil, 0, false
 	}
 	typ := request[2]
 	if typ != peerRequestParty && typ != peerRequestTrade {
 		return nil, typ, false
+	}
+	for _, padding := range request[7:] {
+		if padding != 0 {
+			return nil, typ, false
+		}
 	}
 	response := make([]byte, 8)
 	copy(response, request[:7])
@@ -181,16 +186,35 @@ func partyInfoClearsParty(data []byte) bool {
 	return data[5] == 0xff && data[6] == 0xff && data[7] == 0xff
 }
 
+type recvBodySource uint8
+
+const (
+	recvBodySourceUnknown recvBodySource = iota
+	recvBodySourceDecrypted
+	recvBodySourcePlain
+)
+
+func (s recvBodySource) String() string {
+	switch s {
+	case recvBodySourceDecrypted:
+		return "decrypted"
+	case recvBodySourcePlain:
+		return "plain"
+	default:
+		return "unknown"
+	}
+}
+
 type recvBodyCandidate struct {
 	body   []byte
-	source string
+	source recvBodySource
 }
 
 func recvBodyCandidates(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]recvBodyCandidate, error) {
 	_, _, decrypted, decryptErr := parseRecvPacket(cipher, raw, isAnti)
 	candidates := make([]recvBodyCandidate, 0, 2)
 	if decryptErr == nil {
-		candidates = append(candidates, recvBodyCandidate{body: decrypted, source: "decrypted"})
+		candidates = append(candidates, recvBodyCandidate{body: decrypted, source: recvBodySourceDecrypted})
 	}
 	if plain, ok := plainRecvBody(raw, isAnti); ok {
 		duplicate := false
@@ -201,7 +225,7 @@ func recvBodyCandidates(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]rec
 			}
 		}
 		if !duplicate {
-			candidates = append(candidates, recvBodyCandidate{body: plain, source: "plain"})
+			candidates = append(candidates, recvBodyCandidate{body: plain, source: recvBodySourcePlain})
 		}
 	}
 	if len(candidates) == 0 {
@@ -210,68 +234,89 @@ func recvBodyCandidates(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]rec
 	return candidates, decryptErr
 }
 
-func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]byte, byte, string, error) {
+type peerResponseCandidate struct {
+	data   []byte
+	typ    byte
+	source recvBodySource
+}
+
+func selectPeerResponsePacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, preferred recvBodySource, knownUniqueID func(uint16) bool) ([]byte, byte, recvBodySource, error) {
 	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
+	valid := make([]peerResponseCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		response, typ, ok := buildPeerResponse(candidate.body)
 		if ok {
-			return response, typ, candidate.source, nil
+			valid = append(valid, peerResponseCandidate{data: response, typ: typ, source: candidate.source})
 		}
 	}
-	if decryptErr != nil {
-		return nil, 0, "", decryptErr
+	if len(valid) == 1 {
+		candidate := valid[0]
+		return candidate.data, candidate.typ, candidate.source, nil
 	}
-	return nil, 0, "", fmt.Errorf("peer request has no valid body")
+	if len(valid) > 1 && knownUniqueID != nil {
+		for _, candidate := range valid {
+			if knownUniqueID(binary.LittleEndian.Uint16(candidate.data[:2])) {
+				return candidate.data, candidate.typ, candidate.source, nil
+			}
+		}
+	}
+	if len(valid) > 1 && preferred != recvBodySourceUnknown {
+		for _, candidate := range valid {
+			if candidate.source == preferred {
+				return candidate.data, candidate.typ, candidate.source, nil
+			}
+		}
+	}
+	if len(valid) > 0 {
+		candidate := valid[0]
+		return candidate.data, candidate.typ, candidate.source, nil
+	}
+	if decryptErr != nil {
+		return nil, 0, recvBodySourceUnknown, decryptErr
+	}
+	return nil, 0, recvBodySourceUnknown, fmt.Errorf("peer request has no valid body")
 }
 
-func selectPartyIPInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, selfAccID uint32) (partyIPPeer, []partyIPPeer, string, error) {
+func selectPartyIPInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, selfAccID uint32) (partyIPPeer, []partyIPPeer, recvBodySource, error) {
 	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
-	var fallbackSelf partyIPPeer
-	var fallbackPeers []partyIPPeer
-	fallbackSource := ""
 	for _, candidate := range candidates {
 		self, peers, ok := parsePartyIPInfoSnapshot(candidate.body, selfAccID)
 		if !ok {
 			continue
 		}
-		if selfAccID == 0 || self.accID == selfAccID {
-			return self, peers, candidate.source, nil
+		if selfAccID != 0 && self.accID != selfAccID {
+			continue
 		}
-		if fallbackSource == "" {
-			fallbackSelf = self
-			fallbackPeers = peers
-			fallbackSource = candidate.source
-		}
-	}
-	if fallbackSource != "" {
-		return fallbackSelf, fallbackPeers, fallbackSource, nil
+		return self, peers, candidate.source, nil
 	}
 	if decryptErr != nil {
-		return partyIPPeer{}, nil, "", decryptErr
+		return partyIPPeer{}, nil, recvBodySourceUnknown, decryptErr
 	}
-	return partyIPPeer{}, nil, "", fmt.Errorf("party IP info has no valid body")
+	return partyIPPeer{}, nil, recvBodySourceUnknown, fmt.Errorf("party IP info has no valid body")
 }
 
-func partyInfoPacketClearsParty(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (bool, string, error) {
+func partyInfoPacketClearsParty(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (bool, recvBodySource, error) {
 	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
-	valid := false
+	validSource := recvBodySourceUnknown
 	for _, candidate := range candidates {
 		inflated, err := inflatePartyInfo(candidate.body)
 		if err != nil {
 			continue
 		}
-		valid = true
+		if validSource == recvBodySourceUnknown {
+			validSource = candidate.source
+		}
 		if partyInfoClearsParty(inflated) {
 			return true, candidate.source, nil
 		}
 	}
-	if valid {
-		return false, "", nil
+	if validSource != recvBodySourceUnknown {
+		return false, validSource, nil
 	}
 	if decryptErr != nil {
-		return false, "", decryptErr
+		return false, recvBodySourceUnknown, decryptErr
 	}
-	return false, "", fmt.Errorf("party info has no valid zlib body")
+	return false, recvBodySourceUnknown, fmt.Errorf("party info has no valid zlib body")
 }
 
 func parseRecvPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (dataType uint16, dataSize int, decrypted []byte, err error) {
