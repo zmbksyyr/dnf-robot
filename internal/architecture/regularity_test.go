@@ -91,7 +91,7 @@ func TestActionResultStatesUseNamedConstants(t *testing.T) {
 
 func TestMarketAppLocksUsePurposeNames(t *testing.T) {
 	root := repoRoot(t)
-	path := filepath.Join(root, "internal", "capability", "marketapp", "marketapp_core.go")
+	path := filepath.Join(root, "internal", "capability", "marketapp", "marketapp_app.go")
 	assertStructHasNoGenericLockField(t, path, "App")
 }
 

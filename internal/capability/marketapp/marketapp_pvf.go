@@ -2,6 +2,7 @@ package marketapp
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 	"time"
 )
 
-// ---- iteminfo.go ----
 func (a *App) itemInfoStatus() ItemInfoSyncStatus {
 	return ItemInfoSyncStatus{
 		SourcePath: a.resolveConfigPath(a.cfg.ItemInfoSourcePath),
@@ -426,4 +426,49 @@ func (a *App) PVFPatchUpgradeSeparate(req PVFUpgradeSeparateRequest) (pvf.PVFUpg
 		target = 7
 	}
 	return pvf.PatchPVFUpgradeSeparate(path, target)
+}
+
+func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
+	out := map[uint32]catalogItem{}
+	stackable, err := readPVFItems(filepath.Join(a.configDir, "pvf_stackable_catalog.json"))
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range stackable {
+		if item.ID <= 0 {
+			continue
+		}
+		kind := "stackable"
+		if item.BadName || item.NoTrade || item.Expire {
+			kind = "blocked"
+		}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
+	}
+	equipment, err := readPVFItems(filepath.Join(a.configDir, "pvf_equipment_catalog.json"))
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range equipment {
+		if item.ID <= 0 {
+			continue
+		}
+		kind := "equipment"
+		if item.BadName || item.NoTrade || item.Expire {
+			kind = "blocked"
+		}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
+	}
+	return out, nil
+}
+
+func readPVFItems(path string) ([]pvfItem, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
+	}
+	var items []pvfItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

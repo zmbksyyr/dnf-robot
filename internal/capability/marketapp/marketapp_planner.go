@@ -2,6 +2,8 @@ package marketapp
 
 import "strings"
 
+const defaultAuctionEquipmentEndurance = 10
+
 type normalAuctionPlan struct {
 	Row          restockRow
 	Item         catalogItem
