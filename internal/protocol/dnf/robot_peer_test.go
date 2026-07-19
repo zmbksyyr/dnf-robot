@@ -47,6 +47,24 @@ func TestBuildPeerResponse(t *testing.T) {
 	}
 }
 
+func TestPlainRecvBodySupportsPartyNotify(t *testing.T) {
+	body := []byte{0x34, 0x12, peerRequestParty, 0x78, 0x56, 0x34, 0x12, 0xaa}
+	raw := make([]byte, 15+len(body))
+	raw[0] = 0
+	binary.LittleEndian.PutUint16(raw[1:3], 7)
+	binary.LittleEndian.PutUint32(raw[3:7], uint32(len(raw)))
+	copy(raw[15:], body)
+
+	plain, ok := plainRecvBody(raw, false)
+	if !ok || !bytes.Equal(plain, body) {
+		t.Fatalf("plainRecvBody = %x ok=%t", plain, ok)
+	}
+	response, typ, ok := buildPeerResponse(plain)
+	if !ok || typ != peerRequestParty || binary.LittleEndian.Uint16(response[:2]) != 0x1234 {
+		t.Fatalf("buildPeerResponse response=%x typ=%d ok=%t", response, typ, ok)
+	}
+}
+
 func TestPartyAcceptGameOptions(t *testing.T) {
 	options := make([]byte, gameEtcOptionSize)
 	for i := range options {

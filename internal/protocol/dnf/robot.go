@@ -730,15 +730,36 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 
 	if r.State == StateRun && packetFlag == 0 && packetType == 11 {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
-		if err == nil {
-			if self, peers, ok := parsePartyIPInfoSnapshot(decData, uint32(r.UID)); ok {
-				tracePartyIPInfo(r.UID, self, peers)
-				r.partySelfPeer = self
-				r.setPartyPeersUnsafe(peers)
-				r.ensurePartyRelayUnsafe()
-				r.followCachedPartyLeaderTownPositionUnsafe()
-				r.startPartyRobotPeerNegotiationUnsafe()
+		if err != nil {
+			if plain, ok := plainRecvBody(pInBuf, isAnti); ok {
+				decData = plain
+				fmt.Printf("[PARTY_IPINFO_PLAIN_FALLBACK] uid=%d err=%v size=%d\n", r.UID, err, len(plain))
+			} else {
+				fmt.Printf("[PARTY_IPINFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
+				return
 			}
+		}
+		if self, peers, ok := parsePartyIPInfoSnapshot(decData, uint32(r.UID)); ok {
+			tracePartyIPInfo(r.UID, self, peers)
+			r.partySelfPeer = self
+			r.setPartyPeersUnsafe(peers)
+			r.ensurePartyRelayUnsafe()
+			r.followCachedPartyLeaderTownPositionUnsafe()
+			r.startPartyRobotPeerNegotiationUnsafe()
+		} else {
+			if plain, plainOK := plainRecvBody(pInBuf, isAnti); plainOK && !bytes.Equal(plain, decData) {
+				if self, peers, ok := parsePartyIPInfoSnapshot(plain, uint32(r.UID)); ok {
+					fmt.Printf("[PARTY_IPINFO_PLAIN_FALLBACK] uid=%d data_size=%d\n", r.UID, len(plain))
+					tracePartyIPInfo(r.UID, self, peers)
+					r.partySelfPeer = self
+					r.setPartyPeersUnsafe(peers)
+					r.ensurePartyRelayUnsafe()
+					r.followCachedPartyLeaderTownPositionUnsafe()
+					r.startPartyRobotPeerNegotiationUnsafe()
+					return
+				}
+			}
+			fmt.Printf("[PARTY_IPINFO_SNAPSHOT_INVALID] uid=%d data_size=%d anti=%t\n", r.UID, len(decData), isAnti)
 		}
 		return
 	}
@@ -987,32 +1008,53 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 
 	if packetFlag == 0 && packetType == 7 && r.State == StateRun {
 		_, _, decData, err := parseRecvPacket(r.Cipher, pInBuf, isAnti)
-		if err == nil {
-			data, typ, ok := buildPeerResponse(decData)
-			if ok && (typ == peerRequestParty || (!r.LastTradeState && r.LastTradeID == 0)) {
-				uniqueID := binary.LittleEndian.Uint16(data[0:2])
-				pkt, err := buildSendPacket(11, uint16(r.PacketID), data, r.Cipher)
-				r.PacketID++
-				if err != nil {
-					fmt.Printf("[PEER_RESPONSE_BUILD_ERROR] uid=%d type=%d err=%v\n", r.UID, typ, err)
+		if err != nil {
+			if plain, ok := plainRecvBody(pInBuf, isAnti); ok {
+				decData = plain
+				fmt.Printf("[PEER_REQUEST_PLAIN_FALLBACK] uid=%d err=%v size=%d\n", r.UID, err, len(plain))
+			} else {
+				fmt.Printf("[PEER_REQUEST_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, isAnti, dInSize)
+				return
+			}
+		}
+		data, typ, ok := buildPeerResponse(decData)
+		if !ok {
+			if plain, plainOK := plainRecvBody(pInBuf, isAnti); plainOK && !bytes.Equal(plain, decData) {
+				if plainData, plainTyp, plainOK := buildPeerResponse(plain); plainOK {
+					fmt.Printf("[PEER_REQUEST_PLAIN_FALLBACK] uid=%d data_size=%d\n", r.UID, len(plain))
+					data = plainData
+					typ = plainTyp
+					ok = true
 				}
-				if err == nil {
-					sent := r.sendRaw(pkt)
-					if sent && typ == peerRequestTrade {
-						r.LastTradeID = uniqueID
-						r.LastTradeState = true
-					}
-					if sent && typ == peerRequestParty {
-						fmt.Printf("[PARTY_AUTO_ACCEPT] uid=%d peer_unique_id=%d request_id=%d\n",
-							r.UID, uniqueID, binary.LittleEndian.Uint32(data[3:7]))
-						r.resetPartyTQOSTransportUnsafe()
-						r.setPartyPendingUnsafe(uniqueID)
-						r.ensurePartyRelayUnsafe()
-					}
+			}
+			if !ok {
+				fmt.Printf("[PEER_REQUEST_UNSUPPORTED] uid=%d data_size=%d data=%x\n", r.UID, len(decData), decData)
+				return
+			}
+		}
+		if typ == peerRequestParty || (!r.LastTradeState && r.LastTradeID == 0) {
+			uniqueID := binary.LittleEndian.Uint16(data[0:2])
+			pkt, err := buildSendPacket(11, uint16(r.PacketID), data, r.Cipher)
+			r.PacketID++
+			if err != nil {
+				fmt.Printf("[PEER_RESPONSE_BUILD_ERROR] uid=%d type=%d err=%v\n", r.UID, typ, err)
+			}
+			if err == nil {
+				sent := r.sendRaw(pkt)
+				if sent && typ == peerRequestTrade {
+					r.LastTradeID = uniqueID
+					r.LastTradeState = true
 				}
-				if typ == peerRequestTrade {
-					r.TradeMoney = 0
+				if sent && typ == peerRequestParty {
+					fmt.Printf("[PARTY_AUTO_ACCEPT] uid=%d peer_unique_id=%d request_id=%d\n",
+						r.UID, uniqueID, binary.LittleEndian.Uint32(data[3:7]))
+					r.resetPartyTQOSTransportUnsafe()
+					r.setPartyPendingUnsafe(uniqueID)
+					r.ensurePartyRelayUnsafe()
 				}
+			}
+			if typ == peerRequestTrade {
+				r.TradeMoney = 0
 			}
 		}
 		return
@@ -3703,10 +3745,34 @@ func parseRecvPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (dataType
 	}
 
 	if err != nil {
+		if !isAnti && recvPacketPlainFallback(dataType, encryptedData) {
+			dec := append([]byte(nil), encryptedData...)
+			return dataType, len(dec), dec, nil
+		}
 		return dataType, 0, nil, err
 	}
 
 	return dataType, len(decData), decData, nil
+}
+
+func plainRecvBody(raw []byte, isAnti bool) ([]byte, bool) {
+	if isAnti || len(raw) <= 15 {
+		return nil, false
+	}
+	return append([]byte(nil), raw[15:]...), true
+}
+
+func recvPacketPlainFallback(dataType uint16, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	if dataType >= 6 && dataType <= 11 {
+		return true
+	}
+	if dataType >= 22 && dataType <= 31 {
+		return true
+	}
+	return dataType == 153
 }
 
 func alignTo16(size int) int {
