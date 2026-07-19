@@ -3,6 +3,7 @@ package webadmin
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -66,6 +67,28 @@ func TestPartyCompatRetryBackoffAndAutoOffThreshold(t *testing.T) {
 	s.partyCompatFirstFailure = now.Add(-partyCompatDisableAfter)
 	if !s.partyCompatShouldDisableLocked(now) {
 		t.Fatal("did not disable after count and age thresholds")
+	}
+}
+
+func TestPartyCompatUnavailableRetryDoesNotAccumulateAutoOffFailures(t *testing.T) {
+	s := New(&config.SysConfig{ConfigDir: t.TempDir()}, "", "")
+	now := time.Unix(1000, 0)
+	s.partyCompatFailures = partyCompatDisableAfterFailures
+	s.partyCompatFirstFailure = now.Add(-partyCompatDisableAfter)
+	s.partyCompatLastError = "old patch failure"
+
+	delay := s.schedulePartyCompatUnavailableRetryLocked("df_game_r is not listening on port 10011", now)
+	if delay != partyCompatInitialRetry {
+		t.Fatalf("retry delay = %s, want %s", delay, partyCompatInitialRetry)
+	}
+	if s.partyCompatFailures != 0 || !s.partyCompatFirstFailure.IsZero() || s.partyCompatShouldDisableLocked(now) {
+		t.Fatalf("unavailable process retained auto-off failures: count=%d first=%s", s.partyCompatFailures, s.partyCompatFirstFailure)
+	}
+	if want := now.Add(partyCompatInitialRetry); !s.partyCompatNextRetry.Equal(want) {
+		t.Fatalf("next retry = %s, want %s", s.partyCompatNextRetry, want)
+	}
+	if want := "waiting for df_game_r: df_game_r is not listening on port 10011"; s.partyCompatLastError != want {
+		t.Fatalf("waiting message = %q, want %q", s.partyCompatLastError, want)
 	}
 }
 
@@ -158,5 +181,8 @@ LISTEN 0 128 :::8111 :::* users:(("robot",pid=12,fd=8))`)
 	pid, err := parseGamePIDForPort(data, 10011)
 	if err != nil || pid != 499 {
 		t.Fatalf("pid=%d err=%v", pid, err)
+	}
+	if _, err := parseGamePIDForPort(data, 10056); !errors.Is(err, errPartyCompatUnavailable) {
+		t.Fatalf("missing game port error = %v", err)
 	}
 }

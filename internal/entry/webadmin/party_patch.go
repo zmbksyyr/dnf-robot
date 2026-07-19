@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -37,8 +38,9 @@ var defaultPartyCompatLayout = partyCompatLayout{
 }
 
 var (
-	partyCompatOriginalSite = []byte{0x80, 0x7d, 0xd3, 0x00, 0x0f, 0x84, 0xbf, 0x02, 0x00, 0x00}
-	partyCompatZeroCave     = make([]byte, 128)
+	partyCompatOriginalSite   = []byte{0x80, 0x7d, 0xd3, 0x00, 0x0f, 0x84, 0xbf, 0x02, 0x00, 0x00}
+	partyCompatZeroCave       = make([]byte, 128)
+	errPartyCompatUnavailable = errors.New("df_game_r is not listening")
 )
 
 type partyCompatLayout struct {
@@ -56,16 +58,17 @@ type partyCompatConfig struct {
 }
 
 type partyCompatStatus struct {
-	DesiredEnabled bool   `json:"desired_enabled"`
-	Enabled        bool   `json:"enabled"`
-	State          string `json:"state"`
-	PID            int    `json:"pid,omitempty"`
-	Port           int    `json:"port"`
-	AccountStart   uint32 `json:"account_start"`
-	AccountEnd     uint32 `json:"account_end"`
-	Message        string `json:"message,omitempty"`
-	FailCount      int    `json:"fail_count,omitempty"`
-	NextRetrySec   int    `json:"next_retry_sec,omitempty"`
+	DesiredEnabled     bool   `json:"desired_enabled"`
+	Enabled            bool   `json:"enabled"`
+	State              string `json:"state"`
+	PID                int    `json:"pid,omitempty"`
+	Port               int    `json:"port"`
+	AccountStart       uint32 `json:"account_start"`
+	AccountEnd         uint32 `json:"account_end"`
+	Message            string `json:"message,omitempty"`
+	FailCount          int    `json:"fail_count,omitempty"`
+	NextRetrySec       int    `json:"next_retry_sec,omitempty"`
+	processUnavailable bool
 }
 
 type partyCompatRequest struct {
@@ -203,6 +206,9 @@ func (s *Server) inspectPartyCompatLocked(cfg partyCompatConfig) partyCompatStat
 	if status.Message == "" && s.partyCompatLastError != "" {
 		status.Message = s.partyCompatLastError
 	}
+	if cfg.Enabled && status.processUnavailable {
+		status.Message = partyCompatWaitingMessage(status.Message)
+	}
 	return status
 }
 
@@ -268,7 +274,17 @@ func (s *Server) reconcilePartyCompat() time.Duration {
 		s.resetPartyCompatFailuresLocked()
 		return partyCompatSuccessInterval
 	}
+	if status.processUnavailable {
+		delay := s.schedulePartyCompatUnavailableRetryLocked(status.Message, time.Now())
+		foundationlog.Robotf("[PARTY_COMPAT_SUPERVISOR] waiting_for_game port=%d retry=%s err=%s\n", s.cfg.RobotGamePort, delay, status.Message)
+		return delay
+	}
 	if _, err := setPartyCompat(s.cfg.RobotGamePort, cfg, true); err != nil {
+		if errors.Is(err, errPartyCompatUnavailable) {
+			delay := s.schedulePartyCompatUnavailableRetryLocked(err.Error(), time.Now())
+			foundationlog.Robotf("[PARTY_COMPAT_SUPERVISOR] waiting_for_game port=%d retry=%s err=%v\n", s.cfg.RobotGamePort, delay, err)
+			return delay
+		}
 		s.recordPartyCompatFailureLocked(err)
 		foundationlog.Robotf("[PARTY_COMPAT_SUPERVISOR] enable_failed failures=%d port=%d err=%v\n", s.partyCompatFailures, s.cfg.RobotGamePort, err)
 		if s.partyCompatShouldDisableLocked(time.Now()) {
@@ -288,6 +304,26 @@ func (s *Server) reconcilePartyCompat() time.Duration {
 	foundationlog.Robotf("[PARTY_COMPAT_SUPERVISOR] enabled port=%d range=%d..%d\n", s.cfg.RobotGamePort, cfg.AccountStart, cfg.AccountEnd)
 	s.resetPartyCompatFailuresLocked()
 	return partyCompatSuccessInterval
+}
+
+func (s *Server) schedulePartyCompatUnavailableRetryLocked(message string, now time.Time) time.Duration {
+	delay := partyCompatInitialRetry
+	s.partyCompatFailures = 0
+	s.partyCompatFirstFailure = time.Time{}
+	s.partyCompatLastError = partyCompatWaitingMessage(message)
+	s.partyCompatNextRetry = now.Add(delay)
+	return delay
+}
+
+func partyCompatWaitingMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "waiting for df_game_r"
+	}
+	if strings.HasPrefix(message, "waiting for df_game_r:") {
+		return message
+	}
+	return "waiting for df_game_r: " + message
 }
 
 func (s *Server) recordPartyCompatFailureLocked(err error) {
@@ -339,6 +375,7 @@ func inspectPartyCompat(port int, cfg partyCompatConfig) partyCompatStatus {
 	pid, err := gamePIDForPort(port)
 	if err != nil {
 		status.Message = err.Error()
+		status.processUnavailable = errors.Is(err, errPartyCompatUnavailable)
 		return status
 	}
 	status.PID = pid
@@ -416,6 +453,9 @@ func gamePIDForPort(port int) (int, error) {
 	}
 	cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
 	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, fmt.Errorf("%w: pid %d exited", errPartyCompatUnavailable, pid)
+		}
 		return 0, err
 	}
 	for _, part := range strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00") {
@@ -442,7 +482,7 @@ func parseGamePIDForPort(data []byte, port int) (int, error) {
 			return pid, nil
 		}
 	}
-	return 0, fmt.Errorf("df_game_r is not listening on port %d", port)
+	return 0, fmt.Errorf("%w on port %d", errPartyCompatUnavailable, port)
 }
 
 func inspectPartyCompatMemory(mem io.ReaderAt, layout partyCompatLayout) (bool, uint32, uint32, error) {
