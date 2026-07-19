@@ -28,11 +28,16 @@ type partyTQOSPacket struct {
 }
 
 type partyTQOSReliableReply struct {
-	packet       []byte
-	nextRetry    time.Time
-	retries      uint8
-	acknowledged bool
-	exhausted    bool
+	packet                []byte
+	nextRetry             time.Time
+	retries               uint8
+	acknowledged          bool
+	exhausted             bool
+	requestKnown          bool
+	requestType           byte
+	requestFlags          byte
+	requestCodec          partyTQOSCodec
+	latestRequestSequence uint32
 }
 
 type partyTQOSReceiveWindow struct {

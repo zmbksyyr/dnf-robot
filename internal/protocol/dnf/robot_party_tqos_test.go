@@ -82,21 +82,79 @@ func TestRobotPartyTQOSRetransmitsPendingReliableReply(t *testing.T) {
 	request := buildPartyTQOSPacket(7, peer.slot, 0, 1, 1, codec)
 
 	first := vo.buildPartyTQOSRepliesUnsafe(request, 1, peer)
-	second := vo.buildPartyTQOSRepliesUnsafe(request, 1, peer)
+	second := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 1, codec), 1, peer)
 	if len(first) != 1 || len(second) != 1 || !bytes.Equal(first[0], second[0]) {
 		t.Fatalf("reliable retry changed reply: first=%x second=%x", first, second)
 	}
 	if vo.partyTQOSReliableSeq[peer.slot][1] != 1 {
 		t.Fatalf("reliable sequence advanced on retry: %d", vo.partyTQOSReliableSeq[peer.slot][1])
 	}
+	if got := vo.partyTQOSReplies[peer.slot][1].latestRequestSequence; got != 8 {
+		t.Fatalf("latest request sequence = %d, want 8", got)
+	}
 
 	sequence := binary.LittleEndian.Uint32(first[0][1:5])
 	if replies := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(peer.slot, sequence), 1, peer); len(replies) != 0 {
 		t.Fatalf("ACK generated replies: %x", replies)
 	}
-	third := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 1, codec), 1, peer)
-	if len(third) != 1 || !bytes.Equal(third[0], first[0]) || vo.partyTQOSReliableSeq[peer.slot][1] != 1 {
-		t.Fatalf("post-ACK retry changed reply=%x first=%x next=%d", third, first, vo.partyTQOSReliableSeq[peer.slot][1])
+	duplicate := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 1, codec), 1, peer)
+	if len(duplicate) != 1 || !bytes.Equal(duplicate[0], first[0]) || vo.partyTQOSReliableSeq[peer.slot][1] != 1 {
+		t.Fatalf("post-ACK duplicate changed reply=%x first=%x next=%d", duplicate, first, vo.partyTQOSReliableSeq[peer.slot][1])
+	}
+	third := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(9, peer.slot, 0, 1, 1, codec), 1, peer)
+	if len(third) != 1 || bytes.Equal(third[0], first[0]) || vo.partyTQOSReliableSeq[peer.slot][1] != 2 {
+		t.Fatalf("new handshake reused reply=%x first=%x next=%d", third, first, vo.partyTQOSReliableSeq[peer.slot][1])
+	}
+}
+
+func TestRobotPartyTQOSReliableReplyStartsNewEpochForCodecOrFlags(t *testing.T) {
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true}
+	codecA := partyTQOSCodec{key: 0x7e}
+	codecB := partyTQOSCodec{key: 0xa5, rotate: 3}
+
+	first := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(7, peer.slot, 0, 1, 1, codecA), 1, peer)
+	second := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 1, 1, 1, codecA), 1, peer)
+	third := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(9, peer.slot, 1, 1, 1, codecB), 1, peer)
+	if len(first) != 1 || len(second) != 1 || len(third) != 1 || bytes.Equal(first[0], second[0]) || bytes.Equal(second[0], third[0]) {
+		t.Fatalf("epochs first=%x second=%x third=%x", first, second, third)
+	}
+	if vo.partyTQOSReliableSeq[peer.slot][1] != 3 {
+		t.Fatalf("reliable sequence = %d, want 3", vo.partyTQOSReliableSeq[peer.slot][1])
+	}
+	got, ok := parsePartyTQOSPacketWithCodec(third[0], 1, &codecB)
+	if !ok || got.flags != 1 || got.state != 2 || got.codec != codecB {
+		t.Fatalf("latest reply = %+v ok=%t", got, ok)
+	}
+}
+
+func TestRobotPartyTQOSExhaustedReplyRecoversOnNewRequest(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	vo := &RobotVo{}
+	vo.partySelfPeer = partyIPPeer{slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true}
+	first := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(7, peer.slot, 0, 1, 1, codec), 1, peer)
+	pending := &vo.partyTQOSReplies[peer.slot][1]
+	pending.exhausted = true
+	pending.retries = partyTQOSMaxRetries
+	pending.nextRetry = time.Time{}
+
+	second := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 1, codec), 1, peer)
+	if len(first) != 1 || len(second) != 1 || bytes.Equal(first[0], second[0]) {
+		t.Fatalf("exhausted epoch was not replaced: first=%x second=%x", first, second)
+	}
+	if pending.exhausted || pending.retries != 0 || pending.nextRetry.IsZero() {
+		t.Fatalf("new pending state = %+v", *pending)
+	}
+}
+
+func TestPartyTQOSSequenceAfterHandlesWraparound(t *testing.T) {
+	if !partyTQOSSequenceAfter(0, ^uint32(0)) {
+		t.Fatal("wrapped sequence was not newer")
+	}
+	if partyTQOSSequenceAfter(^uint32(0), 0) {
+		t.Fatal("old wrapped sequence was newer")
 	}
 }
 
@@ -272,6 +330,44 @@ func TestRobotPartyTQOSReadyRequiresState2OrReplyACK(t *testing.T) {
 	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(4, peer.slot, 0, 2, 1, codec), 1, peer)
 	if !vo.partyRobotPeerReady[peer.slot] {
 		t.Fatal("received state2 did not mark robot peer ready")
+	}
+
+	vo.resetPartyTQOSPeerUnsafe(peer.slot)
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(5, peer.slot, 0, 2, 2, codec), 2, peer)
+	if !vo.partyRobotPeerReady[peer.slot] {
+		t.Fatal("relay state2 did not mark robot peer ready")
+	}
+}
+
+func TestRobotPartyTQOSRelayACKDoesNotConfirmNewEpoch(t *testing.T) {
+	codec := partyTQOSCodec{key: 0x7e}
+	vo := &RobotVo{UID: 17000001}
+	vo.partySelfPeer = partyIPPeer{accID: 17000001, slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, accID: 17000002, slot: 0, slotKnown: true}
+
+	first := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(7, peer.slot, 0, 1, 2, codec), 2, peer)
+	if len(first) != 1 {
+		t.Fatalf("first relay state2 = %x", first)
+	}
+	firstSequence := binary.LittleEndian.Uint32(first[0][1:5])
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(peer.slot, firstSequence), 2, peer)
+	if !vo.partyTQOSReplies[peer.slot][2].acknowledged || !vo.partyRobotPeerReady[peer.slot] {
+		t.Fatal("relay ACK did not complete the first epoch")
+	}
+
+	second := vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSPacket(8, peer.slot, 0, 1, 2, codec), 2, peer)
+	if len(second) != 1 || bytes.Equal(first[0], second[0]) {
+		t.Fatalf("second relay epoch = %x first=%x", second, first)
+	}
+	vo.partyRobotPeerReady[peer.slot] = false
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(peer.slot, firstSequence), 2, peer)
+	if vo.partyTQOSReplies[peer.slot][2].acknowledged || vo.partyRobotPeerReady[peer.slot] {
+		t.Fatal("old relay ACK confirmed the new epoch")
+	}
+	secondSequence := binary.LittleEndian.Uint32(second[0][1:5])
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(peer.slot, secondSequence), 2, peer)
+	if !vo.partyTQOSReplies[peer.slot][2].acknowledged || !vo.partyRobotPeerReady[peer.slot] {
+		t.Fatal("current relay ACK did not complete the new epoch")
 	}
 }
 

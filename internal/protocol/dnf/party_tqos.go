@@ -118,7 +118,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 	now := time.Now()
 	for _, frame := range frames {
 		if frame[0] == 0x00 {
-			if route == 1 && r.partyTQOSReplyAcknowledgedUnsafe(frame, route, peer) {
+			if r.partyTQOSReplyAcknowledgedUnsafe(frame, route, peer) {
 				r.markPartyRobotPeerReadyUnsafe(peer, "ack")
 			}
 			continue
@@ -148,7 +148,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		if !ok {
 			continue
 		}
-		if route == 1 && request.state == 2 {
+		if request.state == 2 {
 			r.markPartyRobotPeerReadyUnsafe(peer, "state2")
 		}
 		if peer.slot < 4 && route < 3 {
@@ -189,6 +189,7 @@ func (r *RobotVo) partyTQOSReplyAcknowledgedUnsafe(frame []byte, route byte, pee
 		return false
 	}
 	pending.acknowledged = true
+	pending.exhausted = false
 	pending.nextRetry = time.Time{}
 	return true
 }
@@ -206,17 +207,42 @@ func (r *RobotVo) partyTQOSReliableReplyUnsafe(peerSlot, route byte, request par
 		return nil, false
 	}
 	pending := &r.partyTQOSReplies[peerSlot][route]
-	if pending.packet != nil {
-		return pending.packet, true
+	if pending.matchesRequestEpoch(request) {
+		newerRequest := partyTQOSSequenceAfter(request.sequence, pending.latestRequestSequence)
+		if !pending.acknowledged && !pending.exhausted {
+			if newerRequest {
+				pending.latestRequestSequence = request.sequence
+			}
+			return pending.packet, true
+		}
+		if !newerRequest {
+			return pending.packet, true
+		}
 	}
 	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peerSlot, route, true)
 	if !ok {
 		return nil, false
 	}
 	packet := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, request.flags, 2, route, request.codec)
-	pending.packet = packet
-	pending.nextRetry = time.Now().Add(partyTQOSRetryInterval)
+	*pending = partyTQOSReliableReply{
+		packet:                packet,
+		nextRetry:             time.Now().Add(partyTQOSRetryInterval),
+		requestKnown:          true,
+		requestType:           request.typ,
+		requestFlags:          request.flags,
+		requestCodec:          request.codec,
+		latestRequestSequence: request.sequence,
+	}
 	return packet, true
+}
+
+func (p *partyTQOSReliableReply) matchesRequestEpoch(request partyTQOSPacket) bool {
+	return p != nil && p.requestKnown && len(p.packet) != 0 &&
+		p.requestType == request.typ && p.requestFlags == request.flags && p.requestCodec == request.codec
+}
+
+func partyTQOSSequenceAfter(sequence, previous uint32) bool {
+	return int32(sequence-previous) > 0
 }
 
 func (r *RobotVo) tracePartyUDPUnsafe(reason string, remote *net.UDPAddr, senderSlot *byte, peer uint32, size int) {
