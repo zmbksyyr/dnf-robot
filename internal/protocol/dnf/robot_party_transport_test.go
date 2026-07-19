@@ -355,3 +355,106 @@ func TestEnsurePartyRelayIsAsyncSingleflightAndUsesLoginIP(t *testing.T) {
 	}
 	close(release)
 }
+
+func TestPartyRelayQueuedWriteDoesNotHoldRobotMutex(t *testing.T) {
+	robotConn, peerConn := net.Pipe()
+	defer peerConn.Close()
+	vo := &RobotVo{UID: 17000001, State: StateRun, partyRelayConn: robotConn}
+	peer := partyIPPeer{uniqueID: 7, accID: 18000000, slot: 0, slotKnown: true}
+
+	vo.mu.Lock()
+	started := time.Now()
+	_, err := vo.sendPartyTransportUnsafe(nil, peer, 2, []byte("blocked relay write"))
+	vo.mu.Unlock()
+	if err != nil {
+		t.Fatalf("queue relay write: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("relay enqueue blocked for %s", elapsed)
+	}
+
+	locked := make(chan struct{})
+	go func() {
+		vo.mu.Lock()
+		vo.mu.Unlock()
+		close(locked)
+	}()
+	select {
+	case <-locked:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("blocked relay socket held the Robot mutex")
+	}
+
+	vo.mu.Lock()
+	vo.closePartyRelayUnsafe()
+	vo.mu.Unlock()
+}
+
+func TestPartyRelayWriteFailureDetachesAndFallsBackToUDP(t *testing.T) {
+	robotConn, peerConn := net.Pipe()
+	_ = peerConn.Close()
+	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpConn.Close()
+
+	vo := &RobotVo{UID: 17000001, State: StateRun, partyRelayConn: robotConn, partyUDPConn: udpConn}
+	peer := partyIPPeer{uniqueID: 7, accID: 18000000, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
+	vo.partyPeers[0] = peer
+	vo.partyPeerRoute[0] = 2
+	vo.partyPeerRouteAt[0] = time.Now()
+
+	vo.mu.Lock()
+	_, err = vo.sendPartyTransportUnsafe(nil, peer, 2, []byte("write failure"))
+	vo.mu.Unlock()
+	if err != nil {
+		t.Fatalf("queue relay write: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		vo.mu.Lock()
+		detached := vo.partyRelayConn == nil && vo.partyRelayWriter == nil
+		route := vo.partyRouteForPeerUnsafe(0)
+		vo.mu.Unlock()
+		if detached {
+			if route != 1 {
+				t.Fatalf("route after relay failure=%d want UDP", route)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("relay write failure left a stale connection")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestPartyRelayWriteQueueIsBounded(t *testing.T) {
+	robotConn, peerConn := net.Pipe()
+	defer peerConn.Close()
+	vo := &RobotVo{UID: 17000001, State: StateRun, partyRelayConn: robotConn}
+	peer := partyIPPeer{uniqueID: 7, accID: 18000000, slot: 0, slotKnown: true}
+
+	started := time.Now()
+	var queueErr error
+	vo.mu.Lock()
+	for i := 0; i < partyRelayWriteQueueSize+2; i++ {
+		if _, err := vo.sendPartyTransportUnsafe(nil, peer, 2, []byte{byte(i)}); err != nil {
+			queueErr = err
+			break
+		}
+	}
+	detached := vo.partyRelayConn == nil && vo.partyRelayWriter == nil
+	vo.mu.Unlock()
+	if queueErr == nil {
+		t.Fatal("relay queue accepted an unbounded write burst")
+	}
+	if !detached {
+		t.Fatal("relay queue overflow did not detach the connection")
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("relay queue overflow blocked for %s", elapsed)
+	}
+}

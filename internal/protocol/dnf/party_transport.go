@@ -12,11 +12,20 @@ import (
 	"time"
 )
 
-const partyRelayWriteTimeout = 500 * time.Millisecond
+const (
+	partyRelayWriteTimeout   = 500 * time.Millisecond
+	partyRelayWriteQueueSize = 64
+)
 
 const partyRobotProbeCooldown = 30 * time.Second
 
 type partyRelayDialFunc func(network, address string, timeout time.Duration) (net.Conn, error)
+
+type partyRelayWriter struct {
+	conn    net.Conn
+	packets chan []byte
+	done    chan struct{}
+}
 
 func (r *RobotVo) sendPartyOptionUnsafe() bool {
 	if r.State != StateRun || !r.partyOptionReady || r.partyOptionSent {
@@ -125,6 +134,7 @@ func (r *RobotVo) finishPartyRelayConnect(generation uint64, conn net.Conn) bool
 		return false
 	}
 	r.partyRelayConn = conn
+	r.startPartyRelayWriterUnsafe(conn)
 	return true
 }
 
@@ -133,6 +143,7 @@ func (r *RobotVo) closePartyRelayUnsafe() {
 	r.partyRelayConnecting = false
 	conn := r.partyRelayConn
 	r.partyRelayConn = nil
+	r.stopPartyRelayWriterUnsafe(conn)
 	if conn != nil {
 		_ = conn.Close()
 	}
@@ -144,12 +155,17 @@ func (r *RobotVo) detachPartyRelayConn(conn net.Conn) bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.partyRelayConn != conn {
+	return r.detachPartyRelayConnUnsafe(conn)
+}
+
+func (r *RobotVo) detachPartyRelayConnUnsafe(conn net.Conn) bool {
+	if conn == nil || r.partyRelayConn != conn {
 		return false
 	}
 	r.partyRelayConn = nil
 	r.partyRelayGeneration++
 	r.partyRelayConnecting = false
+	r.stopPartyRelayWriterUnsafe(conn)
 	return r.State != StateStop
 }
 
@@ -157,8 +173,6 @@ func (r *RobotVo) writePartyRelayConn(conn net.Conn, packet []byte) error {
 	if conn == nil {
 		return fmt.Errorf("party relay is not connected")
 	}
-	r.partyRelaySendMu.Lock()
-	defer r.partyRelaySendMu.Unlock()
 	if err := conn.SetWriteDeadline(time.Now().Add(partyRelayWriteTimeout)); err != nil {
 		return err
 	}
@@ -175,6 +189,84 @@ func (r *RobotVo) writePartyRelayConn(conn net.Conn, packet []byte) error {
 	return nil
 }
 
+func (r *RobotVo) startPartyRelayWriterUnsafe(conn net.Conn) *partyRelayWriter {
+	if conn == nil {
+		return nil
+	}
+	if writer := r.partyRelayWriter; writer != nil && writer.conn == conn {
+		return writer
+	}
+	if r.partyRelayWriter != nil {
+		close(r.partyRelayWriter.done)
+	}
+	writer := &partyRelayWriter{
+		conn:    conn,
+		packets: make(chan []byte, partyRelayWriteQueueSize),
+		done:    make(chan struct{}),
+	}
+	r.partyRelayWriter = writer
+	go r.partyRelayWriteLoop(writer, r.UID)
+	return writer
+}
+
+func (r *RobotVo) stopPartyRelayWriterUnsafe(conn net.Conn) {
+	writer := r.partyRelayWriter
+	if writer == nil || (conn != nil && writer.conn != conn) {
+		return
+	}
+	r.partyRelayWriter = nil
+	close(writer.done)
+}
+
+func (r *RobotVo) partyRelayWriteLoop(writer *partyRelayWriter, uid uint32) {
+	if writer == nil {
+		return
+	}
+	for {
+		select {
+		case <-writer.done:
+			return
+		default:
+		}
+		select {
+		case <-writer.done:
+			return
+		case packet := <-writer.packets:
+			if err := r.writePartyRelayConn(writer.conn, packet); err != nil {
+				unexpected := r.detachPartyRelayConn(writer.conn)
+				_ = writer.conn.Close()
+				if unexpected {
+					fmt.Printf("[PARTY_RELAY_WRITE_ERROR] uid=%d err=%v\n", uid, err)
+				}
+				return
+			}
+		}
+	}
+}
+
+func (r *RobotVo) enqueuePartyRelayPacketUnsafe(conn net.Conn, packet []byte) error {
+	if conn == nil || r.partyRelayConn != conn {
+		return fmt.Errorf("party relay is not connected")
+	}
+	writer := r.startPartyRelayWriterUnsafe(conn)
+	if writer == nil {
+		return fmt.Errorf("party relay writer is unavailable")
+	}
+	packet = append([]byte(nil), packet...)
+	select {
+	case writer.packets <- packet:
+		return nil
+	default:
+		return fmt.Errorf("party relay write queue is full")
+	}
+}
+
+func (r *RobotVo) enqueuePartyRelayPacket(conn net.Conn, packet []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.enqueuePartyRelayPacketUnsafe(conn, packet)
+}
+
 func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 	buf := make([]byte, 4096)
 	pending := make([]byte, 0, 4096)
@@ -186,7 +278,7 @@ func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				now := time.Now()
 				if now.After(nextHeartbeat) {
-					if err := r.writePartyRelayConn(conn, buildPartyRelayPacket(1, uid, uid, nil)); err != nil {
+					if err := r.enqueuePartyRelayPacket(conn, buildPartyRelayPacket(1, uid, uid, nil)); err != nil {
 						unexpected := r.detachPartyRelayConn(conn)
 						_ = conn.Close()
 						if unexpected {
@@ -250,7 +342,7 @@ func (r *RobotVo) handlePartyRelayPacket(conn net.Conn, packet []byte) {
 	replies := r.buildPartyRelayReplies(payload, src)
 	for _, replyPayload := range replies {
 		reply := buildPartyRelayPacket(1, r.UID, src, replyPayload)
-		if err := r.writePartyRelayConn(conn, reply); err != nil {
+		if err := r.enqueuePartyRelayPacket(conn, reply); err != nil {
 			unexpected := r.detachPartyRelayConn(conn)
 			_ = conn.Close()
 			if unexpected {
@@ -722,11 +814,9 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 		if relay == nil {
 			return "relay", fmt.Errorf("party relay is unavailable")
 		}
-		err := r.writePartyRelayConn(relay, buildPartyRelayPacket(1, r.UID, peer.accID, payload))
+		err := r.enqueuePartyRelayPacketUnsafe(relay, buildPartyRelayPacket(1, r.UID, peer.accID, payload))
 		if err != nil && r.partyRelayConn == relay {
-			r.partyRelayConn = nil
-			r.partyRelayConnecting = false
-			r.partyRelayGeneration++
+			r.detachPartyRelayConnUnsafe(relay)
 			_ = relay.Close()
 		}
 		return "relay", err

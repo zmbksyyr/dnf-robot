@@ -142,7 +142,7 @@ type RobotVo struct {
 	partyRelayGeneration uint64
 	partyRelayAt         time.Time
 	partyRelayDial       partyRelayDialFunc
-	partyRelaySendMu     lockhub.Locker
+	partyRelayWriter     *partyRelayWriter
 	partyTQOSSeq         [4][3]uint32
 	partyTQOSReliableSeq [4][3]uint32
 	partyTQOSReplies     [4][3]partyTQOSReliableReply
