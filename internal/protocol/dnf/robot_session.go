@@ -109,16 +109,15 @@ type RobotVo struct {
 	TransactionArr [24]*Transaction
 	InfanMap       map[int]Transaction
 
-	PendingStoreTitle         string
-	StoreDisplaySent          bool
-	StoreDisplayAck           bool
-	StoreDisplayRejected      bool
-	StoreCreateRejected       bool
-	LastStoreError            byte
-	StoreCreated              bool
-	PrepareStoreAfterItemList bool
-	storeInventoryVersion     uint64
-	LoginInfo                 UserLoginInfo
+	PendingStoreTitle     string
+	StoreDisplaySent      bool
+	StoreDisplayAck       bool
+	StoreDisplayRejected  bool
+	StoreCreateRejected   bool
+	LastStoreError        byte
+	StoreCreated          bool
+	storeInventoryVersion uint64
+	LoginInfo             UserLoginInfo
 
 	DisjointCreateSent       bool
 	DisjointDirectAck        bool
@@ -358,7 +357,6 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.StoreCreateRejected = false
 	r.LastStoreError = 0
 	r.StoreCreated = false
-	r.PrepareStoreAfterItemList = false
 	r.storeInventoryVersion++
 	r.invalidateTradeQuoteUnsafe()
 	r.clearTradeUnsafe()

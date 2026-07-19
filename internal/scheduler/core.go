@@ -211,7 +211,6 @@ type StoreRuntime interface {
 	StartDisjointStore(uid int, cost uint32) bool
 	ResetDisjointStore(uid int) bool
 	SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool
-	CompletePrivateStoreDisplay(uid int) bool
 }
 
 type AreaRuntime interface {
@@ -445,10 +444,6 @@ func (noopRuntime) SetArea(uid int, village, area int, x, y int) bool {
 }
 
 func (noopRuntime) SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool {
-	return false
-}
-
-func (noopRuntime) CompletePrivateStoreDisplay(uid int) bool {
 	return false
 }
 

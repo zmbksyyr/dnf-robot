@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"time"
+
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	storecap "robot/internal/capability/store"
@@ -112,15 +114,17 @@ func (m *RobotManager) restoreAutoNormalPosition(info robotcap.Info, rc robotcon
 }
 
 func (m *RobotManager) restoreAutoNormalOnline(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, bool) {
+	started := time.Now()
 	normal := m.restoreAutoNormalPosition(info, rc, reason)
 	result, err := m.sessionService().Online(robotcap.CommandRequest{UIDs: []int{normal.UID}}, true, rc)
 	recovered := err == nil && result.Confirmed == 1
+	elapsedMS := time.Since(started).Milliseconds()
 	if !recovered {
-		robotLogf("[AutoStore] uid=%d restore_normal_online_failed reason=%s confirmed=%d failed=%d err=%v\n",
-			normal.UID, reason, result.Confirmed, result.Failed, err)
+		robotLogf("[AutoStore] uid=%d restore_normal_online_failed reason=%s confirmed=%d failed=%d elapsed_ms=%d err=%v\n",
+			normal.UID, reason, result.Confirmed, result.Failed, elapsedMS, err)
 		return normal, false
 	}
-	robotLogf("[AutoStore] uid=%d restore_normal_online_ok reason=%s\n", normal.UID, reason)
+	robotLogf("[AutoStore] uid=%d restore_normal_online_ok reason=%s elapsed_ms=%d\n", normal.UID, reason, elapsedMS)
 	return normal, true
 }
 

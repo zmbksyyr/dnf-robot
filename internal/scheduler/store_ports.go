@@ -27,10 +27,6 @@ func (e storeWorkflowEnv) BeginStoreBusy(uid int) bool {
 	return e.manager.beginStoreBusy(uid)
 }
 
-func (e storeWorkflowEnv) CompletePrivateStoreDisplay(uid int) bool {
-	return e.manager.doll.CompletePrivateStoreDisplay(uid)
-}
-
 func (e storeWorkflowEnv) Config() robotconfig.RuntimeConfig {
 	return e.manager.loadRobotConfig()
 }

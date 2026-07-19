@@ -39,7 +39,6 @@ func (r *RobotVo) ResetPrivateStoreState() {
 	r.StoreCreateRejected = false
 	r.LastStoreError = 0
 	r.StoreCreated = false
-	r.PrepareStoreAfterItemList = false
 	r.PendingStoreTitle = ""
 }
 
@@ -65,7 +64,6 @@ func (r *RobotVo) PreparePrivateStoreState(title string) {
 	r.StoreCreateRejected = false
 	r.LastStoreError = 0
 	r.StoreCreated = false
-	r.PrepareStoreAfterItemList = false
 	r.RobotTyp = 2
 }
 
@@ -98,12 +96,12 @@ func (r *RobotVo) OpenDisjointStore(cost uint32) bool {
 	return true
 }
 
-func (r *RobotVo) CreatePrivateStore() {
+func (r *RobotVo) CreatePrivateStore() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.State != StateRun || r.partyActiveUnsafe() {
-		return
+		return false
 	}
 	r.StoreCreateRejected = false
 
@@ -115,25 +113,28 @@ func (r *RobotVo) CreatePrivateStore() {
 	binary.LittleEndian.PutUint16(data[2:4], r.CurX)
 	binary.LittleEndian.PutUint16(data[4:6], r.CurY)
 	pkt, err := buildSendPacket(88, uint16(r.PacketID), data[:], r.Cipher)
-	r.PacketID++
-	if err == nil {
-		r.SendMsg(pkt)
+	if err != nil || !r.SendMsg(pkt) {
+		r.StoreCreateRejected = true
+		r.LastStoreError = 0
+		return false
 	}
+	r.PacketID++
 	r.RobotTyp = 2
+	return true
 }
 
-func (r *RobotVo) CompleteDisplay(title string, storeInfo []StoreInfo) {
+func (r *RobotVo) CompleteDisplay(title string, storeInfo []StoreInfo) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.completeDisplay(title, storeInfo)
+	return r.completeDisplay(title, storeInfo)
 }
 
-func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) {
+func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) bool {
 	if r.State != StateRun || r.partyActiveUnsafe() {
-		return
+		return false
 	}
 	if r.StoreDisplaySent {
-		return
+		return false
 	}
 
 	realSize := 4 + len(title) + 1 + len(storeInfo)*13 + 2
@@ -161,12 +162,15 @@ func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) {
 	}
 
 	pkt, err := buildSendPacket(90, uint16(r.PacketID), data, r.Cipher)
-	r.PacketID++
-	if err == nil {
-		r.SendMsg(pkt)
-		r.StoreDisplaySent = true
-		r.StoreDisplayAck = false
+	if err != nil || !r.SendMsg(pkt) {
+		r.StoreDisplayRejected = true
+		r.LastStoreError = 0
+		return false
 	}
+	r.PacketID++
+	r.StoreDisplaySent = true
+	r.StoreDisplayAck = false
+	return true
 }
 
 func (r *RobotVo) GetCompleteDisplay(flag int) bool {
@@ -184,11 +188,40 @@ func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 	var data [8]byte
 	data[0] = byte(flag)
 	pkt, err := buildSendPacket(20, uint16(r.PacketID), data[:], r.Cipher)
-	r.PacketID++
-	if err == nil {
-		r.SendMsg(pkt)
+	if err != nil || !r.SendMsg(pkt) {
+		r.IsWaitingItemList = false
+		r.StoreDisplayRejected = true
+		r.LastStoreError = 0
+		return false
 	}
-	return err == nil
+	r.PacketID++
+	return true
+}
+
+func (r *RobotVo) PrivateStoreItemListReceived() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.IsWaitingItemList
+}
+
+func (r *RobotVo) MarkPrivateStoreCreateFailed() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.StoreCreated || r.StoreCreateRejected {
+		return
+	}
+	r.StoreCreateRejected = true
+	r.LastStoreError = 0
+}
+
+func (r *RobotVo) MarkPrivateStoreDisplayFailed() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.StoreDisplaySent || r.StoreDisplayAck || r.StoreDisplayRejected {
+		return
+	}
+	r.StoreDisplayRejected = true
+	r.LastStoreError = 0
 }
 
 func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
@@ -256,7 +289,7 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 
 func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	r.mu.Lock()
-	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.StoreDisplayAck || r.DB == nil {
+	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.StoreDisplaySent || r.StoreDisplayAck || r.StoreDisplayRejected || r.DB == nil {
 		r.mu.Unlock()
 		return false
 	}
@@ -336,16 +369,12 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	}
 
 	r.mu.Lock()
-	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.StoreDisplayAck || r.UID != uid || r.DB != db {
-		ack := r.StoreDisplayAck
+	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.StoreDisplaySent || r.StoreDisplayAck || r.StoreDisplayRejected || r.UID != uid || r.DB != db {
+		sent := r.StoreDisplaySent || r.StoreDisplayAck
 		r.mu.Unlock()
-		return ack
+		return sent
 	}
-	r.StoreDisplaySent = false
-	r.StoreDisplayAck = false
 	r.StoreDisplayRejected = false
-	r.mu.Unlock()
-
 	storeInfo := make([]StoreInfo, 0, len(storeRows))
 	for i, sr := range storeRows {
 		count := sr.Count
@@ -354,10 +383,9 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		}
 		storeInfo = append(storeInfo, StoreInfo{Index: i, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
 	}
-
-	r.CompleteDisplay(title, storeInfo)
-	time.Sleep(1400 * time.Millisecond)
-	return r.Snapshot().StoreDisplayAck
+	sent := r.completeDisplay(title, storeInfo)
+	r.mu.Unlock()
+	return sent
 }
 
 func isStoreStackableType(itemType int) bool {

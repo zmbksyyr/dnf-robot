@@ -61,14 +61,21 @@ func TestStoreErrReasonRetryClassification(t *testing.T) {
 	if got := StoreErrReason(0x11); got != StoreReasonErr011 {
 		t.Fatalf("StoreErrReason(0x11) got %q want %q", got, StoreReasonErr011)
 	}
-	if !RetryStoreReasonWithNewPoint(StoreReasonErr011) {
-		t.Fatalf("store_err_0x11 should retry another point")
+	tests := []struct {
+		reason string
+		want   bool
+	}{
+		{reason: "store_err_0x38", want: true},
+		{reason: "store_err_0x3e", want: true},
+		{reason: StoreReasonErr052, want: true},
+		{reason: StoreReasonErr011, want: false},
+		{reason: "store_err_0x7f", want: false},
+		{reason: StoreReasonRuntimeStopped, want: false},
 	}
-	if !RetryStoreReasonWithNewPoint(StoreReasonErr052) {
-		t.Fatalf("store_err_0x52 should remain point-retryable")
-	}
-	if RetryStoreReasonWithNewPoint(StoreReasonRuntimeStopped) {
-		t.Fatalf("runtime_stopped should not retry another point")
+	for _, tt := range tests {
+		if got := RetryStoreReasonWithNewPoint(tt.reason); got != tt.want {
+			t.Fatalf("RetryStoreReasonWithNewPoint(%q) = %v, want %v", tt.reason, got, tt.want)
+		}
 	}
 }
 

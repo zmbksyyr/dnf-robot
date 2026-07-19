@@ -62,11 +62,6 @@ func (rs *RobotSvc) SetAreaFrom(uid int, village, area int, x, y int, fromVillag
 	return true
 }
 
-func (rs *RobotSvc) CompletePrivateStoreDisplay(uid int) bool {
-	vo := rs.robot(uid)
-	return vo != nil && vo.CompleteDisplayFromStallFallback()
-}
-
 func (rs *RobotSvc) robot(uid int) *dnf.RobotVo {
 	task := rs.task()
 	if task == nil || uid <= 0 {
@@ -97,25 +92,28 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 	if !storeRobotReady(vo) {
 		return
 	}
-	vo.CreatePrivateStore()
-	waitStoreCreated(vo, 5*time.Second)
-	if snap := vo.Snapshot(); !snap.PartyActive && !snap.StoreCreated && shared.StateName(int(snap.State)) == shared.RuntimeStateRunning {
-		time.Sleep(1200 * time.Millisecond)
-		vo.CreatePrivateStore()
-		waitStoreCreated(vo, 5*time.Second)
+	if !vo.CreatePrivateStore() {
+		return
 	}
-	time.Sleep(1200 * time.Millisecond)
+	waitStoreCreated(vo, 5*time.Second)
+	if snap := vo.Snapshot(); snap.PartyActive || shared.StateName(int(snap.State)) != shared.RuntimeStateRunning {
+		return
+	} else if !snap.StoreCreated {
+		vo.MarkPrivateStoreCreateFailed()
+		return
+	}
+	if !vo.GetCompleteDisplay(0) {
+		return
+	}
+	waitStoreItemList(vo, 4*time.Second)
 	if !storeRobotReady(vo) {
 		return
 	}
-	vo.GetCompleteDisplay(0)
-	time.Sleep(1200 * time.Millisecond)
-	vo.GetDbDataAndCompleteDisplay()
-	waitStoreDisplay(vo, 1500*time.Millisecond)
-	if snap := vo.Snapshot(); snap.StoreDisplayAck || shared.StateName(int(snap.State)) != shared.RuntimeStateRunning {
-		return
+	_ = vo.GetDbDataAndCompleteDisplay()
+	if snap := vo.Snapshot(); !snap.StoreDisplaySent && !snap.StoreDisplayAck && !snap.StoreDisplayRejected {
+		vo.CompleteDisplayFromStallFallback()
 	}
-	vo.CompleteDisplayFromStallFallback()
+	vo.MarkPrivateStoreDisplayFailed()
 }
 
 func storeRobotReady(vo *dnf.RobotVo) bool {
@@ -134,11 +132,10 @@ func waitStoreCreated(vo *dnf.RobotVo, timeout time.Duration) {
 	}
 }
 
-func waitStoreDisplay(vo *dnf.RobotVo, timeout time.Duration) {
+func waitStoreItemList(vo *dnf.RobotVo, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		snap := vo.Snapshot()
-		if snap.PartyActive || snap.StoreDisplayAck || shared.StateName(int(snap.State)) != shared.RuntimeStateRunning {
+		if vo.PrivateStoreItemListReceived() || !storeRobotReady(vo) {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)

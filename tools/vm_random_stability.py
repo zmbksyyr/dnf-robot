@@ -142,6 +142,14 @@ SAMPLE_FIELDS = [
     "party_skill_error_hits",
     "game_ping_timeout_hits",
     "game_check_disconnect_hits",
+    "game_disconnect_from5_hits",
+    "game_disconnect_from10_hits",
+    "store_err_0x11_hits",
+    "store_failed_after_hits",
+    "store_failed_after_max_tries",
+    "store_restore_ok_hits",
+    "store_restore_failed_hits",
+    "store_restore_elapsed_ms_max",
     "market_auto",
     "market_last_status",
     "market_last_error",
@@ -218,6 +226,11 @@ DEFAULT_ARTIFACT_MAX_MB = 512
 GAME_CONNECTION_CHECK_PATTERNS = {
     "ping_timeout": r"no response 2th ping",
     "check_disconnect": r"DisConnSig[^\n]*from \(8\)",
+}
+
+GAME_STORE_DISCONNECT_PATTERNS = {
+    "from5": r"DisConnSig[^\n]*from \(5\)",
+    "from10": r"DisConnSig[^\n]*from \(10\)",
 }
 
 
@@ -408,6 +421,7 @@ class StabilityRun(object):
         self.last_invariant_failure = {}
         self.game_log_offsets = {}
         self.game_connection_counts = dict((name, 0) for name in GAME_CONNECTION_CHECK_PATTERNS)
+        self.game_store_disconnect_counts = dict((name, 0) for name in GAME_STORE_DISCONNECT_PATTERNS)
         self.game_connection_failure_reported = set()
         self.prime_game_connection_logs()
         self.ports = self.read_ports()
@@ -2877,6 +2891,7 @@ echo "KEYS_RESTORED"
         self.fill_port_row(row)
         self.fill_party_row(row)
         self.fill_game_connection_row(row)
+        self.fill_store_row(row)
         row["fd_robot"] = self.robot_fd_count()
         load1, load5, load15 = self.load_average()
         row["load1"], row["load5"], row["load15"] = load1, load5, load15
@@ -3066,6 +3081,8 @@ echo "KEYS_RESTORED"
                 text = safe_text(raw)
                 for name, pattern in GAME_CONNECTION_CHECK_PATTERNS.items():
                     self.game_connection_counts[name] += len(re.findall(pattern, text))
+                for name, pattern in GAME_STORE_DISCONNECT_PATTERNS.items():
+                    self.game_store_disconnect_counts[name] += len(re.findall(pattern, text))
             except (IOError, OSError):
                 continue
 
@@ -3073,6 +3090,8 @@ echo "KEYS_RESTORED"
         self.read_game_connection_updates()
         row["game_ping_timeout_hits"] = self.game_connection_counts.get("ping_timeout", 0)
         row["game_check_disconnect_hits"] = self.game_connection_counts.get("check_disconnect", 0)
+        row["game_disconnect_from5_hits"] = self.game_store_disconnect_counts.get("from5", 0)
+        row["game_disconnect_from10_hits"] = self.game_store_disconnect_counts.get("from10", 0)
         for name, count in self.game_connection_counts.items():
             if count <= 0 or name in self.game_connection_failure_reported:
                 continue
@@ -3081,6 +3100,24 @@ echo "KEYS_RESTORED"
                 "game_connection_%s" % name,
                 "df_game_r reported %s new %s event(s) after stability test start" % (count, name),
             )
+
+    def fill_store_row(self, row):
+        try:
+            text = self.robot_log_tail(2 * 1024 * 1024)
+            failed = re.findall(r"\[AutoStore\][^\n]*failed_after=(\d+)[^\n]*reason=([^\s]+)", text)
+            restore_elapsed = [
+                int(value)
+                for value in re.findall(r"\[AutoStore\][^\n]*restore_normal_online_(?:ok|failed)[^\n]*elapsed_ms=(\d+)", text)
+            ]
+            row["store_err_0x11_hits"] = sum(1 for _, reason in failed if reason == "store_err_0x11")
+            row["store_failed_after_hits"] = len(failed)
+            row["store_failed_after_max_tries"] = max([int(tries) for tries, _ in failed] or [0])
+            row["store_restore_ok_hits"] = len(re.findall(r"\[AutoStore\][^\n]*restore_normal_online_ok", text))
+            row["store_restore_failed_hits"] = len(re.findall(r"\[AutoStore\][^\n]*restore_normal_online_failed", text))
+            row["store_restore_elapsed_ms_max"] = max(restore_elapsed or [0])
+        except Exception as exc:
+            if not row.get("api_error"):
+                row["api_error"] = "store:%r" % (exc,)
 
     def robot_fd_count(self):
         try:

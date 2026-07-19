@@ -3,7 +3,6 @@ package dnf
 import (
 	"encoding/binary"
 	"fmt"
-	"time"
 )
 
 func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
@@ -36,24 +35,32 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 		if len(decData) > 0 {
 			value = decData[0]
 		}
-		if packet.flag == 1 && packet.typ == 88 && err == nil && value == 1 {
-			r.StoreCreated = true
-		}
-		if packet.flag == 1 && packet.typ == 88 && err == nil && value == 0 {
-			r.StoreCreateRejected = true
-		}
-		if packet.flag == 1 && packet.typ == 90 && err == nil && value == 1 {
-			r.StoreDisplayAck = true
-		}
 		storeErr := byte(0)
 		if len(decData) > 1 {
 			storeErr = decData[1]
 		}
-		if packet.flag == 1 && err == nil && value == 0 && storeErr != 0 {
-			r.LastStoreError = storeErr
+		if packet.flag != 1 || err != nil {
+			return
 		}
-		if packet.flag == 1 && packet.typ == 90 && err == nil && value == 0 && storeErr == 0x11 {
-			r.StoreDisplayRejected = true
+		switch packet.typ {
+		case 88:
+			if value == 1 {
+				r.StoreCreated = true
+				r.StoreCreateRejected = false
+				r.LastStoreError = 0
+			} else {
+				r.StoreCreateRejected = true
+				r.LastStoreError = storeErr
+			}
+		case 90:
+			if value == 1 {
+				r.StoreDisplayAck = true
+				r.StoreDisplayRejected = false
+				r.LastStoreError = 0
+			} else if !r.StoreDisplayAck {
+				r.StoreDisplayRejected = true
+				r.LastStoreError = storeErr
+			}
 		}
 
 	case 13:
@@ -61,7 +68,6 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 			return
 		}
 		r.storeInventoryVersion++
-		wasWaiting := r.IsWaitingItemList
 		r.IsWaitingItemList = false
 		for k := range r.InfanMap {
 			delete(r.InfanMap, k)
@@ -81,28 +87,6 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 				r.InfanMap[int(itemID)] = Transaction{ItemPos: itemPos, ItemId: itemID, ItemNum: itemNum}
 			}
 		}
-		if wasWaiting {
-			if r.PrepareStoreAfterItemList {
-				r.PrepareStoreAfterItemList = false
-				go func() {
-					r.CreatePrivateStore()
-					deadline := time.Now().Add(4 * time.Second)
-					for time.Now().Before(deadline) {
-						snap := r.Snapshot()
-						if snap.StoreCreated || snap.State != StateRun {
-							break
-						}
-						time.Sleep(100 * time.Millisecond)
-					}
-					if snap := r.Snapshot(); snap.State == StateRun {
-						r.GetDbDataAndCompleteDisplay()
-					}
-				}()
-			} else {
-				go r.GetDbDataAndCompleteDisplay()
-			}
-		}
-
 	case 15:
 		if packet.flag != 0 || r.State != StateRun {
 			return

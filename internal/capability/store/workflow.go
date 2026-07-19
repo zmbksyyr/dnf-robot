@@ -15,7 +15,6 @@ type WorkflowEnv interface {
 	AddAutoStore(success, failed, expired int)
 	AcquireAutoStoreSlot(rc robotconfig.RuntimeConfig) (func(), bool)
 	BeginStoreBusy(uid int) bool
-	CompletePrivateStoreDisplay(uid int) bool
 	Config() robotconfig.RuntimeConfig
 	EndStoreBusy(uid int)
 	EnsureStoreInventoryAndStall(info robotcap.Info, rc robotconfig.RuntimeConfig) error
@@ -184,7 +183,9 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 	}()
 	points := env.StorePoints()
 	finalReason := StoreReasonFailed
+	attempts := 0
 	for try := 1; try <= tries; try++ {
+		attempts = try
 		if shouldStop != nil && shouldStop() {
 			env.Logf("[AutoStore] uid=%d cancelled_before_try=%d\n", info.UID, try)
 			return AutoAttemptCancelled
@@ -208,6 +209,7 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 				env.FinishStoreState(info.UID, info.CID, reason)
 				return AutoAttemptCancelled
 			}
+			finalReason = reason
 			points.Report(info.UID, pos, try, false, reason)
 			if !RetryStoreReasonWithNewPoint(reason) {
 				finalReason = reason
@@ -221,7 +223,7 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 	points.Flush()
 	_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
 	env.FinishStoreState(info.UID, info.CID, finalReason)
-	env.Logf("[AutoStore] uid=%d failed_after=%d reason=%s\n", info.UID, tries, finalReason)
+	env.Logf("[AutoStore] uid=%d failed_after=%d reason=%s\n", info.UID, attempts, finalReason)
 	env.AddAutoStore(0, 1, 0)
 	if _, recovered := env.RestoreAutoNormalOnline(info, rc, finalReason); !recovered {
 		env.Logf("[AutoStore] uid=%d restore_normal_online_failed reason=%s\n", info.UID, finalReason)
@@ -306,24 +308,18 @@ func (w Workflow) startAndWaitDisplay(info robotcap.Info, rc robotconfig.Runtime
 	if ok, reason := w.waitDisplay(info.UID, rc, shouldStop); ok {
 		return true, ""
 	} else if reason != "" {
-		if reason == StoreReasonCancelled {
-			return false, reason
-		}
-		_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
-		env.FinishStoreState(info.UID, info.CID, reason)
 		return false, reason
 	}
-	_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{info.UID}})
-	env.FinishStoreState(info.UID, info.CID, StoreReasonFailed)
 	return false, StoreReasonFailed
 }
 
 func (w Workflow) waitDisplay(uid int, rc robotconfig.RuntimeConfig, shouldStop func() bool) (bool, string) {
 	env := w.Env
-	var createdAt time.Time
-	var lastDisplayAt time.Time
-	displayTries := 0
-	deadline := time.Now().Add(10 * time.Second)
+	timeout := time.Duration(rc.StoreConfirmTimeoutSec) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if shouldStop != nil && shouldStop() {
 			return false, StoreReasonCancelled
@@ -340,17 +336,6 @@ func (w Workflow) waitDisplay(uid int, rc robotconfig.RuntimeConfig, shouldStop 
 		}
 		if st.StoreCreateRejected && !st.StoreCreated {
 			return false, StoreErrReason(st.LastStoreError)
-		}
-		if st.StoreCreated && createdAt.IsZero() {
-			createdAt = time.Now()
-		}
-		if !createdAt.IsZero() && time.Since(createdAt) >= 2*time.Second &&
-			(lastDisplayAt.IsZero() || time.Since(lastDisplayAt) >= 2*time.Second) && displayTries < 4 {
-			lastDisplayAt = time.Now()
-			displayTries++
-			if env.CompletePrivateStoreDisplay(uid) {
-				return true, ""
-			}
 		}
 		if SleepWithStop(200*time.Millisecond, shouldStop) {
 			return false, StoreReasonCancelled
@@ -371,10 +356,10 @@ func StoreErrReason(err byte) string {
 
 func RetryStoreReasonWithNewPoint(reason string) bool {
 	switch reason {
-	case "", StoreReasonCancelled, StoreReasonRuntimeStopped, StoreReasonOnlineFailed, StoreReasonOnlineAttemptFailed, StoreReasonStartFailed, StoreReasonPrepareFailed:
-		return false
-	default:
+	case "store_err_0x38", "store_err_0x3e", StoreReasonErr052:
 		return true
+	default:
+		return false
 	}
 }
 
