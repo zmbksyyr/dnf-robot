@@ -411,12 +411,12 @@ func (r *RobotVo) clearConfirmedTradeFallbackUnsafe() {
 
 func (r *RobotVo) rememberPartyPeersUnsafe(peers []partyIPPeer) {
 	for _, peer := range peers {
-		if peer.uniqueID == 0 {
+		if !partyPeerIdentityKnown(peer) {
 			continue
 		}
 		known := false
 		for i, existing := range r.partyPeers {
-			if existing.uniqueID == peer.uniqueID {
+			if partyPeerSameIdentity(existing, peer) {
 				r.partyPeers[i] = mergePartyPeer(r.partyPeers[i], peer)
 				known = true
 				break
@@ -445,7 +445,7 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 	r.partyPeers = [4]partyIPPeer{}
 	for i := range peers {
 		for _, old := range previous {
-			if old.uniqueID == peers[i].uniqueID {
+			if partyPeerSameIdentity(old, peers[i]) {
 				peers[i] = mergePartyPeer(old, peers[i])
 				if !partyPeerAdvertisedEndpointEqual(old, peers[i]) {
 					peers[i].observedIP = nil
@@ -460,8 +460,8 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 	for slot := byte(0); slot < 4; slot++ {
 		before := partyPeerForSlot(previous, slot)
 		after := partyPeerForSlot(r.partyPeers, slot)
-		identityChanged := before.uniqueID != after.uniqueID && (before.uniqueID != 0 || after.uniqueID != 0)
-		endpointChanged := before.uniqueID != 0 && before.uniqueID == after.uniqueID && !partyPeerAdvertisedEndpointEqual(before, after)
+		identityChanged := !partyPeerSameIdentity(before, after) && (partyPeerIdentityKnown(before) || partyPeerIdentityKnown(after))
+		endpointChanged := partyPeerSameIdentity(before, after) && partyPeerIdentityKnown(before) && !partyPeerAdvertisedEndpointEqual(before, after)
 		if identityChanged || endpointChanged {
 			r.resetPartyTQOSPeerUnsafe(slot)
 		}
@@ -530,6 +530,17 @@ func mergePartyPeer(old, next partyIPPeer) partyIPPeer {
 		next.mtu = old.mtu
 	}
 	return next
+}
+
+func partyPeerIdentityKnown(peer partyIPPeer) bool {
+	return peer.uniqueID != 0 || peer.accID != 0
+}
+
+func partyPeerSameIdentity(left, right partyIPPeer) bool {
+	if left.uniqueID != 0 || right.uniqueID != 0 {
+		return left.uniqueID != 0 && left.uniqueID == right.uniqueID
+	}
+	return left.accID != 0 && left.accID == right.accID
 }
 
 func partyPeerAdvertisedEndpointEqual(left, right partyIPPeer) bool {

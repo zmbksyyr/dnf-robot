@@ -129,6 +129,19 @@ func TestPartyPeerLifecycle(t *testing.T) {
 	}
 }
 
+func TestSetPartyPeersKeepsAccountOnlyRobotPeers(t *testing.T) {
+	vo := &RobotVo{State: StateRun}
+	vo.setPartyPeersUnsafe([]partyIPPeer{
+		{uniqueID: 7, accID: 18000000, slot: 0, slotKnown: true},
+		{accID: 17000026, slot: 2, slotKnown: true},
+	})
+
+	peer := vo.partyPeerForSlotUnsafe(2)
+	if peer.accID != 17000026 || !peer.slotKnown || peer.slot != 2 {
+		t.Fatalf("account-only peer was not retained: %+v", peer)
+	}
+}
+
 func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}

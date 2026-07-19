@@ -209,7 +209,7 @@ func (r *RobotVo) learnPartyPeerEndpointUnsafe(peer partyIPPeer, remote *net.UDP
 		return peer
 	}
 	for i := range r.partyPeers {
-		if !r.partyPeerIdentityEqualUnsafe(r.partyPeers[i], peer) || !r.partyPeers[i].slotKnown || r.partyPeers[i].slot != peer.slot {
+		if !partyPeerSameIdentity(r.partyPeers[i], peer) || !r.partyPeers[i].slotKnown || r.partyPeers[i].slot != peer.slot {
 			continue
 		}
 		r.partyPeers[i].observedIP = append(net.IP(nil), remote.IP...)
@@ -217,13 +217,6 @@ func (r *RobotVo) learnPartyPeerEndpointUnsafe(peer partyIPPeer, remote *net.UDP
 		return r.partyPeers[i]
 	}
 	return peer
-}
-
-func (r *RobotVo) partyPeerIdentityEqualUnsafe(left, right partyIPPeer) bool {
-	if left.uniqueID != 0 || right.uniqueID != 0 {
-		return left.uniqueID != 0 && left.uniqueID == right.uniqueID
-	}
-	return left.accID != 0 && left.accID == right.accID
 }
 
 func partyPeerEndpointMatches(ip net.IP, port uint16, remote *net.UDPAddr) bool {
