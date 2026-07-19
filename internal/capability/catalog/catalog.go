@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -10,68 +9,6 @@ import (
 	"robot/internal/foundation/lockhub"
 	"robot/internal/shared"
 )
-
-type partySkillCatalogFile struct {
-	MaxSkillLevel int                      `json:"max_skill_level"`
-	Skills        []partySkillCatalogEntry `json:"skills"`
-}
-
-type partySkillCatalogEntry struct {
-	Disabled   bool   `json:"disabled,omitempty"`
-	Job        int    `json:"job"`
-	SkillIndex int    `json:"skill_index"`
-	State      int    `json:"state"`
-	Level      int    `json:"level"`
-	Name       string `json:"name,omitempty"`
-	ScriptPath string `json:"script_path,omitempty"`
-	StateData  []int  `json:"state_data,omitempty"`
-	Risk       int    `json:"risk,omitempty"`
-}
-
-const maxSafePartySkillLevel = 70
-
-func LoadPartySkills(configDir string) error {
-	var cfg partySkillCatalogFile
-	path := filepath.Join(configDir, "party_skill_catalog.json")
-	if err := readJSON(path, &cfg); err != nil {
-		return err
-	}
-	maxLevel := cfg.MaxSkillLevel
-	if maxLevel <= 0 || maxLevel > maxSafePartySkillLevel {
-		maxLevel = maxSafePartySkillLevel
-	}
-	entries := make([]shared.PartySkillState, 0, len(cfg.Skills))
-	for _, entry := range cfg.Skills {
-		if entry.Disabled || entry.Job < 0 || entry.Level <= 0 || entry.Level > maxLevel || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
-			continue
-		}
-		stateData, err := partySkillStateData(entry.StateData)
-		if err != nil {
-			return fmt.Errorf("party skill job=%d skill=%d state=%d: %w", entry.Job, entry.SkillIndex, entry.State, err)
-		}
-		entries = append(entries, shared.PartySkillState{
-			Job: entry.Job, SkillIndex: entry.SkillIndex, State: entry.State,
-			Level: entry.Level, Name: entry.Name, ScriptPath: entry.ScriptPath,
-			StateData: stateData, Risk: entry.Risk,
-		})
-	}
-	shared.SetPartySkillStates(entries)
-	return nil
-}
-
-func partySkillStateData(values []int) ([]byte, error) {
-	if len(values) > 3 {
-		return nil, fmt.Errorf("state_data has %d values, maximum is 3", len(values))
-	}
-	data := make([]byte, 0, len(values)*3)
-	for _, value := range values {
-		if value < 0 || value > 0xffffff {
-			return nil, fmt.Errorf("state_data value %d is outside 0..16777215", value)
-		}
-		data = append(data, byte(value), byte(value>>8), byte(value>>16))
-	}
-	return data, nil
-}
 
 func Equipment(configDir string) []shared.EquipmentCatalogItem {
 	return equipmentFile(configDir, "pvf_equipment_catalog.json")

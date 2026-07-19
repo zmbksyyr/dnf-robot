@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"sort"
-	"strings"
 	"time"
 
 	foundationlog "robot/internal/foundation/log"
@@ -357,11 +356,7 @@ type partySkillProfile struct {
 
 type partySkillProfileLoadFunc func(uid uint32, cid int) (partySkillProfile, error)
 
-type partySkillCandidateStats struct {
-	PVFMatched          int
-	SkippedMissingPVF   int
-	SkippedPathMismatch int
-}
+type partySkillCandidateStats = shared.PartySkillMatchStats
 
 func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -380,37 +375,9 @@ func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile,
 }
 
 func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
-	pvfIndex := make(map[[3]int]map[string]struct{}, len(pvfStates))
-	for _, entry := range pvfStates {
-		if entry.Job != job || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
-			continue
-		}
-		key := [3]int{entry.Job, entry.SkillIndex, entry.State}
-		paths := pvfIndex[key]
-		if paths == nil {
-			paths = make(map[string]struct{})
-			pvfIndex[key] = paths
-		}
-		paths[normalizeSkillScriptPath(entry.ScriptPath)] = struct{}{}
-	}
-	candidates := make([]partySkillCandidate, 0, len(whitelist))
-	stats := partySkillCandidateStats{}
-	for _, entry := range whitelist {
-		if entry.Job != job || entry.SkillIndex <= 0 || entry.SkillIndex > 255 || entry.State < 0 || entry.State > 255 {
-			continue
-		}
-		paths, ok := pvfIndex[[3]int{entry.Job, entry.SkillIndex, entry.State}]
-		if !ok {
-			stats.SkippedMissingPVF++
-			continue
-		}
-		if scriptPath := normalizeSkillScriptPath(entry.ScriptPath); scriptPath != "" {
-			if _, ok := paths[scriptPath]; !ok {
-				stats.SkippedPathMismatch++
-				continue
-			}
-		}
-		stats.PVFMatched++
+	matches, stats := shared.MatchPartySkillStates(job, whitelist, pvfStates)
+	candidates := make([]partySkillCandidate, 0, len(matches))
+	for _, entry := range matches {
 		candidates = append(candidates, partySkillCandidate{
 			skillIndex: byte(entry.SkillIndex),
 			state:      byte(entry.State),
@@ -431,12 +398,6 @@ func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState
 		return candidates[i].state < candidates[j].state
 	})
 	return candidates, stats
-}
-
-func normalizeSkillScriptPath(value string) string {
-	value = strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
-	value = strings.Trim(value, "/")
-	return strings.ToLower(value)
 }
 
 const partyDungeonStateCommand = 0x0004
