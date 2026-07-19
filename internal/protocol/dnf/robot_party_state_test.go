@@ -134,7 +134,6 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 7, slot: 0, slotKnown: true}
 	vo.townEntityPositions = map[uint16]townEntityPosition{7: {uniqueID: 7}}
-	vo.partyDungeonTraceAt = time.Now().Add(time.Minute)
 
 	if partyInfoClearsParty(mustPartyHex(t, "0100220000486b01a86b01")) {
 		t.Fatal("active party info was treated as clear")
@@ -146,7 +145,7 @@ func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 		t.Fatal("clear party info was not recognized")
 	}
 	vo.clearPartyUnsafe()
-	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 || !vo.partyDungeonTraceAt.IsZero() {
+	if vo.partyActiveUnsafe() || len(vo.townEntityPositions) != 0 {
 		t.Fatalf("party state remained after clear: peers=%+v positions=%+v", vo.partyPeers, vo.townEntityPositions)
 	}
 }

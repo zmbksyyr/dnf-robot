@@ -161,7 +161,6 @@ type RobotVo struct {
 	partyPeerRoute       [4]byte
 	partyPeerRouteAt     [4]time.Time
 	partyUDPDiagAt       time.Time
-	partyDungeonTraceAt  time.Time
 	partyDungeonFollow   []partyDungeonFollowPending
 	partyDungeonLastAt   time.Time
 	partyDungeonFlags    byte

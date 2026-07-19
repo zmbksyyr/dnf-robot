@@ -63,7 +63,6 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 		}
 		peer = r.learnPartyPeerEndpointUnsafe(peer, remote)
 	}
-	r.tracePartyUDPUnsafe("RECV", remote, senderSlot, peer.accID, len(payload))
 	if len(payload) == 8 && payload[0] == 0x00 {
 		return nil
 	}
@@ -136,7 +135,6 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
 			r.rememberPartyDungeonActivityUnsafe(frame, route, peer, now)
-			r.tracePartyDungeonFrameUnsafe(frame, route, peer)
 			r.queuePartyDungeonFollowUnsafe(frame, peer, now)
 		}
 		var preferred *partyTQOSCodec
@@ -265,7 +263,7 @@ func (r *RobotVo) tracePartyUDPUnsafe(reason string, remote *net.UDPAddr, sender
 	if now.Before(r.partyUDPDiagAt) {
 		return
 	}
-	r.partyUDPDiagAt = now.Add(1500 * time.Millisecond)
+	r.partyUDPDiagAt = now.Add(30 * time.Second)
 	slot := -1
 	if senderSlot != nil {
 		slot = int(*senderSlot)

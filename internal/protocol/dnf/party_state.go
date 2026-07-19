@@ -390,7 +390,6 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
 	r.townEntitySweepAt = time.Time{}
-	r.partyDungeonTraceAt = time.Time{}
 	r.closePartyRelayUnsafe()
 	r.resetPartyTQOSTransportUnsafe()
 }

@@ -321,11 +321,8 @@ func flushQueuedDungeonFollow(t *testing.T, vo *RobotVo, frame []byte, peer part
 	return append([]byte(nil), buf[:n]...)
 }
 
-func TestPartyDungeonFrameRecords(t *testing.T) {
+func TestPartyDungeonFrameCommandDetection(t *testing.T) {
 	position := mustPartyHex(t, "028703000034000000015100970cfec701070034ede5df0001070034ede5df1102a97492965e0800000d000000ffffffffffffffff0000000000000000")
-	if got := partyDungeonFrameRecords(position); got != "0x0051/52" {
-		t.Fatalf("position records = %q", got)
-	}
 	if !partyDungeonFrameContainsCommand(position, 0x0051) || partyDungeonFrameContainsCommand(position, 0x0027) {
 		t.Fatalf("position command detection failed")
 	}
@@ -335,9 +332,6 @@ func TestPartyDungeonFrameRecords(t *testing.T) {
 	binary.LittleEndian.PutUint16(frame[5:7], uint16(2+len(reliable)))
 	binary.LittleEndian.PutUint16(frame[9:11], uint16(len(reliable)))
 	copy(frame[11:], reliable)
-	if got := partyDungeonFrameRecords(frame); got != "0x0044/13" {
-		t.Fatalf("reliable records = %q", got)
-	}
 	if !partyDungeonFrameContainsCommand(frame, 0x0044) || partyDungeonFrameContainsCommand(frame, 0x0051) {
 		t.Fatalf("reliable command detection failed")
 	}
