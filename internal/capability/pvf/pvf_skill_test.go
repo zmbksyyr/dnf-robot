@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestExtractSkillStateCatalogKeepsOnlyEmptyDataStates(t *testing.T) {
+func TestExtractSkillStateCatalogIndexesResolvedPVFStates(t *testing.T) {
 	archive := &pvfArchive{files: map[string]*pvfFile{
 		"sqr/character/new_atmage_load_state.nut": {
 			Name: "sqr/character/new_atmage_load_state.nut",
@@ -22,7 +22,7 @@ IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/native/na
 		},
 		"sqr/character/atmage/safe/safe.nut": {
 			Name: "sqr/character/atmage/safe/safe.nut",
-			Data: []byte("function checkExecutableSkill_safe(obj) { obj.sq_AddSetStatePacket(STATE_SAFE, 0, false); }\nfunction onAfterSetState_safe(obj, state, datas, reset) { obj.setCurrentAnimation(1); }"),
+			Data: []byte("function checkExecutableSkill_safe(obj) { return true; }"),
 		},
 		"sqr/character/atmage/data/data.nut": {
 			Name: "sqr/character/atmage/data/data.nut",
@@ -30,115 +30,71 @@ IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_AT_MAGE, "character/atmage/native/na
 		},
 		"sqr/character/atmage/native/native.nut": {
 			Name: "sqr/character/atmage/native/native.nut",
-			Data: []byte("function onSetState_native(obj, state, datas, reset) { SetState_native(obj, state, datas, reset); }\nfunction SetState_native(obj, state, values, reset) { obj.setCurrentAnimation(2); }"),
+			Data: []byte("function onSetState_native(obj, state, datas, reset) { obj.setCurrentAnimation(2); }"),
 		},
 	}}
 
-	got := extractSkillStateCatalog(archive)
-	if len(got) != 2 {
-		t.Fatalf("catalog size = %d, want 2: %+v", len(got), got)
+	want := []SkillState{
+		{Job: 8, SkillIndex: 1, State: 20, ScriptPath: "sqr/character/atmage/safe/safe.nut"},
+		{Job: 8, SkillIndex: 3, State: 22, ScriptPath: "sqr/character/atmage/data/data.nut"},
+		{Job: 8, SkillIndex: 4, State: 23, ScriptPath: "sqr/character/atmage/native/native.nut"},
 	}
-	want := SkillState{Job: 8, SkillIndex: 1, State: 20, ScriptPath: "sqr/character/atmage/safe/safe.nut", StateData: []byte{}, Experimental: true, Risk: 1}
-	if !reflect.DeepEqual(got[0], want) {
-		t.Fatalf("catalog entry = %+v, want %+v", got[0], want)
-	}
-	want = SkillState{Job: 8, SkillIndex: 4, State: 23, ScriptPath: "sqr/character/atmage/native/native.nut"}
-	if !reflect.DeepEqual(got[1], want) {
-		t.Fatalf("catalog entry = %+v, want %+v", got[1], want)
+	if got := extractSkillStateCatalog(archive); !reflect.DeepEqual(got, want) {
+		t.Fatalf("skill state catalog = %+v, want %+v", got, want)
 	}
 }
 
-func TestExtractSkillStateCatalogInfersExperimentalLiteralData(t *testing.T) {
+func TestExtractSkillStateCatalogKeepsDistinctPathsForSameState(t *testing.T) {
 	archive := &pvfArchive{files: map[string]*pvfFile{
 		"sqr/character/new_mage_load_state.nut": {
 			Name: "sqr/character/new_mage_load_state.nut",
-			Data: []byte(`IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_MAGE, "character/mage/simple/simple.nut", "simple", 44, 7);`),
+			Data: []byte(`
+IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_MAGE, "character/mage/a.nut", "a", 44, 7);
+IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_MAGE, "character/mage/b.nut", "b", 44, 7);
+`),
 		},
-		"sqr/character/mage/simple/simple.nut": {
-			Name: "sqr/character/mage/simple/simple.nut",
-			Data: []byte(`STATE_SIMPLE <- 44;
-SUB_SIMPLE_CAST <- 1;
-function checkExecutableSkill_simple(obj) {
-	obj.sq_IntVectClear();
-	obj.sq_IntVectPush(SUB_SIMPLE_CAST);
-	obj.sq_IntVectPush(2);
-	obj.sq_AddSetStatePacket(STATE_SIMPLE, STATE_PRIORITY_USER, true);
-	return true;
-}
-function onSetState_simple(obj, state, datas, reset) { obj.sq_GetVectorData(datas, 0); }`),
-		},
+		"sqr/character/mage/a.nut": {Name: "sqr/character/mage/a.nut", Data: []byte("function a() { return true; }")},
+		"sqr/character/mage/b.nut": {Name: "sqr/character/mage/b.nut", Data: []byte("function b() { return true; }")},
 	}}
 
-	got := extractSkillStateCatalog(archive)
-	want := []SkillState{{
-		Job: 3, SkillIndex: 7, State: 44,
-		ScriptPath:   "sqr/character/mage/simple/simple.nut",
-		StateData:    []byte{1, 0, 0, 2, 0, 0},
-		Experimental: true,
-		Risk:         1,
-	}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("experimental skill catalog = %+v, want %+v", got, want)
+	want := []SkillState{
+		{Job: 3, SkillIndex: 7, State: 44, ScriptPath: "sqr/character/mage/a.nut"},
+		{Job: 3, SkillIndex: 7, State: 44, ScriptPath: "sqr/character/mage/b.nut"},
+	}
+	if got := extractSkillStateCatalog(archive); !reflect.DeepEqual(got, want) {
+		t.Fatalf("duplicate state paths = %+v, want %+v", got, want)
 	}
 }
 
-func TestExtractSkillStateCatalogIncludesVerifiedShiningCutData(t *testing.T) {
-	archive := &pvfArchive{files: map[string]*pvfFile{
-		"sqr/character/new_thief_load_state.nut": {
-			Name: "sqr/character/new_thief_load_state.nut",
-			Data: []byte(`IRDSQRCharacter.pushState(ENUM_CHARACTERJOB_THIEF, "character/thief/1_rogue/shiningcut/shiningcut.nut", "thief_shiningcut", 22, 3);`),
-		},
-		"sqr/character/thief/1_rogue/shiningcut/shiningcut.nut": {
-			Name: "sqr/character/thief/1_rogue/shiningcut/shiningcut.nut",
-			Data: []byte("function onAfterSetState_thief_shiningcut(obj, state, datas, reset) { return obj.sq_GetVectorData(datas, 0); }"),
-		},
-	}}
-
-	got := extractSkillStateCatalog(archive)
-	want := []SkillState{{
-		Job: 6, SkillIndex: 3, State: 22,
-		ScriptPath: "sqr/character/thief/1_rogue/shiningcut/shiningcut.nut",
-		StateData:  []byte{0x03, 0x00, 0x00}, Verified: true,
-	}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("verified skill catalog = %+v, want %+v", got, want)
-	}
-}
-
-func TestExtractSkillStateCatalogRejectsScriptsWithoutStateHandler(t *testing.T) {
+func TestExtractSkillStateCatalogRejectsMissingAndInvalidReferences(t *testing.T) {
 	archive := &pvfArchive{files: map[string]*pvfFile{
 		"sqr/character/new_swordman_load_state.nut": {
 			Name: "sqr/character/new_swordman_load_state.nut",
 			Data: []byte(`
-IRDSQRCharacter.pushState(0, "character/swordman/passive.nut", "passive", 13, 18);
-IRDSQRCharacter.pushState(0, "character/swordman/reactive.nut", "reactive", 32, 58);
+IRDSQRCharacter.pushState(0, "character/swordman/valid.nut", "valid", 13, 18);
+IRDSQRCharacter.pushState(0, "character/swordman/missing.nut", "missing", 14, 19);
+IRDSQRCharacter.pushState(0, "character/swordman/invalid.nut", "invalid", 300, 0);
 `),
 		},
-		"sqr/character/swordman/passive.nut": {
-			Name: "sqr/character/swordman/passive.nut",
-			Data: []byte("function checkExecutableSkill_passive(obj) { obj.appendage(); }"),
-		},
-		"sqr/character/swordman/reactive.nut": {
-			Name: "sqr/character/swordman/reactive.nut",
-			Data: []byte("function onAttack_reactive(obj) { obj.sq_AddSetStatePacket(32, 0, false); }"),
-		},
+		"sqr/character/swordman/valid.nut":   {Name: "sqr/character/swordman/valid.nut", Data: []byte("function valid() { return true; }")},
+		"sqr/character/swordman/invalid.nut": {Name: "sqr/character/swordman/invalid.nut", Data: []byte("function invalid() { return true; }")},
 	}}
 
-	if got := extractSkillStateCatalog(archive); len(got) != 0 {
-		t.Fatalf("unsafe skills entered catalog: %+v", got)
+	want := []SkillState{{Job: 0, SkillIndex: 18, State: 13, ScriptPath: "sqr/character/swordman/valid.nut"}}
+	if got := extractSkillStateCatalog(archive); !reflect.DeepEqual(got, want) {
+		t.Fatalf("filtered skill states = %+v, want %+v", got, want)
 	}
 }
 
 func TestSkillStatesForJobReturnsCopy(t *testing.T) {
-	setSkillStateCatalog([]SkillState{{Job: 1, SkillIndex: 2, State: 3, StateData: []byte{1, 2}}, {Job: 2, SkillIndex: 4, State: 5}})
+	setSkillStateCatalog([]SkillState{{Job: 1, SkillIndex: 2, State: 3}, {Job: 2, SkillIndex: 4, State: 5}})
 	got := SkillStatesForJob(1)
 	if len(got) != 1 || got[0].SkillIndex != 2 {
 		t.Fatalf("job catalog = %+v", got)
 	}
 	got[0].SkillIndex = 99
-	got[0].StateData[0] = 99
 	again := SkillStatesForJob(1)
-	if len(again) != 1 || again[0].SkillIndex != 2 || !reflect.DeepEqual(again[0].StateData, []byte{1, 2}) {
+	if len(again) != 1 || again[0].SkillIndex != 2 {
 		t.Fatalf("catalog mutated through returned slice: %+v", again)
 	}
 }

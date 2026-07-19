@@ -24,7 +24,7 @@ func TestEnsureExportsLoadsExistingSkillCatalogWithoutPVFSource(t *testing.T) {
 			t.Fatalf("EnsureExports(%q): %v", dfGameR, err)
 		}
 		got := shared.SkillStatesForJob(6)
-		if len(got) != 1 || got[0].SkillIndex != 3 || got[0].State != 22 || len(got[0].StateData) != 3 || got[0].StateData[0] != 3 {
+		if len(got) != 1 || got[0].SkillIndex != 3 || got[0].State != 22 || got[0].ScriptPath != "sqr/character/thief/shiningcut.nut" {
 			t.Fatalf("loaded skill snapshot for %q = %+v", dfGameR, got)
 		}
 	}
