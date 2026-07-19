@@ -58,9 +58,8 @@ func (s *RobotSupervisor) Stop() {
 func (s *RobotSupervisor) StopWithError() error {
 	s.once.Do(func() { close(s.stop) })
 	<-s.done
-	s.shutdownMu.Lock()
-	defer s.shutdownMu.Unlock()
-	return s.shutdownErr
+	_, err := s.stoppedResult()
+	return err
 }
 
 func (s *RobotSupervisor) loop() {

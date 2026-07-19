@@ -13,8 +13,11 @@ import (
 func (m *RobotManager) StartAutoActions() {
 	m.autoMu.Lock()
 	if m.supervisor != nil {
-		m.autoMu.Unlock()
-		return
+		if stopped, err := m.supervisor.stoppedResult(); !stopped || err != nil {
+			m.autoMu.Unlock()
+			return
+		}
+		m.supervisor = nil
 	}
 	runtime := NewRobotRuntime(m)
 	supervisor := NewRobotSupervisor(m, runtime)

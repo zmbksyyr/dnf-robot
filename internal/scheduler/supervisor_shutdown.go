@@ -94,6 +94,43 @@ func (s *RobotSupervisor) waitPressureWorkerUntil(deadline time.Time) bool {
 	}
 }
 
+func (s *RobotSupervisor) stoppedResult() (bool, error) {
+	select {
+	case <-s.done:
+	default:
+		return false, nil
+	}
+
+	s.shutdownMu.Lock()
+	defer s.shutdownMu.Unlock()
+	if s.shutdownErr != nil {
+		s.ledger.ReapDoneDraining()
+		if s.ledger.DrainingCount() == 0 && len(s.ledger.ActorPointers()) == 0 && s.pressureWorkerDone() {
+			s.shutdownErr = nil
+		}
+	}
+	return true, s.shutdownErr
+}
+
+func (s *RobotSupervisor) pressureWorkerDone() bool {
+	s.pressureMu.Lock()
+	running := s.pressureRunning
+	done := s.pressureDone
+	s.pressureMu.Unlock()
+	if !running {
+		return true
+	}
+	if done == nil {
+		return false
+	}
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
 func describeActors(actors []*actormodel.Actor) string {
 	if len(actors) == 0 {
 		return "none"

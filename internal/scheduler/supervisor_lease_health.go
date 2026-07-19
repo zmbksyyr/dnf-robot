@@ -94,8 +94,10 @@ func (s *RobotSupervisor) recycleActorUID(actor *actormodel.Actor, status actorm
 	robotLogf("[RobotSupervisor] recycle_uid slot=%d uid=%d health=%s reason=%s failures=%d first_failure=%s state=%s\n",
 		status.SlotID, status.UID, status.Health, status.HealthReason, status.Failures, status.FirstFailureAt.Format(time.RFC3339), status.State)
 	released := actor.ReleaseAndWait(15 * time.Second)
-	if released <= 0 {
-		released = status.UID
+	if released != status.UID {
+		robotLogf("[RobotSupervisor] recycle_deferred slot=%d uid=%d released=%d reason=runtime_close_unconfirmed\n",
+			status.SlotID, status.UID, released)
+		return
 	}
 	s.ledger.RemoveLeaseIfActor(released, actor)
 	result, err := s.manager.CleanupRobots(robotcap.CleanupRequest{UIDs: []int{released}, Force: true, InternalConfirmedBroken: true})

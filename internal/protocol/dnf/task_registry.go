@@ -59,16 +59,6 @@ func (t *RobotDnfTask) DeleteIf(uid uint32, vo *RobotVo) bool {
 	return true
 }
 
-func (t *RobotDnfTask) DeleteByInt(key int) bool {
-	t.robotVoMutex.Lock()
-	defer t.robotVoMutex.Unlock()
-	if _, ok := t.robotVoMap[key]; ok {
-		delete(t.robotVoMap, key)
-		return true
-	}
-	return false
-}
-
 func (t *RobotDnfTask) isCurrent(uid uint32, vo *RobotVo) bool {
 	t.robotVoMutex.RLock()
 	defer t.robotVoMutex.RUnlock()
