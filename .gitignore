@@ -4,6 +4,10 @@
 *.out
 coverage.out
 
+# Python tooling artifacts
+__pycache__/
+*.py[cod]
+
 # Local runtime/config artifacts
 /config/
 logs/
