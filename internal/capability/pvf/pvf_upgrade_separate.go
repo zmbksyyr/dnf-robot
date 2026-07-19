@@ -3,16 +3,15 @@ package pvf
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"robot/internal/foundation/charset"
 )
 
 const upgradeSeparatePath = "etc/upgrade_separate.etc"
 const upgradeSeparateLabel = "[separate upgrade max]"
+const upgradeSeparateBackupCount = 3
 
 type PVFUpgradeSeparateStatus struct {
 	Path       string `json:"path"`
@@ -97,17 +96,12 @@ func PatchPVFUpgradeSeparate(path string, target int) (PVFUpgradeSeparatePatchRe
 	result.After = before
 	result.OK = before <= target
 
-	backupPath := fmt.Sprintf("%s.bak_upgrade_separate_%s", path, time.Now().Format("20060102_150405"))
-	if err := copyFile(path, backupPath); err != nil {
-		return result, fmt.Errorf("backup pvf: %w", err)
-	}
-	result.BackupPath = backupPath
-
 	if before <= target {
 		result.Message = "no patch needed"
 		return result, nil
 	}
 
+	patched := append([]byte(nil), raw...)
 	binary.LittleEndian.PutUint32(data[valueOffset:valueOffset+4], uint32(target))
 	alignedLen := align4(int(entry.dataLen))
 	aligned := make([]byte, alignedLen)
@@ -118,12 +112,21 @@ func PatchPVFUpgradeSeparate(path string, target int) (PVFUpgradeSeparatePatchRe
 	binary.LittleEndian.PutUint32(tree[checksumOffset:checksumOffset+4], newChecksum)
 
 	newTreeChecksum := pvfDataChecksum(tree, len(tree), meta.fileCount)
-	binary.LittleEndian.PutUint32(raw[meta.treeChecksumOffset:meta.treeChecksumOffset+4], newTreeChecksum)
-	encryptPVFBlockInto(raw[meta.treeStart:meta.treeEnd], tree, newTreeChecksum)
+	binary.LittleEndian.PutUint32(patched[meta.treeChecksumOffset:meta.treeChecksumOffset+4], newTreeChecksum)
+	encryptPVFBlockInto(patched[meta.treeStart:meta.treeEnd], tree, newTreeChecksum)
 
-	encryptPVFBlockInto(raw[meta.dataStart+int(entry.offset):meta.dataStart+int(entry.offset)+alignedLen], aligned, newChecksum)
-	if err := os.WriteFile(path, raw, 0644); err != nil {
+	encryptPVFBlockInto(patched[meta.dataStart+int(entry.offset):meta.dataStart+int(entry.offset)+alignedLen], aligned, newChecksum)
+	info, err := os.Stat(path)
+	if err != nil {
 		return result, err
+	}
+	backupPath, err := rotateUpgradeSeparateBackups(path, raw, info.Mode())
+	if err != nil {
+		return result, fmt.Errorf("backup pvf: %w", err)
+	}
+	result.BackupPath = backupPath
+	if err := replaceFileAtomically(path, patched, info.Mode(), os.Rename); err != nil {
+		return result, fmt.Errorf("replace pvf: %w", err)
 	}
 	result.After = target
 	result.Patched = true
@@ -321,17 +324,70 @@ func cleanPVFFilePath(path string) string {
 	return filepath.Clean(path)
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+func rotateUpgradeSeparateBackups(path string, original []byte, mode os.FileMode) (string, error) {
+	dir := filepath.Dir(path)
+	temp, err := writeTempFile(dir, "."+filepath.Base(path)+".backup-*", original, mode)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(temp)
+
+	oldest := upgradeSeparateBackupPath(path, upgradeSeparateBackupCount)
+	if err := os.Remove(oldest); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	for index := upgradeSeparateBackupCount - 1; index >= 1; index-- {
+		from := upgradeSeparateBackupPath(path, index)
+		to := upgradeSeparateBackupPath(path, index+1)
+		if err := os.Rename(from, to); err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	backup := upgradeSeparateBackupPath(path, 1)
+	if err := os.Rename(temp, backup); err != nil {
+		return "", err
+	}
+	return backup, nil
+}
+
+func upgradeSeparateBackupPath(path string, index int) string {
+	return fmt.Sprintf("%s.bak_upgrade_separate.%d", path, index)
+}
+
+func replaceFileAtomically(path string, data []byte, mode os.FileMode, rename func(string, string) error) error {
+	temp, err := writeTempFile(filepath.Dir(path), "."+filepath.Base(path)+".patch-*", data, mode)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	defer os.Remove(temp)
+	return rename(temp, path)
+}
+
+func writeTempFile(dir, pattern string, data []byte, mode os.FileMode) (string, error) {
+	file, err := os.CreateTemp(dir, pattern)
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	path := file.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = file.Close()
+			_ = os.Remove(path)
+		}
+	}()
+	if err := file.Chmod(mode.Perm()); err != nil {
+		return "", err
+	}
+	if _, err := file.Write(data); err != nil {
+		return "", err
+	}
+	if err := file.Sync(); err != nil {
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	keep = true
+	return path, nil
 }
