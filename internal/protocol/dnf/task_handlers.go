@@ -22,27 +22,14 @@ func (t *RobotDnfTask) initKeyCall() {
 	t.keyToHandle["MsgMove"] = t.dnfMsgMove
 	t.keyToHandle["MsgLogout"] = t.msgLogout
 	t.keyToHandle["MsgPublicMsg"] = t.msgPublicMsg
-	t.keyToHandle["MsgOnLineAsyncTaskVec"] = t.msgOnLineAsyncTaskVec
 }
 
 func (t *RobotDnfTask) dnfMsgOnLine(_ *RobotDnfTask, voVoid interface{}) bool {
 	vo := voVoid.(*RobotVo)
 
 	tmpVo := t.Find(int(vo.UID))
-	if tmpVo != nil {
-		if !tmpVo.CheckUserState() {
-		} else {
-			vo.mu.Lock()
-			tasks := append([]AsyncTask(nil), vo.AfterRunAsyncTaskVec...)
-			vo.mu.Unlock()
-			if len(tasks) > 0 {
-				tmpVo.mu.Lock()
-				tmpVo.AfterRunAsyncTaskVec = tasks
-				tmpVo.mu.Unlock()
-				t.AddMessage("MsgOnLineAsyncTaskVec", tmpVo)
-			}
-			return true
-		}
+	if tmpVo != nil && tmpVo.CheckUserState() {
+		return true
 	}
 
 	if !vo.prepareConnect(t) || !t.replaceCurrent(vo.UID, tmpVo, vo) {
@@ -100,27 +87,4 @@ func (t *RobotDnfTask) msgPublicMsg(_ *RobotDnfTask, moveVoid interface{}) bool 
 		voObj.SendPublicMessage(msgType, []byte(md.Msg))
 	}
 	return voObj != nil
-}
-
-func (t *RobotDnfTask) msgOnLineAsyncTaskVec(_ *RobotDnfTask, moveVoid interface{}) bool {
-	vo := moveVoid.(*RobotVo)
-	vo.mu.Lock()
-	tasks := append([]AsyncTask(nil), vo.AfterRunAsyncTaskVec...)
-	vo.AfterRunAsyncTaskVec = nil
-	vo.mu.Unlock()
-
-	for _, task := range tasks {
-		switch task.Type {
-		case AsyncMove:
-		case AsyncDisjoint:
-			vo.OpenDisjointStore(uint32(task.Cost))
-		case AsyncPriStore:
-			vo.mu.Lock()
-			vo.PendingStoreTitle = task.Title
-			vo.mu.Unlock()
-			vo.CreatePrivateStore()
-			vo.GetCompleteDisplay(0)
-		}
-	}
-	return true
 }

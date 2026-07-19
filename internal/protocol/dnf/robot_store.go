@@ -12,33 +12,12 @@ import (
 
 const storeQueryTimeout = 3 * time.Second
 
-type AsyncTaskType int
-
-const (
-	AsyncMove     AsyncTaskType = 0
-	AsyncDisjoint AsyncTaskType = 1
-	AsyncPriStore AsyncTaskType = 2
-)
-
 type StoreInfo struct {
 	Index    int
 	BoxType  int
 	BoxIndex int
 	Price    int
 	Count    int
-}
-
-type AsyncTask struct {
-	Type      AsyncTaskType
-	Village   int
-	Area      int
-	X         int
-	Y         int
-	Mtype     int
-	Speed     int
-	Cost      int
-	Title     string
-	StoreInfo []StoreInfo
 }
 
 type Transaction struct {
@@ -88,46 +67,6 @@ func (r *RobotVo) PreparePrivateStoreState(title string) {
 	r.StoreCreated = false
 	r.PrepareStoreAfterItemList = false
 	r.RobotTyp = 2
-}
-
-func (r *RobotVo) runAsyncTasks() {
-	if r.AfterRunAsyncTaskVec == nil {
-		return
-	}
-	tasks := r.AfterRunAsyncTaskVec
-	r.AfterRunAsyncTaskVec = nil
-	cost := uint32(0)
-	title := ""
-	for _, task := range tasks {
-		switch task.Type {
-		case AsyncDisjoint:
-			cost = uint32(task.Cost)
-		case AsyncPriStore:
-			title = task.Title
-		}
-	}
-
-	go r.executeAsyncTasks(tasks, cost, title)
-}
-
-func (r *RobotVo) executeAsyncTasks(tasks []AsyncTask, cost uint32, title string) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			fmt.Printf("[RobotVo] runAsyncTasks panic uid=%d err=%v\n", r.UID, rec)
-		}
-	}()
-	for _, task := range tasks {
-		switch task.Type {
-		case AsyncDisjoint:
-			r.OpenDisjointStore(cost)
-		case AsyncPriStore:
-			r.mu.Lock()
-			r.PendingStoreTitle = title
-			r.mu.Unlock()
-			r.CreatePrivateStore()
-			r.GetCompleteDisplay(0)
-		}
-	}
 }
 
 func (r *RobotVo) OpenDisjointStore(cost uint32) bool {

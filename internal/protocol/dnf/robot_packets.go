@@ -428,21 +428,13 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		pkt, err = buildSendPacket(37, 27, r.setPosStart[:], r.Cipher)
 		if err == nil {
 			if r.sendRaw(pkt) {
-				if r.IsRefishUser == 1 && r.DB != nil {
-					_, _ = r.DB.Exec("update taiwan_cain_2nd.inventory set money=1000000 where charac_no in(select b.charac_no from d_taiwan.accounts a left join taiwan_cain.charac_info b on a.uid=b.m_id where a.uid=?);", r.UID)
-				} else {
-					r.PacketID = 29
-					r.State = StateRun
-					r.ConnCount = 0
-					r.sendNATInfoUnsafe()
-					r.sendPartyOptionUnsafe()
-					if r.RunStartTime == 0 {
-						r.RunStartTime = uint32(time.Now().Unix())
-					}
-					if r.Controller != nil {
-						r.Controller.AddMessageDelay("MsgOnLineAsyncTaskVec", r, int(r.RunStartTime)+1)
-					}
-					r.runAsyncTasks()
+				r.PacketID = 29
+				r.State = StateRun
+				r.ConnCount = 0
+				r.sendNATInfoUnsafe()
+				r.sendPartyOptionUnsafe()
+				if r.RunStartTime == 0 {
+					r.RunStartTime = uint32(time.Now().Unix())
 				}
 			}
 		}
@@ -454,7 +446,6 @@ func (r *RobotVo) sendSelectCharacUnsafe(_ string) bool {
 	if r.State != StateLogin || r.SelectCharacSent {
 		return false
 	}
-	r.IsTokenRight = true
 	r.selectCharac[0] = byte(r.CID)
 	pkt, err := buildSendPacket(4, 12, r.selectCharac[:], r.Cipher)
 	if err != nil {

@@ -23,7 +23,7 @@ type WorkflowEnv interface {
 	Logf(format string, args ...interface{})
 	Logout(req robotcap.CommandRequest) (robotcap.CommandResult, error)
 	MarkStoreStarted(uid int) error
-	Online(req robotcap.CommandRequest, store bool, confirm bool) (robotcap.CommandResult, error)
+	Online(req robotcap.CommandRequest, confirm bool) (robotcap.CommandResult, error)
 	PrepareStorePosition(info robotcap.Info) error
 	RestoreAutoNormalOnline(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, bool)
 	RobotGamePort() int
@@ -83,7 +83,7 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 		offline = append(offline, r)
 	}
 	if len(offline) > 0 {
-		online, err := env.Online(robotcap.CommandRequest{UIDs: robotcap.UIDs(offline)}, false, true)
+		online, err := env.Online(robotcap.CommandRequest{UIDs: robotcap.UIDs(offline)}, true)
 		if err != nil {
 			for _, r := range offline {
 				env.EndStoreBusy(r.UID)
@@ -260,7 +260,7 @@ func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 	if SleepWithStop(800*time.Millisecond, shouldStop) {
 		return false, StoreReasonCancelled
 	}
-	online, err := env.Online(robotcap.CommandRequest{UIDs: []int{info.UID}}, false, true)
+	online, err := env.Online(robotcap.CommandRequest{UIDs: []int{info.UID}}, true)
 	if err != nil || online.Confirmed != 1 {
 		env.Logf("[AutoStore] uid=%d store_online_failed try=%d confirmed=%d failed=%d err=%v\n", info.UID, try, online.Confirmed, online.Failed, err)
 		env.FinishStoreState(info.UID, info.CID, StoreReasonOnlineFailed)

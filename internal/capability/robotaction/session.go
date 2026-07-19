@@ -24,15 +24,11 @@ type SessionEnv interface {
 	SendOnline(userinfos []shared.RuntimeOnlineUser) error
 }
 
-func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
-	return s.online(req, store, false, 0, confirm, rc)
+func (s SessionService) Online(req robotcap.CommandRequest, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
+	return s.online(req, confirm, rc)
 }
 
-func (s SessionService) OnlineDisjoint(req robotcap.CommandRequest, cost int, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
-	return s.online(req, false, true, cost, confirm, rc)
-}
-
-func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint bool, disjointCost int, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
+func (s SessionService) online(req robotcap.CommandRequest, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
 	env := s.Env
 	robots, err := env.SelectRobots(req)
 	if err != nil {
@@ -45,22 +41,20 @@ func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint
 			rc.OnlineDispatchIntervalMS = minInterval
 		}
 	}
-	if !store && !disjoint {
-		if len(robots) > rc.MaxOnlinePerCommand {
-			return result, fmt.Errorf("requested %d robots exceeds max_online_per_command=%d", len(robots), rc.MaxOnlinePerCommand)
+	if len(robots) > rc.MaxOnlinePerCommand {
+		return result, fmt.Errorf("requested %d robots exceeds max_online_per_command=%d", len(robots), rc.MaxOnlinePerCommand)
+	}
+	running := env.CountRuntimeRunning()
+	alreadyRunning := 0
+	status := env.RuntimeStatusMap()
+	for _, robot := range robots {
+		if st, ok := status[robot.UID]; ok && robotcap.ActiveRuntimeStatus(st) {
+			alreadyRunning++
 		}
-		running := env.CountRuntimeRunning()
-		alreadyRunning := 0
-		status := env.RuntimeStatusMap()
-		for _, robot := range robots {
-			if st, ok := status[robot.UID]; ok && robotcap.ActiveRuntimeStatus(st) {
-				alreadyRunning++
-			}
-		}
-		newLogins := len(robots) - alreadyRunning
-		if running+newLogins > rc.MaxOnlineRobots {
-			return result, fmt.Errorf("online limit exceeded: running=%d new=%d max_online_robots=%d", running, newLogins, rc.MaxOnlineRobots)
-		}
+	}
+	newLogins := len(robots) - alreadyRunning
+	if running+newLogins > rc.MaxOnlineRobots {
+		return result, fmt.Errorf("online limit exceeded: running=%d new=%d max_online_robots=%d", running, newLogins, rc.MaxOnlineRobots)
 	}
 	if rc.OnlineDispatchIntervalMS <= 0 {
 		userinfos := make([]shared.RuntimeOnlineUser, 0, len(robots))
@@ -70,7 +64,7 @@ func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue
 			}
-			userinfos = append(userinfos, s.onlinePayload(robot, rc, store, disjoint, disjointCost))
+			userinfos = append(userinfos, s.onlinePayload(robot, rc))
 			result.Accepted++
 			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 		}
@@ -89,7 +83,7 @@ func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue
 			}
-			if err := env.SendOnline([]shared.RuntimeOnlineUser{s.onlinePayload(robot, rc, store, disjoint, disjointCost)}); err == nil {
+			if err := env.SendOnline([]shared.RuntimeOnlineUser{s.onlinePayload(robot, rc)}); err == nil {
 				result.Accepted++
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 			} else {
@@ -152,10 +146,7 @@ func (s SessionService) ConfirmAccepted(result *robotcap.CommandResult, timeout 
 	s.confirmOnline(result, timeout)
 }
 
-func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.RuntimeConfig, store bool, disjoint bool, disjointCost int) shared.RuntimeOnlineUser {
-	if disjointCost <= 0 {
-		disjointCost = 500
-	}
+func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.RuntimeConfig) shared.RuntimeOnlineUser {
 	return shared.RuntimeOnlineUser{
 		BirthArea:      robot.Area,
 		BirthVillage:   robot.Village,
@@ -163,14 +154,10 @@ func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.Runtim
 		BirthY:         robot.Y,
 		CID:            0,
 		DelayMS:        rc.LoginDelayMS,
-		DisjointCost:   disjointCost,
-		DisjointOpen:   disjoint,
 		IP:             s.Env.RobotConnectIP(),
 		MaxReconnect:   rc.MaxReconnect,
 		Port:           robot.Port,
 		ReconnectDelay: rc.ReconnectDelayMS,
-		StoreOpen:      store,
-		StoreTitle:     fmt.Sprintf("bot-%d-store", robot.UID),
 		UID:            robot.UID,
 	}
 }

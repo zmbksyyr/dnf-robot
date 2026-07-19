@@ -61,7 +61,6 @@ const (
 type UserLoginInfo struct {
 	IP        string
 	Port      int
-	Delay     uint32
 	Token     [512]byte
 	TokenSize uint32
 	UID       uint32
@@ -75,15 +74,12 @@ type RobotVo struct {
 	UID       uint32
 	CID       int
 	LoginIP   string
-	LoginPort int
 	LocalIP   string
 	Conn      net.Conn
 	Cipher    *crypt.DNFCipher
 	State     ClientState
 	LastError ClientError
 
-	IsRefishUser      int
-	Delay             uint32
 	Token             [512]byte
 	TokenSize         uint32
 	MaxReConn         uint32
@@ -94,20 +90,16 @@ type RobotVo struct {
 	CurArea           uint8
 	CurX              uint16
 	CurY              uint16
-	IsTokenRight      bool
 	NccSent           bool
 	SelectCharacSent  bool
 	RunStartTime      uint32
 	IsWaitingItemList bool
 	MoveType          uint8
 	DisconReason      DisconnectReason
-	RobotType         string
 	IP                string
 	Port              int
 	RobotTyp          int
 	LastTradeID       uint16
-	LastGMID          int
-	WaitingMsgType    int
 	LastTradeState    bool
 	TradeMoney        uint32
 	tradeQuoteLoading bool
@@ -126,7 +118,6 @@ type RobotVo struct {
 	StoreCreated              bool
 	PrepareStoreAfterItemList bool
 	storeInventoryVersion     uint64
-	AfterRunAsyncTaskVec      []AsyncTask
 	LoginInfo                 UserLoginInfo
 
 	DisjointCreateSent   bool
@@ -177,8 +168,6 @@ type RobotVo struct {
 	partySkillJob        int
 	partySkillCandidates []partySkillCandidate
 	partySkillLoad       partySkillProfileLoadFunc
-
-	GMName [5][100]byte
 
 	mu     lockhub.Locker
 	sendMu lockhub.Locker
@@ -236,28 +225,18 @@ func NewRobotVo(db *sql.DB) *RobotVo {
 		State:             StateStop,
 		LastError:         NoneError,
 		DisconReason:      NoDisconnect,
-		WaitingMsgType:    33,
 		minBufferSize:     4096,
 		done:              make(chan struct{}),
-		IsRefishUser:      0,
 		SelectCharacSent:  false,
 		NccSent:           false,
 		IsWaitingItemList: false,
-		IsTokenRight:      false,
 		LastTradeState:    false,
-		LastGMID:          0,
 		LastTradeID:       0,
 		TradeMoney:        0,
 		RobotTyp:          0,
 		DB:                db,
 		InfanMap:          make(map[int]Transaction),
 	}
-
-	copy(r.GMName[0][:], []byte("GMUSER1"))
-	copy(r.GMName[1][:], []byte("GMUSER2"))
-	copy(r.GMName[2][:], []byte("GMUSER3"))
-	copy(r.GMName[3][:], []byte("GMUSER4"))
-	copy(r.GMName[4][:], []byte("GMUSER5"))
 
 	tmpEnd := [64]byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -339,7 +318,6 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.LoginInfo = info
 	r.IP = info.IP
 	r.Port = info.Port
-	r.Delay = info.Delay
 	r.UID = info.UID
 	r.CID = info.CID
 	r.MaxReConn = info.MaxReConn
@@ -387,7 +365,6 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.recvSize = 0
 	r.Conn = nil
 	r.LoginIP = info.IP
-	r.LoginPort = info.Port
 	r.LocalIP = "127.0.0.1"
 	r.publishSnapshotUnsafe()
 }
@@ -429,7 +406,6 @@ func (r *RobotVo) prepareConnect(controller *RobotDnfTask) bool {
 		return false
 	}
 	r.Controller = controller
-	r.IsTokenRight = false
 	r.connectInFlight = false
 	r.State = StateInit
 	r.publishSnapshotUnsafe()

@@ -15,10 +15,6 @@ type RuntimeOnlineUser struct {
 	BirthArea      int
 	BirthX         int
 	BirthY         int
-	DisjointOpen   bool
-	DisjointCost   int
-	StoreOpen      bool
-	StoreTitle     string
 }
 
 type RuntimeMoveCommand struct {

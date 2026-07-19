@@ -65,7 +65,6 @@ func TestMessageDispatchKeepsAllUIDOperationsOnOneShard(t *testing.T) {
 		{"MsgMove", &moveInternalData{ID: uid}},
 		{"MsgLogout", uid},
 		{"MsgPublicMsg", &publicMsgInternalData{ID: uid}},
-		{"MsgOnLineAsyncTaskVec", &RobotVo{UID: uid}},
 	}
 	for _, tc := range cases {
 		if got := messageShardIndex(tc.typ, tc.data); got != want {

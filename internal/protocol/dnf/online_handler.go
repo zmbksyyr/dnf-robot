@@ -60,7 +60,6 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 		loginInfo := UserLoginInfo{
 			IP:        user.IP,
 			Port:      user.Port,
-			Delay:     uint32(user.DelayMS),
 			UID:       uint32(user.UID),
 			CID:       user.CID,
 			MaxReConn: uint32(user.MaxReconnect),
@@ -76,12 +75,6 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 
 		vo := NewRobotVo(db)
 		vo.Load(loginInfo)
-		if user.DisjointOpen {
-			vo.AfterRunAsyncTaskVec = append(vo.AfterRunAsyncTaskVec, AsyncTask{Type: AsyncDisjoint, Cost: user.DisjointCost})
-		}
-		if user.StoreOpen {
-			vo.AfterRunAsyncTaskVec = append(vo.AfterRunAsyncTaskVec, AsyncTask{Type: AsyncPriStore, Title: user.StoreTitle})
-		}
 		if !task.TryAddMessage("MsgOnLine", vo) {
 			return DnfTableTaskResult{Msg: "online queue full"}
 		}
@@ -92,9 +85,7 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 func validOnlineUser(user shared.RuntimeOnlineUser) bool {
 	return user.UID > 0 && len(user.IP) > 0 && len(user.IP) <= 15 &&
 		user.Port > 0 && user.Port < 1<<16 && user.DelayMS >= 0 &&
-		user.MaxReconnect >= 0 && user.ReconnectDelay >= 0 &&
-		(!user.DisjointOpen || user.DisjointCost >= 0) &&
-		(!user.StoreOpen || user.StoreTitle != "")
+		user.MaxReconnect >= 0 && user.ReconnectDelay >= 0
 }
 
 func resolveLoginToken(existing string, uid int, key *rsa.PrivateKey) string {

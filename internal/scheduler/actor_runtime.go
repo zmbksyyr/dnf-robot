@@ -71,7 +71,7 @@ func (r *RobotRuntime) RandomShoutMessage(randIntn func(int) int) string {
 
 func (r *RobotRuntime) OnlineNoConfirm(uid int) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
-		res, err := r.manager.sessionService().Online(robotcap.CommandRequest{UIDs: []int{uid}}, false, false, r.Config())
+		res, err := r.manager.sessionService().Online(robotcap.CommandRequest{UIDs: []int{uid}}, false, r.Config())
 		return firstActionResult(uid, res, err)
 	})
 }
@@ -279,7 +279,7 @@ func (r *RobotRuntime) tryDisjointPosition(info robotcap.Info, rc robotconfig.Ru
 	// Disjoint stalls are created by CMD 238 after the robot is fully running.
 	// Keep the login path normal here; setting disopen/discost in Dummylist and
 	// then also sending CMD 238 can leave the runtime without a direct 238 ACK.
-	online, err := r.manager.sessionService().Online(robotcap.CommandRequest{UIDs: []int{info.UID}}, false, true, rc)
+	online, err := r.manager.sessionService().Online(robotcap.CommandRequest{UIDs: []int{info.UID}}, true, rc)
 	if err != nil || online.Confirmed != 1 {
 		robotLogf("[DISJOINT_ONLINE_ERROR] uid=%d confirmed=%d failed=%d err=%v\n", info.UID, online.Confirmed, online.Failed, err)
 		return false, "online_failed"

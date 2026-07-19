@@ -69,7 +69,6 @@ func (r *RobotVo) RefishConnect() bool {
 		loginInfo := r.LoginInfo
 		runStartTime := r.RunStartTime
 		connCount := r.ConnCount + 1
-		tasks := append([]AsyncTask(nil), r.AfterRunAsyncTaskVec...)
 		pendingStoreTitle := r.PendingStoreTitle
 
 		if r.Conn != nil {
@@ -88,7 +87,6 @@ func (r *RobotVo) RefishConnect() bool {
 			newVo.mu.Lock()
 			newVo.RunStartTime = runStartTime
 			newVo.ConnCount = connCount
-			newVo.AfterRunAsyncTaskVec = tasks
 			newVo.PendingStoreTitle = pendingStoreTitle
 			newVo.mu.Unlock()
 			if !newVo.prepareConnect(controller) || !controller.replaceCurrent(uid, r, newVo) {

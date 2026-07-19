@@ -146,7 +146,7 @@ func messageShardIndex(typ string, data interface{}) int {
 
 func messageUID(typ string, data interface{}) int {
 	switch typ {
-	case "MsgOnLine", "MsgReconnect", "MsgOnLineAsyncTaskVec":
+	case "MsgOnLine", "MsgReconnect":
 		if vo, ok := data.(*RobotVo); ok && vo != nil {
 			return int(vo.UID)
 		}
@@ -167,7 +167,7 @@ func messageUID(typ string, data interface{}) int {
 
 func lifecycleMessage(typ string) bool {
 	switch typ {
-	case "MsgOnLine", "MsgReconnect", "MsgLogout", "MsgOnLineAsyncTaskVec":
+	case "MsgOnLine", "MsgReconnect", "MsgLogout":
 		return true
 	default:
 		return false
