@@ -14,12 +14,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"robot/internal/capability/catalog"
 	"robot/internal/capability/keypair"
-	"robot/internal/capability/robotconfig"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/dbstatus"
-	"robot/internal/shared"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -44,12 +41,6 @@ type diagnosticsSection struct {
 	Name   string             `json:"name"`
 	Status string             `json:"status"`
 	Checks []diagnosticsCheck `json:"checks"`
-}
-
-var partySkillErrorLogPatterns = []string{
-	"PARTY_DUNGEON_SKILL_PROFILE_ERROR",
-	"PARTY_DUNGEON_SKILL_CAST_ERROR",
-	"PARTY_DUNGEON_SKILL_RECOVER_ERROR",
 }
 
 type diagnosticsCheck struct {
@@ -261,81 +252,6 @@ func (b *diagnosticsBuilder) addMarketSection() {
 	checks = append(checks, auctionGuardCheck(diagnosticsDFGameRJSPath))
 	checks = append(checks, auctionMemoryPatchReadOnlyCheck())
 	b.addSection("Market", checks...)
-}
-
-func (b *diagnosticsBuilder) addPartySection() {
-	cfg, err := b.server.loadPartyCompatConfig()
-	if err != nil {
-		b.addSection("Party", diagnosticsCheck{Name: "party compat config", Status: diagError, Message: err.Error()})
-		return
-	}
-	status := inspectPartyCompat(b.cfg.RobotGamePort, cfg)
-	status.DesiredEnabled = cfg.Enabled
-	checks := []diagnosticsCheck{
-		{
-			Name:     "party compatibility patch",
-			Status:   partyCompatDiagStatus(status),
-			Message:  partyCompatDiagMessage(status),
-			Expected: map[string]interface{}{"desired_enabled": cfg.Enabled, "account_start": cfg.AccountStart, "account_end": cfg.AccountEnd},
-			Observed: status,
-		},
-		portDialCheck("relay service", "127.0.0.1", b.cfg.RelayPort),
-		udpListeningCheck("party route0 UDP", b.cfg.PartyRoute0Port),
-	}
-	checks = append(checks, partyAccountRangeCheck(b.cfg.ConfigDir, status.AccountStart, status.AccountEnd))
-	b.addSection("Party", checks...)
-}
-
-func partyAccountRangeCheck(configDir string, patchStart, patchEnd uint32) diagnosticsCheck {
-	path := filepath.Join(configDir, "robot_config.ini")
-	rc, err := robotconfig.LoadFile(path)
-	if err != nil {
-		return diagnosticsCheck{
-			Name:     "party account range",
-			Status:   diagError,
-			Message:  "cannot load robot account range: " + err.Error(),
-			Expected: path,
-		}
-	}
-
-	observed := map[string]interface{}{
-		"robot_uid_start":     rc.RobotUIDStart,
-		"robot_uid_end":       rc.RobotUIDEnd,
-		"patch_start":         patchStart,
-		"patch_end_exclusive": patchEnd,
-	}
-	expectedStart, expectedEnd, ok := partyCompatConfiguredWindow(rc.RobotUIDStart, rc.RobotUIDEnd)
-	if !ok {
-		return diagnosticsCheck{
-			Name:     "party account range",
-			Status:   diagError,
-			Message:  "configured robot account range is invalid",
-			Observed: observed,
-		}
-	}
-	covered := patchStart <= expectedStart && patchEnd >= expectedEnd
-	if !covered {
-		return diagnosticsCheck{
-			Name:     "party account range",
-			Status:   diagError,
-			Message:  "party patch range does not cover the configured party account window",
-			Expected: map[string]interface{}{"patch_start_lte": expectedStart, "patch_end_exclusive_gte": expectedEnd},
-			Observed: observed,
-		}
-	}
-	return diagnosticsCheck{
-		Name:     "party account range",
-		Status:   diagOK,
-		Message:  "party patch range covers the configured party account window",
-		Observed: observed,
-	}
-}
-
-func (b *diagnosticsBuilder) addSkillSection() {
-	configDir := b.cfg.ConfigDir
-	checks := skillDiagnosticsChecks(configDir)
-	checks = append(checks, recentLogPatternCheck("recent party skill errors", filepath.Join(configDir, "log_robot"), partySkillErrorLogPatterns))
-	b.addSection("Skill", checks...)
 }
 
 func (b *diagnosticsBuilder) addLogSection() {
@@ -701,35 +617,6 @@ func pidOfProcess(name string) (int, error) {
 	return pid, nil
 }
 
-func partyCompatDiagStatus(status partyCompatStatus) string {
-	if status.DesiredEnabled && (!status.Enabled || status.State != "on") {
-		if status.State == "unavailable" {
-			return diagWarn
-		}
-		return diagError
-	}
-	if !status.DesiredEnabled && status.Enabled {
-		return diagWarn
-	}
-	return diagOK
-}
-
-func partyCompatDiagMessage(status partyCompatStatus) string {
-	if status.Message != "" {
-		return status.Message
-	}
-	if status.DesiredEnabled && status.Enabled {
-		return "party compatibility patch is active"
-	}
-	if status.DesiredEnabled {
-		return "party compatibility patch is desired but not active"
-	}
-	if status.Enabled {
-		return "party compatibility patch is active while desired off"
-	}
-	return "party compatibility patch is off"
-}
-
 func portDialCheck(name, host string, port int) diagnosticsCheck {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -752,120 +639,6 @@ func udpListeningCheck(name string, port int) diagnosticsCheck {
 		}
 	}
 	return diagnosticsCheck{Name: name, Status: diagError, Message: "udp port is not listening", Expected: port}
-}
-
-func skillDiagnosticsChecks(configDir string) []diagnosticsCheck {
-	whitelistPath := filepath.Join(configDir, "party_skill_catalog.json")
-	pvfPath := filepath.Join(configDir, "pvf_skill_state_catalog.json")
-
-	whitelist, whitelistErr := catalog.ReadPartySkillCatalog(whitelistPath)
-	whitelistCheck := partySkillWhitelistCheck(whitelistPath, whitelist, whitelistErr)
-	pvfStates, pvfCheck, pvfErr := pvfSkillCatalogCheck(pvfPath)
-	checks := []diagnosticsCheck{whitelistCheck, pvfCheck}
-	if whitelistErr != nil || pvfErr != nil {
-		checks = append(checks, diagnosticsCheck{
-			Name: "effective party skill candidates", Status: diagError,
-			Message: "candidate intersection cannot be calculated until both catalogs are valid",
-		})
-		return checks
-	}
-	checks = append(checks, effectivePartySkillCheck(whitelist, pvfStates))
-	return checks
-}
-
-func partySkillWhitelistCheck(path string, report catalog.PartySkillCatalogReport, err error) diagnosticsCheck {
-	if err != nil {
-		return diagnosticsCheck{Name: filepath.Base(path), Status: diagError, Message: err.Error(), Expected: path}
-	}
-	byJob := make(map[int]int)
-	for _, entry := range report.Entries {
-		byJob[entry.Job]++
-	}
-	status := diagOK
-	message := "party skill whitelist is valid"
-	switch {
-	case len(report.Entries) == 0:
-		status = diagWarn
-		message = "party skill whitelist has no valid entries"
-	case len(report.Issues) > 0 || report.OverLevelCount > 0 || report.ConfiguredMaxSkillLevel > report.EffectiveMaxSkillLevel:
-		status = diagWarn
-		message = "party skill whitelist contains skipped entries"
-	}
-	return diagnosticsCheck{
-		Name: filepath.Base(path), Status: status, Message: message,
-		Observed: map[string]interface{}{
-			"path": path, "source_count": report.SourceCount, "valid_count": len(report.Entries), "by_job": byJob,
-			"invalid_count": len(report.Issues), "disabled_count": report.DisabledCount, "over_level_count": report.OverLevelCount,
-			"configured_max_level": report.ConfiguredMaxSkillLevel, "effective_max_level": report.EffectiveMaxSkillLevel,
-		},
-	}
-}
-
-func pvfSkillCatalogCheck(path string) ([]shared.SkillState, diagnosticsCheck, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, diagnosticsCheck{Name: filepath.Base(path), Status: diagError, Message: err.Error(), Expected: path}, err
-	}
-	var entries []shared.SkillState
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, diagnosticsCheck{Name: filepath.Base(path), Status: diagError, Message: err.Error(), Expected: path}, err
-	}
-	byJob := make(map[int]int)
-	for _, entry := range entries {
-		byJob[entry.Job]++
-	}
-	status := diagOK
-	message := "PVF skill catalog is valid"
-	if len(entries) == 0 {
-		status = diagWarn
-		message = "PVF skill catalog has no entries"
-	}
-	return entries, diagnosticsCheck{
-		Name: filepath.Base(path), Status: status, Message: message,
-		Observed: map[string]interface{}{"path": path, "count": len(entries), "by_job": byJob},
-	}, nil
-}
-
-func effectivePartySkillCheck(whitelist catalog.PartySkillCatalogReport, pvfStates []shared.SkillState) diagnosticsCheck {
-	jobSet := make(map[int]struct{})
-	for _, entry := range whitelist.Entries {
-		jobSet[entry.Job] = struct{}{}
-	}
-	jobs := make([]int, 0, len(jobSet))
-	for job := range jobSet {
-		jobs = append(jobs, job)
-	}
-	sort.Ints(jobs)
-
-	byJob := make(map[int]int, len(jobs))
-	total := 0
-	stats := shared.PartySkillMatchStats{}
-	for _, job := range jobs {
-		matches, jobStats := shared.MatchPartySkillStates(job, whitelist.Entries, pvfStates)
-		byJob[job] = len(matches)
-		total += len(matches)
-		stats.PVFMatched += jobStats.PVFMatched
-		stats.SkippedMissingPVF += jobStats.SkippedMissingPVF
-		stats.SkippedPathMismatch += jobStats.SkippedPathMismatch
-	}
-
-	status := diagOK
-	message := fmt.Sprintf("%d effective party skill candidates", total)
-	switch {
-	case total == 0:
-		status = diagError
-		message = "party skill whitelist and PVF export have no effective candidates"
-	case len(whitelist.Issues) > 0 || whitelist.OverLevelCount > 0 || stats.SkippedMissingPVF > 0 || stats.SkippedPathMismatch > 0:
-		status = diagWarn
-		message = fmt.Sprintf("%d effective party skill candidates with skipped entries", total)
-	}
-	return diagnosticsCheck{
-		Name: "effective party skill candidates", Status: status, Message: message,
-		Observed: map[string]interface{}{
-			"total": total, "by_job": byJob, "whitelist_valid": len(whitelist.Entries), "whitelist_invalid": len(whitelist.Issues),
-			"pvf_total": len(pvfStates), "missing_pvf": stats.SkippedMissingPVF, "path_mismatch": stats.SkippedPathMismatch,
-		},
-	}
 }
 
 func recentLogPatternCheck(name, path string, patterns []string) diagnosticsCheck {
