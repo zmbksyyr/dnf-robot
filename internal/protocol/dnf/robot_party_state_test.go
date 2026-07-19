@@ -142,6 +142,32 @@ func TestSetPartyPeersKeepsAccountOnlyRobotPeers(t *testing.T) {
 	}
 }
 
+func TestAccountOnlyPeerKeepsPartyLifecycleActive(t *testing.T) {
+	vo := &RobotVo{State: StateRun}
+	vo.partyPeers[0] = partyIPPeer{accID: 17000026, slot: 2, slotKnown: true}
+	if !vo.partyActiveUnsafe() {
+		t.Fatal("account-only confirmed peer was treated as an empty party slot")
+	}
+}
+
+func TestPartySelfSnapshotPreservesKnownUniqueID(t *testing.T) {
+	vo := &RobotVo{UID: 17000026}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x2244, accID: 17000026, slot: 2, slotKnown: true, port: 45000}
+	vo.setPartySelfPeerUnsafe(partyIPPeer{accID: 17000026, slot: 2, slotKnown: true, port: 46000})
+	if vo.partySelfPeer.uniqueID != 0x2244 || vo.partySelfPeer.port != 46000 {
+		t.Fatalf("partial self snapshot lost identity or endpoint: %+v", vo.partySelfPeer)
+	}
+}
+
+func TestPartySelfSnapshotMergesAnonymousEndpointUpdate(t *testing.T) {
+	vo := &RobotVo{UID: 17000026}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x2244, accID: 17000026, slot: 2, slotKnown: true, port: 45000}
+	vo.setPartySelfPeerUnsafe(partyIPPeer{slot: 3, slotKnown: true, port: 46000})
+	if vo.partySelfPeer.uniqueID != 0x2244 || vo.partySelfPeer.accID != 17000026 || vo.partySelfPeer.slot != 3 || vo.partySelfPeer.port != 46000 {
+		t.Fatalf("anonymous partial self snapshot was not merged: %+v", vo.partySelfPeer)
+	}
+}
+
 func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}

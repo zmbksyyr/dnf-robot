@@ -4,11 +4,20 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type panicLocalAddrConn struct {
+	net.Conn
+}
+
+func (panicLocalAddrConn) LocalAddr() net.Addr {
+	panic("test local address panic")
+}
 
 func TestPartyRobotPeersNegotiateOverDynamicUDP(t *testing.T) {
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -26,7 +35,7 @@ func TestPartyRobotPeersNegotiateOverDynamicUDP(t *testing.T) {
 	vo.partySelfPeer = partyIPPeer{uniqueID: 1, accID: 17000001, slot: 1, slotKnown: true}
 	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
-	if !vo.sendPartyRobotPeerProbeUnsafe(vo.partyPeers[0], 1) {
+	if !vo.sendPartyRobotPeerProbeRouteUnsafe(vo.partyPeers[0], 1, 1) {
 		t.Fatal("robot peer probe was not sent")
 	}
 
@@ -87,6 +96,9 @@ func TestPartyUDPLoopRetriesRobotPeerProbe(t *testing.T) {
 	if !vo.ensurePartyUDPLoopUnsafe() {
 		t.Fatal("active party UDP loop did not start")
 	}
+	vo.mu.Lock()
+	vo.ensurePartySupervisorUnsafe()
+	vo.mu.Unlock()
 	defer func() {
 		vo.mu.Lock()
 		vo.State = StateStop
@@ -122,7 +134,7 @@ func TestPartyRobotPeerNegotiationDoesNotDependOnAccountOrder(t *testing.T) {
 	}
 	defer sender.Close()
 
-	vo := &RobotVo{partyUDPConn: sender}
+	vo := &RobotVo{partyUDPConn: sender, partyUDPRunning: true}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true}
 	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, accID: 17000001, slot: 1, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
@@ -172,7 +184,7 @@ func TestPartyRobotPeerProbeRestartsAfterCooldown(t *testing.T) {
 	}
 	defer sender.Close()
 
-	vo := &RobotVo{partyUDPConn: sender}
+	vo := &RobotVo{partyUDPConn: sender, partyUDPRunning: true}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 1, accID: 17000001, slot: 1, slotKnown: true}
 	peerAddr := receiver.LocalAddr().(*net.UDPAddr)
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 2, accID: 17000002, slot: 2, slotKnown: true, outerIP: peerAddr.IP, port: uint16(peerAddr.Port)}
@@ -270,6 +282,14 @@ func TestBuildPartyRelayPacket(t *testing.T) {
 	want := []byte{1, 0, 15, 0, 0x80, 0xa8, 0x12, 0x01, 0x46, 0x66, 0x03, 0x01, 1, 2, 3}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("packet = %x, want %x", got, want)
+	}
+}
+
+func TestPartyTransportReplyGroupingRespectsDatagramLimit(t *testing.T) {
+	frames := [][]byte{{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}}
+	groups := groupPartyTransportFrames(frames, 8)
+	if len(groups) != 2 || !bytes.Equal(groups[0], []byte{1, 2, 3, 4, 5, 6, 7, 8}) || !bytes.Equal(groups[1], []byte{9, 10, 11, 12}) {
+		t.Fatalf("reply groups=%x", groups)
 	}
 }
 
@@ -526,4 +546,103 @@ func TestPartyRelayWriteQueueIsBounded(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
 		t.Fatalf("relay queue overflow blocked for %s", elapsed)
 	}
+}
+
+func TestPartySupervisorReconnectsRelayAfterFailure(t *testing.T) {
+	gameConn, gamePeer := net.Pipe()
+	defer gamePeer.Close()
+	var calls atomic.Int32
+	connectedPeer := make(chan net.Conn, 1)
+	vo := &RobotVo{
+		UID:           17000001,
+		LoginIP:       "192.0.2.44",
+		State:         StateRun,
+		Conn:          gameConn,
+		partySelfPeer: partyIPPeer{uniqueID: 7, accID: 17000001, slot: 1, slotKnown: true},
+		partyRelayDial: func(_, _ string, _ time.Duration) (net.Conn, error) {
+			if calls.Add(1) == 1 {
+				return nil, errors.New("temporary relay failure")
+			}
+			robot, peer := net.Pipe()
+			go func() {
+				auth := make([]byte, 12)
+				_, _ = io.ReadFull(peer, auth)
+				connectedPeer <- peer
+			}()
+			return robot, nil
+		},
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 9, accID: 18000000, slot: 0, slotKnown: true}
+	vo.mu.Lock()
+	vo.ensurePartySupervisorUnsafe()
+	vo.mu.Unlock()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		vo.mu.Lock()
+		connected := vo.partyRelayConn != nil
+		vo.mu.Unlock()
+		if connected && calls.Load() >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	vo.mu.Lock()
+	connected := vo.partyRelayConn != nil
+	vo.mu.Unlock()
+	if !connected || calls.Load() < 2 {
+		t.Fatalf("relay did not reconnect connected=%t calls=%d", connected, calls.Load())
+	}
+
+	peer := <-connectedPeer
+	vo.mu.Lock()
+	vo.State = StateStop
+	vo.stopPartySupervisorUnsafe()
+	vo.closePartyRelayUnsafe()
+	vo.mu.Unlock()
+	_ = peer.Close()
+	_ = gameConn.Close()
+}
+
+func TestPartySupervisorRecoversFromStepPanic(t *testing.T) {
+	vo := &RobotVo{UID: 17000001, State: StateRun, Conn: panicLocalAddrConn{}}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 9, accID: 18000000, slot: 0, slotKnown: true}
+	vo.mu.Lock()
+	if !vo.ensurePartySupervisorUnsafe() {
+		vo.mu.Unlock()
+		t.Fatal("party supervisor did not start")
+	}
+	vo.mu.Unlock()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		vo.mu.Lock()
+		running := vo.partySupervisorRun
+		vo.mu.Unlock()
+		if !running {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("party supervisor stayed marked running after panic")
+}
+
+func TestPartyRelayCombinesRepliesIntoOneWrite(t *testing.T) {
+	robot, relay := net.Pipe()
+	defer relay.Close()
+	vo := &RobotVo{UID: 17000001, State: StateRun, partyRelayConn: robot}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 2, accID: 17000001, slot: 1, slotKnown: true}
+	peer := partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true}
+	vo.partyPeers[0] = peer
+	payload := append(buildPartyReliablePacket(7, peer.slot, 0, [][]byte{{1, 2, 3}}), buildPartyReliablePacket(8, peer.slot, 0, [][]byte{{4, 5, 6}})...)
+	vo.handlePartyRelayPacket(robot, buildPartyRelayPacket(3, peer.accID, vo.UID, payload))
+	packet := readPartyRelayPacket(t, relay)
+	frames, ok := splitPartyTransportFrames(packet[12:])
+	if !ok || len(frames) != 2 || !bytes.Equal(frames[0], buildPartyTQOSAck(vo.partySelfPeer.slot, 7)) || !bytes.Equal(frames[1], buildPartyTQOSAck(vo.partySelfPeer.slot, 8)) {
+		t.Fatalf("combined relay replies=%x frames=%x ok=%t", packet, frames, ok)
+	}
+	vo.mu.Lock()
+	vo.State = StateStop
+	vo.closePartyRelayUnsafe()
+	vo.mu.Unlock()
 }

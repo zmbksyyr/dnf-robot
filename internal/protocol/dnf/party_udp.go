@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	partyUDPReadErrorLogGap = 5 * time.Second
-	partyUDPReadBackoffMin  = 10 * time.Millisecond
-	partyUDPReadBackoffMax  = time.Second
+	partyUDPReadErrorLogGap  = 5 * time.Second
+	partyUDPReadBackoffMin   = 10 * time.Millisecond
+	partyUDPReadBackoffMax   = time.Second
+	partyUDPReadRecycleAfter = 5 * time.Second
 )
 
 func (r *RobotVo) startPartyUDPUnsafe(addr *net.TCPAddr) bool {
@@ -65,28 +66,13 @@ func (r *RobotVo) ensurePartyUDPLoopUnsafe() bool {
 
 func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64) {
 	buf := make([]byte, 4096)
-	var nextProbe time.Time
-	var nextFlush time.Time
 	var readErrorLogAt time.Time
 	var readErrorBackoff time.Duration
+	var readErrorSince time.Time
 	for {
-		now := time.Now()
 		r.mu.Lock()
 		stopped := r.State == StateStop || r.partyUDPConn != conn || r.partyUDPGeneration != generation
-		active := false
-		if !stopped {
-			active = r.partyActiveUnsafe()
-			if active {
-				if nextProbe.IsZero() || !now.Before(nextProbe) {
-					r.startPartyRobotPeerNegotiationUnsafe()
-					nextProbe = now.Add(time.Second)
-				}
-				if nextFlush.IsZero() || !now.Before(nextFlush) {
-					r.flushPartyRuntimeUnsafe(conn, now)
-					nextFlush = now.Add(100 * time.Millisecond)
-				}
-			}
-		}
+		active := !stopped && r.partyActiveUnsafe()
 		if stopped || !active {
 			if r.partyUDPConn == conn && r.partyUDPGeneration == generation {
 				r.partyUDPRunning = false
@@ -95,14 +81,7 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 			return
 		}
 		r.mu.Unlock()
-		readWait := time.Until(nextFlush)
-		if probeWait := time.Until(nextProbe); probeWait < readWait {
-			readWait = probeWait
-		}
-		if readWait < time.Millisecond {
-			readWait = time.Millisecond
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(readWait))
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 		n, remote, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
@@ -118,9 +97,20 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 				return
 			}
 			now := time.Now()
+			if readErrorSince.IsZero() {
+				readErrorSince = now
+			}
 			if readErrorLogAt.IsZero() || !now.Before(readErrorLogAt) {
 				fmt.Printf("[PARTY_UDP_READ_ERROR] uid=%d err=%v\n", uid, err)
 				readErrorLogAt = now.Add(partyUDPReadErrorLogGap)
+			}
+			if now.Sub(readErrorSince) >= partyUDPReadRecycleAfter {
+				if r.partyUDPConn == conn && r.partyUDPGeneration == generation {
+					r.partyUDPRunning = false
+				}
+				r.mu.Unlock()
+				fmt.Printf("[PARTY_UDP_RECYCLE] uid=%d err=%v\n", uid, err)
+				return
 			}
 			r.mu.Unlock()
 			readErrorBackoff = nextPartyUDPReadBackoff(readErrorBackoff)
@@ -128,14 +118,14 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 			continue
 		}
 		readErrorBackoff = 0
+		readErrorSince = time.Time{}
 		if n <= 0 || remote == nil {
 			continue
 		}
 		payload := append([]byte(nil), buf[:n]...)
 		if shouldReplyPartyUDP(conn, remote) {
-			acks := r.buildPartyUDPAcks(payload, remote)
-			for _, ack := range acks {
-				writePartyUDPReply(conn, ack, remote, uid)
+			for _, reply := range groupPartyTransportFrames(r.buildPartyUDPAcks(payload, remote), partyDefaultUDPMTU) {
+				writePartyUDPReply(conn, reply, remote, uid)
 			}
 		}
 	}
@@ -170,7 +160,7 @@ func writePartyUDPReply(conn *net.UDPConn, payload []byte, remote *net.UDPAddr, 
 	if conn == nil || remote == nil {
 		return
 	}
-	if _, err := conn.WriteToUDP(payload, remote); err != nil {
+	if err := writePartyUDPDatagram(conn, payload, remote); err != nil {
 		fmt.Printf("[PARTY_UDP_ACK_ERROR] uid=%d remote=%s err=%v\n", uid, remote.String(), err)
 	}
 }

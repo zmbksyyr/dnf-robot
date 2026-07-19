@@ -18,7 +18,7 @@ type partyDungeonFollowPending struct {
 }
 
 func (r *RobotVo) shouldFollowPartyPeerUnsafe(peer partyIPPeer) bool {
-	return r.partySelfPeer.slotKnown && r.partySelfPeer.slot != 0 && peer.slotKnown && peer.slot == 0 && peer.uniqueID != 0
+	return r.partySelfPeer.slotKnown && r.partySelfPeer.slot != 0 && r.partySelfPeer.uniqueID != 0 && peer.slotKnown && peer.slot == 0 && peer.uniqueID != 0
 }
 
 func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, now time.Time) bool {
@@ -78,25 +78,41 @@ func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
 func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time) {
 	for len(r.partyDungeonFollow) > 0 && !now.Before(r.partyDungeonFollow[0].due) {
 		pending := r.partyDungeonFollow[0]
-		r.partyDungeonFollow = r.partyDungeonFollow[1:]
 		peer := r.partyPeerForSlotUnsafe(pending.peerSlot)
 		if peer.uniqueID == 0 {
+			r.partyDungeonFollow = r.partyDungeonFollow[1:]
 			continue
 		}
-		route := r.partyRouteForPeerUnsafe(peer.slot)
-		sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, pending.reliable)
-		if !ok {
-			continue
-		}
-		var payload []byte
+		var err error
+		route := byte(0)
 		if pending.reliable {
-			payload = buildPartyReliablePacket(sequence, r.partySelfPeer.slot, pending.flags, pending.records)
+			if r.partyReliablePendingCountUnsafe(peer.slot) > 0 || !r.partySkillRecoverAt.IsZero() {
+				r.partyDungeonFollow[0].due = now.Add(500 * time.Millisecond)
+				return
+			}
+			_, err = r.sendPartyReliableUnsafe(conn, peer, pending.flags, pending.records, "follow", now)
 		} else {
-			payload = buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, pending.flags, pending.body)
+			route = r.partyRouteForPeerUnsafe(peer.slot)
+			if !r.partyRouteSendEligibleUnsafe(conn, peer, route, now) {
+				err = errPartyReliableBackpressure
+			} else {
+				sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, false)
+				if !ok {
+					err = errPartyReliableBackpressure
+				} else {
+					payload := buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, pending.flags, pending.body)
+					_, err = r.sendPartyTransportUnsafe(conn, peer, route, payload)
+				}
+			}
 		}
-		if _, err := r.sendPartyTransportUnsafe(conn, peer, route, payload); err != nil {
-			foundationlog.Robotf("[PARTY_DUNGEON_FOLLOW_ERROR] uid=%d peer=%d route=%d err=%v\n", r.UID, peer.accID, route, err)
+		if err != nil {
+			r.partyDungeonFollow[0].due = now.Add(500 * time.Millisecond)
+			if r.shouldLogPartyRuntimeErrorUnsafe(now) {
+				foundationlog.Robotf("[PARTY_DUNGEON_FOLLOW_ERROR] uid=%d peer=%d route=%d reliable=%t err=%v\n", r.UID, peer.accID, route, pending.reliable, err)
+			}
+			return
 		}
+		r.partyDungeonFollow = r.partyDungeonFollow[1:]
 	}
 }
 

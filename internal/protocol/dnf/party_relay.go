@@ -12,7 +12,9 @@ import (
 const (
 	partyRelayWriteTimeout   = 500 * time.Millisecond
 	partyRelayWriteQueueSize = 64
-	partyRelayOnlyFlush      = 100 * time.Millisecond
+	partyRelayBackoffInitial = 500 * time.Millisecond
+	partyRelayBackoffMax     = 30 * time.Second
+	partyRelayMaxPacketSize  = 4096
 )
 
 type partyRelayDialFunc func(network, address string, timeout time.Duration) (net.Conn, error)
@@ -29,10 +31,9 @@ func (r *RobotVo) ensurePartyRelayUnsafe() {
 	}
 	host := r.LoginIP
 	now := time.Now()
-	if !r.partyRelayAt.IsZero() && now.Sub(r.partyRelayAt) < 5*time.Second {
+	if !r.partyRelayNextAt.IsZero() && now.Before(r.partyRelayNextAt) {
 		return
 	}
-	r.partyRelayAt = now
 	relayAddr := net.JoinHostPort(host, strconv.Itoa(currentPartyRelayPort()))
 	r.partyRelayConnecting = true
 	generation := r.partyRelayGeneration
@@ -73,16 +74,28 @@ func (r *RobotVo) finishPartyRelayConnect(generation uint64, conn net.Conn) bool
 	}
 	r.partyRelayConnecting = false
 	if conn == nil || r.partyRelayConn != nil || r.State != StateRun || !r.partyActiveUnsafe() {
+		if conn == nil && r.partyRelayConn == nil && r.State == StateRun && r.partyActiveUnsafe() {
+			r.schedulePartyRelayRetryUnsafe(time.Now())
+		}
 		return false
 	}
 	r.partyRelayConn = conn
+	r.partyRelayNextAt = time.Time{}
+	r.partyRelayBackoff = 0
+	for slot := byte(0); slot < 4; slot++ {
+		r.partyRouteBlockedUntil[slot][2] = time.Time{}
+		r.partyRouteFailures[slot][2] = 0
+	}
 	r.startPartyRelayWriterUnsafe(conn)
+	fmt.Printf("[PARTY_RELAY_CONNECTED] uid=%d\n", r.UID)
 	return true
 }
 
 func (r *RobotVo) closePartyRelayUnsafe() {
 	r.partyRelayGeneration++
 	r.partyRelayConnecting = false
+	r.partyRelayNextAt = time.Time{}
+	r.partyRelayBackoff = 0
 	conn := r.partyRelayConn
 	r.partyRelayConn = nil
 	r.stopPartyRelayWriterUnsafe(conn)
@@ -108,7 +121,29 @@ func (r *RobotVo) detachPartyRelayConnUnsafe(conn net.Conn) bool {
 	r.partyRelayGeneration++
 	r.partyRelayConnecting = false
 	r.stopPartyRelayWriterUnsafe(conn)
+	if r.State == StateRun && r.partyActiveUnsafe() {
+		now := time.Now()
+		for slot := byte(0); slot < 4; slot++ {
+			peer := r.partyPeerForSlotUnsafe(slot)
+			if partyPeerIdentityKnown(peer) {
+				r.markPartyRouteFailureUnsafe(peer, 2, now, "relay disconnected")
+			}
+		}
+		r.schedulePartyRelayRetryUnsafe(now)
+	}
 	return r.State != StateStop
+}
+
+func (r *RobotVo) schedulePartyRelayRetryUnsafe(now time.Time) {
+	if r.partyRelayBackoff <= 0 {
+		r.partyRelayBackoff = partyRelayBackoffInitial
+	} else {
+		r.partyRelayBackoff *= 2
+		if r.partyRelayBackoff > partyRelayBackoffMax {
+			r.partyRelayBackoff = partyRelayBackoffMax
+		}
+	}
+	r.partyRelayNextAt = now.Add(r.partyRelayBackoff)
 }
 
 func (r *RobotVo) writePartyRelayConn(conn net.Conn, packet []byte) error {
@@ -214,23 +249,13 @@ func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 	pending := make([]byte, 0, 4096)
 	nextHeartbeat := time.Now().Add(10 * time.Second)
 	for {
-		readWait := 2 * time.Second
-		r.mu.Lock()
-		relayOnly := r.State == StateRun && r.partyRelayConn == conn && r.partyActiveUnsafe() && (r.partyUDPConn == nil || !r.partyUDPRunning)
-		r.mu.Unlock()
-		if relayOnly {
-			readWait = partyRelayOnlyFlush
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(readWait))
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		n, err := conn.Read(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				now := time.Now()
 				r.mu.Lock()
 				stopped := r.State == StateStop || r.partyRelayConn != conn
-				if !stopped && r.partyActiveUnsafe() && (r.partyUDPConn == nil || !r.partyUDPRunning) {
-					r.flushPartyRuntimeUnsafe(nil, now)
-				}
 				r.mu.Unlock()
 				if stopped {
 					_ = conn.Close()
@@ -262,7 +287,7 @@ func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 		pending = append(pending, buf[:n]...)
 		for len(pending) >= 12 {
 			size := int(binary.LittleEndian.Uint16(pending[2:4]))
-			if size < 12 || size > 4096 {
+			if size < 12 || size > partyRelayMaxPacketSize {
 				unexpected := r.detachPartyRelayConn(conn)
 				_ = conn.Close()
 				if unexpected {
@@ -292,7 +317,7 @@ func (r *RobotVo) handlePartyRelayPacket(conn net.Conn, packet []byte) {
 		return
 	}
 	replies := r.buildPartyRelayReplies(payload, src)
-	for _, replyPayload := range replies {
+	for _, replyPayload := range groupPartyTransportFrames(replies, partyRelayMaxPacketSize-12) {
 		reply := buildPartyRelayPacket(1, r.UID, src, replyPayload)
 		if err := r.enqueuePartyRelayPacket(conn, reply); err != nil {
 			unexpected := r.detachPartyRelayConn(conn)

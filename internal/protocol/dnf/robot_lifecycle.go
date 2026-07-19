@@ -10,6 +10,7 @@ func (r *RobotVo) CheckUserState() bool {
 		return false
 	}
 	if r.DisconReason != NoDisconnect {
+		r.stopPartySupervisorUnsafe()
 		if r.Conn != nil {
 			r.Conn.Close()
 			r.Conn = nil
@@ -21,6 +22,7 @@ func (r *RobotVo) CheckUserState() bool {
 		return false
 	}
 	if r.State != StateRun {
+		r.stopPartySupervisorUnsafe()
 		if r.Conn != nil {
 			r.Conn.Close()
 			r.Conn = nil
@@ -33,11 +35,15 @@ func (r *RobotVo) CheckUserState() bool {
 	}
 	partyActive := r.partyActiveUnsafe()
 	if partyActive {
+		r.ensurePartySupervisorUnsafe()
 		r.ensurePartyUDPLoopUnsafe()
 		r.ensurePartyRelayUnsafe()
 		r.startPartyRobotPeerNegotiationUnsafe()
-	} else if r.partyRelayConn != nil {
-		r.closePartyRelayUnsafe()
+	} else {
+		r.stopPartySupervisorUnsafe()
+		if r.partyRelayConn != nil {
+			r.closePartyRelayUnsafe()
+		}
 	}
 	return true
 }
@@ -48,6 +54,7 @@ func (r *RobotVo) RefishConnect() bool {
 	uid := r.UID
 
 	if r.State == StateStop {
+		r.stopPartySupervisorUnsafe()
 		if r.Conn != nil {
 			r.Conn.Close()
 			r.Conn = nil
@@ -62,6 +69,7 @@ func (r *RobotVo) RefishConnect() bool {
 	}
 
 	if r.State == StateRun || r.State == StateLogin || r.State == StateInit {
+		r.stopPartySupervisorUnsafe()
 		r.recvBuffer = nil
 		r.recvSize = 0
 
@@ -107,6 +115,7 @@ func (r *RobotVo) RefishConnect() bool {
 	}
 
 	r.State = StateStop
+	r.stopPartySupervisorUnsafe()
 	if r.Conn != nil {
 		r.Conn.Close()
 		r.Conn = nil

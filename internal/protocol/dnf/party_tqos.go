@@ -10,8 +10,10 @@ import (
 const (
 	partyTQOSRetryInterval   = time.Second
 	partyTQOSMaxRetries      = 6
+	partyTQOSSlowRetry       = 5 * time.Second
 	partyTQOSEpochReuseDelay = partyTQOSRetryInterval * partyTQOSMaxRetries
 	partyRobotProbeCooldown  = 30 * time.Second
+	partyRobotHealthInterval = 10 * time.Second
 )
 
 func (r *RobotVo) flushPartyTQOSRepliesUnsafe(conn *net.UDPConn, now time.Time) {
@@ -22,14 +24,20 @@ func (r *RobotVo) flushPartyTQOSRepliesUnsafe(conn *net.UDPConn, now time.Time) 
 		}
 		for route := byte(1); route < byte(len(r.partyTQOSReplies[slot])); route++ {
 			pending := &r.partyTQOSReplies[slot][route]
-			if len(pending.packet) == 0 || pending.acknowledged || pending.exhausted || pending.nextRetry.IsZero() || now.Before(pending.nextRetry) {
+			if len(pending.packet) == 0 || pending.acknowledged || pending.nextRetry.IsZero() || now.Before(pending.nextRetry) {
+				continue
+			}
+			if pending.exhausted {
+				_, _ = r.sendPartyTransportUnsafe(conn, peer, route, pending.packet)
+				pending.nextRetry = now.Add(partyTQOSSlowRetry)
 				continue
 			}
 			if pending.retries >= partyTQOSMaxRetries {
 				pending.exhausted = true
-				pending.nextRetry = time.Time{}
+				pending.nextRetry = now.Add(partyTQOSSlowRetry)
 				sequence := binary.LittleEndian.Uint32(pending.packet[1:5])
 				fmt.Printf("[PARTY_TQOS_RETRY_EXHAUSTED] uid=%d peer=%d slot=%d route=%d sequence=%d retries=%d\n", r.UID, peer.accID, slot, route, sequence, pending.retries)
+				r.markPartyRouteFailureUnsafe(peer, route, now, "state2 ack timeout")
 				continue
 			}
 			if _, err := r.sendPartyTransportUnsafe(conn, peer, route, pending.packet); err != nil {
@@ -121,8 +129,15 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 	now := time.Now()
 	for _, frame := range frames {
 		if frame[0] == 0x00 {
+			if len(frame) != 8 || frame[1] != peer.slot {
+				return nil
+			}
+			r.rememberPartyPeerRouteUnsafe(peer.slot, route, now)
+			generatedACK := r.acknowledgePartyReliableUnsafe(frame, route, peer, now)
 			if r.partyTQOSReplyAcknowledgedUnsafe(frame, route, peer) {
-				r.markPartyRobotPeerReadyUnsafe(peer, "ack")
+				r.markPartyRobotPeerReadyUnsafe(peer, route, "ack", now)
+			} else if generatedACK && isPartyRobotAccount(peer.accID) {
+				r.markPartyRobotPeerReadyUnsafe(peer, route, "data-ack", now)
 			}
 			continue
 		}
@@ -144,7 +159,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			replies = append(replies, buildPartyTQOSAck(r.partySelfPeer.slot, sequence))
 			if !r.partyTQOSReceived[peer.slot][route].accept(sequence) {
 				if readyFromState2 {
-					r.markPartyRobotPeerReadyUnsafe(peer, "state2-duplicate")
+					r.markPartyRobotPeerReadyUnsafe(peer, route, "state2-duplicate", now)
 				}
 				continue
 			}
@@ -156,18 +171,18 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		if !requestOK {
 			continue
 		}
-		if r.partyRobotHandshakeReadyUnsafe(peer, route) {
-			continue
-		}
 		if request.state == 3 {
 			r.beginPartyTQOSEpochUnsafe(peer.slot, route, request, now)
 		}
 		if request.state == 2 {
-			r.markPartyRobotPeerReadyUnsafe(peer, "state2")
+			r.markPartyRobotPeerReadyUnsafe(peer, route, "state2", now)
 		}
 		if peer.slot < 4 && route < 3 {
 			r.partyTQOSCodecs[peer.slot][route] = request.codec
 			r.partyTQOSCodecKnown[peer.slot][route] = true
+		}
+		if request.state != 3 && isPartyRobotAccount(peer.accID) && r.partyRobotPeerReady[peer.slot] {
+			continue
 		}
 		nextState, hasNextState := nextPartyTQOSState(request.state)
 		if hasNextState {
@@ -190,10 +205,6 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 	return replies
 }
 
-func (r *RobotVo) partyRobotHandshakeReadyUnsafe(peer partyIPPeer, route byte) bool {
-	return route == 1 && peer.slot < 4 && isPartyRobotAccount(peer.accID) && r.partyRobotPeerReady[peer.slot]
-}
-
 func (r *RobotVo) partyTQOSReplyAcknowledgedUnsafe(frame []byte, route byte, peer partyIPPeer) bool {
 	if len(frame) != 8 || frame[0] != 0 || frame[1] != peer.slot || peer.slot >= byte(len(r.partyTQOSReplies)) || route >= byte(len(r.partyTQOSReplies[0])) {
 		return false
@@ -212,23 +223,36 @@ func (r *RobotVo) partyTQOSReplyAcknowledgedUnsafe(frame []byte, route byte, pee
 	return true
 }
 
-func (r *RobotVo) markPartyRobotPeerReadyUnsafe(peer partyIPPeer, reason string) {
-	if peer.slot >= 4 || !isPartyRobotAccount(peer.accID) || r.partyRobotPeerReady[peer.slot] {
-		return
-	}
-	r.partyRobotPeerReady[peer.slot] = true
-	if reason != "ack" && reason != "state2-duplicate" {
-		r.clearPartyTQOSPendingRepliesUnsafe(peer.slot)
-	}
-	fmt.Printf("[PARTY_ROBOT_TQOS_READY] uid=%d peer=%d slot=%d reason=%s\n", r.UID, peer.accID, peer.slot, reason)
+func (r *RobotVo) markPartyRobotPeerReadyUnsafe(peer partyIPPeer, route byte, reason string, now time.Time) {
+	r.setPartyRobotRouteReadyUnsafe(peer, route, true, reason, now)
 }
 
-func (r *RobotVo) clearPartyTQOSPendingRepliesUnsafe(peerSlot byte) {
-	if peerSlot >= byte(len(r.partyTQOSReplies)) {
-		return
-	}
-	for route := range r.partyTQOSReplies[peerSlot] {
-		r.partyTQOSReplies[peerSlot][route] = partyTQOSReliableReply{}
+func (r *RobotVo) probePartyRobotPeerHealthUnsafe(conn *net.UDPConn, now time.Time) {
+	for slot := byte(0); slot < 4; slot++ {
+		peer := r.partyPeerForSlotUnsafe(slot)
+		if !isPartyRobotAccount(peer.accID) {
+			continue
+		}
+		for route := byte(1); route <= 2; route++ {
+			if !r.partyRobotRouteReady[slot][route] {
+				continue
+			}
+			pending := &r.partyTQOSReplies[slot][route]
+			if len(pending.packet) == 0 || !pending.acknowledged {
+				continue
+			}
+			lastActivity := r.partyRouteActivityAt[slot][route]
+			if lastActivity.IsZero() || now.Sub(lastActivity) < partyRobotHealthInterval {
+				continue
+			}
+			pending.acknowledged = false
+			pending.exhausted = false
+			pending.retries = 0
+			pending.nextRetry = now.Add(partyTQOSRetryInterval)
+			if _, err := r.sendPartyTransportUnsafe(conn, peer, route, pending.packet); err != nil {
+				continue
+			}
+		}
 	}
 }
 
@@ -239,7 +263,7 @@ func (r *RobotVo) partyTQOSReliableReplyUnsafe(peerSlot, route byte, request par
 	pending := &r.partyTQOSReplies[peerSlot][route]
 	if pending.matchesRequestEpoch(request) {
 		newerRequest := partyTQOSSequenceAfter(request.sequence, pending.latestRequestSequence)
-		if !pending.acknowledged && !pending.exhausted {
+		if !pending.acknowledged {
 			if newerRequest {
 				pending.latestRequestSequence = request.sequence
 			}
@@ -294,19 +318,14 @@ func (r *RobotVo) beginPartyTQOSEpochUnsafe(peerSlot, route byte, request partyT
 	if epoch.matches(request) && now.Sub(epoch.startedAt) < partyTQOSEpochReuseDelay {
 		return
 	}
+	r.resetPartyTQOSRouteUnsafe(peerSlot, route)
+	epoch = &r.partyTQOSEpochs[peerSlot][route]
 	*epoch = partyTQOSEpoch{
 		flags:       request.flags,
 		codec:       request.codec,
 		startedAt:   now,
 		initialized: true,
 	}
-	r.partyTQOSSeq[peerSlot][route] = 0
-	r.partyTQOSReliableSeq[peerSlot][route] = 0
-	r.partyTQOSReplies[peerSlot][route] = partyTQOSReliableReply{}
-	r.partyTQOSReceived[peerSlot][route] = partyTQOSReceiveWindow{}
-	r.partyRobotProbeAt[peerSlot] = time.Time{}
-	r.partyRobotProbeCount[peerSlot] = 0
-	r.partyRobotPeerReady[peerSlot] = false
 }
 
 func (r *RobotVo) tracePartyUDPUnsafe(reason string, remote *net.UDPAddr, senderSlot *byte, peer uint32, size int) {
@@ -359,17 +378,31 @@ func (r *RobotVo) rememberPartyPeerRouteUnsafe(peerSlot, route byte, now time.Ti
 	if peerSlot >= byte(len(r.partyPeerRoute)) || (route != 1 && route != 2) {
 		return
 	}
-	r.partyPeerRoute[peerSlot] = route
-	r.partyPeerRouteAt[peerSlot] = now
+	peer := r.partyPeerForSlotUnsafe(peerSlot)
+	r.markPartyRouteHealthyUnsafe(peer, route, now)
 }
 
 func (r *RobotVo) partyRouteForPeerUnsafe(peerSlot byte) byte {
 	peer := r.partyPeerForSlotUnsafe(peerSlot)
+	now := time.Now()
 	if peerSlot < byte(len(r.partyPeerRoute)) && !r.partyPeerRouteAt[peerSlot].IsZero() {
 		route := r.partyPeerRoute[peerSlot]
-		if r.partyRouteAvailableUnsafe(peer, route) {
+		if (!isPartyRobotAccount(peer.accID) || r.partyRobotRouteReady[peerSlot][route]) && r.partyRouteEligibleUnsafe(peer, route, now) {
 			return route
 		}
+	}
+	if isPartyRobotAccount(peer.accID) && peerSlot < 4 {
+		for route := byte(1); route <= 2; route++ {
+			if r.partyRobotRouteReady[peerSlot][route] && r.partyRouteEligibleUnsafe(peer, route, now) {
+				return route
+			}
+		}
+	}
+	if r.partyRouteEligibleUnsafe(peer, 1, now) {
+		return 1
+	}
+	if r.partyRouteEligibleUnsafe(peer, 2, now) {
+		return 2
 	}
 	if r.partyRouteAvailableUnsafe(peer, 1) {
 		return 1
@@ -393,7 +426,7 @@ func (r *RobotVo) partyRouteAvailableUnsafe(peer partyIPPeer, route byte) bool {
 }
 
 func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
-	if r.partyUDPConn == nil || !r.partySelfPeer.slotKnown || !isPartyRobotAccount(r.partySelfPeer.accID) {
+	if !r.partySelfPeer.slotKnown || !isPartyRobotAccount(r.partySelfPeer.accID) || (r.partyUDPConn == nil && r.partyRelayConn == nil) {
 		return
 	}
 	for _, peer := range r.partyPeers {
@@ -401,9 +434,6 @@ func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 			continue
 		}
 		if r.partySelfPeer.accID == peer.accID {
-			continue
-		}
-		if _, ok := partyPeerUDPAddr(peer); !ok {
 			continue
 		}
 		now := time.Now()
@@ -417,31 +447,34 @@ func (r *RobotVo) startPartyRobotPeerNegotiationUnsafe() {
 			continue
 		}
 		attempt := int(r.partyRobotProbeCount[peer.slot]) + 1
-		if r.sendPartyRobotPeerProbeUnsafe(peer, attempt) {
+		route := r.partyRouteForPeerUnsafe(peer.slot)
+		if !r.partyRouteAvailableUnsafe(peer, route) {
+			continue
+		}
+		if r.sendPartyRobotPeerProbeRouteUnsafe(peer, route, attempt) {
 			r.partyRobotProbeAt[peer.slot] = now
 			r.partyRobotProbeCount[peer.slot]++
 		}
 	}
 }
 
-func (r *RobotVo) sendPartyRobotPeerProbeUnsafe(peer partyIPPeer, attempt int) bool {
-	if r.partyUDPConn == nil || !peer.slotKnown || peer.slot >= 4 {
+func (r *RobotVo) sendPartyRobotPeerProbeRouteUnsafe(peer partyIPPeer, route byte, attempt int) bool {
+	if !peer.slotKnown || peer.slot >= 4 || route < 1 || route > 2 {
 		return false
 	}
-	remote, ok := partyPeerUDPAddr(peer)
+	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, route, false)
 	if !ok {
 		return false
 	}
-	sequence, ok := r.nextPartyTQOSSequenceUnsafe(peer.slot, 1, false)
-	if !ok {
+	payload := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, 0, 3, route, partyTQOSCodec{key: 0x7e})
+	destination, err := r.sendPartyTransportUnsafe(r.partyUDPConn, peer, route, payload)
+	if err != nil {
+		fmt.Printf("[PARTY_ROBOT_PROBE_ERROR] uid=%d peer=%d route=%d attempt=%d destination=%s err=%v\n", r.UID, peer.accID, route, attempt, destination, err)
 		return false
 	}
-	payload := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, 0, 3, 1, partyTQOSCodec{key: 0x7e})
-	if _, err := r.partyUDPConn.WriteToUDP(payload, remote); err != nil {
-		fmt.Printf("[PARTY_ROBOT_PROBE_ERROR] uid=%d peer=%d attempt=%d remote=%s err=%v\n", r.UID, peer.accID, attempt, remote.String(), err)
-		return false
+	if attempt == 1 {
+		fmt.Printf("[PARTY_ROBOT_PROBE_CYCLE] uid=%d peer=%d slot=%d route=%d sequence=%d destination=%s\n", r.UID, peer.accID, peer.slot, route, sequence, destination)
 	}
-	fmt.Printf("[PARTY_ROBOT_PROBE] uid=%d peer=%d slot=%d attempt=%d sequence=%d remote=%s\n", r.UID, peer.accID, peer.slot, attempt, sequence, remote.String())
 	return true
 }
 
@@ -449,6 +482,7 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyTQOSSeq = [4][3]uint32{}
 	r.partyTQOSReliableSeq = [4][3]uint32{}
 	r.partyTQOSReplies = [4][3]partyTQOSReliableReply{}
+	r.partyReliablePending = [4][3][]partyReliablePending{}
 	r.partyTQOSReceived = [4][3]partyTQOSReceiveWindow{}
 	r.partyTQOSEpochs = [4][3]partyTQOSEpoch{}
 	r.partyTQOSCodecs = [4][3]partyTQOSCodec{}
@@ -456,14 +490,22 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyRobotProbeAt = [4]time.Time{}
 	r.partyRobotProbeCount = [4]uint8{}
 	r.partyRobotPeerReady = [4]bool{}
+	r.partyRobotRouteReady = [4][3]bool{}
 	r.partyPeerRoute = [4]byte{}
 	r.partyPeerRouteAt = [4]time.Time{}
+	r.partyRouteActivityAt = [4][3]time.Time{}
+	r.partyRouteBlockedUntil = [4][3]time.Time{}
+	r.partyRouteFailures = [4][3]uint8{}
+	r.partyRouteRecoveryAt = [4][3]time.Time{}
+	r.partyRouteDiagAt = [4][3]time.Time{}
+	r.partyRuntimeDiagAt = time.Time{}
 	r.partyDungeonFollow = nil
 	r.partyDungeonEnteredAt = time.Time{}
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
 	r.partySkillNextAt = time.Time{}
 	r.partySkillRecoverAt = time.Time{}
+	r.partySkillBlockedUntil = time.Time{}
 }
 
 func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
@@ -473,6 +515,7 @@ func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
 	r.partyTQOSSeq[slot] = [3]uint32{}
 	r.partyTQOSReliableSeq[slot] = [3]uint32{}
 	r.partyTQOSReplies[slot] = [3]partyTQOSReliableReply{}
+	r.partyReliablePending[slot] = [3][]partyReliablePending{}
 	r.partyTQOSReceived[slot] = [3]partyTQOSReceiveWindow{}
 	r.partyTQOSEpochs[slot] = [3]partyTQOSEpoch{}
 	r.partyTQOSCodecs[slot] = [3]partyTQOSCodec{}
@@ -480,8 +523,14 @@ func (r *RobotVo) resetPartyTQOSPeerUnsafe(slot byte) {
 	r.partyRobotProbeAt[slot] = time.Time{}
 	r.partyRobotProbeCount[slot] = 0
 	r.partyRobotPeerReady[slot] = false
+	r.partyRobotRouteReady[slot] = [3]bool{}
 	r.partyPeerRoute[slot] = 0
 	r.partyPeerRouteAt[slot] = time.Time{}
+	r.partyRouteActivityAt[slot] = [3]time.Time{}
+	r.partyRouteBlockedUntil[slot] = [3]time.Time{}
+	r.partyRouteFailures[slot] = [3]uint8{}
+	r.partyRouteRecoveryAt[slot] = [3]time.Time{}
+	r.partyRouteDiagAt[slot] = [3]time.Time{}
 	if len(r.partyDungeonFollow) > 0 {
 		kept := r.partyDungeonFollow[:0]
 		for _, pending := range r.partyDungeonFollow {

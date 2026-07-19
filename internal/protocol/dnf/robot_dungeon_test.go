@@ -234,6 +234,7 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	if vo.partySkillRecoverAt.Sub(now) != partySkillRecoverDelay {
 		t.Fatalf("recover delay = %s", vo.partySkillRecoverAt.Sub(now))
 	}
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(vo.partyPeers[0].slot, 0), 1, vo.partyPeers[0])
 	vo.flushPartyDungeonSkillUnsafe(sender, now.Add(partySkillRecoverDelay))
 	n, _, err = receiver.ReadFromUDP(buf)
 	if err != nil {
@@ -256,6 +257,17 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	vo.resetPartyTQOSTransportUnsafe()
 	if !vo.partyDungeonLastAt.IsZero() || !vo.partySkillNextAt.IsZero() || !vo.partySkillRecoverAt.IsZero() {
 		t.Fatalf("dungeon skill state survived reset: last=%s next=%s recover=%s", vo.partyDungeonLastAt, vo.partySkillNextAt, vo.partySkillRecoverAt)
+	}
+}
+
+func TestPartySkillDelayScalesWithRobotMembers(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	vo := &RobotVo{UID: 17000001}
+	vo.partyPeers[0] = partyIPPeer{accID: 17000002}
+	vo.partyPeers[1] = partyIPPeer{accID: 17000003}
+	delay := vo.partySkillDelayUnsafe(now)
+	if delay < 10*time.Second || delay > 15*time.Second {
+		t.Fatalf("three-robot skill delay=%s", delay)
 	}
 }
 
@@ -518,6 +530,9 @@ func TestPartyRelayOnlyLoopFlushesDungeonSkill(t *testing.T) {
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
 	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
+	vo.mu.Lock()
+	vo.ensurePartySupervisorUnsafe()
+	vo.mu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -535,6 +550,8 @@ func TestPartyRelayOnlyLoopFlushesDungeonSkill(t *testing.T) {
 	}
 
 	vo.mu.Lock()
+	vo.State = StateStop
+	vo.stopPartySupervisorUnsafe()
 	vo.closePartyRelayUnsafe()
 	vo.mu.Unlock()
 	select {

@@ -309,7 +309,7 @@ func (r *RobotVo) partyActiveUnsafe() bool {
 		r.clearPartyPendingUnsafe()
 	}
 	for _, peer := range r.partyPeers {
-		if peer.uniqueID != 0 {
+		if partyPeerIdentityKnown(peer) {
 			return true
 		}
 	}
@@ -324,6 +324,7 @@ func (r *RobotVo) setPartyPendingUnsafe(uniqueID uint16) {
 	r.partyPendingPeer = uniqueID
 	r.partyPendingUntil = time.Now().Add(partyPendingTimeout)
 	r.ensurePartyUDPLoopUnsafe()
+	r.ensurePartySupervisorUnsafe()
 }
 
 func (r *RobotVo) clearPartyPendingUnsafe() {
@@ -426,7 +427,7 @@ func (r *RobotVo) rememberPartyPeersUnsafe(peers []partyIPPeer) {
 			continue
 		}
 		for i, existing := range r.partyPeers {
-			if existing.uniqueID == 0 {
+			if !partyPeerIdentityKnown(existing) {
 				r.partyPeers[i] = peer
 				known = true
 				break
@@ -457,18 +458,41 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 	}
 	r.rememberPartyPeersUnsafe(peers)
 	r.ensurePartyUDPLoopUnsafe()
+	r.ensurePartySupervisorUnsafe()
 	for slot := byte(0); slot < 4; slot++ {
 		before := partyPeerForSlot(previous, slot)
 		after := partyPeerForSlot(r.partyPeers, slot)
-		identityChanged := !partyPeerSameIdentity(before, after) && (partyPeerIdentityKnown(before) || partyPeerIdentityKnown(after))
+		uniqueChanged := before.uniqueID != 0 && after.uniqueID != 0 && before.uniqueID != after.uniqueID
+		identityChanged := uniqueChanged || (!partyPeerSameIdentity(before, after) && (partyPeerIdentityKnown(before) || partyPeerIdentityKnown(after)))
 		endpointChanged := partyPeerSameIdentity(before, after) && partyPeerIdentityKnown(before) && !partyPeerAdvertisedEndpointEqual(before, after)
 		if identityChanged || endpointChanged {
 			r.resetPartyTQOSPeerUnsafe(slot)
 		}
 	}
 	if !r.partyActiveUnsafe() {
+		r.stopPartySupervisorUnsafe()
 		r.partySelfPeer = partyIPPeer{}
 		r.resetPartyTQOSTransportUnsafe()
+	}
+}
+
+func (r *RobotVo) setPartySelfPeerUnsafe(peer partyIPPeer) {
+	previous := r.partySelfPeer
+	uniqueChanged := previous.uniqueID != 0 && peer.uniqueID != 0 && previous.uniqueID != peer.uniqueID
+	if partyPeerSameIdentity(previous, peer) {
+		peer = mergePartyPeer(previous, peer)
+	} else if !partyPeerIdentityKnown(peer) && previous.accID == r.UID {
+		peer = mergePartyPeer(previous, peer)
+	}
+	r.partySelfPeer = peer
+	if uniqueChanged {
+		r.resetPartyTQOSTransportUnsafe()
+	}
+	if peer.uniqueID != 0 {
+		r.partySelfRefreshAt = time.Time{}
+		r.partySelfRefreshBackoff = 0
+	} else if peer.accID == r.UID && peer.slotKnown && r.partySelfRefreshAt.IsZero() {
+		r.partySelfRefreshAt = time.Now().Add(3 * time.Second)
 	}
 }
 
@@ -491,7 +515,10 @@ func (r *RobotVo) removePartyPeerUnsafe(uniqueID uint16) {
 }
 
 func (r *RobotVo) clearPartyUnsafe() {
+	r.stopPartySupervisorUnsafe()
 	r.partySelfPeer = partyIPPeer{}
+	r.partySelfRefreshAt = time.Time{}
+	r.partySelfRefreshBackoff = 0
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
@@ -501,6 +528,9 @@ func (r *RobotVo) clearPartyUnsafe() {
 }
 
 func mergePartyPeer(old, next partyIPPeer) partyIPPeer {
+	if next.uniqueID == 0 {
+		next.uniqueID = old.uniqueID
+	}
 	if next.accID == 0 {
 		next.accID = old.accID
 	}
@@ -537,10 +567,10 @@ func partyPeerIdentityKnown(peer partyIPPeer) bool {
 }
 
 func partyPeerSameIdentity(left, right partyIPPeer) bool {
-	if left.uniqueID != 0 || right.uniqueID != 0 {
-		return left.uniqueID != 0 && left.uniqueID == right.uniqueID
+	if left.accID != 0 && right.accID != 0 {
+		return left.accID == right.accID
 	}
-	return left.accID != 0 && left.accID == right.accID
+	return left.uniqueID != 0 && left.uniqueID == right.uniqueID
 }
 
 func partyPeerAdvertisedEndpointEqual(left, right partyIPPeer) bool {

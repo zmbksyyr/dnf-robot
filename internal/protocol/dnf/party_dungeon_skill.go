@@ -18,6 +18,7 @@ const (
 	partySkillRecoveryGrace     = 2 * time.Second
 	partySkillRecoveryRetry     = 750 * time.Millisecond
 	partySkillRecoverDelay      = 900 * time.Millisecond
+	partySkillFailureCooldown   = 30 * time.Second
 	partySkillStateBodyBaseSize = 31
 )
 
@@ -60,7 +61,7 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 	r.partyDungeonLastAt = now
 	r.partyDungeonFlags = frame[8]
 	if r.partySkillNextAt.IsZero() {
-		r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+		r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
 	}
 }
 
@@ -70,7 +71,7 @@ func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
 		r.partyDungeonLastAt = now
 	}
 	if r.partySkillNextAt.IsZero() {
-		r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+		r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
 	}
 }
 
@@ -78,12 +79,14 @@ func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {
 	if r.partyDungeonEnteredAt.IsZero() && r.partyDungeonLastAt.IsZero() && r.partySkillNextAt.IsZero() && r.partySkillRecoverAt.IsZero() && len(r.partyDungeonFollow) == 0 {
 		return
 	}
+	r.cancelPartyDungeonReliableUnsafe(time.Now())
 	r.partyDungeonFollow = nil
 	r.partyDungeonEnteredAt = time.Time{}
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
 	r.partySkillNextAt = time.Time{}
 	r.partySkillRecoverAt = time.Time{}
+	r.partySkillBlockedUntil = time.Time{}
 }
 
 func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time) {
@@ -97,10 +100,15 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		return
 	}
 	if !r.partySkillRecoverAt.IsZero() && !now.Before(r.partySkillRecoverAt) {
+		peer := r.partyPeerForSlotUnsafe(0)
+		if peer.slotKnown && r.partyReliablePurposePendingUnsafe(peer.slot, "skill-cast") {
+			r.partySkillRecoverAt = now.Add(partySkillRecoveryRetry)
+			return
+		}
 		if r.sendPartySkillStateUnsafe(conn, now, 0, nil, "RECOVER") {
 			r.partySkillRecoverAt = time.Time{}
 			if !r.partySkillNextAt.IsZero() && !now.Before(r.partySkillNextAt) {
-				r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+				r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
 			}
 		} else {
 			r.partySkillRecoverAt = now.Add(partySkillRecoveryRetry)
@@ -115,15 +123,26 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		}
 		return
 	}
+	if now.Before(r.partySkillBlockedUntil) {
+		return
+	}
 	if !r.partySkillRecoverAt.IsZero() || r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
 		return
 	}
-	r.partySkillNextAt = now.Add(partySkillDelay(r.UID, now))
+	r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
 	if !r.ensurePartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
 		return
 	}
 	peer := r.partyPeerForSlotUnsafe(0)
-	if peer.uniqueID == 0 {
+	if peer.uniqueID == 0 || r.partySelfPeer.uniqueID == 0 {
+		return
+	}
+	if r.partyReliablePurposePendingUnsafe(peer.slot, "skill-") {
+		r.partySkillNextAt = now.Add(time.Second)
+		return
+	}
+	if r.partyReliablePendingCountUnsafe(peer.slot) > 0 {
+		r.partySkillNextAt = now.Add(time.Second)
 		return
 	}
 	candidate := r.nextPartySkillCandidateUnsafe(now)
@@ -142,22 +161,22 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) partySkillCandida
 
 func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string) bool {
 	peer := r.partyPeerForSlotUnsafe(0)
-	if peer.uniqueID == 0 {
+	if peer.uniqueID == 0 || r.partySelfPeer.uniqueID == 0 {
 		return false
 	}
 	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
+	purpose := "skill-cast"
+	if reason == "RECOVER" {
+		purpose = "skill-recover"
+	}
 	route := r.partyRouteForPeerUnsafe(peer.slot)
-	if peer.slot >= byte(len(r.partyTQOSReliableSeq)) || route >= byte(len(r.partyTQOSReliableSeq[0])) {
-		return false
-	}
-	sequence := r.partyTQOSReliableSeq[peer.slot][route]
-	payload := buildPartyReliablePacket(sequence, r.partySelfPeer.slot, r.partyDungeonFlags, [][]byte{body})
-	destination, err := r.sendPartyTransportUnsafe(conn, peer, route, payload)
+	destination, err := r.sendPartyReliableUnsafe(conn, peer, r.partyDungeonFlags, [][]byte{body}, purpose, now)
 	if err != nil {
-		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d state=%d data=%x route=%d destination=%s err=%v\n", reason, r.UID, state, stateData, route, destination, err)
+		if r.shouldLogPartyRuntimeErrorUnsafe(now) {
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d state=%d data=%x route=%d destination=%s err=%v\n", reason, r.UID, state, stateData, route, destination, err)
+		}
 		return false
 	}
-	r.partyTQOSReliableSeq[peer.slot][route]++
 	return true
 }
 
@@ -294,8 +313,15 @@ func buildPartySkillStateBody(uniqueID uint16, state byte, stateData []byte, tok
 	return body
 }
 
-func partySkillDelay(uid uint32, now time.Time) time.Duration {
-	return time.Duration(4+partySkillChoice(uid, now, 6)) * time.Second
+func (r *RobotVo) partySkillDelayUnsafe(now time.Time) time.Duration {
+	robotMembers := 1
+	for _, peer := range r.partyPeers {
+		if isPartyRobotAccount(peer.accID) && peer.accID != r.UID {
+			robotMembers++
+		}
+	}
+	base := 4 + 3*(robotMembers-1)
+	return time.Duration(base+partySkillChoice(r.UID, now, 6)) * time.Second
 }
 
 func partySkillChoice(uid uint32, now time.Time, count int) int {
