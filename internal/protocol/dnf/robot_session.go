@@ -392,7 +392,19 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 func (r *RobotVo) CloseOut() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.closeOutUnsafe()
+}
 
+func (r *RobotVo) TryCloseOut() bool {
+	if !r.mu.TryLock() {
+		return false
+	}
+	defer r.mu.Unlock()
+	r.closeOutUnsafe()
+	return true
+}
+
+func (r *RobotVo) closeOutUnsafe() {
 	if r.Conn != nil {
 		r.Conn.Close()
 		r.Conn = nil
