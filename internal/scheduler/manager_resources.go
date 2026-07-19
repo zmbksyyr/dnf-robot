@@ -43,15 +43,6 @@ func (m *RobotManager) randomString(vals []string, fallback string) string {
 	return vals[m.randIntn(len(vals))]
 }
 
-func (m *RobotManager) randShuffle(n int, swap func(i, j int)) {
-	if n <= 1 {
-		return
-	}
-	_ = m.withRand(func(r *rand.Rand) {
-		r.Shuffle(n, swap)
-	})
-}
-
 func (m *RobotManager) withRand(fn func(*rand.Rand)) error {
 	return m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerRandom, "random_source", func() error {
 		fn(m.rand)

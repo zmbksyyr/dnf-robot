@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/binary"
 	"fmt"
+	"math/rand"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/shared"
@@ -19,7 +20,6 @@ type PreparationEnv interface {
 	LoadInventory(cid int) ([]byte, error)
 	Logf(format string, args ...interface{})
 	RandBetween(min, max int) int
-	RandShuffle(n int, swap func(i, j int))
 	ReplaceStoreStall(uid int, title string, items []StallItem) (StallResult, error)
 	RepairRobotExpBounds(uid, cid int) (ExpRepairResult, error)
 	RobotCID(uid int) (int, error)
@@ -187,9 +187,10 @@ func (p Preparer) selectItemsForPlan(info robotcap.Info, rc robotconfig.RuntimeC
 	if count > 24 {
 		count = 24
 	}
-	var candidates []shared.EquipmentCatalogItem
-	var basicCandidates []shared.EquipmentCatalogItem
-	var fallback []shared.EquipmentCatalogItem
+	rng := rand.New(rand.NewSource(int64(p.Env.RandBetween(0, 1<<30)) ^ int64(info.UID)<<32))
+	preferred := newItemReservoir(count, rng)
+	basic := newItemReservoir(count, rng)
+	fallback := newItemReservoir(count, rng)
 	wantSlot := "material"
 	if InventoryTypeForBoxIndex(plan.StartBox) == 2 {
 		wantSlot = "waste"
@@ -226,34 +227,72 @@ func (p Preparer) selectItemsForPlan(info robotcap.Info, rc robotconfig.RuntimeC
 			}
 		}
 		if item.Trade || AttachPreferred(item.Attach) {
-			candidates = append(candidates, item)
+			preferred.Add(item)
 			if item.BasicMaterial {
-				basicCandidates = append(basicCandidates, item)
+				basic.Add(item)
 			}
 			continue
 		}
 		if AttachAllowed(item.Attach) {
-			fallback = append(fallback, item)
+			fallback.Add(item)
 		}
 	}
-	if len(candidates) == 0 {
-		candidates = fallback
+	candidates := preferred.Items()
+	if basic.Seen() > 0 {
+		candidates = basic.Items()
+	} else if preferred.Seen() == 0 {
+		candidates = fallback.Items()
 	}
-	if len(basicCandidates) > 0 {
-		candidates = basicCandidates
-	}
 	if len(candidates) == 0 {
+		allowed := newItemReservoir(count, rng)
 		for _, id := range rc.StoreItemAllowIDs {
 			if id > 0 && !intInSlice(rc.StoreItemDenyIDs, id) {
-				candidates = append(candidates, shared.EquipmentCatalogItem{ID: id, Slot: wantSlot, Trade: true, StackLimit: 1000})
+				allowed.Add(shared.EquipmentCatalogItem{ID: id, Slot: wantSlot, Trade: true, StackLimit: 1000})
 			}
 		}
-	}
-	p.Env.RandShuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
-	if len(candidates) > count {
-		candidates = candidates[:count]
+		candidates = allowed.Items()
 	}
 	return candidates
+}
+
+type itemReservoir struct {
+	capacity int
+	seen     int
+	items    []shared.EquipmentCatalogItem
+	rng      *rand.Rand
+}
+
+func newItemReservoir(capacity int, rng *rand.Rand) *itemReservoir {
+	return &itemReservoir{capacity: capacity, items: make([]shared.EquipmentCatalogItem, 0, capacity), rng: rng}
+}
+
+func (r *itemReservoir) Add(item shared.EquipmentCatalogItem) {
+	if r == nil || r.capacity <= 0 || r.rng == nil {
+		return
+	}
+	r.seen++
+	if len(r.items) < r.capacity {
+		r.items = append(r.items, item)
+		return
+	}
+	if index := r.rng.Intn(r.seen); index < r.capacity {
+		r.items[index] = item
+	}
+}
+
+func (r *itemReservoir) Seen() int {
+	if r == nil {
+		return 0
+	}
+	return r.seen
+}
+
+func (r *itemReservoir) Items() []shared.EquipmentCatalogItem {
+	if r == nil || len(r.items) == 0 {
+		return nil
+	}
+	r.rng.Shuffle(len(r.items), func(i, j int) { r.items[i], r.items[j] = r.items[j], r.items[i] })
+	return r.items
 }
 
 func intInSlice(values []int, want int) bool {

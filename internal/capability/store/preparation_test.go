@@ -47,6 +47,34 @@ func TestSelectStoreItemsFallbacksToAllowIDs(t *testing.T) {
 	}
 }
 
+func TestSelectStoreItemsBoundsLargeCatalogSample(t *testing.T) {
+	catalog := make([]shared.EquipmentCatalogItem, 5000)
+	for i := range catalog {
+		catalog[i] = shared.EquipmentCatalogItem{
+			ID:         i + 1,
+			Level:      1,
+			Slot:       "material",
+			Trade:      true,
+			Icon:       "stackable/material.img",
+			FieldImage: "material/item",
+			StackLimit: 1000,
+		}
+	}
+	preparer := Preparer{Env: testPreparationEnv{catalog: catalog}}
+
+	items := preparer.SelectItems(robotcap.Info{UID: 17000001, Level: 10}, robotconfig.RuntimeConfig{
+		StoreItemSlots:         24,
+		StoreInventoryStartBox: 7,
+	})
+
+	if len(items) != 24 {
+		t.Fatalf("selected items got %d want 24", len(items))
+	}
+	if got := len(storeItemIDSet(items)); got != len(items) {
+		t.Fatalf("selected items contain duplicates: unique=%d items=%d", got, len(items))
+	}
+}
+
 type testPreparationEnv struct {
 	catalog []shared.EquipmentCatalogItem
 }
@@ -64,8 +92,6 @@ func (e testPreparationEnv) Logf(format string, args ...interface{}) {}
 func (e testPreparationEnv) RandBetween(min, max int) int {
 	return min
 }
-
-func (e testPreparationEnv) RandShuffle(n int, swap func(i, j int)) {}
 
 func (e testPreparationEnv) ReplaceStoreStall(uid int, title string, items []StallItem) (StallResult, error) {
 	return StallResult{}, nil

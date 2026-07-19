@@ -59,8 +59,8 @@ func (e storeWorkflowEnv) MarkStoreStarted(uid int) error {
 	return e.manager.schemaRepo().MarkStoreStarted(uid)
 }
 
-func (e storeWorkflowEnv) Online(req robotcap.CommandRequest, store bool, confirm bool) (robotcap.CommandResult, error) {
-	return e.manager.sessionService().Online(req, store, confirm, e.manager.loadRobotConfig())
+func (e storeWorkflowEnv) Online(req robotcap.CommandRequest, confirm bool) (robotcap.CommandResult, error) {
+	return e.manager.sessionService().Online(req, confirm, e.manager.loadRobotConfig())
 }
 
 func (e storeWorkflowEnv) PrepareStorePosition(info robotcap.Info) error {
@@ -129,10 +129,6 @@ func (e storePreparationEnv) Logf(format string, args ...interface{}) {
 
 func (e storePreparationEnv) RandBetween(min, max int) int {
 	return e.manager.randBetween(min, max)
-}
-
-func (e storePreparationEnv) RandShuffle(n int, swap func(i, j int)) {
-	e.manager.randShuffle(n, swap)
 }
 
 func (e storePreparationEnv) ReplaceStoreStall(uid int, title string, items []storecap.StallItem) (storecap.StallResult, error) {
