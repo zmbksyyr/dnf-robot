@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	robottemplate "robot/internal/capability/robottemplate"
+	"robot/internal/foundation/lockhub"
 	"robot/internal/shared"
 )
 
@@ -78,23 +79,54 @@ func Stackable(configDir string) []shared.EquipmentCatalogItem {
 	return equipmentFile(configDir, "pvf_stackable_catalog.json")
 }
 
+type jsonFileStamp struct {
+	exists  bool
+	mtimeNS int64
+	size    int64
+}
+
+type jsonFileCacheEntry[T any] struct {
+	stamp jsonFileStamp
+	value T
+}
+
+type jsonFileCache[T any] struct {
+	mu      lockhub.Locker
+	entries map[string]jsonFileCacheEntry[T]
+}
+
+var (
+	mapCatalogFiles jsonFileCache[[]shared.MapCatalogItem]
+	shoutFiles      jsonFileCache[robottemplate.ShoutTemplates]
+)
+
 func Maps(configDir string) []shared.MapCatalogItem {
-	var out []shared.MapCatalogItem
-	_ = readJSON(filepath.Join(configDir, "pvf_map_catalog.json"), &out)
-	return out
+	path := filepath.Join(configDir, "pvf_map_catalog.json")
+	maps := mapCatalogFiles.load(path, nil, func(data []byte, fallback []shared.MapCatalogItem) []shared.MapCatalogItem {
+		var out []shared.MapCatalogItem
+		if json.Unmarshal(data, &out) != nil {
+			return fallback
+		}
+		return out
+	})
+	return append([]shared.MapCatalogItem(nil), maps...)
 }
 
 func ShoutTemplates(configDir string) robottemplate.ShoutTemplates {
-	t := robottemplate.ShoutTemplates{Channel: "world", Type: 80, Messages: []string{"hello"}}
-	data, err := os.ReadFile(filepath.Join(configDir, "robot_shout_templates.json"))
-	if err == nil {
-		var messages []string
-		if json.Unmarshal(data, &messages) == nil {
-			t.Messages = robottemplate.DedupeStrings(messages)
-		} else {
-			_ = json.Unmarshal(data, &t)
-			t.Messages = robottemplate.DedupeStrings(t.Messages)
-		}
+	fallback := robottemplate.ShoutTemplates{Channel: "world", Type: 80, Messages: []string{"hello"}}
+	path := filepath.Join(configDir, "robot_shout_templates.json")
+	t := shoutFiles.load(path, fallback, decodeShoutTemplates)
+	return robottemplate.CloneShoutTemplates(t)
+}
+
+func decodeShoutTemplates(data []byte, fallback robottemplate.ShoutTemplates) robottemplate.ShoutTemplates {
+	t := fallback
+	var messages []string
+	if json.Unmarshal(data, &messages) == nil {
+		t.Messages = robottemplate.DedupeStrings(messages)
+	} else {
+		_ = json.Unmarshal(data, &t)
+		t.Messages = robottemplate.DedupeStrings(t.Messages)
 	}
 	if t.Type == 0 {
 		t.Type = 3
@@ -102,7 +134,58 @@ func ShoutTemplates(configDir string) robottemplate.ShoutTemplates {
 	if len(t.Messages) == 0 {
 		t.Messages = []string{"hello"}
 	}
-	return robottemplate.CloneShoutTemplates(t)
+	return t
+}
+
+func (c *jsonFileCache[T]) load(path string, fallback T, decode func([]byte, T) T) T {
+	path = canonicalCatalogPath(path)
+	stamp, err := catalogFileStamp(path)
+	if err != nil {
+		return fallback
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entry, ok := c.entries[path]; ok && entry.stamp == stamp {
+		return entry.value
+	}
+
+	value := fallback
+	if stamp.exists {
+		data, readErr := os.ReadFile(path)
+		switch {
+		case readErr == nil:
+			value = decode(data, fallback)
+		case os.IsNotExist(readErr):
+			stamp = jsonFileStamp{}
+		default:
+			return fallback
+		}
+	}
+	if c.entries == nil {
+		c.entries = make(map[string]jsonFileCacheEntry[T])
+	}
+	c.entries[path] = jsonFileCacheEntry[T]{stamp: stamp, value: value}
+	return value
+}
+
+func canonicalCatalogPath(path string) string {
+	clean := filepath.Clean(path)
+	if absolute, err := filepath.Abs(clean); err == nil {
+		return absolute
+	}
+	return clean
+}
+
+func catalogFileStamp(path string) (jsonFileStamp, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return jsonFileStamp{}, nil
+	}
+	if err != nil {
+		return jsonFileStamp{}, err
+	}
+	return jsonFileStamp{exists: true, mtimeNS: info.ModTime().UnixNano(), size: info.Size()}, nil
 }
 
 func NameTemplates(configDir string) robottemplate.NameTemplates {
