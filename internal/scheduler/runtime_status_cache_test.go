@@ -99,6 +99,23 @@ func TestRuntimeStatusRejectsInvalidUIDWithoutRefresh(t *testing.T) {
 	}
 }
 
+func TestCountRuntimeRunningUsesCachedSnapshot(t *testing.T) {
+	runtime := &countingStatusRuntime{statuses: []robotcap.RuntimeStatus{
+		{UID: 17000001, StateName: robotcap.RuntimeStateRunning},
+		{UID: 17000002, StateName: robotcap.RuntimeStateLogin},
+	}}
+	manager := NewRobotManager(nil, nil, runtime)
+	if got := manager.countRuntimeRunning(); got != 1 {
+		t.Fatalf("running count = %d", got)
+	}
+	if got := manager.countRuntimeRunning(); got != 1 {
+		t.Fatalf("cached running count = %d", got)
+	}
+	if got := runtime.calls.Load(); got != 1 {
+		t.Fatalf("RuntimeStatus calls got %d want 1", got)
+	}
+}
+
 func BenchmarkRuntimeStatusLookup550(b *testing.B) {
 	manager := benchmarkRuntimeStatusManager(b)
 	if _, ok := manager.runtimeStatus(17000275); !ok {

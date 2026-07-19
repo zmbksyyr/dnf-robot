@@ -12,6 +12,8 @@ import (
 	"robot/internal/protocol/dnf/crypt"
 )
 
+const robotSocketReadBufferSize = 32 * 1024
+
 type ClientState int
 
 const (
@@ -461,7 +463,7 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 		}
 		r.mu.Unlock()
 	}()
-	buf := make([]byte, 65536)
+	buf := make([]byte, robotSocketReadBufferSize)
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
@@ -478,7 +480,6 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 			r.closePartyUDPUnsafe()
 			r.closePartyRelayUnsafe()
 			shouldReconnect := r.Controller != nil && r.ConnCount < r.MaxReConn
-			reDelay := r.ReDelay
 			if !shouldReconnect {
 				r.State = StateStop
 				if r.Controller != nil {
@@ -488,9 +489,6 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 				return
 			}
 			r.mu.Unlock()
-			if reDelay > 0 {
-				time.Sleep(time.Duration(reDelay) * time.Millisecond)
-			}
 			r.RefishConnect()
 			return
 		}

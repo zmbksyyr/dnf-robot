@@ -89,7 +89,7 @@ func (m *RobotManager) runtimeStatus(uid int) (robotcap.RuntimeStatus, bool) {
 
 func (m *RobotManager) countRuntimeRunning() int {
 	n := 0
-	for _, st := range m.doll.RuntimeStatus() {
+	for _, st := range m.runtimeStatusMap() {
 		if robotcap.ActiveRuntimeStatus(st) {
 			n++
 		}
