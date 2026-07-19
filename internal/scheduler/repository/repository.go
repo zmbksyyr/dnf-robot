@@ -6,6 +6,12 @@ import (
 	"strings"
 )
 
+type tableExistsEntry struct {
+	done   chan struct{}
+	exists bool
+	err    error
+}
+
 func (r *SQLRepository) InsertIgnore(table string, values map[string]interface{}) error {
 	cols, err := r.TableColumns(table)
 	if err != nil {
@@ -83,15 +89,53 @@ func (r *SQLRepository) TableExists(table string) (bool, error) {
 	if len(parts) != 2 {
 		return false, fmt.Errorf("invalid table name %q", table)
 	}
-	var name sql.NullString
-	err := r.QueryRow("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=? LIMIT 1", parts[0], parts[1]).Scan(&name)
-	if err == sql.ErrNoRows {
-		return false, nil
+	return r.cachedTableExists(table, func() (bool, error) {
+		var name sql.NullString
+		err := r.QueryRow("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=? LIMIT 1", parts[0], parts[1]).Scan(&name)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return name.Valid, nil
+	})
+}
+
+func (r *SQLRepository) cachedTableExists(table string, load func() (bool, error)) (bool, error) {
+	r.tableExistsMu.Lock()
+	if entry := r.tableExistsCache[table]; entry != nil {
+		r.tableExistsMu.Unlock()
+		<-entry.done
+		return entry.exists, entry.err
 	}
-	if err != nil {
-		return false, err
+	if r.tableExistsCache == nil {
+		r.tableExistsCache = make(map[string]*tableExistsEntry)
 	}
-	return name.Valid, nil
+	entry := &tableExistsEntry{done: make(chan struct{})}
+	r.tableExistsCache[table] = entry
+	r.tableExistsMu.Unlock()
+
+	entry.exists, entry.err = load()
+	r.tableExistsMu.Lock()
+	if entry.err != nil && r.tableExistsCache[table] == entry {
+		delete(r.tableExistsCache, table)
+	}
+	close(entry.done)
+	r.tableExistsMu.Unlock()
+	return entry.exists, entry.err
+}
+
+func (r *SQLRepository) invalidateTableExists(tables ...string) {
+	r.tableExistsMu.Lock()
+	if len(tables) == 0 {
+		clear(r.tableExistsCache)
+	} else {
+		for _, table := range tables {
+			delete(r.tableExistsCache, table)
+		}
+	}
+	r.tableExistsMu.Unlock()
 }
 
 func (r *SQLRepository) DeleteByIntIfTableExists(table, col string, id int) error {
@@ -167,6 +211,7 @@ func (r *SQLRepository) ensureSchema(exec func(string, ...interface{}) (sql.Resu
 			return err
 		}
 	}
+	r.invalidateTableExists()
 	r.schemaReady = true
 	return nil
 }

@@ -159,10 +159,11 @@ func (a *Actor) releaseCurrentUID() int {
 	}
 	a.setState(StateReleasing)
 	cid := 0
-	if st, ok := a.runtime.Status(uid); ok {
+	st, statusOK := a.runtime.Status(uid)
+	if statusOK {
 		cid = st.CID
 	}
-	a.runtime.FinishStoreState(uid, cid, "release")
+	a.finishStoreStateIfNeeded(uid, cid, st, statusOK, "release")
 	a.runtime.Logout(uid)
 	a.resetForUID(0)
 	return uid

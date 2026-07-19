@@ -15,10 +15,11 @@ func (a *Actor) logoutCurrentUID() robotcap.ActionResult {
 		return robotcap.ActionResult{OK: true, State: robotcap.ActionStateIdle}
 	}
 	cid := 0
-	if st, ok := a.runtime.Status(uid); ok {
+	st, statusOK := a.runtime.Status(uid)
+	if statusOK {
 		cid = st.CID
 	}
-	a.runtime.FinishStoreState(uid, cid, "logout")
+	a.finishStoreStateIfNeeded(uid, cid, st, statusOK, "logout")
 	a.setOnlineDesired(false)
 	a.clearAutoSchedule()
 	a.setBusy(true, "logout")
@@ -241,6 +242,18 @@ func (a *Actor) storeUntilMissing() bool {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
 	return a.storeUntil.IsZero()
+}
+
+func (a *Actor) finishStoreStateIfNeeded(uid, cid int, st robotcap.RuntimeStatus, statusOK bool, reason string) {
+	if uid <= 0 {
+		return
+	}
+	storeScheduled := !a.storeUntilMissing()
+	storeRuntime := statusOK && (st.RobotType == 2 || st.RobotType == 3)
+	if !storeScheduled && !storeRuntime {
+		return
+	}
+	a.runtime.FinishStoreState(uid, cid, reason)
 }
 
 func (a *Actor) clearStoreUntil() {

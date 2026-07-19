@@ -25,6 +25,7 @@ func (r *SQLRepository) EnsureAccount(uid int, innerIP string) error {
 			return err
 		}
 	}
+	r.invalidateTableExists("d_taiwan.member_info_bot_backup")
 	if _, err := r.ClearTradePunish(uid); err != nil {
 		return err
 	}

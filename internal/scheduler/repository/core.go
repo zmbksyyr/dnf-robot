@@ -8,11 +8,13 @@ import (
 )
 
 type SQLRepository struct {
-	db          *sql.DB
-	colCache    map[string]map[string]bool
-	locks       *lockhub.Hub
-	schemaMu    lockhub.Locker
-	schemaReady bool
+	db               *sql.DB
+	colCache         map[string]map[string]bool
+	tableExistsMu    lockhub.Locker
+	tableExistsCache map[string]*tableExistsEntry
+	locks            *lockhub.Hub
+	schemaMu         lockhub.Locker
+	schemaReady      bool
 }
 
 func NewSQLRepository(db *sql.DB) *SQLRepository {
@@ -20,9 +22,10 @@ func NewSQLRepository(db *sql.DB) *SQLRepository {
 		return nil
 	}
 	return &SQLRepository{
-		db:       db,
-		colCache: make(map[string]map[string]bool),
-		locks:    lockhub.New(),
+		db:               db,
+		colCache:         make(map[string]map[string]bool),
+		tableExistsCache: make(map[string]*tableExistsEntry),
+		locks:            lockhub.New(),
 	}
 }
 
