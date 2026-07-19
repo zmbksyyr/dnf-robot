@@ -2,10 +2,11 @@ package robotaction
 
 import (
 	"fmt"
+	"time"
+
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
-	"robot/internal/foundation/mathx"
-	"time"
+	"robot/internal/shared"
 )
 
 type SessionService struct {
@@ -19,7 +20,7 @@ type SessionEnv interface {
 	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
 	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
 	SendLogout(uid int) error
-	SendOnline(userinfos []map[string]interface{}) error
+	SendOnline(userinfos []shared.RuntimeOnlineUser) error
 }
 
 func (s SessionService) Online(req robotcap.CommandRequest, store bool, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
@@ -61,7 +62,7 @@ func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint
 		}
 	}
 	if rc.OnlineDispatchIntervalMS <= 0 {
-		userinfos := make([]map[string]interface{}, 0, len(robots))
+		userinfos := make([]shared.RuntimeOnlineUser, 0, len(robots))
 		for _, robot := range robots {
 			if err := env.EnsureWorldHorn(robot.UID); err != nil {
 				result.Failed++
@@ -87,7 +88,7 @@ func (s SessionService) online(req robotcap.CommandRequest, store bool, disjoint
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateFailed, Message: err.Error()})
 				continue
 			}
-			if err := env.SendOnline([]map[string]interface{}{s.onlinePayload(robot, rc, store, disjoint, disjointCost)}); err == nil {
+			if err := env.SendOnline([]shared.RuntimeOnlineUser{s.onlinePayload(robot, rc, store, disjoint, disjointCost)}); err == nil {
 				result.Accepted++
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 			} else {
@@ -139,27 +140,26 @@ func (s SessionService) ConfirmAccepted(result *robotcap.CommandResult, timeout 
 	s.confirmOnline(result, timeout)
 }
 
-func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.RuntimeConfig, store bool, disjoint bool, disjointCost int) map[string]interface{} {
+func (s SessionService) onlinePayload(robot robotcap.Info, rc robotconfig.RuntimeConfig, store bool, disjoint bool, disjointCost int) shared.RuntimeOnlineUser {
 	if disjointCost <= 0 {
 		disjointCost = 500
 	}
-	return map[string]interface{}{
-		"birtharea":  robot.Area,
-		"birthvill":  robot.Village,
-		"birthx":     robot.X,
-		"birthy":     robot.Y,
-		"cid":        0,
-		"delay":      rc.LoginDelayMS,
-		"discost":    mathx.BoolToInt(disjoint) * disjointCost,
-		"disopen":    mathx.BoolToInt(disjoint),
-		"id":         0,
-		"ip":         s.Env.RobotConnectIP(),
-		"maxreconn":  rc.MaxReconnect,
-		"port":       robot.Port,
-		"redelay":    rc.ReconnectDelayMS,
-		"storeopen":  mathx.BoolToInt(store),
-		"storetitle": fmt.Sprintf("bot-%d-store", robot.UID),
-		"uid":        robot.UID,
+	return shared.RuntimeOnlineUser{
+		BirthArea:      robot.Area,
+		BirthVillage:   robot.Village,
+		BirthX:         robot.X,
+		BirthY:         robot.Y,
+		CID:            0,
+		DelayMS:        rc.LoginDelayMS,
+		DisjointCost:   disjointCost,
+		DisjointOpen:   disjoint,
+		IP:             s.Env.RobotConnectIP(),
+		MaxReconnect:   rc.MaxReconnect,
+		Port:           robot.Port,
+		ReconnectDelay: rc.ReconnectDelayMS,
+		StoreOpen:      store,
+		StoreTitle:     fmt.Sprintf("bot-%d-store", robot.UID),
+		UID:            robot.UID,
 	}
 }
 

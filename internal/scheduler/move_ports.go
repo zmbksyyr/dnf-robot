@@ -4,7 +4,6 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotaction "robot/internal/capability/robotaction"
 	robotconfig "robot/internal/capability/robotconfig"
-	"robot/internal/capability/robotruntime"
 	"robot/internal/shared"
 )
 
@@ -17,7 +16,18 @@ type moveActionEnv struct {
 }
 
 func (e moveActionEnv) DispatchMoveStep(info robotcap.Info, targetX, targetY, step, steps, speed int, rc robotconfig.RuntimeConfig) error {
-	if err := robotruntime.MoveStep(e.manager.doll, info, targetX, targetY, step, steps, speed, rc); err != nil {
+	x := info.X + (targetX-info.X)*step/steps
+	y := info.Y + (targetY-info.Y)*step/steps
+	command := shared.RuntimeMoveCommand{
+		UID:      info.UID,
+		Village:  info.Village,
+		Area:     info.Area,
+		X:        x,
+		Y:        y,
+		MoveType: rc.MoveType,
+		Speed:    speed,
+	}
+	if err := e.manager.doll.Move(command); err != nil {
 		return err
 	}
 	if step == steps {

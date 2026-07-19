@@ -3,6 +3,8 @@ package scheduler
 import (
 	"testing"
 	"time"
+
+	"robot/internal/shared"
 )
 
 func TestSessionReloginWaitsForSameUID(t *testing.T) {
@@ -11,7 +13,7 @@ func TestSessionReloginWaitsForSameUID(t *testing.T) {
 	m.markSessionLogout(17000001, time.Now())
 
 	started := time.Now()
-	m.waitSessionRelogin([]map[string]interface{}{{"uid": 17000001}})
+	m.waitSessionRelogin([]shared.RuntimeOnlineUser{{UID: 17000001}})
 	if elapsed := time.Since(started); elapsed < 30*time.Millisecond {
 		t.Fatalf("same uid relogin waited %s, want at least 30ms", elapsed)
 	}
@@ -23,7 +25,7 @@ func TestSessionReloginDoesNotDelayOtherUID(t *testing.T) {
 	m.markSessionLogout(17000001, time.Now())
 
 	started := time.Now()
-	m.waitSessionRelogin([]map[string]interface{}{{"uid": 17000002}})
+	m.waitSessionRelogin([]shared.RuntimeOnlineUser{{UID: 17000002}})
 	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
 		t.Fatalf("unrelated uid relogin waited %s", elapsed)
 	}

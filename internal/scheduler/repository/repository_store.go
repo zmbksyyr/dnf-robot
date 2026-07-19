@@ -3,10 +3,12 @@ package repository
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
+
 	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
 	storecap "robot/internal/capability/store"
-	"strconv"
+	"robot/internal/shared"
 )
 
 func (r *SQLRepository) MarkStoreStarted(uid int) error {
@@ -252,7 +254,7 @@ func (r *SQLRepository) RepairRobotExpBounds(uid, cid int) (storecap.ExpRepairRe
 		WHERE c.charac_no=?`, cid).Scan(&lev, &infoExp, &statExp); err != nil {
 		return storecap.ExpRepairResult{}, err
 	}
-	minExp, ok := storecap.LevelMinExp(lev)
+	minExp, ok := shared.LevelMinExp(lev)
 	if ok && (infoExp < minExp || statExp < minExp) {
 		res, err := r.Exec("UPDATE taiwan_cain.charac_info SET exp=? WHERE charac_no=? AND exp<?", minExp, cid, minExp)
 		if err != nil {

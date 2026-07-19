@@ -1,90 +1,172 @@
 package dnfruntime
 
 import (
-	"encoding/json"
+	"errors"
+	"sync"
+	"time"
+
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/protocol/dnf"
 	"robot/internal/shared"
-	"sync"
-	"time"
 )
 
-// ---- service.go ----
+const maxRobotCommandQueue = 10000
+
+var (
+	ErrRuntimeStopped   = errors.New("robot runtime is stopped")
+	ErrCommandQueueFull = errors.New("robot runtime command queue is full")
+)
+
 type RobotSvc struct {
-	mu       lockhub.Locker
-	msgQueue []robotMsgEntry
-	cond     *sync.Cond
-	running  bool
-	table    *dnf.DnfTableDrive
+	mu           lockhub.Locker
+	msgQueue     []robotMsgEntry
+	cond         *sync.Cond
+	running      bool
+	table        robotDriver
+	worker       sync.WaitGroup
+	shutdownOnce sync.Once
 }
+
+type robotDriver interface {
+	DispatchLogout(uid int) dnf.DnfTableTaskResult
+	DispatchMove(command shared.RuntimeMoveCommand) dnf.DnfTableTaskResult
+	DispatchOnline(users []shared.RuntimeOnlineUser) dnf.DnfTableTaskResult
+	DispatchShout(command shared.RuntimeShoutCommand) dnf.DnfTableTaskResult
+	GetTask() *dnf.RobotDnfTask
+	Shutdown()
+}
+
+type robotCommandType uint8
+
+const (
+	robotCommandLogout robotCommandType = iota + 1
+	robotCommandMove
+	robotCommandOnline
+	robotCommandShout
+)
 
 type robotMsgEntry struct {
-	MsgFlag byte
-	FD      int
-	MsgType int
-	JSON    json.RawMessage
+	typ    robotCommandType
+	uid    int
+	move   shared.RuntimeMoveCommand
+	online []shared.RuntimeOnlineUser
+	shout  shared.RuntimeShoutCommand
 }
 
-func robotLogf(format string, args ...interface{}) {
-	foundationlog.Robotf(format, args...)
+func NewRobotService() *RobotSvc {
+	return newRobotService(dnf.NewDnfTableDrive())
 }
 
-var robotServiceInstance *RobotSvc
-var robotServiceOnce sync.Once
-
-func GetRobotService() *RobotSvc {
-	robotServiceOnce.Do(func() {
-		robotServiceInstance = &RobotSvc{}
-		robotServiceInstance.cond = sync.NewCond(&robotServiceInstance.mu)
-	})
-	return robotServiceInstance
-}
-
-func (rs *RobotSvc) Init() {
-	rs.table = dnf.NewDnfTableDrive()
-	rs.running = true
+func newRobotService(table robotDriver) *RobotSvc {
+	rs := &RobotSvc{table: table, running: true}
+	rs.cond = sync.NewCond(&rs.mu)
+	rs.worker.Add(1)
 	go rs.run()
+	return rs
 }
 
-func (rs *RobotSvc) PushRobotMsg(msgFlag byte, fd int, msgType int, jsonData json.RawMessage) string {
-	entry := robotMsgEntry{
-		MsgFlag: msgFlag,
-		FD:      fd,
-		MsgType: msgType,
-		JSON:    jsonData,
-	}
+func (rs *RobotSvc) Logout(uid int) error {
+	return rs.enqueue(robotMsgEntry{typ: robotCommandLogout, uid: uid})
+}
+
+func (rs *RobotSvc) Move(command shared.RuntimeMoveCommand) error {
+	return rs.enqueue(robotMsgEntry{typ: robotCommandMove, move: command})
+}
+
+func (rs *RobotSvc) Online(users []shared.RuntimeOnlineUser) error {
+	commandUsers := append([]shared.RuntimeOnlineUser(nil), users...)
+	return rs.enqueue(robotMsgEntry{typ: robotCommandOnline, online: commandUsers})
+}
+
+func (rs *RobotSvc) Shout(command shared.RuntimeShoutCommand) error {
+	return rs.enqueue(robotMsgEntry{typ: robotCommandShout, shout: command})
+}
+
+func (rs *RobotSvc) enqueue(entry robotMsgEntry) error {
 	rs.mu.Lock()
-	if len(rs.msgQueue) >= 10000 {
-		rs.mu.Unlock()
-		robotLogf("[RobotSvc] msg_queue_full type=%d len=%d\n", msgType, 10000)
-		return "queue_full"
+	defer rs.mu.Unlock()
+	if !rs.running || rs.table == nil {
+		return ErrRuntimeStopped
+	}
+	if len(rs.msgQueue) >= maxRobotCommandQueue {
+		robotLogf("[RobotSvc] command_queue_full type=%s len=%d\n", entry.typ, maxRobotCommandQueue)
+		return ErrCommandQueueFull
 	}
 	rs.msgQueue = append(rs.msgQueue, entry)
-	rs.mu.Unlock()
 	rs.cond.Signal()
-	return ""
+	return nil
 }
 
-func (rs *RobotSvc) CallRobotMsgResult(msgFlag byte, fd int, msgType int, jsonData json.RawMessage) (string, error) {
-	if rs.table == nil {
-		return "", nil
+func (rs *RobotSvc) run() {
+	defer rs.worker.Done()
+	for {
+		rs.mu.Lock()
+		for len(rs.msgQueue) == 0 && rs.running {
+			rs.cond.Wait()
+		}
+		if !rs.running && len(rs.msgQueue) == 0 {
+			rs.mu.Unlock()
+			return
+		}
+		batch := rs.msgQueue
+		rs.msgQueue = nil
+		rs.mu.Unlock()
+
+		for _, entry := range batch {
+			rs.dispatch(entry)
+		}
 	}
-	msg := dnf.RobotMsg{
-		MsgFlag: msgFlag,
-		Fd:      fd,
-		MsgType: dnf.MsgType(msgType),
-		JSON:    jsonData,
+}
+
+func (rs *RobotSvc) dispatch(entry robotMsgEntry) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			robotLogf("[RobotSvc] dispatch_panic type=%s err=%v\n", entry.typ, rec)
+		}
+	}()
+
+	var result dnf.DnfTableTaskResult
+	switch entry.typ {
+	case robotCommandLogout:
+		result = rs.table.DispatchLogout(entry.uid)
+	case robotCommandMove:
+		result = rs.table.DispatchMove(entry.move)
+	case robotCommandOnline:
+		result = rs.table.DispatchOnline(entry.online)
+	case robotCommandShout:
+		result = rs.table.DispatchShout(entry.shout)
+	default:
+		robotLogf("[RobotSvc] unknown_command type=%d\n", entry.typ)
+		return
 	}
-	result := rs.table.HandleKeyword(msg)
-	return result.Msg, nil
+	if result.Code != 200 {
+		robotLogf("[RobotSvc] command_rejected type=%s msg=%s\n", entry.typ, result.Msg)
+	}
+}
+
+func (rs *RobotSvc) Shutdown() {
+	if rs == nil {
+		return
+	}
+	rs.shutdownOnce.Do(func() {
+		rs.mu.Lock()
+		rs.running = false
+		rs.cond.Broadcast()
+		rs.mu.Unlock()
+		rs.worker.Wait()
+		if rs.table != nil {
+			rs.table.Shutdown()
+		}
+	})
 }
 
 func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
-	if rs.table == nil {
+	task := rs.task()
+	if task == nil {
 		return nil
 	}
-	robotMap := rs.table.GetTask().GetRobotVoMap()
+	robotMap := task.GetRobotVoMap()
 	out := make([]shared.RuntimeStatus, 0, len(robotMap))
 	now := uint32(time.Now().Unix())
 	for _, vo := range robotMap {
@@ -94,7 +176,7 @@ func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 			UID:                  int(snap.UID),
 			CID:                  int(snap.CID),
 			State:                state,
-			StateName:            robotStateName(state),
+			StateName:            shared.StateName(state),
 			LastError:            int(snap.LastError),
 			DisconnectReason:     int(snap.DisconnectReason),
 			Reconnects:           int(snap.Reconnects),
@@ -122,498 +204,43 @@ func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 }
 
 func (rs *RobotSvc) PartyActive(uid int) bool {
-	if rs.table == nil || uid <= 0 {
+	task := rs.task()
+	if task == nil || uid <= 0 {
 		return false
 	}
-	vo := rs.table.GetTask().Find(uid)
-	if vo == nil {
-		return false
+	vo := task.Find(uid)
+	return vo != nil && vo.Snapshot().PartyActive
+}
+
+func (rs *RobotSvc) task() *dnf.RobotDnfTask {
+	if rs == nil || rs.table == nil {
+		return nil
 	}
-	return vo.Snapshot().PartyActive
+	return rs.table.GetTask()
+}
+
+func (typ robotCommandType) String() string {
+	switch typ {
+	case robotCommandLogout:
+		return "logout"
+	case robotCommandMove:
+		return "move"
+	case robotCommandOnline:
+		return "online"
+	case robotCommandShout:
+		return "shout"
+	default:
+		return "unknown"
+	}
 }
 
 func uptimeSeconds(now, start uint32) int {
-	if start == 0 {
-		return 0
-	}
-	if now < start {
+	if start == 0 || now < start {
 		return 0
 	}
 	return int(now - start)
 }
 
-func (rs *RobotSvc) StartPrivateStore(uid int, title string) bool {
-	if rs.table == nil || uid <= 0 {
-		return false
-	}
-	vo := rs.table.GetTask().Find(uid)
-	if vo == nil {
-		return false
-	}
-	snap := vo.Snapshot()
-	if robotStateName(int(snap.State)) != "running" || snap.PartyActive {
-		return false
-	}
-	vo.PreparePrivateStoreState(title)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				robotLogf("[StartPrivateStore] PANIC uid=%d err=%v\n", uid, r)
-			}
-		}()
-		time.Sleep(time.Duration(uid%7) * 450 * time.Millisecond)
-		if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
-			return
-		}
-		vo.CreatePrivateStore()
-		waitStoreCreated(vo, 5*time.Second)
-		if snap := vo.Snapshot(); !snap.PartyActive && !snap.StoreCreated && robotStateName(int(snap.State)) == "running" {
-			time.Sleep(1200 * time.Millisecond)
-			vo.CreatePrivateStore()
-			waitStoreCreated(vo, 5*time.Second)
-		}
-		time.Sleep(1200 * time.Millisecond)
-		if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
-			return
-		}
-		vo.GetCompleteDisplay(0)
-		time.Sleep(1200 * time.Millisecond)
-		vo.GetDbDataAndCompleteDisplay()
-		waitStoreDisplay(vo, 1500*time.Millisecond)
-		if snap := vo.Snapshot(); snap.StoreDisplayAck || robotStateName(int(snap.State)) != "running" {
-			return
-		}
-		vo.CompleteDisplayFromStallFallback()
-	}()
-	return true
-}
-
-func (rs *RobotSvc) StartDisjointStore(uid int, cost uint32) bool {
-	if rs.table == nil || uid <= 0 {
-		return false
-	}
-	vo := rs.table.GetTask().Find(uid)
-	if vo == nil {
-		return false
-	}
-	if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
-		return false
-	}
-	return vo.OpenDisjointStore(cost)
-}
-
-func (rs *RobotSvc) ResetPrivateStore(uid int) bool {
-	if rs.table == nil || uid <= 0 {
-		return false
-	}
-	vo := rs.table.GetTask().Find(uid)
-	if vo == nil {
-		return false
-	}
-	vo.ResetPrivateStoreState()
-	return true
-}
-
-func (rs *RobotSvc) ResetDisjointStore(uid int) bool {
-	if rs.table == nil || uid <= 0 {
-		return false
-	}
-	vo := rs.table.GetTask().Find(uid)
-	if vo == nil {
-		return false
-	}
-	vo.ResetDisjointStoreState()
-	return true
-}
-
-func (rs *RobotSvc) SetArea(uid int, village, area int, x, y int) bool {
-	if rs.table == nil || uid <= 0 {
-		return false
-	}
-	vo := rs.table.GetTask().Find(uid)
-	if vo == nil {
-		return false
-	}
-	if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
-		return false
-	}
-	vo.SetArea(uint8(village), uint8(area), uint16(x), uint16(y))
-	return true
-}
-
-func (rs *RobotSvc) SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool {
-	if rs.table == nil || uid <= 0 {
-		return false
-	}
-	vo := rs.table.GetTask().Find(uid)
-	if vo == nil {
-		return false
-	}
-	if snap := vo.Snapshot(); snap.PartyActive || robotStateName(int(snap.State)) != "running" {
-		return false
-	}
-	vo.SetAreaFrom(uint8(village), uint8(area), uint16(x), uint16(y), uint16(fromVillage), uint16(fromArea))
-	return true
-}
-
-func (rs *RobotSvc) CompletePrivateStoreDisplay(uid int) bool {
-	if rs.table == nil || uid <= 0 {
-		return false
-	}
-	vo := rs.table.GetTask().Find(uid)
-	if vo == nil {
-		return false
-	}
-	return vo.CompleteDisplayFromStallFallback()
-}
-
-func waitStoreCreated(vo *dnf.RobotVo, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		snap := vo.Snapshot()
-		if snap.PartyActive || snap.StoreCreated || snap.StoreCreateRejected || robotStateName(int(snap.State)) != "running" {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-func waitStoreDisplay(vo *dnf.RobotVo, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		snap := vo.Snapshot()
-		if snap.PartyActive || snap.StoreDisplayAck || robotStateName(int(snap.State)) != "running" {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-func robotStateName(state int) string {
-	return shared.StateName(state)
-}
-
-func (rs *RobotSvc) run() {
-	for rs.running {
-		rs.mu.Lock()
-		for len(rs.msgQueue) == 0 && rs.running {
-			rs.cond.Wait()
-		}
-		if !rs.running {
-			rs.mu.Unlock()
-			return
-		}
-		var batch []robotMsgEntry
-		for len(rs.msgQueue) > 0 {
-			batch = append(batch, rs.msgQueue[0])
-			rs.msgQueue = rs.msgQueue[1:]
-		}
-		rs.mu.Unlock()
-
-		for _, entry := range batch {
-			func() {
-				defer func() {
-					if rec := recover(); rec != nil {
-						robotLogf("[RobotSvc] dispatch panic type=%d err=%v\n", entry.MsgType, rec)
-					}
-				}()
-				msg := dnf.RobotMsg{
-					MsgFlag: entry.MsgFlag,
-					Fd:      entry.FD,
-					MsgType: dnf.MsgType(entry.MsgType),
-					JSON:    entry.JSON,
-				}
-				rs.table.HandleKeyword(msg)
-			}()
-		}
-	}
-}
-
-func (rs *RobotSvc) Shutdown() {
-	rs.mu.Lock()
-	rs.running = false
-	rs.cond.Broadcast()
-	rs.mu.Unlock()
-	if rs.table != nil {
-		rs.table.Shutdown()
-	}
-}
-
-type Result struct {
-	Msg string
-}
-
-func NewResult(msg string) Result {
-	return Result{Msg: msg}
-}
-
-type RobotService interface {
-	PushRobotMsg(msgFlag byte, fd int, msgType int, jsonData json.RawMessage) string
-	CallRobotMsgResult(msgFlag byte, fd int, msgType int, jsonData json.RawMessage) (string, error)
-}
-
-var robotSvc RobotService
-var loginKeyProvider func(uid int) string
-
-func SetRobotService(svc RobotService) {
-	robotSvc = svc
-}
-
-func SetLoginKeyProvider(provider func(uid int) string) {
-	loginKeyProvider = provider
-}
-
-func listDoll(key string) Result {
-	var v interface{}
-	if err := json.Unmarshal([]byte(key), &v); err != nil {
-		return NewResult("invalid json")
-	}
-	if v == nil {
-		return NewResult("invalid json")
-	}
-	if _, ok := v.(map[string]interface{}); !ok {
-		return NewResult("invalid json")
-	}
-	resultMsg, _ := robotSvc.CallRobotMsgResult(0, 1, 6001, []byte(key))
-	return NewResult(resultMsg)
-}
-
-func msgRemove(keyData string) Result {
-	var v map[string]interface{}
-	if err := json.Unmarshal([]byte(keyData), &v); err != nil {
-		return NewResult("invalid json")
-	}
-	if v == nil {
-		return NewResult("invalid json")
-	}
-	if _, ok := v["userinfos"]; !ok {
-		return NewResult("missing userinfos")
-	}
-	infos, ok := v["userinfos"].([]interface{})
-	if !ok {
-		return NewResult("invalid userinfos")
-	}
-	_ = infos
-	robotSvc.PushRobotMsg(0, 1, 6003, []byte(keyData))
-	return NewResult("ok")
-}
-
-func msgLogout(keyData string) Result {
-	var v map[string]interface{}
-	if err := json.Unmarshal([]byte(keyData), &v); err != nil {
-		return NewResult("invalid json")
-	}
-	if v == nil {
-		return NewResult("invalid json")
-	}
-	if _, ok := v["userinfos"]; !ok {
-		return NewResult("missing userinfos")
-	}
-	infos, ok := v["userinfos"].([]interface{})
-	if !ok {
-		return NewResult("invalid userinfos")
-	}
-	_ = infos
-	robotSvc.PushRobotMsg(0, 1, 6005, []byte(keyData))
-	return NewResult("ok")
-}
-
-func msgMove(keyData string) Result {
-	var v map[string]interface{}
-	if err := json.Unmarshal([]byte(keyData), &v); err != nil {
-		return NewResult("invalid json")
-	}
-	if v == nil {
-		return NewResult("invalid json")
-	}
-	if _, ok := v["userinfos"]; !ok {
-		return NewResult("missing userinfos")
-	}
-	infos, ok := v["userinfos"].([]interface{})
-	if !ok {
-		return NewResult("invalid userinfos")
-	}
-	_ = infos
-	robotSvc.PushRobotMsg(0, 1, 6006, []byte(keyData))
-	return NewResult("ok")
-}
-
-func msgPublicMsg(keyData string) Result {
-	var v map[string]interface{}
-	if err := json.Unmarshal([]byte(keyData), &v); err != nil {
-		return NewResult("invalid json")
-	}
-	if v == nil {
-		return NewResult("invalid json")
-	}
-	if _, ok := v["userinfos"]; !ok {
-		return NewResult("missing userinfos")
-	}
-	infos, ok := v["userinfos"].([]interface{})
-	if !ok {
-		return NewResult("invalid userinfos")
-	}
-	_ = infos
-	robotSvc.PushRobotMsg(0, 1, 6007, []byte(keyData))
-	return NewResult("ok")
-}
-
-func msgOnLine(keyData string) Result {
-	var v map[string]interface{}
-	if err := json.Unmarshal([]byte(keyData), &v); err != nil {
-		return NewResult("invalid json")
-	}
-	if v == nil {
-		return NewResult("invalid json")
-	}
-	if _, ok := v["userinfos"]; !ok {
-		return NewResult("missing userinfos")
-	}
-	infos, ok := v["userinfos"].([]interface{})
-	if !ok {
-		return NewResult("invalid userinfos")
-	}
-	for i, ui := range infos {
-		userinfo, ok := ui.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		uidVal, ok := userinfo["uid"]
-		if !ok {
-			continue
-		}
-		uid, ok := toInt(uidVal)
-		if !ok || uid <= 0 {
-			continue
-		}
-		var loginkey string
-		if loginKeyProvider != nil {
-			loginkey = loginKeyProvider(uid)
-		}
-		if len(loginkey) > 0 {
-			userinfo["token"] = loginkey
-		}
-		infos[i] = userinfo
-	}
-	v["userinfos"] = infos
-	data, _ := json.Marshal(v)
-	robotSvc.PushRobotMsg(0, 1, 6008, data)
-	return NewResult("ok")
-}
-
-func toInt(v interface{}) (int, bool) {
-	switch val := v.(type) {
-	case float64:
-		return int(val), true
-	case int:
-		return val, true
-	case int64:
-		return int(val), true
-	case json.Number:
-		n, err := val.Int64()
-		if err != nil {
-			return 0, false
-		}
-		return int(n), true
-	}
-	return 0, false
-}
-
-type DollService struct{}
-
-func NewDollService() *DollService {
-	return &DollService{}
-}
-
-func (d *DollService) ListDoll(clientID string, keyData string) (string, error) {
-	result := listDoll(keyData)
-	return result.Msg, nil
-}
-
-func (d *DollService) MsgRemove(clientID string, keyData string) (string, error) {
-	result := msgRemove(keyData)
-	return result.Msg, nil
-}
-
-func (d *DollService) MsgLogout(clientID string, keyData string) (string, error) {
-	result := msgLogout(keyData)
-	return result.Msg, nil
-}
-
-func (d *DollService) MsgMove(clientID string, keyData string) (string, error) {
-	result := msgMove(keyData)
-	return result.Msg, nil
-}
-
-func (d *DollService) MsgPublicMsg(clientID string, keyData string) (string, error) {
-	result := msgPublicMsg(keyData)
-	return result.Msg, nil
-}
-
-func (d *DollService) MsgOnLine(clientID string, keyData string) (string, error) {
-	result := msgOnLine(keyData)
-	return result.Msg, nil
-}
-
-func (d *DollService) RuntimeStatus() []shared.RuntimeStatus {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.RuntimeStatus()
-	}
-	return nil
-}
-
-func (d *DollService) PartyActive(uid int) bool {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.PartyActive(uid)
-	}
-	return false
-}
-
-func (d *DollService) StartPrivateStore(uid int, title string) bool {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.StartPrivateStore(uid, title)
-	}
-	return false
-}
-
-func (d *DollService) ResetPrivateStore(uid int) bool {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.ResetPrivateStore(uid)
-	}
-	return false
-}
-
-func (d *DollService) StartDisjointStore(uid int, cost uint32) bool {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.StartDisjointStore(uid, cost)
-	}
-	return false
-}
-
-func (d *DollService) ResetDisjointStore(uid int) bool {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.ResetDisjointStore(uid)
-	}
-	return false
-}
-
-func (d *DollService) SetArea(uid int, village, area int, x, y int) bool {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.SetArea(uid, village, area, x, y)
-	}
-	return false
-}
-
-func (d *DollService) SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.SetAreaFrom(uid, village, area, x, y, fromVillage, fromArea)
-	}
-	return false
-}
-
-func (d *DollService) CompletePrivateStoreDisplay(uid int) bool {
-	if svc, ok := robotSvc.(*RobotSvc); ok {
-		return svc.CompletePrivateStoreDisplay(uid)
-	}
-	return false
+func robotLogf(format string, args ...interface{}) {
+	foundationlog.Robotf(format, args...)
 }

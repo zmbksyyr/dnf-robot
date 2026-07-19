@@ -1,10 +1,11 @@
 package scheduler
 
 import (
+	"time"
+
 	robotcap "robot/internal/capability/robot"
 	robotaction "robot/internal/capability/robotaction"
-	"robot/internal/capability/robotruntime"
-	"time"
+	"robot/internal/shared"
 )
 
 func (m *RobotManager) sessionService() robotaction.SessionService {
@@ -36,16 +37,16 @@ func (e sessionActionEnv) SelectRobots(req robotcap.CommandRequest) ([]robotcap.
 }
 
 func (e sessionActionEnv) SendLogout(uid int) error {
-	err := robotruntime.Logout(e.manager.doll, uid)
+	err := e.manager.doll.Logout(uid)
 	if err == nil {
 		e.manager.markSessionLogout(uid, time.Now())
 	}
 	return err
 }
 
-func (e sessionActionEnv) SendOnline(userinfos []map[string]interface{}) error {
+func (e sessionActionEnv) SendOnline(userinfos []shared.RuntimeOnlineUser) error {
 	e.manager.waitSessionRelogin(userinfos)
-	return robotruntime.Online(e.manager.doll, userinfos)
+	return e.manager.doll.Online(userinfos)
 }
 
 func (m *RobotManager) markSessionLogout(uid int, at time.Time) {
@@ -60,7 +61,7 @@ func (m *RobotManager) markSessionLogout(uid int, at time.Time) {
 	m.sessionMu.Unlock()
 }
 
-func (m *RobotManager) waitSessionRelogin(userinfos []map[string]interface{}) {
+func (m *RobotManager) waitSessionRelogin(userinfos []shared.RuntimeOnlineUser) {
 	if m == nil || len(userinfos) == 0 {
 		return
 	}
@@ -73,7 +74,7 @@ func (m *RobotManager) waitSessionRelogin(userinfos []map[string]interface{}) {
 		wait := time.Duration(0)
 		m.sessionMu.Lock()
 		for _, userinfo := range userinfos {
-			uid := sessionPayloadUID(userinfo["uid"])
+			uid := userinfo.UID
 			last := m.sessionLastLogout[uid]
 			if uid <= 0 || last.IsZero() {
 				continue
@@ -92,20 +93,5 @@ func (m *RobotManager) waitSessionRelogin(userinfos []map[string]interface{}) {
 			return
 		}
 		time.Sleep(wait)
-	}
-}
-
-func sessionPayloadUID(value interface{}) int {
-	switch uid := value.(type) {
-	case int:
-		return uid
-	case int32:
-		return int(uid)
-	case int64:
-		return int(uid)
-	case float64:
-		return int(uid)
-	default:
-		return 0
 	}
 }

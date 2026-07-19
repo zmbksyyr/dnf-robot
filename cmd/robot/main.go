@@ -104,7 +104,6 @@ func main() {
 	dnf.ConfigurePartyRobotAccountRange(robotRuntimeConfig.RobotUIDStart, robotRuntimeConfig.RobotUIDEnd)
 	dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("PARTY_ACCOUNT_RANGE start=%d end=%d\n", robotRuntimeConfig.RobotUIDStart, robotRuntimeConfig.RobotUIDEnd))
 	keypair.SetRuntimeKeySink(dnf.SetRSAKey)
-	dnfruntime.SetLoginKeyProvider(keypair.GetLoginKey)
 
 	initRSA(cfg)
 
@@ -125,11 +124,8 @@ func main() {
 	}
 	dnf.SetDBPool(db)
 
-	robotSvc := dnfruntime.GetRobotService()
-	robotSvc.Init()
-	dnfruntime.SetRobotService(robotSvc)
-	dollSvc := dnfruntime.NewDollService()
-	manager := scheduler.NewRobotManager(schedulerrepo.NewSQLRepository(db), cfg, dollSvc)
+	robotSvc := dnfruntime.NewRobotService()
+	manager := scheduler.NewRobotManager(schedulerrepo.NewSQLRepository(db), cfg, robotSvc)
 	manager.SetWorldShout(monitor.Client{Address: fmt.Sprintf("127.0.0.1:%d", cfg.MonitorPort)})
 	manager.StartAutoActions()
 	marketApp, err = marketapp.New(db, cfg, auctionapp.NewFactory())

@@ -5,7 +5,6 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotaction "robot/internal/capability/robotaction"
 	robotconfig "robot/internal/capability/robotconfig"
-	"robot/internal/capability/robotruntime"
 	"robot/internal/capability/robotspawn"
 	robottemplate "robot/internal/capability/robottemplate"
 	storecap "robot/internal/capability/store"
@@ -217,7 +216,7 @@ func (r *RobotRuntime) autoDisjointStore(uid int, st robotcap.RuntimeStatus, sho
 			points.Release(uid, pos)
 			points.Flush()
 			r.manager.finishStoreState(uid, info.CID, reason)
-			robotruntime.ResetDisjointStore(r.manager.doll, uid)
+			r.manager.doll.ResetDisjointStore(uid)
 			return robotcap.ActionResult{UID: uid, CID: info.CID, OK: false, State: robotcap.ActionStateCancelled}
 		}
 		if reason == "" {
@@ -277,14 +276,14 @@ func (r *RobotRuntime) tryDisjointPosition(info robotcap.Info, rc robotconfig.Ru
 	}
 	fromGate := storecap.GateAreaForVillage(info.Village)
 	if fromGate != info.Area {
-		if !robotruntime.SetAreaFrom(r.manager.doll, info.UID, info.Village, info.Area, info.X, info.Y, info.Village, fromGate) {
+		if !r.manager.doll.SetAreaFrom(info.UID, info.Village, info.Area, info.X, info.Y, info.Village, fromGate) {
 			return false, "set_area_failed"
 		}
 		if sleepWithStop(1800*time.Millisecond, shouldStop) {
 			return false, "cancelled"
 		}
 	}
-	if !robotruntime.StartDisjointStore(r.manager.doll, info.UID, disjointStoreCostGold) {
+	if !r.manager.doll.StartDisjointStore(info.UID, disjointStoreCostGold) {
 		return false, "start_failed"
 	}
 	deadline := time.Now().Add(8 * time.Second)

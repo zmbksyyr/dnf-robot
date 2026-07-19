@@ -209,16 +209,16 @@ type Runtime interface {
 }
 
 type SessionRuntime interface {
-	MsgLogout(clientID string, keyData string) (string, error)
-	MsgOnLine(clientID string, keyData string) (string, error)
+	Logout(uid int) error
+	Online(users []shared.RuntimeOnlineUser) error
 }
 
 type MoveRuntime interface {
-	MsgMove(clientID string, keyData string) (string, error)
+	Move(command shared.RuntimeMoveCommand) error
 }
 
 type ShoutRuntime interface {
-	MsgPublicMsg(clientID string, keyData string) (string, error)
+	Shout(command shared.RuntimeShoutCommand) error
 }
 
 type StatusRuntime interface {
@@ -421,20 +421,20 @@ func (missingSchemaRepository) CopyTemplateDefaults(int) error {
 
 type noopRuntime struct{}
 
-func (noopRuntime) MsgLogout(clientID string, keyData string) (string, error) {
-	return "", nil
+func (noopRuntime) Logout(int) error {
+	return nil
 }
 
-func (noopRuntime) MsgMove(clientID string, keyData string) (string, error) {
-	return "", nil
+func (noopRuntime) Move(shared.RuntimeMoveCommand) error {
+	return nil
 }
 
-func (noopRuntime) MsgPublicMsg(clientID string, keyData string) (string, error) {
-	return "", nil
+func (noopRuntime) Shout(shared.RuntimeShoutCommand) error {
+	return nil
 }
 
-func (noopRuntime) MsgOnLine(clientID string, keyData string) (string, error) {
-	return "", nil
+func (noopRuntime) Online([]shared.RuntimeOnlineUser) error {
+	return nil
 }
 
 func (noopRuntime) RuntimeStatus() []robotcap.RuntimeStatus {

@@ -4,8 +4,8 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotaction "robot/internal/capability/robotaction"
 	robotconfig "robot/internal/capability/robotconfig"
-	"robot/internal/capability/robotruntime"
 	robottemplate "robot/internal/capability/robottemplate"
+	"robot/internal/shared"
 )
 
 func (m *RobotManager) shoutService() robotaction.ShoutService {
@@ -54,8 +54,12 @@ func (e shoutActionEnv) SelectRobots(req robotcap.CommandRequest) ([]robotcap.In
 	return e.manager.repo().SelectRobots(req)
 }
 
-func (e shoutActionEnv) SendLocalShout(source string, uid int, msg string, msgType int) error {
-	return robotruntime.LocalShout(e.manager.doll, source, uid, msg, msgType)
+func (e shoutActionEnv) SendLocalShout(_ string, uid int, msg string, msgType int) error {
+	return e.manager.doll.Shout(shared.RuntimeShoutCommand{
+		UID:     uid,
+		Message: msg,
+		Type:    msgType,
+	})
 }
 
 func (e shoutActionEnv) SendWorldShout(msg, name string, senderID uint16) error {

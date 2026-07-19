@@ -3,7 +3,6 @@ package scheduler
 import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
-	"robot/internal/capability/robotruntime"
 	storecap "robot/internal/capability/store"
 	"robot/internal/shared"
 )
@@ -29,7 +28,7 @@ func (e storeWorkflowEnv) BeginStoreBusy(uid int) bool {
 }
 
 func (e storeWorkflowEnv) CompletePrivateStoreDisplay(uid int) bool {
-	return robotruntime.CompletePrivateStoreDisplay(e.manager.doll, uid)
+	return e.manager.doll.CompletePrivateStoreDisplay(uid)
 }
 
 func (e storeWorkflowEnv) Config() robotconfig.RuntimeConfig {
@@ -85,11 +84,11 @@ func (e storeWorkflowEnv) SelectRobots(req robotcap.CommandRequest) ([]robotcap.
 }
 
 func (e storeWorkflowEnv) SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool {
-	return robotruntime.SetAreaFrom(e.manager.doll, uid, village, area, x, y, fromVillage, fromArea)
+	return e.manager.doll.SetAreaFrom(uid, village, area, x, y, fromVillage, fromArea)
 }
 
 func (e storeWorkflowEnv) StartPrivateStore(uid int, title string) bool {
-	return robotruntime.StartPrivateStore(e.manager.doll, uid, title)
+	return e.manager.doll.StartPrivateStore(uid, title)
 }
 
 func (e storeWorkflowEnv) StorePoints() *storecap.PointCoordinator {
@@ -187,7 +186,7 @@ func (e storeMaintenanceEnv) RandomMap(maps []shared.MapCatalogItem, level int) 
 
 func (e storeMaintenanceEnv) ResetPrivateStore(uid int) {
 	if e.manager.doll != nil {
-		robotruntime.ResetPrivateStore(e.manager.doll, uid)
+		e.manager.doll.ResetPrivateStore(uid)
 	}
 }
 
