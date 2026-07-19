@@ -1,9 +1,17 @@
 package crypt
 
 type AnubisCipher struct {
-	R           int
+	rounds      int
 	roundKeyEnc [19][4]uint32
 	roundKeyDec [19][4]uint32
+}
+
+var anubisRoundConstants = [...]uint32{
+	0xba542f74, 0x53d3d24d, 0x50ac8dbf, 0x70529a4c,
+	0xead597d1, 0x33515ba6, 0xde48a899, 0xdb32b7fc,
+	0xe39e919b, 0xe2bb416e, 0xa5cb6b95, 0xa1f3b102,
+	0xccc41d14, 0xc363da5d, 0x5fdc7dcd, 0x7f5a6c5c,
+	0xf726ffed, 0xe89d6f8e, 0x19a0f089,
 }
 
 func NewAnubisCipher() *AnubisCipher {
@@ -11,75 +19,69 @@ func NewAnubisCipher() *AnubisCipher {
 }
 
 func (a *AnubisCipher) SetKey(key []byte) error {
-	if len(key) < 16 || len(key) > 40 {
+	if len(key) < 16 || len(key) > 40 || len(key)%4 != 0 {
 		return ErrInvalidKeySize
 	}
-	keyLen := len(key)
-	var keyBits int
-	switch keyLen {
-	case 16:
-		keyBits = 128
-	case 20:
-		keyBits = 160
-	case 24:
-		keyBits = 192
-	case 28:
-		keyBits = 224
-	case 32:
-		keyBits = 256
-	case 36:
-		keyBits = 288
-	case 40:
-		keyBits = 320
-	default:
-		return ErrInvalidKeySize
-	}
-	a.R = 8 + keyBits/32
-	N := keyBits / 32
 
+	n := len(key) / 4
+	a.rounds = 8 + n
 	var kappa [10]uint32
-	for i := 0; i < N && i < 10; i++ {
+	var intermediate [10]uint32
+	for i := 0; i < n; i++ {
 		kappa[i] = loadU32BE(key[4*i : 4*i+4])
 	}
 
-	for i := 0; i <= a.R; i++ {
-		for j := 0; j < 4; j++ {
-			a.roundKeyEnc[i][j] = 0
+	for round := 0; round <= a.rounds; round++ {
+		k0 := anubisT4[byte(kappa[n-1]>>24)]
+		k1 := anubisT4[byte(kappa[n-1]>>16)]
+		k2 := anubisT4[byte(kappa[n-1]>>8)]
+		k3 := anubisT4[byte(kappa[n-1])]
+		for i := n - 2; i >= 0; i-- {
+			k0 = anubisT4[byte(kappa[i]>>24)] ^ anubisKeyTransform(k0)
+			k1 = anubisT4[byte(kappa[i]>>16)] ^ anubisKeyTransform(k1)
+			k2 = anubisT4[byte(kappa[i]>>8)] ^ anubisKeyTransform(k2)
+			k3 = anubisT4[byte(kappa[i])] ^ anubisKeyTransform(k3)
 		}
-	}
-	for i := 0; i <= a.R; i++ {
-		idx := i % N
-		if idx < N {
-			for j := 0; j < 4; j++ {
-				a.roundKeyEnc[i][j] ^= kappa[(idx+j)%10]
-			}
+		a.roundKeyEnc[round] = [4]uint32{k0, k1, k2, k3}
+		if round == a.rounds {
+			break
 		}
+
+		for i := 0; i < n; i++ {
+			j := i
+			intermediate[i] = anubisT0[byte(kappa[j]>>24)]
+			j = (j - 1 + n) % n
+			intermediate[i] ^= anubisT1[byte(kappa[j]>>16)]
+			j = (j - 1 + n) % n
+			intermediate[i] ^= anubisT2[byte(kappa[j]>>8)]
+			j = (j - 1 + n) % n
+			intermediate[i] ^= anubisT3[byte(kappa[j])]
+		}
+		kappa[0] = intermediate[0] ^ anubisRoundConstants[round]
+		copy(kappa[1:n], intermediate[1:n])
 	}
 
-	for i := 0; i <= a.R; i++ {
-		for j := 0; j < 4; j++ {
-			v := a.roundKeyEnc[i][j]
-			a.roundKeyEnc[i][j] = anubisT0[byte(v>>24)] ^ anubisT1[byte(v>>16)] ^ anubisT2[byte(v>>8)] ^ anubisT3[byte(v)]
-		}
+	for i := 0; i < 4; i++ {
+		a.roundKeyDec[0][i] = a.roundKeyEnc[a.rounds][i]
+		a.roundKeyDec[a.rounds][i] = a.roundKeyEnc[0][i]
 	}
-
-	if a.R > 0 {
-		for r := 0; r < a.R; r++ {
-			for j := 0; j < 4; j++ {
-				a.roundKeyDec[r][j] = a.roundKeyEnc[a.R-r][j]
-			}
-		}
-		for j := 0; j < 4; j++ {
-			a.roundKeyDec[a.R][j] = a.roundKeyEnc[0][j]
-		}
-		for r := 1; r < a.R; r++ {
-			for j := 0; j < 4; j++ {
-				v := a.roundKeyDec[r][j]
-				a.roundKeyDec[r][j] = anubisT4[byte(v>>24)] ^ anubisT5[byte(v>>16)] ^ anubisT4[byte(v>>8)] ^ anubisT5[byte(v)]
-			}
+	for round := 1; round < a.rounds; round++ {
+		for i := 0; i < 4; i++ {
+			v := a.roundKeyEnc[a.rounds-round][i]
+			a.roundKeyDec[round][i] = anubisT0[byte(anubisT4[byte(v>>24)])] ^
+				anubisT1[byte(anubisT4[byte(v>>16)])] ^
+				anubisT2[byte(anubisT4[byte(v>>8)])] ^
+				anubisT3[byte(anubisT4[byte(v)])]
 		}
 	}
 	return nil
+}
+
+func anubisKeyTransform(v uint32) uint32 {
+	return anubisT5[byte(v>>24)]&0xff000000 |
+		anubisT5[byte(v>>16)]&0x00ff0000 |
+		anubisT5[byte(v>>8)]&0x0000ff00 |
+		anubisT5[byte(v)]&0x000000ff
 }
 
 func (a *AnubisCipher) KeySize() int {
@@ -90,94 +92,45 @@ func (a *AnubisCipher) BlockSize() int {
 	return 16
 }
 
-func anubisGamma(state *[4]uint32) {
-	t0 := anubisT0[byte(state[0]>>24)] ^ anubisT1[byte(state[1]>>16)] ^ anubisT2[byte(state[2]>>8)] ^ anubisT3[byte(state[3])]
-	t1 := anubisT0[byte(state[1]>>24)] ^ anubisT1[byte(state[2]>>16)] ^ anubisT2[byte(state[3]>>8)] ^ anubisT3[byte(state[0])]
-	t2 := anubisT0[byte(state[2]>>24)] ^ anubisT1[byte(state[3]>>16)] ^ anubisT2[byte(state[0]>>8)] ^ anubisT3[byte(state[1])]
-	t3 := anubisT0[byte(state[3]>>24)] ^ anubisT1[byte(state[0]>>16)] ^ anubisT2[byte(state[1]>>8)] ^ anubisT3[byte(state[2])]
-	state[0] = t0
-	state[1] = t1
-	state[2] = t2
-	state[3] = t3
-}
-
-func anubisGammaInv(state *[4]uint32) {
-	t0 := anubisT4[byte(state[0]>>24)] ^ anubisT5[byte(state[3]>>16)] ^ anubisT4[byte(state[2]>>8)] ^ anubisT5[byte(state[1])]
-	t1 := anubisT4[byte(state[1]>>24)] ^ anubisT5[byte(state[0]>>16)] ^ anubisT4[byte(state[3]>>8)] ^ anubisT5[byte(state[2])]
-	t2 := anubisT4[byte(state[2]>>24)] ^ anubisT5[byte(state[1]>>16)] ^ anubisT4[byte(state[0]>>8)] ^ anubisT5[byte(state[3])]
-	t3 := anubisT4[byte(state[3]>>24)] ^ anubisT5[byte(state[2]>>16)] ^ anubisT4[byte(state[1]>>8)] ^ anubisT5[byte(state[0])]
-	state[0] = t0
-	state[1] = t1
-	state[2] = t2
-	state[3] = t3
-}
-
 func (a *AnubisCipher) Encrypt(data []byte) ([]byte, error) {
-	blockSize := a.BlockSize()
-	if len(data)%blockSize != 0 {
-		return nil, ErrInvalidBlockSize
-	}
-	out := make([]byte, len(data))
-	for i := 0; i < len(data); i += blockSize {
-		var s [4]uint32
-		s[0] = loadU32BE(data[i : i+4])
-		s[1] = loadU32BE(data[i+4 : i+8])
-		s[2] = loadU32BE(data[i+8 : i+12])
-		s[3] = loadU32BE(data[i+12 : i+16])
-		s[0] ^= a.roundKeyEnc[0][0]
-		s[1] ^= a.roundKeyEnc[0][1]
-		s[2] ^= a.roundKeyEnc[0][2]
-		s[3] ^= a.roundKeyEnc[0][3]
-		for r := 1; r < a.R; r++ {
-			anubisGamma(&s)
-			s[0] ^= a.roundKeyEnc[r][0]
-			s[1] ^= a.roundKeyEnc[r][1]
-			s[2] ^= a.roundKeyEnc[r][2]
-			s[3] ^= a.roundKeyEnc[r][3]
-		}
-		s0 := anubisT4[byte(s[0]>>24)] ^ anubisT5[byte(s[1]>>16)] ^ anubisT4[byte(s[2]>>8)] ^ anubisT5[byte(s[3])] ^ a.roundKeyEnc[a.R][0]
-		s1 := anubisT4[byte(s[1]>>24)] ^ anubisT5[byte(s[2]>>16)] ^ anubisT4[byte(s[3]>>8)] ^ anubisT5[byte(s[0])] ^ a.roundKeyEnc[a.R][1]
-		s2 := anubisT4[byte(s[2]>>24)] ^ anubisT5[byte(s[3]>>16)] ^ anubisT4[byte(s[0]>>8)] ^ anubisT5[byte(s[1])] ^ a.roundKeyEnc[a.R][2]
-		s3 := anubisT4[byte(s[3]>>24)] ^ anubisT5[byte(s[0]>>16)] ^ anubisT4[byte(s[1]>>8)] ^ anubisT5[byte(s[2])] ^ a.roundKeyEnc[a.R][3]
-		storeU32BE(out[i:i+4], s0)
-		storeU32BE(out[i+4:i+8], s1)
-		storeU32BE(out[i+8:i+12], s2)
-		storeU32BE(out[i+12:i+16], s3)
-	}
-	return out, nil
+	return a.crypt(data, &a.roundKeyEnc)
 }
 
 func (a *AnubisCipher) Decrypt(data []byte) ([]byte, error) {
-	blockSize := a.BlockSize()
-	if len(data)%blockSize != 0 {
+	return a.crypt(data, &a.roundKeyDec)
+}
+
+func (a *AnubisCipher) crypt(data []byte, roundKeys *[19][4]uint32) ([]byte, error) {
+	if a.rounds == 0 {
+		return nil, ErrNotInitialized
+	}
+	if len(data)%a.BlockSize() != 0 {
 		return nil, ErrInvalidBlockSize
 	}
+
 	out := make([]byte, len(data))
-	for i := 0; i < len(data); i += blockSize {
-		var s [4]uint32
-		s[0] = loadU32BE(data[i : i+4])
-		s[1] = loadU32BE(data[i+4 : i+8])
-		s[2] = loadU32BE(data[i+8 : i+12])
-		s[3] = loadU32BE(data[i+12 : i+16])
-		s[0] ^= a.roundKeyDec[0][0]
-		s[1] ^= a.roundKeyDec[0][1]
-		s[2] ^= a.roundKeyDec[0][2]
-		s[3] ^= a.roundKeyDec[0][3]
-		for r := 1; r < a.R; r++ {
-			anubisGammaInv(&s)
-			s[0] ^= a.roundKeyDec[r][0]
-			s[1] ^= a.roundKeyDec[r][1]
-			s[2] ^= a.roundKeyDec[r][2]
-			s[3] ^= a.roundKeyDec[r][3]
+	for offset := 0; offset < len(data); offset += a.BlockSize() {
+		var state [4]uint32
+		for i := 0; i < 4; i++ {
+			state[i] = loadU32BE(data[offset+4*i:offset+4*i+4]) ^ roundKeys[0][i]
 		}
-		s0 := anubisT4[byte(s[0]>>24)] ^ anubisT5[byte(s[3]>>16)] ^ anubisT4[byte(s[2]>>8)] ^ anubisT5[byte(s[1])] ^ a.roundKeyDec[a.R][0]
-		s1 := anubisT4[byte(s[1]>>24)] ^ anubisT5[byte(s[0]>>16)] ^ anubisT4[byte(s[3]>>8)] ^ anubisT5[byte(s[2])] ^ a.roundKeyDec[a.R][1]
-		s2 := anubisT4[byte(s[2]>>24)] ^ anubisT5[byte(s[1]>>16)] ^ anubisT4[byte(s[0]>>8)] ^ anubisT5[byte(s[3])] ^ a.roundKeyDec[a.R][2]
-		s3 := anubisT4[byte(s[3]>>24)] ^ anubisT5[byte(s[2]>>16)] ^ anubisT4[byte(s[1]>>8)] ^ anubisT5[byte(s[0])] ^ a.roundKeyDec[a.R][3]
-		storeU32BE(out[i:i+4], s0)
-		storeU32BE(out[i+4:i+8], s1)
-		storeU32BE(out[i+8:i+12], s2)
-		storeU32BE(out[i+12:i+16], s3)
+		for round := 1; round < a.rounds; round++ {
+			state = [4]uint32{
+				anubisT0[byte(state[0]>>24)] ^ anubisT1[byte(state[1]>>24)] ^ anubisT2[byte(state[2]>>24)] ^ anubisT3[byte(state[3]>>24)] ^ roundKeys[round][0],
+				anubisT0[byte(state[0]>>16)] ^ anubisT1[byte(state[1]>>16)] ^ anubisT2[byte(state[2]>>16)] ^ anubisT3[byte(state[3]>>16)] ^ roundKeys[round][1],
+				anubisT0[byte(state[0]>>8)] ^ anubisT1[byte(state[1]>>8)] ^ anubisT2[byte(state[2]>>8)] ^ anubisT3[byte(state[3]>>8)] ^ roundKeys[round][2],
+				anubisT0[byte(state[0])] ^ anubisT1[byte(state[1])] ^ anubisT2[byte(state[2])] ^ anubisT3[byte(state[3])] ^ roundKeys[round][3],
+			}
+		}
+		last := [4]uint32{
+			anubisT0[byte(state[0]>>24)]&0xff000000 ^ anubisT1[byte(state[1]>>24)]&0x00ff0000 ^ anubisT2[byte(state[2]>>24)]&0x0000ff00 ^ anubisT3[byte(state[3]>>24)]&0x000000ff ^ roundKeys[a.rounds][0],
+			anubisT0[byte(state[0]>>16)]&0xff000000 ^ anubisT1[byte(state[1]>>16)]&0x00ff0000 ^ anubisT2[byte(state[2]>>16)]&0x0000ff00 ^ anubisT3[byte(state[3]>>16)]&0x000000ff ^ roundKeys[a.rounds][1],
+			anubisT0[byte(state[0]>>8)]&0xff000000 ^ anubisT1[byte(state[1]>>8)]&0x00ff0000 ^ anubisT2[byte(state[2]>>8)]&0x0000ff00 ^ anubisT3[byte(state[3]>>8)]&0x000000ff ^ roundKeys[a.rounds][2],
+			anubisT0[byte(state[0])]&0xff000000 ^ anubisT1[byte(state[1])]&0x00ff0000 ^ anubisT2[byte(state[2])]&0x0000ff00 ^ anubisT3[byte(state[3])]&0x000000ff ^ roundKeys[a.rounds][3],
+		}
+		for i := 0; i < 4; i++ {
+			storeU32BE(out[offset+4*i:offset+4*i+4], last[i])
+		}
 	}
 	return out, nil
 }

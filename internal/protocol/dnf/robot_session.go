@@ -334,6 +334,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	forgetPartyAccountIdentity(r.UID)
 	r.LoginInfo = info
 	r.IP = info.IP
 	r.Port = info.Port

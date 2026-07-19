@@ -512,20 +512,31 @@ func TestPartyInfoPacketSupportsEncryptedAndPlainZlib(t *testing.T) {
 	}
 }
 
-func TestPartyRealtimeInfoPacketParsesPatchedPlainPayload(t *testing.T) {
+func TestPartyRealtimeInfoPacketSupportsEncryptedAndPlainBodies(t *testing.T) {
 	cipher := newPartyTestCipher(t)
 	body := []byte{
 		3,
-		0x34, 0x12, 1, 0, 0,
-		0x78, 0x56, 1, 0, 1,
-		0xbc, 0x9a, 1, 0, 3,
+		0x34, 0x12, 1, 0, 0, 0, 0, 0,
+		0x78, 0x56, 1, 0, 1, 0, 0, 0,
+		0xbc, 0x9a, 1, 0, 3, 0, 0, 0,
 	}
-	identities, source, err := selectPartyRealtimeInfoPacket(cipher, makePartyRecvPacket(153, body), false, recvBodySourcePlain)
-	if err != nil || source != recvBodySourcePlain || len(identities) != 3 {
-		t.Fatalf("identities=%+v source=%s err=%v", identities, source, err)
-	}
-	if identities[0].uniqueID != 0x1234 || identities[0].slot != 0 || identities[2].uniqueID != 0x9abc || identities[2].slot != 3 {
-		t.Fatalf("parsed identities = %+v", identities)
+	for _, tt := range []struct {
+		name   string
+		packet []byte
+		source recvBodySource
+	}{
+		{name: "plain", packet: makePartyRecvPacket(153, body), source: recvBodySourcePlain},
+		{name: "encrypted", packet: makeEncryptedPartyRecvPacket(t, cipher, 153, padPartyBlock(body)), source: recvBodySourceDecrypted},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			identities, source, err := selectPartyRealtimeInfoPacket(cipher, tt.packet, false)
+			if err != nil || source != tt.source || len(identities) != 3 {
+				t.Fatalf("identities=%+v source=%s err=%v", identities, source, err)
+			}
+			if identities[0].uniqueID != 0x1234 || identities[0].slot != 0 || identities[2].uniqueID != 0x9abc || identities[2].slot != 3 {
+				t.Fatalf("parsed identities = %+v", identities)
+			}
+		})
 	}
 }
 

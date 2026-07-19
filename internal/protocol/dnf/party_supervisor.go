@@ -79,6 +79,14 @@ func (r *RobotVo) partySupervisorStep(epoch uint64, uid uint32, now time.Time, n
 
 func (r *RobotVo) refreshPartySelfIdentityUnsafe(now time.Time) {
 	self := r.partySelfPeer
+	if self.uniqueID == 0 && self.accID == r.UID {
+		if uniqueID, ok := loadPartyAccountIdentity(r.UID, now); ok {
+			self.uniqueID = uniqueID
+			r.setPartySelfPeerUnsafe(self)
+			fmt.Printf("[PARTY_SELF_ID_RECOVERED] uid=%d slot=%d unique=%d source=account-cache\n", r.UID, self.slot, uniqueID)
+			return
+		}
+	}
 	if self.uniqueID != 0 || self.accID != r.UID || !self.slotKnown || r.partyUDPConn == nil {
 		return
 	}

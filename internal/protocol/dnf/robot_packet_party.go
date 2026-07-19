@@ -85,12 +85,11 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if r.State != StateRun || packet.flag != 0 {
 			return
 		}
-		identities, source, err := selectPartyRealtimeInfoPacket(r.Cipher, packet.data, packet.isAnti, r.partyRecvSource)
+		identities, _, err := selectPartyRealtimeInfoPacket(r.Cipher, packet.data, packet.isAnti)
 		if err != nil {
 			fmt.Printf("[PARTY_REALTIME_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, packet.isAnti, packet.size)
 			return
 		}
-		r.rememberPartyRecvSourceUnsafe(source)
 		r.rememberPartyRealtimeIdentitiesUnsafe(identities)
 
 	case 6:

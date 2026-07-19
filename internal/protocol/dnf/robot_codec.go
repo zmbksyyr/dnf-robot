@@ -472,11 +472,11 @@ func parsePartyRealtimeInfo(data []byte) ([]partyRealtimeIdentity, bool) {
 		return nil, false
 	}
 	count := int(data[0])
-	if count < 1 || count > 4 {
+	if count > 4 {
 		return nil, false
 	}
-	expected := 1 + count*5
-	if len(data) < expected || len(data)-expected > 7 {
+	expected := 1 + count*8
+	if len(data) < expected || len(data)-expected > 15 {
 		return nil, false
 	}
 	for _, padding := range data[expected:] {
@@ -487,7 +487,7 @@ func parsePartyRealtimeInfo(data []byte) ([]partyRealtimeIdentity, bool) {
 	identities := make([]partyRealtimeIdentity, 0, count)
 	seenSlots := [4]bool{}
 	for i := 0; i < count; i++ {
-		offset := 1 + i*5
+		offset := 1 + i*8
 		uniqueID := binary.LittleEndian.Uint16(data[offset : offset+2])
 		slot := data[offset+4]
 		if uniqueID == 0 || slot >= 4 || seenSlots[slot] {
@@ -499,7 +499,7 @@ func parsePartyRealtimeInfo(data []byte) ([]partyRealtimeIdentity, bool) {
 	return identities, true
 }
 
-func selectPartyRealtimeInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, preferred recvBodySource) ([]partyRealtimeIdentity, recvBodySource, error) {
+func selectPartyRealtimeInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) ([]partyRealtimeIdentity, recvBodySource, error) {
 	candidates, decryptErr := recvBodyCandidates(cipher, raw, isAnti)
 	type validCandidate struct {
 		identities []partyRealtimeIdentity
@@ -513,12 +513,7 @@ func selectPartyRealtimeInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti b
 		}
 	}
 	for _, candidate := range valid {
-		if preferred != recvBodySourceUnknown && candidate.source == preferred {
-			return candidate.identities, candidate.source, nil
-		}
-	}
-	for _, candidate := range valid {
-		if candidate.source == recvBodySourcePlain {
+		if candidate.source == recvBodySourceDecrypted {
 			return candidate.identities, candidate.source, nil
 		}
 	}
