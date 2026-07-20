@@ -516,19 +516,32 @@ class StabilityRun(object):
         return opener
 
     def web_json(self, path, payload=None):
-        opener = self.ensure_web_login()
         url = self.web_base_url() + path
-        data = None
-        headers = {}
-        if payload is not None:
-            data = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = urllib2.Request(url, data=data, headers=headers)
-        try:
-            raw = opener.open(req, timeout=self.args.api_timeout).read()
-        except Exception as exc:
-            self.web_opener = None
-            raise RuntimeError("web request failed path=%s err=%r" % (path, exc))
+        last_exc = None
+        for attempt in range(2):
+            opener = self.ensure_web_login()
+            data = None
+            headers = {}
+            if payload is not None:
+                data = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+                headers["Content-Type"] = "application/json"
+            req = urllib2.Request(url, data=data, headers=headers)
+            try:
+                raw = opener.open(req, timeout=self.args.api_timeout).read()
+                break
+            except urllib2.HTTPError as exc:
+                last_exc = exc
+                if getattr(exc, "code", 0) in (401, 403) and attempt == 0:
+                    self.web_opener = None
+                    continue
+                self.web_opener = None
+                raise RuntimeError("web request failed path=%s status=%s err=%r" % (path, getattr(exc, "code", ""), exc))
+            except Exception as exc:
+                last_exc = exc
+                self.web_opener = None
+                raise RuntimeError("web request failed path=%s err=%r" % (path, exc))
+        else:
+            raise RuntimeError("web request failed path=%s err=%r" % (path, last_exc))
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", "replace")
         try:
@@ -724,6 +737,9 @@ class StabilityRun(object):
         self.log("invariant failure name=%s error=%s" % (name, error))
 
     def check_recovered(self, event):
+        return self.check_recovered_once(event) or self.wait_recovered(event, 120, 10)
+
+    def check_recovered_once(self, event):
         api = self.safe_call("systemStatus", {})
         sched_res = self.safe_call("schedulerStatus", {})
         sched = (sched_res.get("result") or {}) if isinstance(sched_res, dict) else {}
@@ -746,6 +762,17 @@ class StabilityRun(object):
         if not market_ok:
             self.log("recover_check event=%s failed reason=market_services services=%s" % (event, json_text((market.get("services") or {}), 1400)))
         return bool(ok and scheduler_ok and game_ok and market_ok)
+
+    def wait_recovered(self, event, timeout_sec, interval_sec):
+        self.log("wait_recovered start event=%s timeout=%s" % (event, timeout_sec))
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            if self.check_recovered_once(event):
+                self.log("wait_recovered ready event=%s" % event)
+                return True
+            time.sleep(interval_sec)
+        self.log("wait_recovered timeout event=%s" % event)
+        return False
 
     def scaling_recovery_ok(self, event, sched):
         if event not in ("target20", "target_mid", "target_high", "final_target_mid", "robot_scale_wave", "robot_restart", "robot_restart_under_load"):
