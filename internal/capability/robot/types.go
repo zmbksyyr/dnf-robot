@@ -64,6 +64,7 @@ type StatusItem struct {
 	StoreDisplaySent bool              `json:"store_display_sent"`
 	StoreDisplayAck  bool              `json:"store_display_ack"`
 	StoreCreated     bool              `json:"store_created"`
+	DisjointActive   bool              `json:"disjoint_active"`
 	Village          int               `json:"village"`
 	VillageName      string            `json:"village_name,omitempty"`
 	Area             int               `json:"area"`

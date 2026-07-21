@@ -75,6 +75,7 @@ func (m *RobotManager) RobotsStatus(req robotcap.CommandRequest) (RobotStatusRes
 			item.StoreDisplaySent = st.StoreDisplaySent
 			item.StoreDisplayAck = st.StoreDisplayAck
 			item.StoreCreated = st.StoreCreated
+			item.DisjointActive = st.DisjointActive
 			item.UptimeSeconds = st.UptimeSeconds
 			if st.Village != 0 || st.Area != 0 || st.X != 0 || st.Y != 0 {
 				item.Village = st.Village
