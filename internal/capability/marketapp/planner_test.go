@@ -228,7 +228,7 @@ func TestPlanAuctionStackableAvoidsInt32TotalOverflow(t *testing.T) {
 	if action.CountAddInfo != action.Count {
 		t.Fatalf("count_add_info = %d, want %d", action.CountAddInfo, action.Count)
 	}
-	if action.TotalPrice <= 0 || action.InstantPrice <= 0 || action.StartPrice != -1 {
+	if action.TotalPrice <= 0 || action.InstantPrice <= 0 || action.StartPrice < 0 || action.StartPrice >= action.InstantPrice {
 		t.Fatalf("unexpected non-positive prices: %#v", action)
 	}
 	if int64(action.UnitPrice)*int64(action.Count) != int64(action.TotalPrice) {

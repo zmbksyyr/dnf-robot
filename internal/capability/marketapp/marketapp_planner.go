@@ -128,7 +128,10 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			count = safeAuctionStackCount(unit, count)
 			addInfo = count
 			total = safeAuctionTotalPrice(unit, count)
-			startPrice = -1
+			startPrice = total - 1
+			if startPrice < 0 {
+				startPrice = 0
+			}
 		}
 		result.Actions = append(result.Actions, Action{
 			Market:       marketNameAuction,
