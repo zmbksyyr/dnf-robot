@@ -1,6 +1,7 @@
 package robotlifecycle
 
 import (
+	"math"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/shared"
@@ -65,12 +66,17 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	catalogs := env.LoadCreateCatalogs()
 	robots := make([]robotcap.Info, 0, req.Count)
 	usedNames := make(map[string]struct{}, req.Count)
+	levels := make([]int, req.Count)
+	for i := range levels {
+		levels[i] = env.RandBetween(rc.LevelMin, rc.LevelMax)
+	}
+	spawnMaps, hasSpawnMaps := distributedSpawnMaps(env, maps, levels)
 	for i := 0; i < req.Count; i++ {
 		info := robotcap.Info{
 			UID:     allocation.UIDs[i],
 			CID:     allocation.FirstCID + i,
 			Name:    env.RobotName(allocation.UIDs[i], usedNames, rc),
-			Level:   env.RandBetween(rc.LevelMin, rc.LevelMax),
+			Level:   levels[i],
 			Job:     env.RandomFrom(rc.Jobs),
 			Grow:    env.RandomFrom(rc.GrowTypes),
 			Port:    env.RobotGamePort(),
@@ -79,7 +85,13 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 			X:       env.RandBetween(rc.SpawnXMin, rc.SpawnXMax),
 			Y:       env.RandBetween(rc.SpawnYMin, rc.SpawnYMax),
 		}
-		if mp, ok := env.RandomMap(maps, info.Level); ok {
+		if hasSpawnMaps && i < len(spawnMaps) && spawnMaps[i].Use {
+			mp := spawnMaps[i]
+			info.Village = mp.Village
+			info.Area = mp.Area
+			info.X = env.RandBetween(mp.XMin, mp.XMax)
+			info.Y = env.RandBetween(mp.YMin, mp.YMax)
+		} else if mp, ok := env.RandomMap(maps, info.Level); ok {
 			info.Village = mp.Village
 			info.Area = mp.Area
 			info.X = env.RandBetween(mp.XMin, mp.XMax)
@@ -92,6 +104,91 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 		robots = append(robots, info)
 	}
 	return robots, nil
+}
+
+type spawnMapCandidate struct {
+	mp     shared.MapCatalogItem
+	weight int
+}
+
+func distributedSpawnMaps(env CreateEnv, maps []shared.MapCatalogItem, levels []int) ([]shared.MapCatalogItem, bool) {
+	if len(levels) == 0 {
+		return nil, false
+	}
+	candidates := make([]spawnMapCandidate, 0, len(maps))
+	for _, mp := range maps {
+		if mp.Use && mp.Village >= 0 && mp.Area >= 0 {
+			candidates = append(candidates, spawnMapCandidate{mp: mp, weight: smoothedMapAreaWeight(mp)})
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, false
+	}
+	out := make([]shared.MapCatalogItem, 0, len(levels))
+	assigned := make([]int, len(candidates))
+	for _, level := range levels {
+		eligible := eligibleSpawnMapIndexes(candidates, assigned, level, true)
+		if len(eligible) == 0 {
+			eligible = eligibleSpawnMapIndexes(candidates, assigned, level, false)
+		}
+		if len(eligible) == 0 {
+			out = append(out, shared.MapCatalogItem{})
+			continue
+		}
+		chosen := weightedSpawnMapIndex(env, candidates, eligible)
+		assigned[chosen]++
+		out = append(out, candidates[chosen].mp)
+	}
+	return out, true
+}
+
+func eligibleSpawnMapIndexes(candidates []spawnMapCandidate, assigned []int, level int, unassignedOnly bool) []int {
+	eligible := make([]int, 0, len(candidates))
+	for i, c := range candidates {
+		if c.mp.Level > level {
+			continue
+		}
+		if unassignedOnly && assigned[i] > 0 {
+			continue
+		}
+		eligible = append(eligible, i)
+	}
+	return eligible
+}
+
+func weightedSpawnMapIndex(env CreateEnv, candidates []spawnMapCandidate, indexes []int) int {
+	total := 0
+	for _, idx := range indexes {
+		total += candidates[idx].weight
+	}
+	if total <= 0 {
+		return indexes[0]
+	}
+	choice := env.RandBetween(0, total-1)
+	if choice < 0 || choice >= total {
+		choice = 0
+	}
+	for _, idx := range indexes {
+		weight := candidates[idx].weight
+		if choice < weight {
+			return idx
+		}
+		choice -= weight
+	}
+	return indexes[len(indexes)-1]
+}
+
+func smoothedMapAreaWeight(mp shared.MapCatalogItem) int {
+	width := mp.XMax - mp.XMin + 1
+	height := mp.YMax - mp.YMin + 1
+	if width <= 0 || height <= 0 {
+		return 1
+	}
+	weight := int(math.Sqrt(float64(width * height)))
+	if weight < 1 {
+		return 1
+	}
+	return weight
 }
 
 func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig, catalogs CreateCatalogs) error {

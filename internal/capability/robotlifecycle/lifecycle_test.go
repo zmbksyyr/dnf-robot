@@ -38,6 +38,44 @@ func TestCreatorCapsCountAndCreatesRobots(t *testing.T) {
 	}
 }
 
+func TestCreatorSpawnMapsCoverAreasThenUseSmoothedAreaWeight(t *testing.T) {
+	env := &testCreateEnv{
+		rc: robotconfig.RuntimeConfig{
+			RobotUIDStart:        17000000,
+			RobotUIDEnd:          17999999,
+			LevelMin:             1,
+			LevelMax:             1,
+			Jobs:                 []int{1},
+			GrowTypes:            []int{2},
+			SpawnFallbackVillage: 1,
+			SpawnArea:            -1,
+			SpawnXMin:            100,
+			SpawnXMax:            100,
+			SpawnYMin:            200,
+			SpawnYMax:            200,
+		},
+		maps: []shared.MapCatalogItem{
+			{Village: 1, Area: 1, XMin: 0, XMax: 99, YMin: 0, YMax: 99, Use: true},
+			{Village: 1, Area: 2, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true},
+			{Village: 1, Area: 3, XMin: 0, XMax: 9, YMin: 0, YMax: 9, Use: true},
+		},
+	}
+	robots, err := (Creator{Env: env}).Create(robotcap.CreateRequest{Count: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int]int{}
+	for _, info := range robots {
+		seen[info.Area]++
+	}
+	if len(seen) != 3 {
+		t.Fatalf("areas seen = %v, want all 3 areas covered", seen)
+	}
+	if seen[1] != 2 {
+		t.Fatalf("large area assignments = %d, want one extra assignment after coverage", seen[1])
+	}
+}
+
 func TestCleanerDryRunAndForce(t *testing.T) {
 	env := &testCleanupEnv{candidates: []robotcap.CleanupCandidate{
 		{UID: 1, CID: 11},
@@ -70,6 +108,7 @@ type testCreateEnv struct {
 	catalogMismatches int
 	equipmentBase     *shared.EquipmentCatalogItem
 	stackableBase     *shared.EquipmentCatalogItem
+	maps              []shared.MapCatalogItem
 }
 
 func (e *testCreateEnv) AllocateRobotIDs(count, uidStart, uidEnd int) (RobotIDAllocation, error) {
@@ -130,7 +169,7 @@ func (e *testCreateEnv) LoadCreateCatalogs() CreateCatalogs {
 	}
 }
 
-func (e *testCreateEnv) LoadMapCatalog() []shared.MapCatalogItem { return nil }
+func (e *testCreateEnv) LoadMapCatalog() []shared.MapCatalogItem { return e.maps }
 
 func (e *testCreateEnv) PopulateInventory(_ robotcap.Info, _ robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
 	e.inventoryCalls++
