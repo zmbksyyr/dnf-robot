@@ -67,6 +67,7 @@ type DirectRegisterItemGARequest struct {
 	ExtraAddInfo   int32
 	StartPrice     int32
 	InstantPrice   int32
+	UnitPrice      int32
 	ROICategory    [3]int16
 	ROIGrade       [3]byte
 }
@@ -96,6 +97,7 @@ func (r DirectRegisterItemGARequest) Packet() []byte {
 		extraAddInfo = r.CountOrAddInfo
 	}
 	binary.LittleEndian.PutUint32(buf[0x3c:0x40], uint32(extraAddInfo))
+	binary.LittleEndian.PutUint32(buf[0x95:0x99], uint32(r.UnitPrice))
 	off := 0x99
 	for _, category := range r.ROICategory {
 		binary.LittleEndian.PutUint16(buf[off:off+2], uint16(category))

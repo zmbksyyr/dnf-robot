@@ -119,10 +119,12 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 		}
 		unit := a.auctionUnitPrice(plan.Row.SystemPrice, plan.IsEquipment, plan.BatchInflate, upgrade)
 		total := unit
+		startPrice := unit - 1
 		if !plan.IsEquipment {
 			count = safeAuctionStackCount(unit, count)
 			addInfo = count
 			total = safeAuctionTotalPrice(unit, count)
+			startPrice = -1
 		}
 		result.Actions = append(result.Actions, Action{
 			Market:       marketNameAuction,
@@ -136,7 +138,7 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			OwnerID:      a.pickOwner(occ),
 			OwnerName:    a.cfg.SystemOwner.OwnerName,
 			CountAddInfo: addInfo,
-			StartPrice:   total - 1,
+			StartPrice:   startPrice,
 			InstantPrice: total,
 			Upgrade:      upgrade,
 			Endurance:    endurance,

@@ -119,6 +119,7 @@ func TestDirectRegisterItemGAPacket(t *testing.T) {
 		CountOrAddInfo: 17,
 		StartPrice:     9000,
 		InstantPrice:   10000,
+		UnitPrice:      588,
 		ROICategory:    [3]int16{-1, 26, 21},
 		ROIGrade:       [3]byte{0, 0, 0},
 	}.Packet()
@@ -133,6 +134,9 @@ func TestDirectRegisterItemGAPacket(t *testing.T) {
 	wantItem := "282300001027000000dd0b00000011000000000011000000"
 	if got := hex.EncodeToString(packet[0x28:0x40]); got != wantItem {
 		t.Fatalf("item segment mismatch\n got %s\nwant %s", got, wantItem)
+	}
+	if got := int32(binary.LittleEndian.Uint32(packet[0x95:0x99])); got != 588 {
+		t.Fatalf("unit price = %d, want 588", got)
 	}
 	wantROI := "ffff1a001500000000"
 	if got := hex.EncodeToString(packet[0x99:0xa2]); got != wantROI {

@@ -69,6 +69,7 @@ func TestBuildDirectRegisterPacketPreservesEquipFields(t *testing.T) {
 		ExtraAddInfo:   6,
 		StartPrice:     999,
 		InstantPrice:   1000,
+		UnitPrice:      123,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,5 +82,8 @@ func TestBuildDirectRegisterPacketPreservesEquipFields(t *testing.T) {
 	}
 	if got := int32(binary.LittleEndian.Uint32(packet[0x3c:0x40])); got != 6 {
 		t.Fatalf("extra add info = %d, want 6", got)
+	}
+	if got := int32(binary.LittleEndian.Uint32(packet[0x95:0x99])); got != 123 {
+		t.Fatalf("unit price = %d, want 123", got)
 	}
 }

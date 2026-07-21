@@ -97,6 +97,7 @@ func (e *actionExecutor) executeDirectWithSession(action marketapp.Action) (auct
 			ExtraAddInfo:   action.ExtraAddInfo,
 			StartPrice:     action.StartPrice,
 			InstantPrice:   action.InstantPrice,
+			UnitPrice:      action.UnitPrice,
 			TimeoutMS:      5000,
 		})
 	case "cera":

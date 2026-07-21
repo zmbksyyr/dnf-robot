@@ -17,6 +17,7 @@ type MarketDirectRegisterItemRequest struct {
 	ExtraAddInfo   int32    `json:"extra_add_info,omitempty"`
 	StartPrice     int32    `json:"start_price"`
 	InstantPrice   int32    `json:"instant_price"`
+	UnitPrice      int32    `json:"unit_price,omitempty"`
 	ROICategory    [3]int16 `json:"roi_category,omitempty"`
 	ROIGrade       [3]byte  `json:"roi_grade,omitempty"`
 	TimeoutMS      int      `json:"timeout_ms,omitempty"`

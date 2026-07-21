@@ -46,6 +46,7 @@ func buildDirectRegisterPacket(req MarketDirectRegisterItemRequest) ([]byte, err
 		ExtraAddInfo:   req.ExtraAddInfo,
 		StartPrice:     req.StartPrice,
 		InstantPrice:   req.InstantPrice,
+		UnitPrice:      req.UnitPrice,
 		ROICategory:    req.ROICategory,
 		ROIGrade:       req.ROIGrade,
 	}).Packet(), nil
