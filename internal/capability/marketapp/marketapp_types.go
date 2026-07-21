@@ -33,6 +33,7 @@ type SystemOwner struct {
 
 type RestockCfg struct {
 	Comments         map[string]string `json:"comments,omitempty"`
+	QualityFilter    *bool             `json:"quality_filter,omitempty"`
 	StackSizes       []int             `json:"stack_sizes"`
 	EquipmentQtyMin  int               `json:"equipment_qty_min"`
 	EquipmentQtyMax  int               `json:"equipment_qty_max"`
@@ -145,6 +146,7 @@ type ClearSystemMarketResult struct {
 type ConfigUpdateRequest struct {
 	AutoEnabled      *bool    `json:"auto_enabled,omitempty"`
 	CollectorEnabled *bool    `json:"collector_enabled,omitempty"`
+	QualityFilter    *bool    `json:"quality_filter,omitempty"`
 	IntervalMS       int      `json:"interval_ms,omitempty"`
 	InitialDelayMS   *int     `json:"initial_delay_ms,omitempty"`
 	MaxActions       int      `json:"max_actions,omitempty"`

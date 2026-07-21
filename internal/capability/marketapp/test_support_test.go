@@ -37,6 +37,7 @@ func mustWriteText(t *testing.T, path, value string) {
 type clearStockRepository struct {
 	counts            map[string]int
 	stock             map[string]map[uint32]int
+	systemCollectRows map[string][]collectRow
 	maxAddInfo        int32
 	collectCalls      int
 	creatureIDs       []int32
@@ -59,9 +60,13 @@ func (r *clearStockRepository) LoadCollectRows(string, string, uint32, bool) ([]
 	return nil, nil
 }
 
-func (r *clearStockRepository) LoadSystemCollectRows(string, string, uint32) ([]collectRow, error) {
+func (r *clearStockRepository) LoadSystemCollectRows(dbName string, _ string, _ uint32) ([]collectRow, error) {
 	r.collectCalls++
-	return nil, nil
+	if len(r.systemCollectRows) == 0 {
+		return nil, nil
+	}
+	out := append([]collectRow(nil), r.systemCollectRows[dbName]...)
+	return out, nil
 }
 
 func (r *clearStockRepository) LoadMarketStock(dbName string, _ uint32, _ map[uint32]int) (map[uint32]int, error) {

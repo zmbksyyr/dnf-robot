@@ -6,6 +6,24 @@ func marketCandidate(item catalogItem) bool {
 	return item.ItemID != 0 && item.Kind != "blocked" && !isAvatarEquipment(item) && (specialAuctionKind(item) != "" || !isRiskyPVFItem(item))
 }
 
+func (a *App) marketCandidate(item catalogItem) bool {
+	if !marketCandidate(item) {
+		return false
+	}
+	if !a.qualityFilterEnabled() {
+		return true
+	}
+	return marketRarityAllowed(item)
+}
+
+func (a *App) qualityFilterEnabled() bool {
+	return a == nil || a.cfg.Restock.QualityFilter == nil || *a.cfg.Restock.QualityFilter
+}
+
+func marketRarityAllowed(item catalogItem) bool {
+	return item.Rarity >= 0 && item.Rarity <= 4
+}
+
 func specialAuctionKind(item catalogItem) string {
 	if item.Kind != "equipment" {
 		return ""
@@ -37,11 +55,15 @@ func specialAuctionRank(item catalogItem) int {
 }
 
 func catalogAuctionCandidateCounts(catalog map[uint32]catalogItem, allowed map[uint32]bool) (normal int, special int) {
+	return (*App)(nil).catalogAuctionCandidateCounts(catalog, allowed)
+}
+
+func (a *App) catalogAuctionCandidateCounts(catalog map[uint32]catalogItem, allowed map[uint32]bool) (normal int, special int) {
 	for id, item := range catalog {
 		if allowed != nil && !allowed[id] {
 			continue
 		}
-		if !marketCandidate(item) {
+		if !a.marketCandidate(item) {
 			continue
 		}
 		if specialAuctionKind(item) != "" {

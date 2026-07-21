@@ -54,6 +54,9 @@ func (a *App) loadAuctionCatalog(needAuction bool) (map[uint32]catalogItem, bool
 func (a *App) planAuctionMarket(req RestockRequest, catalog map[uint32]catalogItem, pvfReady bool, haveAuction map[uint32]int, occ map[uint32]int, decision *marketDecisionSnapshot, result *PlanResult) error {
 	decision.Auction = true
 	decision.observeAuctionInputs(a, catalog, pvfReady)
+	if err := a.appendRarityFilteredCollectActions(catalog, result); err != nil {
+		return err
+	}
 	maxActions := req.MaxActions
 	if maxActions <= 0 {
 		maxActions = a.cfg.Restock.MaxActions

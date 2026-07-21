@@ -78,7 +78,7 @@ func (s *marketDecisionSnapshot) observeAuctionInputs(a *App, catalog map[uint32
 		s.ItemInfoError = err.Error()
 		return
 	}
-	s.AuctionCandidates = auctionDecisionFromCatalog(catalog, itemInfoIDs)
+	s.AuctionCandidates = a.auctionDecisionFromCatalog(catalog, itemInfoIDs)
 }
 
 func (a *App) logMarketDecision(market string, decision *marketDecisionSnapshot, summary PlanSummary) {
@@ -204,7 +204,7 @@ func topAuctionRejectedReasons(meta map[uint32]auctionRejectedState, limit int) 
 	return strings.Join(parts, ",")
 }
 
-func auctionDecisionFromCatalog(catalog map[uint32]catalogItem, allowed map[uint32]bool) auctionDecisionCounts {
+func (a *App) auctionDecisionFromCatalog(catalog map[uint32]catalogItem, allowed map[uint32]bool) auctionDecisionCounts {
 	counts := auctionDecisionCounts{AllowedItemInfo: len(allowed)}
 	for id, item := range catalog {
 		if allowed != nil && !allowed[id] {
@@ -213,6 +213,8 @@ func auctionDecisionFromCatalog(catalog map[uint32]catalogItem, allowed map[uint
 		counts.Intersection++
 		switch {
 		case item.ItemID == 0 || item.Kind == "blocked":
+			counts.Blocked++
+		case !marketRarityAllowed(item) && a.qualityFilterEnabled():
 			counts.Blocked++
 		case isAvatarEquipment(item):
 			counts.Avatar++

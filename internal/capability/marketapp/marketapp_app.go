@@ -269,6 +269,9 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if req.CollectorEnabled != nil {
 		a.cfg.Collector.Enabled = *req.CollectorEnabled
 	}
+	if req.QualityFilter != nil {
+		a.cfg.Restock.QualityFilter = req.QualityFilter
+	}
 	if req.IntervalMS > 0 {
 		a.cfg.Auto.IntervalMS = req.IntervalMS
 	}

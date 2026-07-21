@@ -27,7 +27,7 @@ func (a *App) pvfItemInfoAuctionQueueCandidates(catalog map[uint32]catalogItem) 
 		a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusBlocked, Message: err.Error()})
 		return auctionQueueCandidatesResult{Source: marketQueueSourcePVFItemInfoMissing}, nil
 	}
-	normal, special := catalogAuctionIDsByType(catalog, itemInfoIDs)
+	normal, special := a.catalogAuctionIDsByType(catalog, itemInfoIDs)
 	a.appendLog(LogEvent{Type: "iteminfo_gate", Status: marketLogStatusActive, Message: fmt.Sprintf("source=%s allowed=%d special=%d", path, len(normal)+len(special), len(special))})
 	return auctionQueueCandidatesResult{Normal: normal, Special: special, Source: marketQueueSourcePVFItemInfo}, nil
 }
@@ -88,13 +88,17 @@ func catalogAuctionIDs(catalog map[uint32]catalogItem, allowed map[uint32]bool) 
 }
 
 func catalogAuctionIDsByType(catalog map[uint32]catalogItem, allowed map[uint32]bool) ([]uint32, []uint32) {
+	return (*App)(nil).catalogAuctionIDsByType(catalog, allowed)
+}
+
+func (a *App) catalogAuctionIDsByType(catalog map[uint32]catalogItem, allowed map[uint32]bool) ([]uint32, []uint32) {
 	ids := make([]uint32, 0, len(catalog))
 	special := make([]uint32, 0)
 	for id, item := range catalog {
 		if allowed != nil && !allowed[id] {
 			continue
 		}
-		if !marketCandidate(item) {
+		if !a.marketCandidate(item) {
 			continue
 		}
 		if specialAuctionKind(item) != "" {
@@ -167,7 +171,7 @@ func (a *App) fallbackAuctionRows() ([]restockRow, error) {
 }
 
 func (a *App) catalogAuctionRow(item catalogItem) (restockRow, bool) {
-	if !marketCandidate(item) {
+	if !a.marketCandidate(item) {
 		return restockRow{}, false
 	}
 	row := restockRow{

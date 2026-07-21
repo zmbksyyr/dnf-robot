@@ -240,7 +240,7 @@ func (a *App) observeAuctionCandidates() marketCandidateSnapshot {
 	if err != nil {
 		return marketCandidateSnapshot{Source: marketQueueSourcePVFItemInfoMissing, Error: err.Error()}
 	}
-	normal, special := catalogAuctionCandidateCounts(catalog, itemInfoIDs)
+	normal, special := a.catalogAuctionCandidateCounts(catalog, itemInfoIDs)
 	return marketCandidateSnapshot{Count: normal, Special: special, Source: path}
 }
 

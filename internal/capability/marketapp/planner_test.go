@@ -86,6 +86,78 @@ func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	}
 }
 
+func TestMarketRarityFilterDefaultsOnAndCanBeDisabled(t *testing.T) {
+	app := testApp(t)
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		1001: {ItemID: 1001, Name: "rare", Kind: "stackable", Rarity: 4},
+		1002: {ItemID: 1002, Name: "epic", Kind: "stackable", Rarity: 5},
+	}
+	app.planAuction([]restockRow{
+		{ItemID: 1001, SystemPrice: 100, Quantity: 1, StackSize: 1, Enabled: true},
+		{ItemID: 1002, SystemPrice: 100, Quantity: 1, StackSize: 1, Enabled: true},
+	}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 1 || result.Actions[0].ItemID != 1001 {
+		t.Fatalf("actions=%#v, want only rarity 0..4 item", result.Actions)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0].Reason != "rarity_filtered" {
+		t.Fatalf("skipped=%#v, want rarity_filtered", result.Skipped)
+	}
+
+	off := false
+	app.cfg.Restock.QualityFilter = &off
+	result = &PlanResult{}
+	app.planAuction([]restockRow{
+		{ItemID: 1002, SystemPrice: 100, Quantity: 1, StackSize: 1, Enabled: true},
+	}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+	if len(result.Actions) != 1 || result.Actions[0].ItemID != 1002 {
+		t.Fatalf("actions=%#v, want high rarity when filter is disabled", result.Actions)
+	}
+}
+
+func TestPlanAuctionAddsCollectForExistingHighRaritySystemStock(t *testing.T) {
+	dir := t.TempDir()
+	app := testApp(t)
+	app.configDir = dir
+	repo := &clearStockRepository{
+		stock: map[string]map[uint32]int{
+			app.cfg.AuctionDB: {1001: 1, 1002: 1},
+			app.cfg.CeraDB:    {},
+		},
+		systemCollectRows: map[string][]collectRow{
+			app.cfg.AuctionDB: {
+				{Market: marketNameAuction, AuctionID: 101, OwnerID: app.cfg.SystemOwner.IDBase, ItemID: 1001, Count: 1, StartPrice: 10, InstantPrice: 11},
+				{Market: marketNameAuction, AuctionID: 102, OwnerID: app.cfg.SystemOwner.IDBase, ItemID: 1002, Count: 1, StartPrice: 20, InstantPrice: 21},
+				{Market: marketNameAuction, AuctionID: 103, OwnerID: app.cfg.SystemOwner.IDBase, ItemID: 9999, Count: 1, StartPrice: 30, InstantPrice: 31},
+			},
+		},
+	}
+	app.repository = repo
+	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
+	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{
+		{"id": 1001, "price": 100, "rarity": 4},
+		{"id": 1002, "price": 100, "rarity": 5},
+	})
+	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{})
+	mustWriteText(t, filepath.Join(dir, "iteminfo.dat"), "1001 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n")
+
+	result, err := app.Plan(RestockRequest{Market: marketNameAuction, MaxActions: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.collectCalls != 1 {
+		t.Fatalf("collect calls = %d, want 1", repo.collectCalls)
+	}
+	if len(result.Actions) != 1 {
+		t.Fatalf("actions=%#v, want one collect action", result.Actions)
+	}
+	action := result.Actions[0]
+	if action.Operation != "collect" || action.AuctionID != 102 || action.ItemID != 1002 {
+		t.Fatalf("collect action=%#v, want high rarity item 1002", action)
+	}
+}
+
 func TestPlanAuctionStackableSplitsQuantity(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}

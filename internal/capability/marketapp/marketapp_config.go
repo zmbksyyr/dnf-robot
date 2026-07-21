@@ -42,6 +42,7 @@ func DefaultConfig() Config {
 		},
 		Restock: RestockCfg{
 			Comments:         defaultRestockComments(),
+			QualityFilter:    boolPtr(true),
 			StackSizes:       []int{500, 1000, 2000},
 			EquipmentQtyMin:  2,
 			EquipmentQtyMax:  5,
@@ -164,6 +165,9 @@ func (c *Config) applyDefaults() {
 		c.Collector.Enabled = d.Collector.Enabled
 	}
 	mergeStringMap(&c.Restock.Comments, d.Restock.Comments)
+	if c.Restock.QualityFilter == nil {
+		c.Restock.QualityFilter = boolPtr(true)
+	}
 	if len(c.Restock.StackSizes) == 0 {
 		c.Restock.StackSizes = d.Restock.StackSizes
 	}
@@ -231,6 +235,10 @@ func (c *Config) applyDefaults() {
 		c.Auto.Enabled = d.Auto.Enabled
 		c.Auto.ContinueOnError = d.Auto.ContinueOnError
 	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func writeJSONFile(path string, v interface{}) error {

@@ -156,6 +156,32 @@ func (a *App) appendCollectActions(rows []collectRow, result *PlanResult) {
 	}
 }
 
+func (a *App) appendRarityFilteredCollectActions(catalog map[uint32]catalogItem, result *PlanResult) error {
+	if !a.qualityFilterEnabled() || len(catalog) == 0 || a.repository == nil {
+		return nil
+	}
+	rows, err := a.repository.LoadSystemCollectRows(a.cfg.AuctionDB, marketNameAuction, a.cfg.SystemOwner.IDBase)
+	if err != nil {
+		return err
+	}
+	filtered := make([]collectRow, 0)
+	for _, row := range rows {
+		item, ok := catalog[row.ItemID]
+		if !ok {
+			continue
+		}
+		if !marketRarityAllowed(item) {
+			filtered = append(filtered, row)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	a.appendCollectActions(filtered, result)
+	a.appendLog(LogEvent{Type: "rarity_filter_collect", Market: marketNameAuction, Status: marketLogStatusActive, Message: fmt.Sprintf("actions=%d", len(filtered))})
+	return nil
+}
+
 func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
 	if !a.jobMu.TryLock() {
 		job := busyMarketJob("collect")
