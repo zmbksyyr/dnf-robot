@@ -21,7 +21,7 @@ func (a *App) qualityFilterEnabled() bool {
 }
 
 func marketRarityAllowed(item catalogItem) bool {
-	return item.Rarity >= 0 && item.Rarity <= 4
+	return item.Rarity < 4
 }
 
 func specialAuctionKind(item catalogItem) string {

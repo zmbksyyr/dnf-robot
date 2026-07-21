@@ -90,8 +90,8 @@ func TestMarketRarityFilterDefaultsOnAndCanBeDisabled(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
-		1001: {ItemID: 1001, Name: "rare", Kind: "stackable", Rarity: 4},
-		1002: {ItemID: 1002, Name: "epic", Kind: "stackable", Rarity: 5},
+		1001: {ItemID: 1001, Name: "unique", Kind: "stackable", Rarity: 3},
+		1002: {ItemID: 1002, Name: "epic", Kind: "stackable", Rarity: 4},
 	}
 	app.planAuction([]restockRow{
 		{ItemID: 1001, SystemPrice: 100, Quantity: 1, StackSize: 1, Enabled: true},
@@ -99,7 +99,7 @@ func TestMarketRarityFilterDefaultsOnAndCanBeDisabled(t *testing.T) {
 	}, catalog, map[uint32]int{}, map[uint32]int{}, result)
 
 	if len(result.Actions) != 1 || result.Actions[0].ItemID != 1001 {
-		t.Fatalf("actions=%#v, want only rarity 0..4 item", result.Actions)
+		t.Fatalf("actions=%#v, want only rarity below 4 item", result.Actions)
 	}
 	if len(result.Skipped) != 1 || result.Skipped[0].Reason != "rarity_filtered" {
 		t.Fatalf("skipped=%#v, want rarity_filtered", result.Skipped)
@@ -136,8 +136,8 @@ func TestPlanAuctionAddsCollectForExistingHighRaritySystemStock(t *testing.T) {
 	app.repository = repo
 	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
 	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{
-		{"id": 1001, "price": 100, "rarity": 4},
-		{"id": 1002, "price": 100, "rarity": 5},
+		{"id": 1001, "price": 100, "rarity": 3},
+		{"id": 1002, "price": 100, "rarity": 4},
 	})
 	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{})
 	mustWriteText(t, filepath.Join(dir, "iteminfo.dat"), "1001 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n")
