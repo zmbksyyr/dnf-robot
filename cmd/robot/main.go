@@ -117,18 +117,13 @@ func main() {
 	robotSvc := dnfruntime.NewRobotService()
 	manager := scheduler.NewRobotManager(schedulerrepo.NewSQLRepository(db), cfg, robotSvc)
 	manager.SetWorldShout(&monitor.Client{Address: fmt.Sprintf("127.0.0.1:%d", cfg.MonitorPort)})
-	manager.StartAutoActions()
 	marketApp, err = marketapp.New(db, cfg, auctionapp.NewFactory())
 	if err != nil {
 		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("MARKET_INIT_FAILED err=%v\n", err))
 		dnf.PrintfRed("market init failed: %v\n", err)
 		os.Exit(1)
 	}
-	if marketApp.Config().Auto.Enabled {
-		marketApp.StartAuto()
-	}
 	tcpapi.SetMarketApp(marketApp)
-	stopWebAdmin := webadmin.StartSupervisor(cfg)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.RobotPort)
 	tcpServer := network.NewTCPServer(addr)
@@ -139,12 +134,17 @@ func main() {
 			_ = tcpServer.SendTo(clientID, []byte(response))
 		}
 	})
-	go func() {
-		if err := tcpServer.Start(); err != nil {
-			dnf.PrintfRed("TCP server failed: %v\n", err)
-		}
-	}()
+	if err := tcpServer.Start(); err != nil {
+		dnf.LogString(dnf.LogLevelIndispensable, fmt.Sprintf("TCP_SERVER_START_FAILED addr=%s err=%v\n", addr, err))
+		dnf.PrintfRed("TCP server failed: %v\n", err)
+		os.Exit(1)
+	}
 	logRobotActionf("TCP server listening on %s\n", addr)
+	stopWebAdmin := webadmin.StartSupervisor(cfg)
+	manager.StartAutoActions()
+	if marketApp.Config().Auto.Enabled {
+		marketApp.StartAuto()
+	}
 	logRobotActionf("robot started\n")
 
 	sigCh := make(chan os.Signal, 1)

@@ -64,3 +64,46 @@ func TestPVFExportsCurrentInvalidatesOldSkillStateSchema(t *testing.T) {
 		t.Fatal("matching skill state schema was not current")
 	}
 }
+
+func TestPVFExportsCurrentAcceptsMetadataMatchWithStoredMD5(t *testing.T) {
+	dir := t.TempDir()
+	writeCurrentPVFExportFiles(t, dir)
+
+	got := pvfManifest{
+		Version: pvfExportVersion, SkillStateVersion: pvfSkillStateExportVersion,
+		Source: "/game/Script.pvf", Size: 100, ModTime: 200, MD5: "abc",
+	}
+	manifestPath := filepath.Join(dir, "pvf_manifest.json")
+	if err := WriteJSON(manifestPath, got); err != nil {
+		t.Fatal(err)
+	}
+	want := got
+	want.MD5 = ""
+	if !pvfExportsCurrent(manifestPath, want, dir) {
+		t.Fatal("metadata-only match with stored md5 was not current")
+	}
+
+	got.MD5 = ""
+	if err := WriteJSON(manifestPath, got); err != nil {
+		t.Fatal(err)
+	}
+	if pvfExportsCurrent(manifestPath, want, dir) {
+		t.Fatal("manifest without stored md5 was treated as current")
+	}
+}
+
+func writeCurrentPVFExportFiles(t *testing.T, dir string) {
+	t.Helper()
+	files := map[string][]byte{
+		"pvf_equipment_catalog.json": []byte(`[{"item_type": 20}]`),
+		"pvf_stackable_catalog.json": []byte(`[{"id": 1}]`),
+		"pvf_map_catalog.json":       []byte(`[{"id": 1}]`),
+		pvfSkillStateExportName:      []byte(`[{"job": 1, "skill_index": 1, "state": 1}]`),
+		pvfItemInfoExportName:        []byte("iteminfo"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

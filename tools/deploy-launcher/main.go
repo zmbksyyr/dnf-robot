@@ -259,7 +259,7 @@ func verifyRemoteRobot(client *ssh.Client) (string, error) {
 			if strings.TrimSpace(sinkPID) == "" {
 				lastReason = "stdout 日志进程未运行"
 			} else {
-				ports, _ := runCmdOutput(client, "ss -ltnH 2>/dev/null | awk '{print $4}' || true")
+				ports, _ := runCmdOutput(client, "ss -ltn 2>/dev/null | awk 'NR>1 {print $4}' || true")
 				if listenerPortsReady(ports, expectedPorts) {
 					return robotPID, nil
 				}

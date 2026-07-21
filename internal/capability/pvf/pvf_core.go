@@ -47,11 +47,18 @@ func EnsureExports(dfGameR, configDir string) error {
 		_ = loadSkillStateCatalog(skillCatalogPath)
 		return nil
 	}
+	manifestPath := filepath.Join(configDir, "pvf_manifest.json")
+	metadata := buildPVFManifestMetadata(pvfPath, stat)
+	if pvfExportsCurrent(manifestPath, metadata, configDir) {
+		if err := loadSkillStateCatalog(skillCatalogPath); err == nil {
+			return nil
+		}
+	}
+
 	manifest, err := buildPVFManifest(pvfPath, stat)
 	if err != nil {
 		return err
 	}
-	manifestPath := filepath.Join(configDir, "pvf_manifest.json")
 	if pvfExportsCurrent(manifestPath, manifest, configDir) {
 		if err := loadSkillStateCatalog(skillCatalogPath); err == nil {
 			return nil
@@ -84,20 +91,25 @@ func EnsureExports(dfGameR, configDir string) error {
 	return WriteJSON(manifestPath, manifest)
 }
 
-func buildPVFManifest(path string, stat os.FileInfo) (pvfManifest, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return pvfManifest{}, err
-	}
-	sum := md5.Sum(data)
+func buildPVFManifestMetadata(path string, stat os.FileInfo) pvfManifest {
 	return pvfManifest{
 		Version:           pvfExportVersion,
 		SkillStateVersion: pvfSkillStateExportVersion,
 		Source:            path,
 		Size:              stat.Size(),
 		ModTime:           stat.ModTime().Unix(),
-		MD5:               hex.EncodeToString(sum[:]),
-	}, nil
+	}
+}
+
+func buildPVFManifest(path string, stat os.FileInfo) (pvfManifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return pvfManifest{}, err
+	}
+	sum := md5.Sum(data)
+	manifest := buildPVFManifestMetadata(path, stat)
+	manifest.MD5 = hex.EncodeToString(sum[:])
+	return manifest, nil
 }
 
 func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) bool {
@@ -126,7 +138,13 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 	if json.Unmarshal(data, &got) != nil {
 		return false
 	}
-	return got.Version == want.Version && got.SkillStateVersion == want.SkillStateVersion && got.Source == want.Source && got.Size == want.Size && got.ModTime == want.ModTime && got.MD5 == want.MD5
+	md5Matches := false
+	if want.MD5 == "" {
+		md5Matches = got.MD5 != ""
+	} else {
+		md5Matches = got.MD5 == want.MD5
+	}
+	return got.Version == want.Version && got.SkillStateVersion == want.SkillStateVersion && got.Source == want.Source && got.Size == want.Size && got.ModTime == want.ModTime && md5Matches
 }
 
 func removeObsoletePVFExports(configDir string) {
