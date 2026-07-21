@@ -75,6 +75,19 @@ func TestSupervisorStopUIDsWithoutLogoutSkipsDetachedRuntime(t *testing.T) {
 	}
 }
 
+func TestSupervisorStopUIDsSkipsInactiveDetachedRuntime(t *testing.T) {
+	runtime := &countingLogoutRuntime{active: map[int]bool{101: true}}
+	s := NewRobotSupervisor(testRobotManagerWithConfig(t, ""), runtime)
+	registry := newSupervisorActorRegistry(s)
+
+	if got := registry.StopUIDs([]int{101, 102}, true); got != 0 {
+		t.Fatalf("StopUIDs got %d want 0 for missing actors", got)
+	}
+	if runtime.logoutCount != 1 || runtime.lastLogoutUID != 101 {
+		t.Fatalf("logout count=%d uid=%d want one active uid 101", runtime.logoutCount, runtime.lastLogoutUID)
+	}
+}
+
 func TestRuntimeUIDLocksAreReleasedAfterAction(t *testing.T) {
 	runtime := NewRobotRuntime(testRobotManagerWithConfig(t, ""))
 	res := runtime.run(101, func() robotcap.ActionResult {
@@ -86,6 +99,23 @@ func TestRuntimeUIDLocksAreReleasedAfterAction(t *testing.T) {
 	if runtime.uidLockActive(101) {
 		t.Fatalf("runtime uid lock should be removed after last action")
 	}
+}
+
+type countingLogoutRuntime struct {
+	actorTestRuntime
+	active        map[int]bool
+	logoutCount   int
+	lastLogoutUID int
+}
+
+func (r *countingLogoutRuntime) IsActive(uid int) bool {
+	return r.active[uid]
+}
+
+func (r *countingLogoutRuntime) Logout(uid int) robotcap.ActionResult {
+	r.logoutCount++
+	r.lastLogoutUID = uid
+	return robotcap.ActionResult{UID: uid, OK: true}
 }
 
 func TestReleaseBrokenLeasesHonorsInterval(t *testing.T) {

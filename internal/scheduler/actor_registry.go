@@ -99,6 +99,9 @@ func (r *supervisorActorRegistry) StopUIDs(uids []int, logout bool) int {
 	actors, missing := s.ledger.BeginDrainUIDs(uids)
 	if logout && s.runtime != nil {
 		for _, uid := range missing {
+			if !s.runtime.IsActive(uid) {
+				continue
+			}
 			s.runtime.Logout(uid)
 		}
 	}
