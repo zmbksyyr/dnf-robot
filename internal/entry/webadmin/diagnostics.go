@@ -281,7 +281,7 @@ func requiredDBTables() []dbstatus.TableRequirement {
 		{Schema: "d_taiwan", Table: "accounts", Columns: []string{"UID", "accountname"}},
 		{Schema: "taiwan_cain", Table: "charac_info", Columns: []string{"m_id", "charac_no", "charac_name", "job", "grow_type", "lev", "delete_flag"}},
 		{Schema: "taiwan_cain", Table: "charac_stat", Columns: []string{"charac_no", "village"}},
-		{Schema: "taiwan_cain", Table: "charac_view", Columns: []string{"m_id", "charac_no"}},
+		{Schema: "taiwan_cain", Table: "charac_view", Columns: []string{"m_id"}},
 		{Schema: "taiwan_cain_2nd", Table: "inventory", Columns: []string{"charac_no", "inventory"}},
 		{Schema: "taiwan_cain_2nd", Table: "skill", Columns: []string{"charac_no", "skill_slot", "skill_slot_2nd", "skill_command", "script_version"}},
 		{Schema: "taiwan_cain_2nd", Table: "user_items", Columns: []string{"charac_no", "slot", "it_id"}},
