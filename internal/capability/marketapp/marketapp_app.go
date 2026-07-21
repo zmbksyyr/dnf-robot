@@ -26,6 +26,7 @@ type App struct {
 	jobMu     lockhub.Locker
 	autoMu    lockhub.Locker
 	logMu     lockhub.Locker
+	serviceMu lockhub.Locker
 	autoRun   bool
 	autoStop  bool
 	lastJob   *JobSummary

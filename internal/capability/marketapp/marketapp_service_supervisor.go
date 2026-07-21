@@ -21,6 +21,8 @@ type marketServiceSpec struct {
 }
 
 func (a *App) ensureMarketServices(markets []string) map[string]bool {
+	a.serviceMu.Lock()
+	defer a.serviceMu.Unlock()
 	ready := map[string]bool{}
 	needed := map[string]bool{}
 	for _, market := range markets {
@@ -46,6 +48,8 @@ func (a *App) ensureRunningMarketServiceLogSinks() {
 	if runtime.GOOS != "linux" {
 		return
 	}
+	a.serviceMu.Lock()
+	defer a.serviceMu.Unlock()
 	for _, service := range a.marketServiceSpecs() {
 		if tcpReady(service.addr, 500*time.Millisecond) {
 			a.ensureMarketService(service)
@@ -341,6 +345,8 @@ func (a *App) restartMarketService(name, reason string) {
 	if !a.allowMarketServiceRestart(name, reason) {
 		return
 	}
+	a.serviceMu.Lock()
+	defer a.serviceMu.Unlock()
 	if a.restarter != nil {
 		a.restarter(name, reason)
 		return
