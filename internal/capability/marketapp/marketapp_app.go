@@ -213,7 +213,7 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		app.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusSuccess, Message: strings.Join(tables, ",")})
 	}
 	app.refreshMarketServiceStatuses()
-	app.ensureRunningMarketServiceLogSinks()
+	go app.ensureRunningMarketServiceLogSinks()
 	return app, nil
 }
 
