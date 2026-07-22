@@ -260,13 +260,13 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	}
 }
 
-func TestPartySkillDelayScalesWithRobotMembers(t *testing.T) {
+func TestPartySkillDelayIsFixedWindow(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	vo := &RobotVo{UID: 17000001}
 	vo.partyPeers[0] = partyIPPeer{accID: 17000002}
 	vo.partyPeers[1] = partyIPPeer{accID: 17000003}
 	delay := vo.partySkillDelayUnsafe(now)
-	if delay < 10*time.Second || delay > 15*time.Second {
+	if delay < 4*time.Second || delay > 6*time.Second {
 		t.Fatalf("three-robot skill delay=%s", delay)
 	}
 }
@@ -483,6 +483,53 @@ func TestPartyDungeonSkillAndFollowUseRecentRelayRoute(t *testing.T) {
 	assertPartyRelayPayload(t, <-followPacket, vo.UID, vo.partyPeers[0].accID)
 	if vo.partyTQOSSeq[0][2] != 1 || vo.partyTQOSSeq[0][1] != 0 {
 		t.Fatalf("follow route sequences=%+v", vo.partyTQOSSeq[0])
+	}
+}
+
+func TestReliableDungeonFollowDoesNotWaitForSkillRecovery(t *testing.T) {
+	relay, peerConn := net.Pipe()
+	defer relay.Close()
+	defer peerConn.Close()
+	now := time.Now()
+	vo := &RobotVo{
+		UID:                 17000001,
+		partyRelayConn:      relay,
+		partySelfPeer:       partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partySkillRecoverAt: now.Add(time.Second),
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
+	vo.partyDungeonFollow = []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, reliable: true, records: [][]byte{{1, 2, 3}}}}
+
+	followPacket := make(chan []byte, 1)
+	go func() { followPacket <- readPartyRelayPacket(t, peerConn) }()
+	vo.flushPartyDungeonFollowUnsafe(nil, now)
+	assertPartyRelayPayload(t, <-followPacket, vo.UID, vo.partyPeers[0].accID)
+	if len(vo.partyDungeonFollow) != 0 {
+		t.Fatalf("reliable follow was delayed by skill recovery: %+v", vo.partyDungeonFollow)
+	}
+}
+
+func TestPartyDungeonSkillYieldsToPendingFollow(t *testing.T) {
+	now := time.Now()
+	vo := &RobotVo{
+		UID:                   17000001,
+		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt: now,
+		partyDungeonLastAt:    now,
+		partySkillNextAt:      now,
+		partySkillLoaded:      true,
+		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+		partyDungeonFollow:    []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, body: []byte{1, 2, 3}}},
+	}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+
+	vo.flushPartyDungeonSkillUnsafe(nil, now)
+	if vo.partyTQOSReliableSeq[0][1] != 0 || !vo.partySkillRecoverAt.IsZero() {
+		t.Fatalf("skill cast did not yield to follow: seq=%d recover=%s", vo.partyTQOSReliableSeq[0][1], vo.partySkillRecoverAt)
+	}
+	if got := vo.partySkillNextAt.Sub(now); got != time.Second {
+		t.Fatalf("skill retry delay = %s, want 1s", got)
 	}
 }
 

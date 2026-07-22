@@ -178,6 +178,18 @@ func (r *RobotVo) partyReliablePendingCountUnsafe(slot byte) int {
 	return total
 }
 
+func (r *RobotVo) partyReliableWindowFullUnsafe(slot byte) bool {
+	if slot >= 4 {
+		return false
+	}
+	for route := byte(1); route <= 2; route++ {
+		if len(r.partyReliablePending[slot][route]) < partyReliableWindow {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *RobotVo) partyReliablePurposePendingUnsafe(slot byte, prefix string) bool {
 	if slot >= 4 {
 		return false

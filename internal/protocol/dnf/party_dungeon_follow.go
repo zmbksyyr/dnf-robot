@@ -86,7 +86,7 @@ func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time
 		var err error
 		route := byte(0)
 		if pending.reliable {
-			if r.partyReliablePendingCountUnsafe(peer.slot) > 0 || !r.partySkillRecoverAt.IsZero() {
+			if r.partyReliableWindowFullUnsafe(peer.slot) {
 				r.partyDungeonFollow[0].due = now.Add(500 * time.Millisecond)
 				return
 			}

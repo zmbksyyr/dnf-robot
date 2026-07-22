@@ -132,6 +132,10 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	if !r.partySkillRecoverAt.IsZero() || r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
 		return
 	}
+	if len(r.partyDungeonFollow) > 0 {
+		r.partySkillNextAt = now.Add(time.Second)
+		return
+	}
 	r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
 	if !r.ensurePartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
 		return
@@ -317,14 +321,7 @@ func buildPartySkillStateBody(uniqueID uint16, state byte, stateData []byte, tok
 }
 
 func (r *RobotVo) partySkillDelayUnsafe(now time.Time) time.Duration {
-	robotMembers := 1
-	for _, peer := range r.partyPeers {
-		if isPartyRobotAccount(peer.accID) && peer.accID != r.UID {
-			robotMembers++
-		}
-	}
-	base := 4 + 3*(robotMembers-1)
-	return time.Duration(base+partySkillChoice(r.UID, now, 6)) * time.Second
+	return time.Duration(4+partySkillChoice(r.UID, now, 3)) * time.Second
 }
 
 func partySkillChoice(uid uint32, now time.Time, count int) int {
