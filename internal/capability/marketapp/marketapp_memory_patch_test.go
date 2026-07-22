@@ -29,6 +29,26 @@ func TestPatchPatternMatchAcceptsExpectedOrPatchedByteOnly(t *testing.T) {
 	}
 }
 
+func TestPatchPatternMatchAcceptsVersionAlternate(t *testing.T) {
+	spec := auctionMemoryPatchSpec{
+		name:         "level",
+		expect:       0x46,
+		alternates:   []byte{0x55},
+		value:        0x7f,
+		targetOffset: 2,
+		pattern:      []byte{0xaa, 0xbb, 0x00, 0xcc},
+	}
+
+	for _, b := range []byte{0x46, 0x55, 0x7f} {
+		if !patchPatternMatch([]byte{0xaa, 0xbb, b, 0xcc}, spec) {
+			t.Fatalf("pattern should match supported byte 0x%02x", b)
+		}
+	}
+	if patchPatternMatch([]byte{0xaa, 0xbb, 0x54, 0xcc}, spec) {
+		t.Fatal("pattern matched unsupported version byte")
+	}
+}
+
 func TestLocateAuctionPatchAddressUsesUniqueExecutablePattern(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "mem")
 	if err != nil {

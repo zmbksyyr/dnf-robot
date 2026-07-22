@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"robot/internal/capability/keypair"
+	"robot/internal/capability/marketapp"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/dbstatus"
 	"runtime/debug"
@@ -561,44 +562,25 @@ func auctionGuardCheck(path string) diagnosticsCheck {
 }
 
 func auctionMemoryPatchReadOnlyCheck() diagnosticsCheck {
-	pid, err := pidOfProcess("df_auction_r")
+	result, err := marketapp.InspectAuctionMemoryPatch()
 	if err != nil {
 		return diagnosticsCheck{Name: "auction memory patch", Status: diagWarn, Message: err.Error()}
 	}
-	const patched = byte(0x7f)
-	addresses := map[string]int64{
-		"refine_average_price_valid": 0x0806523f,
-		"level_operate_parameter":    0x080811d7,
-		"refine_search_valid":        0x0808281f,
-		"level_specific":             0x0808292d,
-		"level_category_min":         0x08083472,
-		"level_category_max":         0x0808347d,
-	}
-	mem, err := os.Open(fmt.Sprintf("/proc/%d/mem", pid))
-	if err != nil {
-		return diagnosticsCheck{Name: "auction memory patch", Status: diagWarn, Message: err.Error(), Observed: map[string]interface{}{"pid": pid}}
-	}
-	defer mem.Close()
 	ok := 0
 	entries := map[string]interface{}{}
-	for name, addr := range addresses {
-		var buf [1]byte
-		if _, err := mem.ReadAt(buf[:], addr); err != nil {
-			entries[name] = err.Error()
-			continue
-		}
-		entries[name] = fmt.Sprintf("0x%02x", buf[0])
-		if buf[0] == patched {
+	for _, entry := range result.Entries {
+		entries[entry.Name] = map[string]interface{}{"address": entry.Address, "byte": fmt.Sprintf("0x%02x", entry.After), "message": entry.Message}
+		if entry.OK {
 			ok++
 		}
 	}
 	status := diagOK
 	msg := "auction memory patch appears active"
-	if ok != len(addresses) {
+	if ok != len(result.Entries) || len(result.Entries) == 0 {
 		status = diagWarn
-		msg = fmt.Sprintf("patched bytes %d/%d", ok, len(addresses))
+		msg = fmt.Sprintf("patched bytes %d/%d", ok, len(result.Entries))
 	}
-	return diagnosticsCheck{Name: "auction memory patch", Status: status, Message: msg, Observed: map[string]interface{}{"pid": pid, "entries": entries}}
+	return diagnosticsCheck{Name: "auction memory patch", Status: status, Message: msg, Observed: map[string]interface{}{"pid": result.PID, "entries": entries}}
 }
 
 func pidOfProcess(name string) (int, error) {
