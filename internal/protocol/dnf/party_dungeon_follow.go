@@ -72,7 +72,7 @@ func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, 
 }
 
 func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
-	return time.Duration(1000+int(r.UID%2001)) * time.Millisecond
+	return time.Duration(300+int(r.UID%701)) * time.Millisecond
 }
 
 func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time) {
@@ -111,6 +111,10 @@ func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time
 				foundationlog.Robotf("[PARTY_DUNGEON_FOLLOW_ERROR] uid=%d peer=%d route=%d reliable=%t err=%v\n", r.UID, peer.accID, route, pending.reliable, err)
 			}
 			return
+		}
+		if !now.Before(r.partyDungeonFollowDiagAt) {
+			r.partyDungeonFollowDiagAt = now.Add(5 * time.Second)
+			foundationlog.Robotf("[PARTY_DUNGEON_FOLLOW] uid=%d peer=%d slot=%d route=%d reliable=%t queued=%d delay=%s\n", r.UID, peer.accID, pending.peerSlot, route, pending.reliable, len(r.partyDungeonFollow), r.partyDungeonFollowDelayUnsafe())
 		}
 		r.partyDungeonFollow = r.partyDungeonFollow[1:]
 	}

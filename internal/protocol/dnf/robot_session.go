@@ -174,6 +174,7 @@ type RobotVo struct {
 	partyRouteDiagAt         [4][3]time.Time
 	partyUDPDiagAt           time.Time
 	partyRuntimeDiagAt       time.Time
+	partyDungeonFollowDiagAt time.Time
 	partyDungeonFollow       []partyDungeonFollowPending
 	partyDungeonEnteredAt    time.Time
 	partyDungeonLastAt       time.Time
