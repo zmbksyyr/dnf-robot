@@ -181,6 +181,14 @@ func TestPlanAuctionStackableSplitsQuantity(t *testing.T) {
 	if result.Actions[0].InstantPrice != 88000 || result.Actions[2].InstantPrice != 44000 {
 		t.Fatalf("unexpected prices: %#v", result.Actions)
 	}
+	for _, action := range result.Actions {
+		if action.StartPrice != -1 {
+			t.Fatalf("stackable start price = %d, want -1 apiece sentinel", action.StartPrice)
+		}
+		if action.UnitPrice <= 0 || action.InstantPrice != action.UnitPrice*action.Count {
+			t.Fatalf("stackable apiece prices are inconsistent: %#v", action)
+		}
+	}
 }
 
 func TestPlanAuctionStackableClampsToPVFStackLimit(t *testing.T) {
@@ -228,7 +236,7 @@ func TestPlanAuctionStackableAvoidsInt32TotalOverflow(t *testing.T) {
 	if action.CountAddInfo != action.Count {
 		t.Fatalf("count_add_info = %d, want %d", action.CountAddInfo, action.Count)
 	}
-	if action.TotalPrice <= 0 || action.InstantPrice <= 0 || action.StartPrice < 0 || action.StartPrice >= action.InstantPrice {
+	if action.TotalPrice <= 0 || action.InstantPrice <= 0 || action.StartPrice != -1 {
 		t.Fatalf("unexpected non-positive prices: %#v", action)
 	}
 	if int64(action.UnitPrice)*int64(action.Count) != int64(action.TotalPrice) {

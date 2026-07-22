@@ -128,10 +128,10 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			count = safeAuctionStackCount(unit, count)
 			addInfo = count
 			total = safeAuctionTotalPrice(unit, count)
-			startPrice = total - 1
-			if startPrice < 0 {
-				startPrice = 0
-			}
+			// The auction service uses -1 as the no-bidding sentinel for
+			// stackable listings. Together with UnitPrice this enables the
+			// AUCTION_BUY_ITEM_APIECE path so buyers can purchase part of a stack.
+			startPrice = -1
 		}
 		result.Actions = append(result.Actions, Action{
 			Market:       marketNameAuction,
