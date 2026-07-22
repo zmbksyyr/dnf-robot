@@ -61,6 +61,18 @@ jobs:
           choco install upx -y --no-progress
           upx --best --lzma dist/robot dist/deploy-launcher.exe
 
+      - name: Package release archive
+        shell: pwsh
+        run: |
+          $date = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, "China Standard Time").ToString("yyyyMMdd")
+          $archive = "dofrobot-main_$date.zip"
+          New-Item -ItemType Directory -Force -Path dist/package | Out-Null
+          Copy-Item -LiteralPath dist/deploy-launcher.exe -Destination dist/package/deploy-launcher.exe
+          Copy-Item -LiteralPath dist/robot-no-upx -Destination dist/package/robot
+          Compress-Archive -Path dist/package/* -DestinationPath "dist/$archive" -Force
+          Remove-Item -LiteralPath dist/package -Recurse -Force
+          "RELEASE_ZIP=$archive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Delete previous latest release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,4 +99,5 @@ jobs:
             --notes "Auto-built from main branch" `
             dist/robot `
             dist/robot-no-upx `
-            dist/deploy-launcher.exe
+            dist/deploy-launcher.exe `
+            "dist/$env:RELEASE_ZIP"
