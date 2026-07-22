@@ -72,7 +72,7 @@ func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, 
 }
 
 func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
-	return time.Duration(2000+int(r.UID%2001)) * time.Millisecond
+	return time.Duration(1000+int(r.UID%2001)) * time.Millisecond
 }
 
 func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time) {

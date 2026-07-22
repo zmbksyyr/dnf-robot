@@ -271,6 +271,16 @@ func TestPartySkillDelayIsFixedWindow(t *testing.T) {
 	}
 }
 
+func TestPartyDungeonFollowDelayIsShortWindow(t *testing.T) {
+	for _, uid := range []uint32{17000000, 17000001, 17002000, 17002001} {
+		vo := &RobotVo{UID: uid}
+		delay := vo.partyDungeonFollowDelayUnsafe()
+		if delay < time.Second || delay > 3*time.Second {
+			t.Fatalf("uid=%d follow delay=%s", uid, delay)
+		}
+	}
+}
+
 func TestPartySkillRecoveryFailureBacksOffAndBlocksCast(t *testing.T) {
 	now := time.Unix(300, 0)
 	vo := &RobotVo{
