@@ -70,6 +70,10 @@ func (e lifecycleCreateEnv) PopulateInventory(info robotcap.Info, rc robotconfig
 	return e.manager.storePreparer().PopulateInventoryFromCatalog(info, rc, items)
 }
 
+func (e lifecycleCreateEnv) PrepareRobotUIDRange(uidStart, uidEnd, uidGuard int) error {
+	return e.manager.schemaRepo().PrepareRobotUIDRange(uidStart, uidEnd, uidGuard)
+}
+
 func (e lifecycleCreateEnv) RebuildCharacView(uid int) error {
 	return e.manager.schemaRepo().RebuildCharacView(uid)
 }

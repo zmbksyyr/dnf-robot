@@ -38,6 +38,37 @@ func TestCreatorCapsCountAndCreatesRobots(t *testing.T) {
 	}
 }
 
+func TestCreatorRejectsGuardInsideRobotSegmentBeforeAllocation(t *testing.T) {
+	env := &testCreateEnv{rc: robotconfig.RuntimeConfig{
+		RobotUIDStart: 17000000,
+		RobotUIDEnd:   17000999,
+		RobotUIDGuard: 17000999,
+	}}
+	if _, err := (Creator{Env: env}).Create(robotcap.CreateRequest{Count: 1}); err == nil {
+		t.Fatal("Create() error = nil, want invalid guard error")
+	}
+	if env.prepared || env.allocated {
+		t.Fatalf("invalid guard reached repository: prepared=%v allocated=%v", env.prepared, env.allocated)
+	}
+}
+
+func TestCreatorStopsBeforeAllocationWhenUIDRangePreparationFails(t *testing.T) {
+	env := &testCreateEnv{
+		rc: robotconfig.RuntimeConfig{
+			RobotUIDStart: 17000000,
+			RobotUIDEnd:   17000999,
+			RobotUIDGuard: 17999999,
+		},
+		prepareErr: errors.New("uid conflict"),
+	}
+	if _, err := (Creator{Env: env}).Create(robotcap.CreateRequest{Count: 1}); err == nil || err.Error() != "uid conflict" {
+		t.Fatalf("Create() error = %v, want uid conflict", err)
+	}
+	if !env.prepared || env.allocated {
+		t.Fatalf("preparation ordering got prepared=%v allocated=%v", env.prepared, env.allocated)
+	}
+}
+
 func TestCreatorSpawnMapsCoverAreasThenUseSmoothedAreaWeight(t *testing.T) {
 	env := &testCreateEnv{
 		rc: robotconfig.RuntimeConfig{
@@ -109,9 +140,13 @@ type testCreateEnv struct {
 	equipmentBase     *shared.EquipmentCatalogItem
 	stackableBase     *shared.EquipmentCatalogItem
 	maps              []shared.MapCatalogItem
+	prepareErr        error
+	prepared          bool
+	allocated         bool
 }
 
 func (e *testCreateEnv) AllocateRobotIDs(count, uidStart, uidEnd int) (RobotIDAllocation, error) {
+	e.allocated = true
 	uids := make([]int, count)
 	for i := range uids {
 		if uidStart+i > uidEnd {
@@ -181,6 +216,11 @@ func (e *testCreateEnv) PopulateInventory(_ robotcap.Info, _ robotconfig.Runtime
 		e.catalogMismatches++
 	}
 	return nil
+}
+
+func (e *testCreateEnv) PrepareRobotUIDRange(int, int, int) error {
+	e.prepared = true
+	return e.prepareErr
 }
 
 func (e *testCreateEnv) RebuildCharacView(int) error { return nil }

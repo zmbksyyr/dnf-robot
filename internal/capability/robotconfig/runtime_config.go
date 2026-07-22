@@ -7,6 +7,7 @@ type RuntimeConfig struct {
 	GrowTypes                     []int  `json:"grow_types"`
 	RobotUIDStart                 int    `json:"robot_uid_start"`
 	RobotUIDEnd                   int    `json:"robot_uid_end"`
+	RobotUIDGuard                 int    `json:"robot_uid_guard"`
 	NameASCIIFallback             bool   `json:"name_ascii_fallback"`
 	NameASCIIPrefix               string `json:"name_ascii_prefix"`
 	SpawnFixed                    bool   `json:"spawn_fixed"`

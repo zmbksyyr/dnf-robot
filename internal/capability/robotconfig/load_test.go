@@ -16,6 +16,7 @@ jobs = 1, 2 2 invalid 3
 grow_types = 4,5
 robot_uid_start = 18000000
 robot_uid_end = 18000999
+robot_uid_guard = 18999999
 name_ascii_fallback = enabled
 name_ascii_prefix = testbot
 default_money = 222
@@ -116,7 +117,7 @@ packet_rate_per_sec = 30
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rc.LevelMin != 61 || rc.LevelMax != 72 || rc.RobotUIDStart != 18000000 || rc.RobotUIDEnd != 18000999 {
+	if rc.LevelMin != 61 || rc.LevelMax != 72 || rc.RobotUIDStart != 18000000 || rc.RobotUIDEnd != 18000999 || rc.RobotUIDGuard != 18999999 {
 		t.Fatalf("create config not loaded: %+v", rc)
 	}
 	if !reflect.DeepEqual(rc.Jobs, []int{1, 2, 3}) || !reflect.DeepEqual(rc.GrowTypes, []int{4, 5}) {
@@ -150,7 +151,7 @@ func TestLoadFileKeepsDefaultsForMissingValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Default()
-	if rc.LevelMin != 60 || rc.LevelMax != want.LevelMax || rc.RobotUIDStart != want.RobotUIDStart || rc.RobotUIDEnd != 17000999 {
+	if rc.LevelMin != 60 || rc.LevelMax != want.LevelMax || rc.RobotUIDStart != want.RobotUIDStart || rc.RobotUIDEnd != 17000999 || rc.RobotUIDGuard != 17999999 {
 		t.Fatalf("defaults not preserved: %+v", rc)
 	}
 }

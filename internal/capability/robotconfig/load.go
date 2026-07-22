@@ -20,6 +20,7 @@ func LoadFile(path string) (RuntimeConfig, error) {
 	rc.GrowTypes = iniIntList(ini, "create", "grow_types", rc.GrowTypes)
 	rc.RobotUIDStart = ini.GetInt("create", "robot_uid_start", rc.RobotUIDStart)
 	rc.RobotUIDEnd = ini.GetInt("create", "robot_uid_end", rc.RobotUIDEnd)
+	rc.RobotUIDGuard = ini.GetInt("create", "robot_uid_guard", rc.RobotUIDGuard)
 	rc.NameASCIIFallback = iniBool(ini, "create", "name_ascii_fallback", rc.NameASCIIFallback)
 	rc.NameASCIIPrefix = ini.GetString("create", "name_ascii_prefix", rc.NameASCIIPrefix)
 	rc.DefaultMoney = ini.GetInt("create", "default_money", rc.DefaultMoney)

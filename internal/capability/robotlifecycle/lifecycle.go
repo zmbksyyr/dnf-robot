@@ -1,6 +1,7 @@
 package robotlifecycle
 
 import (
+	"fmt"
 	"math"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
@@ -31,6 +32,7 @@ type CreateEnv interface {
 	LoadCreateCatalogs() CreateCatalogs
 	LoadMapCatalog() []shared.MapCatalogItem
 	PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error
+	PrepareRobotUIDRange(uidStart, uidEnd, uidGuard int) error
 	RebuildCharacView(uid int) error
 	RegisterRobot(info robotcap.Info) error
 	RandomFrom(vals []int) int
@@ -57,6 +59,12 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	rc := env.Config()
 	maps := env.LoadMapCatalog()
 	if err := env.EnsureSchema(); err != nil {
+		return nil, err
+	}
+	if rc.RobotUIDGuard != 0 && rc.RobotUIDGuard <= rc.RobotUIDEnd {
+		return nil, fmt.Errorf("robot_uid_guard %d must be greater than robot_uid_end %d, or 0 to disable", rc.RobotUIDGuard, rc.RobotUIDEnd)
+	}
+	if err := env.PrepareRobotUIDRange(rc.RobotUIDStart, rc.RobotUIDEnd, rc.RobotUIDGuard); err != nil {
 		return nil, err
 	}
 	allocation, err := env.AllocateRobotIDs(req.Count, rc.RobotUIDStart, rc.RobotUIDEnd)

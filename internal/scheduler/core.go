@@ -143,6 +143,7 @@ type SchemaRepository interface {
 	NextInt(query string, fallback int) (int, error)
 	AvailableRobotUIDs(count, start, end int) ([]int, error)
 	AccountAutoIncrement() (int, error)
+	PrepareRobotUIDRange(uidStart, uidEnd, uidGuard int) error
 	AllocateRobotIDs(count, uidStart, uidEnd int) (lifecyclecap.RobotIDAllocation, error)
 	CharacterNameExists(dbName string) (bool, error)
 	EnsureAccount(uid int, innerIP string) error
@@ -259,6 +260,10 @@ func (missingSchemaRepository) AvailableRobotUIDs(int, int, int) ([]int, error) 
 
 func (missingSchemaRepository) AccountAutoIncrement() (int, error) {
 	return 0, errors.New("scheduler schema repository is not configured")
+}
+
+func (missingSchemaRepository) PrepareRobotUIDRange(int, int, int) error {
+	return errors.New("scheduler schema repository is not configured")
 }
 
 func (missingSchemaRepository) AllocateRobotIDs(int, int, int) (lifecyclecap.RobotIDAllocation, error) {

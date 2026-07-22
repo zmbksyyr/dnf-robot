@@ -5,6 +5,7 @@ func Default() RuntimeConfig {
 		LevelMin: 50, LevelMax: 85, Jobs: []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, GrowTypes: []int{0, 1, 2},
 		RobotUIDStart:     17000000,
 		RobotUIDEnd:       17000999,
+		RobotUIDGuard:     17999999,
 		NameASCIIFallback: false, NameASCIIPrefix: "twbot",
 		SpawnFixed: false, SpawnVillage: 3, SpawnFallbackVillage: 1, SpawnArea: 0, SpawnXMin: 240, SpawnXMax: 1800, SpawnYMin: 180, SpawnYMax: 460,
 		MoveSpeedMin: 180, MoveSpeedMax: 260, MoveType: 5, MoveSteps: 4, MoveStepDelayMS: 1200,
