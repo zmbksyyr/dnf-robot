@@ -59,6 +59,20 @@ func (m *RobotManager) UpdateRobotConfig(req robotcap.ConfigUpdateRequest) (robo
 	return m.RobotConfig()
 }
 
+func (m *RobotManager) ReloadPartySkills() (catalog.PartySkillCatalogReport, error) {
+	if m == nil || m.cfg == nil {
+		return catalog.PartySkillCatalogReport{}, fmt.Errorf("missing config")
+	}
+	if err := catalog.LoadPartySkills(m.cfg.ConfigDir); err != nil {
+		report, readErr := catalog.ReadPartySkillCatalog(filepath.Join(m.cfg.ConfigDir, "party_skill_catalog.json"))
+		if readErr == nil {
+			return report, err
+		}
+		return catalog.PartySkillCatalogReport{}, err
+	}
+	return catalog.ReadPartySkillCatalog(filepath.Join(m.cfg.ConfigDir, "party_skill_catalog.json"))
+}
+
 func (m *RobotManager) writeRobotConfigValues(values map[string]string) error {
 	if len(values) == 0 {
 		return nil

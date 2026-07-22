@@ -114,6 +114,9 @@ func handleRobotCommand(cmd, pkt string, manager *scheduler.RobotManager) (strin
 		}
 		res, err := manager.UpdateRobotConfig(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
+	case "partySkillReload":
+		res, err := manager.ReloadPartySkills()
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
 	case "cleanupRobots":
 		var req robotcap.CleanupRequest
 		if err := decodePayload(pkt, &req); err != nil {

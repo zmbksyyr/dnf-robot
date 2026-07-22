@@ -48,7 +48,7 @@ func TestCompareFileHashCheckDetectsMismatch(t *testing.T) {
 func TestSkillCatalogCheckReportsWhitelistRisks(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "party_skill_catalog.json")
-	raw := `{"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":71,"state_data":[256]}]}`
+	raw := `{"enabled":true,"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":71,"state_data":[256]}]}`
 	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +73,7 @@ func TestSkillCatalogCheckAcceptsPVFStateDataBase64(t *testing.T) {
 func TestSkillDiagnosticsReportsEffectiveCandidatesByJob(t *testing.T) {
 	dir := t.TempDir()
 	whitelist := `{
+  "enabled":true,
   "max_skill_level":70,
   "skills":[
     {"job":1,"skill_index":2,"state":3,"level":10,"script_path":"SQR\\fighter\\a.nut","state_data":[1]},
@@ -105,6 +106,7 @@ func TestSkillDiagnosticsReportsEffectiveCandidatesByJob(t *testing.T) {
 func TestSkillDiagnosticsWarnsButKeepsValidWhitelistEntries(t *testing.T) {
 	dir := t.TempDir()
 	whitelist := `{
+  "enabled":true,
   "max_skill_level":70,
   "skills":[
     {"job":6,"skill_index":3,"state":22,"level":5,"state_data":[3]},
@@ -129,7 +131,7 @@ func TestSkillDiagnosticsWarnsButKeepsValidWhitelistEntries(t *testing.T) {
 
 func TestSkillDiagnosticsErrorsWhenCatalogsHaveNoIntersection(t *testing.T) {
 	dir := t.TempDir()
-	whitelist := `{"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":10}]}`
+	whitelist := `{"enabled":true,"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":10}]}`
 	pvf := `[{"job":1,"skill_index":9,"state":9}]`
 	writeSkillDiagnosticCatalogs(t, dir, whitelist, pvf)
 

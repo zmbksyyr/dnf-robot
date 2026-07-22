@@ -33,6 +33,7 @@ type PartySkillCatalogIssue struct {
 }
 
 type PartySkillCatalogReport struct {
+	Enabled                 bool
 	Entries                 []shared.PartySkillState
 	Issues                  []PartySkillCatalogIssue
 	SourceCount             int
@@ -67,6 +68,10 @@ func LoadPartySkills(configDir string) error {
 	if err != nil {
 		return err
 	}
+	if !report.Enabled {
+		shared.SetPartySkillStates(nil)
+		return nil
+	}
 	shared.SetPartySkillStates(report.Entries)
 	if len(report.Issues) > 0 {
 		return &PartySkillCatalogValidationError{Issues: report.Issues}
@@ -83,6 +88,7 @@ func ReadPartySkillCatalog(path string) (PartySkillCatalogReport, error) {
 		return PartySkillCatalogReport{}, err
 	}
 	var raw struct {
+		Enabled       bool              `json:"enabled"`
 		MaxSkillLevel int               `json:"max_skill_level"`
 		Skills        []json.RawMessage `json:"skills"`
 	}
@@ -91,6 +97,7 @@ func ReadPartySkillCatalog(path string) (PartySkillCatalogReport, error) {
 	}
 
 	report := PartySkillCatalogReport{
+		Enabled:                 raw.Enabled,
 		SourceCount:             len(raw.Skills),
 		ConfiguredMaxSkillLevel: raw.MaxSkillLevel,
 		EffectiveMaxSkillLevel:  raw.MaxSkillLevel,
@@ -98,6 +105,9 @@ func ReadPartySkillCatalog(path string) (PartySkillCatalogReport, error) {
 	}
 	if report.EffectiveMaxSkillLevel <= 0 || report.EffectiveMaxSkillLevel > maxSafePartySkillLevel {
 		report.EffectiveMaxSkillLevel = maxSafePartySkillLevel
+	}
+	if !report.Enabled {
+		return report, nil
 	}
 	for index, rawEntry := range raw.Skills {
 		var entry partySkillCatalogEntry
@@ -134,6 +144,41 @@ func ReadPartySkillCatalog(path string) (PartySkillCatalogReport, error) {
 		})
 	}
 	return report, nil
+}
+
+func SetPartySkillCatalogEnabled(path string, enabled bool) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		data = []byte(`{"skills":[]}`)
+	} else if err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	value, err := json.Marshal(enabled)
+	if err != nil {
+		return err
+	}
+	raw["enabled"] = value
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func (r *PartySkillCatalogReport) addPartySkillIssue(index int, entry partySkillCatalogEntry, reason string) {

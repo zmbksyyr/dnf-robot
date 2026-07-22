@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"robot/internal/capability/catalog"
 	"robot/internal/capability/robotconfig"
 )
 
@@ -28,6 +29,7 @@ type partyCompatConfig struct {
 type partyCompatStatus struct {
 	DesiredEnabled     bool   `json:"desired_enabled"`
 	Enabled            bool   `json:"enabled"`
+	SkillEnabled       bool   `json:"skill_enabled"`
 	State              string `json:"state"`
 	PID                int    `json:"pid,omitempty"`
 	Port               int    `json:"port"`
@@ -44,6 +46,7 @@ type partyCompatRequest struct {
 	Action       string `json:"action"`
 	AccountStart uint32 `json:"account_start"`
 	AccountEnd   uint32 `json:"account_end"`
+	SkillEnabled bool   `json:"skill_enabled"`
 }
 
 func (s *Server) handlePartyCompat(w http.ResponseWriter, r *http.Request) {
@@ -84,20 +87,38 @@ func (s *Server) handlePartyCompat(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
+		skillMessage := ""
+		if err := s.savePartySkillEnabled(req.SkillEnabled); err != nil {
+			skillMessage = "; skill reload pending: " + err.Error()
+		}
 		s.resetPartyCompatFailuresLocked()
 		s.wakePartyCompatSupervisor()
 		status, applyErr := setPartyCompat(s.cfg.RobotGamePort, cfg, enable)
 		status.DesiredEnabled = cfg.Enabled
+		status.SkillEnabled = req.SkillEnabled
 		if applyErr != nil {
 			status = s.inspectPartyCompatLocked(cfg)
-			status.Message = "desired state saved; apply pending: " + applyErr.Error()
+			status.SkillEnabled = req.SkillEnabled
+			status.Message = "desired state saved; apply pending: " + applyErr.Error() + skillMessage
 		} else {
-			status.Message = "desired state saved and applied"
+			status.Message = "desired state saved and applied" + skillMessage
 		}
 		writeJSON(w, map[string]interface{}{"ok": true, "result": status})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) partySkillCatalogPath() string {
+	return filepath.Join(s.cfg.ConfigDir, "party_skill_catalog.json")
+}
+
+func (s *Server) savePartySkillEnabled(enabled bool) error {
+	if err := catalog.SetPartySkillCatalogEnabled(s.partySkillCatalogPath(), enabled); err != nil {
+		return err
+	}
+	_, err := callRobot(s.robotAddr, "partySkillReload", nil, robotCallTimeout("partySkillReload"), s.cfg.MaxResponseBytes)
+	return err
 }
 
 func (s *Server) partyCompatConfigPath() string {
@@ -193,6 +214,7 @@ func (s *Server) savePartyCompatConfig(cfg partyCompatConfig) error {
 func (s *Server) inspectPartyCompatLocked(cfg partyCompatConfig) partyCompatStatus {
 	status := inspectPartyCompat(s.cfg.RobotGamePort, cfg)
 	status.DesiredEnabled = cfg.Enabled
+	status.SkillEnabled = s.loadPartySkillEnabled()
 	status.FailCount = s.partyCompatFailures
 	if !s.partyCompatNextRetry.IsZero() {
 		next := int(time.Until(s.partyCompatNextRetry).Round(time.Second) / time.Second)
@@ -207,6 +229,14 @@ func (s *Server) inspectPartyCompatLocked(cfg partyCompatConfig) partyCompatStat
 		status.Message = partyCompatWaitingMessage(status.Message)
 	}
 	return status
+}
+
+func (s *Server) loadPartySkillEnabled() bool {
+	if s == nil || s.cfg == nil || s.cfg.ConfigDir == "" {
+		return false
+	}
+	report, err := catalog.ReadPartySkillCatalog(s.partySkillCatalogPath())
+	return err == nil && report.Enabled
 }
 
 func validatePartyCompatRange(start, end uint32) error {

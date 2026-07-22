@@ -54,6 +54,9 @@ func partySkillWhitelistCheck(path string, report catalog.PartySkillCatalogRepor
 	status := diagOK
 	message := "party skill whitelist is valid"
 	switch {
+	case !report.Enabled:
+		status = diagWarn
+		message = "party skill casting is disabled"
 	case len(report.Entries) == 0:
 		status = diagWarn
 		message = "party skill whitelist has no valid entries"
@@ -64,7 +67,7 @@ func partySkillWhitelistCheck(path string, report catalog.PartySkillCatalogRepor
 	return diagnosticsCheck{
 		Name: filepath.Base(path), Status: status, Message: message,
 		Observed: map[string]interface{}{
-			"path": path, "source_count": report.SourceCount, "valid_count": len(report.Entries), "by_job": byJob,
+			"path": path, "enabled": report.Enabled, "source_count": report.SourceCount, "valid_count": len(report.Entries), "by_job": byJob,
 			"invalid_count": len(report.Issues), "disabled_count": report.DisabledCount, "over_level_count": report.OverLevelCount,
 			"configured_max_level": report.ConfiguredMaxSkillLevel, "effective_max_level": report.EffectiveMaxSkillLevel,
 		},
@@ -97,6 +100,13 @@ func pvfSkillCatalogCheck(path string) ([]shared.SkillState, diagnosticsCheck, e
 }
 
 func effectivePartySkillCheck(whitelist catalog.PartySkillCatalogReport, pvfStates []shared.SkillState) diagnosticsCheck {
+	if !whitelist.Enabled {
+		return diagnosticsCheck{
+			Name: "effective party skill candidates", Status: diagWarn,
+			Message:  "party skill casting is disabled",
+			Observed: map[string]interface{}{"enabled": false, "whitelist_source": whitelist.SourceCount, "pvf_total": len(pvfStates)},
+		}
+	}
 	jobSet := make(map[int]struct{})
 	for _, entry := range whitelist.Entries {
 		jobSet[entry.Job] = struct{}{}
