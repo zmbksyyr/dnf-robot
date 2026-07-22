@@ -11,6 +11,7 @@ import (
 var defaultPartyCompatLayout = partyCompatLayout{
 	site:                0x0864811a,
 	cave:                0x08af75e4,
+	rewardTimerSite:     0x0863458a,
 	rawSend:             0x086483e3,
 	resumeSite:          0x08648124,
 	getPacket:           0x0822b702,
@@ -20,13 +21,16 @@ var defaultPartyCompatLayout = partyCompatLayout{
 }
 
 var (
-	partyCompatOriginalSite = []byte{0x80, 0x7d, 0xd3, 0x00, 0x0f, 0x84, 0xbf, 0x02, 0x00, 0x00}
-	partyCompatZeroCave     = make([]byte, 128)
+	partyCompatOriginalSite        = []byte{0x80, 0x7d, 0xd3, 0x00, 0x0f, 0x84, 0xbf, 0x02, 0x00, 0x00}
+	partyCompatZeroCave            = make([]byte, 128)
+	partyCompatOriginalRewardTimer = []byte{0xc7, 0x44, 0x24, 0x04, 0x1e, 0x00, 0x00, 0x00}
+	partyCompatPatchedRewardTimer  = []byte{0xc7, 0x44, 0x24, 0x04, 0x01, 0x00, 0x00, 0x00}
 )
 
 type partyCompatLayout struct {
 	site                int64
 	cave                int64
+	rewardTimerSite     int64
 	rawSend             int64
 	resumeSite          int64
 	getPacket           int64
@@ -97,6 +101,14 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 		return false, err
 	}
 
+	rewardTimerBefore, err := readMemory(mem, layout.rewardTimerSite, len(partyCompatOriginalRewardTimer))
+	if err != nil {
+		return false, err
+	}
+	if !bytes.Equal(rewardTimerBefore, partyCompatOriginalRewardTimer) && !bytes.Equal(rewardTimerBefore, partyCompatPatchedRewardTimer) {
+		return false, fmt.Errorf("unsupported df_game_r: unexpected bytes at dungeon reward timer: %x", rewardTimerBefore)
+	}
+
 	if enable {
 		if !bytes.Equal(siteBefore, partyCompatOriginalSite) && !bytes.Equal(siteBefore, patchedSite) {
 			return false, fmt.Errorf("unexpected bytes at party compatibility patch site: %x", siteBefore)
@@ -115,7 +127,7 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 		if err != nil {
 			return false, err
 		}
-		changed := !bytes.Equal(caveBefore, desiredCave) || !bytes.Equal(siteBefore, patchedSite)
+		changed := !bytes.Equal(caveBefore, desiredCave) || !bytes.Equal(siteBefore, patchedSite) || !bytes.Equal(rewardTimerBefore, partyCompatPatchedRewardTimer)
 		if !changed {
 			return false, nil
 		}
@@ -123,8 +135,14 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 			_ = writeMemoryVerified(mem, layout.cave, caveBefore)
 			return false, err
 		}
+		if err := writeMemoryVerified(mem, layout.rewardTimerSite, partyCompatPatchedRewardTimer); err != nil {
+			_ = writeMemoryVerified(mem, layout.rewardTimerSite, rewardTimerBefore)
+			_ = writeMemoryVerified(mem, layout.cave, caveBefore)
+			return false, err
+		}
 		if err := writeMemoryVerified(mem, layout.site, patchedSite); err != nil {
 			_ = writeMemoryVerified(mem, layout.site, siteBefore)
+			_ = writeMemoryVerified(mem, layout.rewardTimerSite, rewardTimerBefore)
 			_ = writeMemoryVerified(mem, layout.cave, caveBefore)
 			return false, err
 		}
@@ -132,13 +150,25 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 	}
 
 	if bytes.Equal(siteBefore, partyCompatOriginalSite) {
-		if allZero(caveBefore) {
+		if allZero(caveBefore) && bytes.Equal(rewardTimerBefore, partyCompatOriginalRewardTimer) {
 			return false, nil
 		}
-		if _, _, ok := parsePartyCompatCave(layout, caveBefore); !ok {
-			return false, fmt.Errorf("party compatibility code cave contains unknown data")
+		if !allZero(caveBefore) {
+			if _, _, ok := parsePartyCompatCave(layout, caveBefore); !ok {
+				return false, fmt.Errorf("party compatibility code cave contains unknown data")
+			}
 		}
-		return true, writeMemoryVerified(mem, layout.cave, partyCompatZeroCave)
+		if err := writeMemoryVerified(mem, layout.rewardTimerSite, partyCompatOriginalRewardTimer); err != nil {
+			return false, err
+		}
+		if allZero(caveBefore) {
+			return true, nil
+		}
+		if err := writeMemoryVerified(mem, layout.cave, partyCompatZeroCave); err != nil {
+			_ = writeMemoryVerified(mem, layout.rewardTimerSite, rewardTimerBefore)
+			return false, fmt.Errorf("patch disable failed during code cave cleanup: %w", err)
+		}
+		return true, nil
 	}
 	if !bytes.Equal(siteBefore, patchedSite) {
 		return false, fmt.Errorf("unexpected bytes at party compatibility patch site: %x", siteBefore)
@@ -149,10 +179,31 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 	if err := writeMemoryVerified(mem, layout.site, partyCompatOriginalSite); err != nil {
 		return false, err
 	}
+	if err := writeMemoryVerified(mem, layout.rewardTimerSite, partyCompatOriginalRewardTimer); err != nil {
+		_ = writeMemoryVerified(mem, layout.site, siteBefore)
+		return false, err
+	}
 	if err := writeMemoryVerified(mem, layout.cave, partyCompatZeroCave); err != nil {
-		return true, fmt.Errorf("patch disabled but code cave cleanup failed: %w", err)
+		_ = writeMemoryVerified(mem, layout.rewardTimerSite, rewardTimerBefore)
+		_ = writeMemoryVerified(mem, layout.site, siteBefore)
+		return false, fmt.Errorf("patch disable failed during code cave cleanup: %w", err)
 	}
 	return true, nil
+}
+
+func inspectPartyCompatRewardTimer(mem io.ReaderAt, layout partyCompatLayout) (bool, error) {
+	got, err := readMemory(mem, layout.rewardTimerSite, len(partyCompatOriginalRewardTimer))
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case bytes.Equal(got, partyCompatOriginalRewardTimer):
+		return false, nil
+	case bytes.Equal(got, partyCompatPatchedRewardTimer):
+		return true, nil
+	default:
+		return false, fmt.Errorf("unsupported df_game_r: unexpected bytes at dungeon reward timer: %x", got)
+	}
 }
 
 func validatePartyCompatTarget(mem io.ReaderAt, layout partyCompatLayout) error {

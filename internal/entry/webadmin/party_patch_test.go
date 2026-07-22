@@ -14,7 +14,7 @@ import (
 )
 
 func testPartyCompatLayout() partyCompatLayout {
-	return partyCompatLayout{site: 64, cave: 128, rawSend: 320, resumeSite: 74, getPacket: 256}
+	return partyCompatLayout{site: 64, cave: 128, rewardTimerSite: 384, rawSend: 320, resumeSite: 74, getPacket: 256}
 }
 
 func TestPartyCompatDefaultRangeCoversFirstThousandRobotAccounts(t *testing.T) {
@@ -138,6 +138,9 @@ func newPartyCompatMemory(t *testing.T, layout partyCompatLayout) *os.File {
 	if _, err := file.WriteAt(partyCompatOriginalSite, layout.site); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := file.WriteAt(partyCompatOriginalRewardTimer, layout.rewardTimerSite); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = file.Close() })
 	return file
 }
@@ -178,6 +181,10 @@ func TestSetPartyCompatMemoryOnUpdateOff(t *testing.T) {
 	if err != nil || !enabled || start != 17000000 || end != 18000000 {
 		t.Fatalf("enabled=%t range=%d..%d err=%v", enabled, start, end, err)
 	}
+	rewardTimerEnabled, err := inspectPartyCompatRewardTimer(mem, layout)
+	if err != nil || !rewardTimerEnabled {
+		t.Fatalf("reward timer enabled=%t err=%v", rewardTimerEnabled, err)
+	}
 
 	changed, err = setPartyCompatMemory(mem, layout, 17001000, 17002000, true)
 	if err != nil || !changed {
@@ -195,6 +202,37 @@ func TestSetPartyCompatMemoryOnUpdateOff(t *testing.T) {
 	enabled, _, _, err = inspectPartyCompatMemory(mem, layout)
 	if err != nil || enabled {
 		t.Fatalf("enabled=%t err=%v", enabled, err)
+	}
+	rewardTimerEnabled, err = inspectPartyCompatRewardTimer(mem, layout)
+	if err != nil || rewardTimerEnabled {
+		t.Fatalf("reward timer enabled=%t err=%v", rewardTimerEnabled, err)
+	}
+}
+
+func TestSetPartyCompatMemoryRejectsUnexpectedRewardTimer(t *testing.T) {
+	layout := testPartyCompatLayout()
+	mem := newPartyCompatMemory(t, layout)
+	if _, err := mem.WriteAt([]byte{0x90}, layout.rewardTimerSite); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setPartyCompatMemory(mem, layout, 17000000, 18000000, true); err == nil || !strings.Contains(err.Error(), "unsupported df_game_r") {
+		t.Fatalf("patch error = %v", err)
+	}
+}
+
+func TestSetPartyCompatMemoryRepairsPartialRewardTimerPatch(t *testing.T) {
+	layout := testPartyCompatLayout()
+	mem := newPartyCompatMemory(t, layout)
+	if _, err := mem.WriteAt(partyCompatPatchedRewardTimer, layout.rewardTimerSite); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := setPartyCompatMemory(mem, layout, 17000000, 18000000, true)
+	if err != nil || !changed {
+		t.Fatalf("enable changed=%t err=%v", changed, err)
+	}
+	enabled, _, _, err := inspectPartyCompatMemory(mem, layout)
+	if err != nil || !enabled {
+		t.Fatalf("party enabled=%t err=%v", enabled, err)
 	}
 }
 

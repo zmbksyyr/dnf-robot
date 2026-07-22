@@ -36,9 +36,15 @@ func inspectPartyCompat(port int, cfg partyCompatConfig) partyCompatStatus {
 		status.Message = err.Error()
 		return status
 	}
-	status.Enabled = enabled
-	status.orphanedCave = !enabled && start != 0 && end != 0
-	if enabled {
+	rewardTimerEnabled, err := inspectPartyCompatRewardTimer(mem, defaultPartyCompatLayout)
+	if err != nil {
+		status.State = "unknown"
+		status.Message = err.Error()
+		return status
+	}
+	status.Enabled = enabled && rewardTimerEnabled
+	status.orphanedCave = !status.Enabled && (enabled || rewardTimerEnabled || start != 0 && end != 0)
+	if status.Enabled {
 		status.State = "on"
 		status.AccountStart = start
 		status.AccountEnd = end
@@ -74,14 +80,18 @@ func setPartyCompat(port int, cfg partyCompatConfig, enable bool) (partyCompatSt
 	if err != nil {
 		return status, err
 	}
-	status.Enabled = enabled
+	rewardTimerEnabled, err := inspectPartyCompatRewardTimer(mem, defaultPartyCompatLayout)
+	if err != nil {
+		return status, err
+	}
+	status.Enabled = enabled && rewardTimerEnabled
 	status.State = "off"
-	if enabled {
+	if status.Enabled {
 		status.State = "on"
 		status.AccountStart = start
 		status.AccountEnd = end
 	}
-	if enabled != enable {
+	if status.Enabled != enable {
 		return status, fmt.Errorf("party compatibility patch verification failed")
 	}
 	return status, nil
