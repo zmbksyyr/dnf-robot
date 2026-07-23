@@ -173,6 +173,7 @@ func creatureArtifactCategory(category string) (string, int, bool) {
 
 func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []shared.EquipmentCatalogItem {
 	var out []shared.EquipmentCatalogItem
+	itemSetInfo := make(map[int]pvfItemSetInfo)
 	for _, entry := range parsePVFList(a.text(listPath)) {
 		exts := []string{".equ"}
 		if stackable {
@@ -264,7 +265,13 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 		}
 		if item.ID > 0 && (item.ItemType > 0 || stackable) {
 			out = append(out, item)
+			if !stackable {
+				itemSetInfo[item.ID] = parsePVFItemSetInfo(body)
+			}
 		}
+	}
+	if !stackable {
+		resolvePVFItemSetKeys(out, itemSetInfo)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

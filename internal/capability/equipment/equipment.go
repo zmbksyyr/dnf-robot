@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"sort"
+	"strings"
 
 	robotconfig "robot/internal/capability/robotconfig"
 	foundrand "robot/internal/foundation/random"
@@ -291,24 +292,38 @@ func buildSetGroups(candidatesBySlot map[int][]shared.EquipmentCatalogItem) map[
 	groups := make(map[string]*setGroup)
 	for slot, candidates := range candidatesBySlot {
 		for _, item := range candidates {
-			if item.SetKey == "" {
-				continue
+			for _, setKey := range itemSetKeys(item.SetKey) {
+				group := groups[setKey]
+				if group == nil {
+					group = &setGroup{key: setKey, bySlot: make(map[int][]shared.EquipmentCatalogItem)}
+					groups[setKey] = group
+				}
+				if len(group.bySlot[slot]) == 0 {
+					group.coverage++
+				}
+				group.bySlot[slot] = append(group.bySlot[slot], item)
+				group.levelSum += item.Level
+				group.raritySum += item.Rarity
+				group.count++
 			}
-			group := groups[item.SetKey]
-			if group == nil {
-				group = &setGroup{key: item.SetKey, bySlot: make(map[int][]shared.EquipmentCatalogItem)}
-				groups[item.SetKey] = group
-			}
-			if len(group.bySlot[slot]) == 0 {
-				group.coverage++
-			}
-			group.bySlot[slot] = append(group.bySlot[slot], item)
-			group.levelSum += item.Level
-			group.raritySum += item.Rarity
-			group.count++
 		}
 	}
 	return groups
+}
+
+func itemSetKeys(value string) []string {
+	parts := strings.Split(value, "|")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]bool)
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || seen[part] {
+			continue
+		}
+		seen[part] = true
+		out = append(out, part)
+	}
+	return out
 }
 
 func selectBestSetItems(groups map[string]*setGroup, minSlots int, randIntn func(int) int) map[int]shared.EquipmentCatalogItem {

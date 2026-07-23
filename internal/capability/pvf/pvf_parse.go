@@ -4,8 +4,10 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"robot/internal/shared"
 )
@@ -26,24 +28,309 @@ func deriveItemSetKey(path, body string, item shared.EquipmentCatalogItem) strin
 	return ""
 }
 
+type pvfItemSetInfo struct {
+	masterID    int
+	memberIDs   []int
+	descriptors []string
+}
+
+func parsePVFItemSetInfo(body string) pvfItemSetInfo {
+	return pvfItemSetInfo{
+		masterID:    pvfSetMasterID(body),
+		memberIDs:   pvfSetItemIDs(body),
+		descriptors: pvfSetDescriptors(body),
+	}
+}
+
+func resolvePVFItemSetKeys(items []shared.EquipmentCatalogItem, setInfo map[int]pvfItemSetInfo) {
+	if len(items) == 0 || len(setInfo) == 0 {
+		return
+	}
+	masterFor := make(map[int]int)
+	masterDescriptors := make(map[string]int)
+	masterIDs := make(map[int]bool)
+	for i := range items {
+		item := &items[i]
+		info := setInfo[item.ID]
+		if info.masterID > 0 {
+			masterFor[item.ID] = info.masterID
+		}
+		if !containsInt(info.memberIDs, item.ID) {
+			continue
+		}
+		masterIDs[item.ID] = true
+		masterFor[item.ID] = item.ID
+		for _, memberID := range info.memberIDs {
+			masterFor[memberID] = item.ID
+		}
+		for _, descriptor := range info.descriptors {
+			key := pvfDescriptorLookupKey(*item, descriptor)
+			if key == "" {
+				continue
+			}
+			if previous, exists := masterDescriptors[key]; !exists {
+				masterDescriptors[key] = item.ID
+			} else if previous != item.ID {
+				masterDescriptors[key] = 0
+			}
+		}
+	}
+
+	assigned := make(map[int]bool)
+	for i := range items {
+		item := &items[i]
+		if masterID := masterFor[item.ID]; masterID > 0 {
+			item.SetKey = pvfMasterSetKey(masterID)
+			assigned[item.ID] = true
+			continue
+		}
+		for _, descriptor := range setInfo[item.ID].descriptors {
+			masterID := masterDescriptors[pvfDescriptorLookupKey(*item, descriptor)]
+			if masterID <= 0 {
+				continue
+			}
+			item.SetKey = pvfMasterSetKey(masterID)
+			assigned[item.ID] = true
+			break
+		}
+	}
+
+	attachPVFThemeMatches(items, assigned, masterIDs)
+}
+
+func pvfSetMasterID(body string) int {
+	return atoi(pvfTagValue(body, "set item master"))
+}
+
+func pvfSetItemIDs(body string) []int {
+	return pvfSectionInts(body, "set item")
+}
+
+func pvfMasterSetKey(masterID int) string {
+	return "pvf_" + shortHash("set item master:"+strconv.Itoa(masterID))
+}
+
+func pvfSetDescriptors(body string) []string {
+	values := []string{pvfTagValue(body, "set name"), pvfTagValue(body, "explain")}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool)
+	for _, value := range values {
+		value = normalizePVFSetDescriptor(value)
+		if value == "" || strings.EqualFold(value, "errorstring") || !pvfSetDescriptorReliable(value) || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func pvfSetDescriptorReliable(value string) bool {
+	return strings.Contains(value, "套裝") || strings.Contains(value, "套装") || strings.Contains(value, "禮包") || strings.Contains(value, "礼包")
+}
+
+func normalizePVFSetDescriptor(value string) string {
+	value = strings.ToLower(cleanPVFString(value))
+	value = strings.NewReplacer("禮包", "套裝", "礼包", "套裝", "套装", "套裝").Replace(value)
+	return strings.Join(strings.Fields(value), "")
+}
+
+func pvfDescriptorLookupKey(item shared.EquipmentCatalogItem, descriptor string) string {
+	if descriptor == "" {
+		return ""
+	}
+	jobs := append([]int(nil), item.UseJob...)
+	sort.Ints(jobs)
+	parts := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		parts = append(parts, strconv.Itoa(job))
+	}
+	return strings.Join(parts, ",") + ":" + descriptor
+}
+
+type pvfThemeGroup struct {
+	key       string
+	jobs      string
+	minID     int
+	maxID     int
+	slots     map[int]bool
+	tokenHits map[string]int
+}
+
+func attachPVFThemeMatches(items []shared.EquipmentCatalogItem, assigned map[int]bool, masterIDs map[int]bool) {
+	groupsByKey := make(map[string]*pvfThemeGroup)
+	for _, item := range items {
+		if !assigned[item.ID] || item.SetKey == "" {
+			continue
+		}
+		group := groupsByKey[item.SetKey]
+		if group == nil {
+			group = &pvfThemeGroup{key: item.SetKey, jobs: pvfItemJobsKey(item), minID: item.ID, maxID: item.ID, slots: make(map[int]bool), tokenHits: make(map[string]int)}
+			groupsByKey[item.SetKey] = group
+		}
+		if item.ID < group.minID {
+			group.minID = item.ID
+		}
+		if item.ID > group.maxID {
+			group.maxID = item.ID
+		}
+		group.slots[item.ItemType] = true
+		for token := range pvfThemeTokens(item.Name2) {
+			group.tokenHits[token]++
+		}
+	}
+	groups := make([]*pvfThemeGroup, 0, len(groupsByKey))
+	for _, group := range groupsByKey {
+		groups = append(groups, group)
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].key < groups[j].key })
+
+	for i := range items {
+		item := &items[i]
+		if assigned[item.ID] || item.ItemType < 20 || item.ItemType > 28 || masterIDs[item.ID] {
+			continue
+		}
+		tokens := pvfThemeTokens(item.Name2)
+		if len(tokens) == 0 {
+			continue
+		}
+		bestDistance := 0
+		matches := make([]*pvfThemeGroup, 0)
+		for _, group := range groups {
+			if group.jobs != pvfItemJobsKey(*item) || group.slots[item.ItemType] {
+				continue
+			}
+			score := 0
+			for token := range tokens {
+				if group.tokenHits[token] > score {
+					score = group.tokenHits[token]
+				}
+			}
+			if score < 2 {
+				continue
+			}
+			distance := pvfIDRangeDistance(item.ID, group.minID, group.maxID)
+			if distance > 10000 {
+				continue
+			}
+			if len(matches) == 0 || distance < bestDistance {
+				bestDistance = distance
+			}
+			matches = append(matches, group)
+		}
+		if len(matches) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(matches))
+		for _, group := range matches {
+			if pvfIDRangeDistance(item.ID, group.minID, group.maxID) <= bestDistance+32 {
+				keys = append(keys, group.key)
+			}
+		}
+		if len(keys) > 0 {
+			sort.Strings(keys)
+			item.SetKey = strings.Join(keys, "|")
+			assigned[item.ID] = true
+		}
+	}
+}
+
+func pvfItemJobsKey(item shared.EquipmentCatalogItem) string {
+	jobs := append([]int(nil), item.UseJob...)
+	sort.Ints(jobs)
+	parts := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		parts = append(parts, strconv.Itoa(job))
+	}
+	return strings.Join(parts, ",")
+}
+
+func pvfThemeTokens(value string) map[string]bool {
+	value = strings.ToLower(value)
+	fields := strings.FieldsFunc(value, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	out := make(map[string]bool)
+	for _, field := range fields {
+		if len(field) < 4 || pvfThemeStopWord(field) || strings.HasPrefix(field, "name") {
+			continue
+		}
+		out[field] = true
+	}
+	return out
+}
+
+func pvfThemeStopWord(value string) bool {
+	switch value {
+	case "black", "white", "blue", "green", "yellow", "gold", "golden", "silver", "gray", "grey", "brown", "purple", "violet", "pink", "orange", "apricot", "cream", "creamy", "dark", "light", "deep", "red",
+		"avatar", "official", "special", "clone", "rare", "event", "package", "equipment", "priest", "gunner", "fighter", "swordman", "slayer", "mage", "thief",
+		"coat", "shirt", "shirts", "pants", "shoes", "boots", "belt", "waist", "hair", "face", "skin", "body", "hat", "cap", "neck", "necklace", "earring", "gloves":
+		return true
+	default:
+		return false
+	}
+}
+
+func pvfIDRangeDistance(id, minID, maxID int) int {
+	if id < minID {
+		return minID - id
+	}
+	if id > maxID {
+		return id - maxID
+	}
+	return 0
+}
+
+func pvfTagValue(body, tag string) string {
+	lines := splitPVFLines(body)
+	want := strings.ToLower(strings.TrimSpace(tag))
+	for i, line := range lines {
+		if strings.ToLower(cleanPVFString(line)) == want {
+			return cleanPVFString(nextLine(lines, i))
+		}
+	}
+	return ""
+}
+
+func pvfSectionInts(body, tag string) []int {
+	lines := splitPVFLines(body)
+	want := strings.ToLower(strings.TrimSpace(tag))
+	for i, line := range lines {
+		if strings.ToLower(cleanPVFString(line)) != want {
+			continue
+		}
+		var out []int
+		for _, valueLine := range lines[i+1:] {
+			trimmed := strings.TrimSpace(valueLine)
+			if strings.HasPrefix(trimmed, "[") {
+				break
+			}
+			for _, field := range strings.Fields(cleanPVFString(trimmed)) {
+				if value, err := strconv.Atoi(field); err == nil && value > 0 {
+					out = append(out, value)
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func containsInt(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func explicitPVFSetKey(body string) string {
 	lines := splitPVFLines(body)
 	for i, line := range lines {
 		lower := strings.ToLower(cleanPVFString(line))
-		if !strings.Contains(lower, "set") {
-			continue
-		}
 		switch lower {
-		case "[set item]", "[set]", "[set name]", "[equipment set]":
+		case "set item master", "set", "set name", "equipment set":
 			if value := cleanPVFString(nextLine(lines, i)); value != "" && !strings.EqualFold(value, "ErrorString") {
 				return lower + ":" + value
-			}
-		default:
-			if i+1 < len(lines) {
-				value := cleanPVFString(lines[i+1])
-				if value != "" && !strings.HasPrefix(value, "[") && !strings.EqualFold(value, "ErrorString") {
-					return lower + ":" + value
-				}
 			}
 		}
 	}

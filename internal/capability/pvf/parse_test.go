@@ -67,6 +67,41 @@ func TestEquipmentExplicitJobsOverridePathFallback(t *testing.T) {
 	assertIntSlice(t, item.UseJob, []int{14})
 }
 
+func TestResolvePVFItemSetKeysJoinsMasterMembersAndPackageExtras(t *testing.T) {
+	items := []shared.EquipmentCatalogItem{
+		{ID: 100, ItemType: 20, UseJob: []int{2}, Name2: "Nobility Hat"},
+		{ID: 200, ItemType: 23, UseJob: []int{2}, Name2: "Nobility Coat"},
+		{ID: 300, ItemType: 26, UseJob: []int{2}, Name2: "Summer Tube"},
+		{ID: 400, ItemType: 28, UseJob: []int{2}, Name2: "Nobility Skin"},
+	}
+	bodies := map[int]string{
+		100: "[set item master]\n200\n[explain]\n`2010年夏日 套裝 3`",
+		200: "[set name]\n`2010年夏日 套裝 3`\n[set item]\n100 200\n[/set item]",
+		300: "[part set index]\n2\n[explain]\n`2010年夏日禮包 3`",
+		400: "[name2]\n`Nobility Skin`",
+	}
+	setInfo := make(map[int]pvfItemSetInfo, len(bodies))
+	for id, body := range bodies {
+		setInfo[id] = parsePVFItemSetInfo(body)
+	}
+	resolvePVFItemSetKeys(items, setInfo)
+	want := pvfMasterSetKey(200)
+	for _, item := range items {
+		if item.SetKey != want {
+			t.Fatalf("item %d set key got %q want %q", item.ID, item.SetKey, want)
+		}
+	}
+}
+
+func TestExplicitPVFSetKeyIgnoresPartSetIndex(t *testing.T) {
+	if got := explicitPVFSetKey("[part set index]\n2"); got != "" {
+		t.Fatalf("part set index became set key %q", got)
+	}
+	if got := explicitPVFSetKey("[set item master]\n123"); got != "set item master:123" {
+		t.Fatalf("master set key got %q", got)
+	}
+}
+
 func TestAppendItemInfoCreatureArtifacts(t *testing.T) {
 	raw := "#PVF_File\r\n" +
 		"63500 1 1 1 1 1 1 1 1 1 1 1 1 70 `red` `red2` 14002\r\n" +

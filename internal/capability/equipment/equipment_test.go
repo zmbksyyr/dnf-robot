@@ -131,3 +131,16 @@ func testSetCandidates(qualitySlots, varietySlots int) map[int][]shared.Equipmen
 	}
 	return out
 }
+
+func TestBuildSetGroupsSupportsSharedSetItems(t *testing.T) {
+	groups := buildSetGroups(map[int][]shared.EquipmentCatalogItem{
+		0: {{ID: 100, SetKey: "set-a|set-b"}},
+		1: {{ID: 101, SetKey: "set-a"}, {ID: 201, SetKey: "set-b"}},
+	})
+	if groups["set-a"] == nil || groups["set-a"].coverage != 2 {
+		t.Fatalf("set-a group=%+v", groups["set-a"])
+	}
+	if groups["set-b"] == nil || groups["set-b"].coverage != 2 {
+		t.Fatalf("set-b group=%+v", groups["set-b"])
+	}
+}
