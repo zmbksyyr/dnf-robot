@@ -133,28 +133,33 @@ func (r *RobotVo) scheduleSelectCharacUnsafe(minDelay time.Duration) {
 		return
 	}
 	r.SelectCharacQueued = true
-	time.AfterFunc(reserveLoginSelectDelay(minDelay), func() {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		r.SelectCharacQueued = false
-		if r.State != StateLogin || !r.NccSent || r.SelectCharacSent {
-			return
-		}
-		r.sendSelectCharacUnsafe("after throttled type=272")
-	})
+	time.AfterFunc(minDelay, r.trySendQueuedSelectCharac)
 }
 
-func reserveLoginSelectDelay(minDelay time.Duration) time.Duration {
-	now := time.Now()
-	earliest := now.Add(minDelay)
-	loginSelectGate.Lock()
-	if loginSelectGate.next.Before(earliest) {
-		loginSelectGate.next = earliest
+func (r *RobotVo) trySendQueuedSelectCharac() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.State != StateLogin || !r.NccSent || r.SelectCharacSent {
+		r.SelectCharacQueued = false
+		return
 	}
-	slot := loginSelectGate.next
-	loginSelectGate.next = slot.Add(loginSelectInterval)
-	loginSelectGate.Unlock()
-	return time.Until(slot)
+	if delay := claimLoginSelectSlot(); delay > 0 {
+		time.AfterFunc(delay, r.trySendQueuedSelectCharac)
+		return
+	}
+	r.SelectCharacQueued = false
+	r.sendSelectCharacUnsafe("after throttled type=272")
+}
+
+func claimLoginSelectSlot() time.Duration {
+	now := time.Now()
+	loginSelectGate.Lock()
+	defer loginSelectGate.Unlock()
+	if now.Before(loginSelectGate.next) {
+		return time.Until(loginSelectGate.next)
+	}
+	loginSelectGate.next = now.Add(loginSelectInterval)
+	return 0
 }
 
 func (r *RobotVo) sendSelectCharacUnsafe(_ string) bool {

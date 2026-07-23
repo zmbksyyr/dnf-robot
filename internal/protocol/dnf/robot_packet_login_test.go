@@ -29,10 +29,27 @@ func TestSelectCharacIsDelayedAfterNCC(t *testing.T) {
 
 func TestSelectCharacGateSerializesSessions(t *testing.T) {
 	resetLoginSelectGate()
-	first := reserveLoginSelectDelay(10 * time.Millisecond)
-	second := reserveLoginSelectDelay(10 * time.Millisecond)
-	if first < 0 || second-first < loginSelectInterval-20*time.Millisecond {
-		t.Fatalf("gate delays first=%s second=%s interval=%s", first, second, second-first)
+	if delay := claimLoginSelectSlot(); delay != 0 {
+		t.Fatalf("first gate claim delay=%s", delay)
+	}
+	if delay := claimLoginSelectSlot(); delay < loginSelectInterval-20*time.Millisecond {
+		t.Fatalf("second gate claim delay=%s interval=%s", delay, loginSelectInterval)
+	}
+}
+
+func TestSelectCharacGateDoesNotReserveFutureSlots(t *testing.T) {
+	resetLoginSelectGate()
+	if delay := claimLoginSelectSlot(); delay != 0 {
+		t.Fatalf("first gate claim delay=%s", delay)
+	}
+	for i := 0; i < 100; i++ {
+		_ = claimLoginSelectSlot()
+	}
+	loginSelectGate.Lock()
+	reservedUntil := loginSelectGate.next
+	loginSelectGate.Unlock()
+	if remaining := time.Until(reservedUntil); remaining > loginSelectInterval+20*time.Millisecond {
+		t.Fatalf("gate accumulated abandoned reservations: %s", remaining)
 	}
 }
 
