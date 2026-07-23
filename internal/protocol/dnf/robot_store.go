@@ -330,11 +330,13 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 			continue
 		}
 		count := wantedCount
+		boxType := 0
 		if selected.ItemNum <= 0 {
 			// Equipment is transferred as the whole inventory instance. Its online
 			// quantity field is zero; sending one makes old servers compare 1 > 0
 			// and reject CMD 90 with 0x11.
 			count = 0
+			boxType = 1
 		} else if available := int(selected.ItemNum); count > available {
 			count = available
 		}
@@ -345,6 +347,7 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 		storeInfo = append(storeInfo, StoreInfo{
 			Index:    len(storeInfo),
 			ItemID:   tradeItem,
+			BoxType:  boxType,
 			BoxIndex: int(selected.ItemPos),
 			Price:    price,
 			Count:    count,
@@ -442,14 +445,16 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	storeInfo := make([]StoreInfo, 0, len(storeRows))
 	for i, sr := range storeRows {
 		count := sr.Count
+		boxType := 0
 		if !isStoreStackableType(sr.Pos.BoxType) {
 			count = 0
+			boxType = 1
 		} else if count <= 0 {
 			continue
 		}
-		// CMD 90's box-type byte is not the inventory table's type field. This
-		// legacy protocol uses zero with the global bag index for all three bags.
-		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
+		// CMD 90 uses zero for stackable material slots and one for singleton
+		// equipment slots; it does not accept the inventory table's 2/3 types.
+		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: boxType, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
 	}
 	sent := r.completeDisplay(title, storeInfo)
 	r.mu.Unlock()

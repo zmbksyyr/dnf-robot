@@ -301,8 +301,8 @@ func TestReconcileStoreDisplayAcceptsNonStackableOnlineItem(t *testing.T) {
 	inventory := map[int]Transaction{7: {ItemPos: 7, ItemId: 10016, ItemNum: 0}}
 
 	got := reconcileStoreDisplay(rows, inventory)
-	if len(got) != 1 || got[0].Count != 0 || got[0].BoxIndex != 7 {
-		t.Fatalf("reconciled equipment = %+v, want slot 7 count 0", got)
+	if len(got) != 1 || got[0].Count != 0 || got[0].BoxType != 1 || got[0].BoxIndex != 7 {
+		t.Fatalf("reconciled equipment = %+v, want type 1 slot 7 count 0", got)
 	}
 }
 
