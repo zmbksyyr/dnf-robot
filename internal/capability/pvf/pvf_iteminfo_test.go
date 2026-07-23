@@ -29,10 +29,10 @@ func TestFormatPVFItemInfoDAT(t *testing.T) {
 }
 
 func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) {
-	raw := "2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `gold` `gold` 13002\r\n" +
+	raw := "2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `百萬金幣` `金币` 13002\r\n" +
 		"3100060 0 1 1 1 1 1 1 1 1 1 1 1 90 `raw` `raw2` 99999\r\n"
 	got := formatExtendedPVFItemInfoDAT(raw, []shared.EquipmentCatalogItem{
-		{ID: 3100060, Level: 90, Rarity: 4, ItemType: 8, Slot: "amulet", Path: "equipment/ancient/halin/3100060.equ"},
+		{ID: 3100060, Name: "無法編碼的名稱", Name2: "无法编码的名称", Level: 90, Rarity: 4, ItemType: 8, Slot: "amulet", Path: "equipment/ancient/halin/3100060.equ"},
 		{ID: 35500001, Level: 90, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 3, Path: "equipment/character/fighter/weapon/boxglove/35500001.equ", UseJob: []int{1, 7}},
 		{ID: 28237, Level: 85, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 3, Path: "equipment/character/swordman/weapon/beamsword/28237.equ"},
 		{ID: 37603, Level: 85, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 1, Path: "equipment/character/thief/weapon/wand/37603.equ"},
@@ -46,8 +46,17 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 	if len(lines) != 9 {
 		t.Fatalf("lines = %d, want 9: %q", len(lines), got)
 	}
+	for _, b := range []byte(got) {
+		if b >= 0x80 {
+			t.Fatalf("extended iteminfo contains non-ASCII byte 0x%x: %q", b, got)
+		}
+	}
 	assertLineContains(t, lines, "2675336 ", "13002")
+	assertLineHasToken(t, lines, "2675336 ", 14, "`item_2675336`")
+	assertLineHasToken(t, lines, "2675336 ", 15, "`name2_2675336`")
 	assertLineContains(t, lines, "3100060 ", "12001")
+	assertLineHasToken(t, lines, "3100060 ", 14, "`item_3100060`")
+	assertLineHasToken(t, lines, "3100060 ", 15, "`name2_3100060`")
 	assertLineHasToken(t, lines, "3100060 ", 13, "70")
 	if strings.Contains(got, "99999") || strings.Contains(got, "`raw`") {
 		t.Fatalf("raw iteminfo row was not overwritten by PVF generated row: %q", got)

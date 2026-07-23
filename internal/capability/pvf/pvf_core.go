@@ -242,9 +242,19 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 	sort.Slice(rows, func(i, j int) bool { return rows[i].id < rows[j].id })
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, row.text)
+		fields := tokenizePVFItemInfo(row.text)
+		if len(fields) != 17 {
+			continue
+		}
+		fields[14] = asciiItemInfoName("item", row.id)
+		fields[15] = asciiItemInfoName("name2", row.id)
+		out = append(out, strings.Join(fields, " "))
 	}
 	return strings.Join(out, "\r\n") + "\r\n"
+}
+
+func asciiItemInfoName(prefix string, id int) string {
+	return "`" + prefix + "_" + strconv.Itoa(id) + "`"
 }
 
 func parsePVFItemInfoRows(text string) map[int][]string {
@@ -280,8 +290,8 @@ func generatedItemInfoFields(item shared.EquipmentCatalogItem, stackable bool) [
 	}
 	fields = append(fields,
 		strconv.Itoa(level),
-		generatedItemInfoName(item.Name, "item_"+strconv.Itoa(item.ID)),
-		generatedItemInfoName(item.Name2, "name2_"+strconv.Itoa(item.ID)),
+		asciiItemInfoName("item", item.ID),
+		asciiItemInfoName("name2", item.ID),
 		strconv.Itoa(generatedItemInfoCategory(item, stackable)),
 	)
 	return fields
@@ -293,15 +303,6 @@ func generatedItemInfoJobFlags(item shared.EquipmentCatalogItem, stackable bool)
 		flags[i] = "1"
 	}
 	return flags
-}
-
-func generatedItemInfoName(value, fallback string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.EqualFold(value, "ErrorString") {
-		value = fallback
-	}
-	value = strings.ReplaceAll(value, "`", "'")
-	return "`" + value + "`"
 }
 
 func generatedItemInfoCategory(item shared.EquipmentCatalogItem, stackable bool) int {
