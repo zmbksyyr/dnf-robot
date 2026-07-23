@@ -319,6 +319,22 @@ func TestReconcileStoreDisplayCapsLegacyWindowAtFourteenItems(t *testing.T) {
 	}
 }
 
+func TestSilentEquipmentDisplayCanConfirmWithoutReply(t *testing.T) {
+	r := NewRobotVo(nil)
+	r.StoreCreated = true
+	r.StoreDisplaySent = true
+	r.LastStoreDisplay = []StoreInfo{{ItemID: 10016, BoxIndex: 7, Count: 0}}
+	if !r.ConfirmPrivateStoreEquipmentDisplayIfSilent() || !r.StoreDisplayAck {
+		t.Fatal("silent equipment display was not confirmed")
+	}
+
+	r.StoreDisplayAck = false
+	r.StoreDisplayRejected = true
+	if r.ConfirmPrivateStoreEquipmentDisplayIfSilent() || r.StoreDisplayAck {
+		t.Fatal("explicit rejection was overridden by silent confirmation")
+	}
+}
+
 func newStorePacketTestRobot(t *testing.T, conn net.Conn) *RobotVo {
 	t.Helper()
 	r := NewRobotVo(nil)

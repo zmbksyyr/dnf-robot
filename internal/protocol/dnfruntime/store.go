@@ -113,6 +113,10 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 	if snap := vo.Snapshot(); !snap.StoreDisplaySent && !snap.StoreDisplayAck && !snap.StoreDisplayRejected {
 		vo.CompleteDisplayFromStallFallback()
 	}
+	// Some legacy servers consume equipment (quantity zero) without replying to
+	// CMD 90. Give an explicit rejection time to arrive before accepting silence.
+	time.Sleep(1500 * time.Millisecond)
+	vo.ConfirmPrivateStoreEquipmentDisplayIfSilent()
 	vo.MarkPrivateStoreDisplayFailed()
 }
 

@@ -232,6 +232,26 @@ func (r *RobotVo) MarkPrivateStoreDisplayFailed() {
 	r.LastStoreError = 0
 }
 
+// ConfirmPrivateStoreEquipmentDisplayIfSilent supports old servers that move
+// singleton equipment into the store but do not reply to CMD 90. Equipment is
+// distinguishable by its protocol quantity of zero. Explicit rejections always
+// win and material-only displays still require the normal acknowledgement.
+func (r *RobotVo) ConfirmPrivateStoreEquipmentDisplayIfSilent() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.StoreCreated || !r.StoreDisplaySent || r.StoreDisplayAck || r.StoreDisplayRejected {
+		return false
+	}
+	for _, item := range r.LastStoreDisplay {
+		if item.Count == 0 {
+			r.StoreDisplayAck = true
+			fmt.Printf("[STORE_90_SILENT_ACK] uid=%d items=%d\n", r.UID, len(r.LastStoreDisplay))
+			return true
+		}
+	}
+	return false
+}
+
 func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	r.mu.Lock()
 	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || len(r.InfanMap) == 0 || r.DB == nil {
