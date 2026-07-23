@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -302,6 +303,19 @@ func TestReconcileStoreDisplayAcceptsNonStackableOnlineItem(t *testing.T) {
 	got := reconcileStoreDisplay(rows, inventory)
 	if len(got) != 1 || got[0].Count != 1 || got[0].BoxIndex != 7 {
 		t.Fatalf("reconciled equipment = %+v, want slot 7 count 1", got)
+	}
+}
+
+func TestReconcileStoreDisplayCapsLegacyWindowAtFourteenItems(t *testing.T) {
+	rows := make([][]string, 0, 20)
+	inventory := make(map[int]Transaction, 20)
+	for index := 0; index < 20; index++ {
+		itemID := 10000 + index
+		rows = append(rows, []string{strconv.Itoa(itemID), "100000", "1"})
+		inventory[index+7] = Transaction{ItemPos: int16(index + 7), ItemId: int32(itemID), ItemNum: 1}
+	}
+	if got := reconcileStoreDisplay(rows, inventory); len(got) != 14 {
+		t.Fatalf("store items = %d, want legacy display limit 14", len(got))
 	}
 }
 

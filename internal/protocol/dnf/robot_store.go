@@ -10,7 +10,10 @@ import (
 	sqlpkg "robot/internal/foundation/sql"
 )
 
-const storeQueryTimeout = 3 * time.Second
+const (
+	storeQueryTimeout        = 3 * time.Second
+	privateStoreDisplayLimit = 14
+)
 
 type StoreInfo struct {
 	Index    int
@@ -276,10 +279,10 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 }
 
 func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []StoreInfo {
-	storeInfo := make([]StoreInfo, 0, min(len(rows), 24))
+	storeInfo := make([]StoreInfo, 0, min(len(rows), privateStoreDisplayLimit))
 	usedSlots := make(map[int16]struct{}, len(inventory))
 	for _, row := range rows {
-		if len(storeInfo) >= 24 || len(row) < 3 || row[0] == "" || row[1] == "" || row[2] == "" {
+		if len(storeInfo) >= privateStoreDisplayLimit || len(row) < 3 || row[0] == "" || row[1] == "" || row[2] == "" {
 			continue
 		}
 		tradeItem, errItem := strconv.Atoi(row[0])
@@ -338,7 +341,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 
 	ctx, cancel := context.WithTimeout(context.Background(), storeQueryTimeout)
 	defer cancel()
-	rows, err := sqlpkg.SelectContext(ctx, db, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID,id limit 24", uid)
+	rows, err := sqlpkg.SelectContext(ctx, db, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID,id limit 14", uid)
 	if err != nil || len(rows) == 0 {
 		return false
 	}
@@ -392,9 +395,6 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		if !ok {
 			continue
 		}
-		if !isStoreStackableType(pos.BoxType) {
-			continue
-		}
 		if pos.Count > 0 && itemNumber > pos.Count {
 			itemNumber = pos.Count
 		}
@@ -420,7 +420,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		if count <= 0 {
 			count = 1
 		}
-		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
+		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: sr.Pos.BoxType, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
 	}
 	sent := r.completeDisplay(title, storeInfo)
 	r.mu.Unlock()
