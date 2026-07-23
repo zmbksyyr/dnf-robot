@@ -71,6 +71,10 @@ store_item_count_max = 5
 store_price_min = 1000
 store_price_max = 2000
 store_inventory_start_box_index = 8
+store_equipment_start_box_index = 9
+store_consumable_start_box_index = 57
+store_material_start_box_index = 107
+store_equipment_intensify = 13
 store_confirm_timeout_sec = 31
 
 [follow]
@@ -134,6 +138,9 @@ packet_rate_per_sec = 30
 	}
 	if !reflect.DeepEqual(rc.StoreItemAllowIDs, []int{11, 12}) || !reflect.DeepEqual(rc.StoreItemDenyIDs, []int{21, 22}) {
 		t.Fatalf("store lists not loaded: allow=%v deny=%v", rc.StoreItemAllowIDs, rc.StoreItemDenyIDs)
+	}
+	if rc.StoreEquipmentStartBox != 9 || rc.StoreConsumableStartBox != 57 || rc.StoreMaterialStartBox != 107 || rc.StoreEquipmentIntensify != 13 {
+		t.Fatalf("store pool config not loaded: %+v", rc)
 	}
 	if rc.FollowAccount != "leader" || rc.AutoTargetOnlineCount != 200 || rc.SchedulerOnlineBatchSize != 42 || rc.SystemActorPollMS != 777 {
 		t.Fatalf("follow/auto/scheduler/system config not loaded: %+v", rc)

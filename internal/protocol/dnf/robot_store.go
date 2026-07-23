@@ -287,7 +287,7 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 		var selected Transaction
 		found := false
 		for _, tx := range inventory {
-			if int(tx.ItemId) != tradeItem || tx.ItemNum <= 0 {
+			if int(tx.ItemId) != tradeItem || (tx.ItemNum <= 0 && wantedCount > 1) {
 				continue
 			}
 			if _, used := usedSlots[tx.ItemPos]; used {
@@ -302,7 +302,7 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 			continue
 		}
 		count := wantedCount
-		if available := int(selected.ItemNum); count > available {
+		if available := int(selected.ItemNum); available > 0 && count > available {
 			count = available
 		}
 		if count <= 0 {

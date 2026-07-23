@@ -36,7 +36,7 @@ func (e storeWorkflowEnv) EndStoreBusy(uid int) {
 }
 
 func (e storeWorkflowEnv) EnsureStoreInventoryAndStall(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
-	return e.manager.storePreparer().EnsureInventoryAndStall(info, rc)
+	return e.manager.storePreparerWithPool(rc).EnsureInventoryAndStall(info, rc)
 }
 
 func (e storeWorkflowEnv) FinishStoreState(uid, cid int, reason string) {
@@ -105,6 +105,23 @@ func (m *RobotManager) storePreparer() storecap.Preparer {
 		Env:        storePreparationEnv{manager: m},
 		WorldHorns: m.worldHornCache,
 	}
+}
+
+func (m *RobotManager) storePreparerWithPool(rc robotconfig.RuntimeConfig) storecap.Preparer {
+	preparer := m.storePreparer()
+	preparer.Pool = m.storePool(rc)
+	return preparer
+}
+
+func (m *RobotManager) storePool(rc robotconfig.RuntimeConfig) *storecap.ItemPool {
+	m.storePoolLock.Lock()
+	defer m.storePoolLock.Unlock()
+	if m.storeItemPool == nil {
+		catalogs := m.loadCreateCatalogs()
+		m.storeItemPool = storecap.BuildItemPool(catalogs.Equipment, catalogs.Stackable, rc.StoreEquipmentIntensify)
+		robotLogf("[StorePool] generated stackable=%d equipment=%d intensify=%d\n", len(m.storeItemPool.Stackable), len(m.storeItemPool.Equipment), rc.StoreEquipmentIntensify)
+	}
+	return m.storeItemPool
 }
 
 type storePreparationEnv struct {

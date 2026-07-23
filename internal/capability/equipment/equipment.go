@@ -398,6 +398,22 @@ func WriteEquipSlot(dst []byte, item shared.EquipmentCatalogItem, rng *rand.Rand
 	}
 }
 
+// WriteStoreEquipSlot builds a complete inventory equipment record once for
+// the private-store pool, then applies the explicitly configured enhancement.
+func WriteStoreEquipSlot(dst []byte, item shared.EquipmentCatalogItem, rng *rand.Rand, intensify int) {
+	WriteEquipSlot(dst, item, rng, SlotOptions{IntensifyMin: intensify, IntensifyMax: intensify})
+	if len(dst) < 61 {
+		return
+	}
+	if intensify < 0 {
+		intensify = 0
+	}
+	if intensify > 255 {
+		intensify = 255
+	}
+	dst[6] = byte(intensify)
+}
+
 func safeRandIntn(randIntn func(int) int, n int) int {
 	if n <= 0 || randIntn == nil {
 		return 0

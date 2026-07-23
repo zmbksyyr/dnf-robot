@@ -13,6 +13,7 @@ import (
 type Preparer struct {
 	Env        PreparationEnv
 	WorldHorns *WorldHornCache
+	Pool       *ItemPool
 }
 
 type PreparationEnv interface {
@@ -78,6 +79,9 @@ func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.Run
 	if err := p.EnsureStorePermission(info.UID, info.CID); err != nil {
 		return err
 	}
+	if p.Pool != nil && (len(p.Pool.Stackable) > 0 || len(p.Pool.Equipment) > 0) {
+		return p.preparePoolInventoryAndStall(info, rc)
+	}
 	if err := p.PopulateInventory(info, rc); err != nil {
 		return err
 	}
@@ -119,6 +123,104 @@ func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.Run
 	env.Logf("[StorePrepare] uid=%d cid=%d store_plan=%s inventory_found=%d items=%v stall_rows=%d cfg_rows=%d title=%s\n",
 		info.UID, info.CID, plan.Name, len(foundItems), foundItems, stallResult.StallRows, stallResult.ConfigRows, title)
 	return nil
+}
+
+func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
+	env := p.Env
+	invRaw, err := env.LoadInventory(info.CID)
+	if err != nil || len(invRaw) < 249*61 {
+		invRaw = make([]byte, 249*61)
+	}
+	clearInventoryRange(invRaw, rc.StoreEquipmentStartBox, StoreEquipmentSlots)
+	clearInventoryRange(invRaw, rc.StoreConsumableStartBox, StoreStackableSlots)
+	clearInventoryRange(invRaw, rc.StoreMaterialStartBox, StoreStackableSlots)
+
+	stackable, equipment := p.Pool.Draw(info.UID)
+	stallItems := make([]StallItem, 0, len(stackable)+len(equipment))
+	materialIndex := 0
+	consumableIndex := 0
+	for _, entry := range stackable {
+		boxIndex := 0
+		inventoryType := 0
+		switch entry.Kind {
+		case PoolConsumable:
+			boxIndex = rc.StoreConsumableStartBox + consumableIndex
+			consumableIndex++
+			inventoryType = 2
+		case PoolMaterial:
+			boxIndex = rc.StoreMaterialStartBox + materialIndex
+			materialIndex++
+			inventoryType = 3
+		default:
+			continue
+		}
+		rawIndex := boxIndex + 2
+		if rawIndex < 0 || rawIndex >= 249 {
+			continue
+		}
+		limit := entry.MaxCount
+		if limit <= 0 {
+			limit = StoreStackFallback
+		}
+		count := env.RandBetween(1, limit)
+		if count <= 0 || count > limit {
+			count = limit
+		}
+		WriteInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], entry.Item, count, inventoryType)
+		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: count, Price: storePoolPrice(env, rc, count)})
+	}
+	for index, entry := range equipment {
+		boxIndex := rc.StoreEquipmentStartBox + index
+		rawIndex := boxIndex + 2
+		if rawIndex < 0 || rawIndex >= 249 {
+			continue
+		}
+		copy(invRaw[rawIndex*61:(rawIndex+1)*61], entry.SlotBytes[:])
+		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: 1, Price: storePoolPrice(env, rc, 1)})
+	}
+	if len(stallItems) == 0 {
+		env.Logf("[StorePrepare] uid=%d cid=%d pool_empty=1\n", info.UID, info.CID)
+		return nil
+	}
+	if err := env.SaveInventory(info.CID, rc.InventoryCapacity, invRaw); err != nil {
+		return err
+	}
+	p.WorldHorns.Invalidate(info.CID)
+	title := fmt.Sprintf("tw-%d", info.UID%100000)
+	result, err := env.ReplaceStoreStall(info.UID, title, stallItems)
+	if err != nil {
+		return err
+	}
+	env.Logf("[StorePrepare] uid=%d cid=%d pool_stackable=%d pool_equipment=%d material=%d consumable=%d stall_rows=%d title=%s\n",
+		info.UID, info.CID, len(stackable), len(equipment), materialIndex, consumableIndex, result.StallRows, title)
+	return nil
+}
+
+func clearInventoryRange(raw []byte, startBox, count int) {
+	for index := 0; index < count; index++ {
+		rawIndex := startBox + index + 2
+		if rawIndex >= 0 && rawIndex < 249 && (rawIndex+1)*61 <= len(raw) {
+			clear(raw[rawIndex*61 : (rawIndex+1)*61])
+		}
+	}
+}
+
+func storePoolPrice(env PreparationEnv, rc robotconfig.RuntimeConfig, count int) int {
+	price := env.RandBetween(rc.StorePriceMin, rc.StorePriceMax)
+	if price <= 0 {
+		price = 100000
+	}
+	if count <= 0 {
+		count = 1
+	}
+	const maxStoreTotal = int(^uint32(0) >> 1)
+	if maxPrice := maxStoreTotal / count; price > maxPrice {
+		price = maxPrice
+	}
+	if price <= 0 {
+		price = 1
+	}
+	return price
 }
 
 func (p Preparer) EnsureStorePermission(uid, cid int) error {

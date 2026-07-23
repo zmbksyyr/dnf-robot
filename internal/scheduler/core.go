@@ -70,6 +70,8 @@ type RobotManager struct {
 	supervisor                      *RobotSupervisor
 	storePointsCoord                *storecap.PointCoordinator
 	worldHornCache                  *storecap.WorldHornCache
+	storePoolLock                   lockhub.Locker
+	storeItemPool                   *storecap.ItemPool
 	positionWrites                  *positionBatcher
 }
 
