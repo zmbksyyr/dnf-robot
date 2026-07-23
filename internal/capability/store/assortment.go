@@ -15,7 +15,7 @@ const (
 	StoreStackableSlots      = 7
 	StoreEquipmentSlots      = 7
 	StoreInventoryClearSlots = 12
-	StoreStackFallback       = 2000
+	StoreStackFallback       = 1000
 	StoreTotalPriceLimit     = 500000000
 )
 
