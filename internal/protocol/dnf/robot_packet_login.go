@@ -4,19 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"time"
-
-	"robot/internal/foundation/lockhub"
 )
-
-const (
-	loginSelectDelay    = 3 * time.Second
-	loginSelectInterval = time.Second
-)
-
-var loginSelectGate struct {
-	lockhub.Locker
-	next time.Time
-}
 
 func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 	switch packet.typ {
@@ -81,12 +69,12 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 			if err == nil {
 				r.sendRaw(pkt)
 			}
-			r.scheduleSelectCharacUnsafe(loginSelectDelay)
+			r.sendSelectCharacUnsafe("after type=272")
 		}
 
 	case 53:
 		if packet.flag == 0 && r.State == StateLogin && !r.SelectCharacSent {
-			r.CharacListReady = true
+			r.sendSelectCharacUnsafe("after type=53")
 		}
 
 	case 300:
@@ -126,40 +114,6 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 			}
 		}
 	}
-}
-
-func (r *RobotVo) scheduleSelectCharacUnsafe(minDelay time.Duration) {
-	if r.State != StateLogin || !r.NccSent || r.SelectCharacSent || r.SelectCharacQueued {
-		return
-	}
-	r.SelectCharacQueued = true
-	time.AfterFunc(minDelay, r.trySendQueuedSelectCharac)
-}
-
-func (r *RobotVo) trySendQueuedSelectCharac() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.State != StateLogin || !r.NccSent || r.SelectCharacSent {
-		r.SelectCharacQueued = false
-		return
-	}
-	if delay := claimLoginSelectSlot(); delay > 0 {
-		time.AfterFunc(delay, r.trySendQueuedSelectCharac)
-		return
-	}
-	r.SelectCharacQueued = false
-	r.sendSelectCharacUnsafe("after throttled type=272")
-}
-
-func claimLoginSelectSlot() time.Duration {
-	now := time.Now()
-	loginSelectGate.Lock()
-	defer loginSelectGate.Unlock()
-	if now.Before(loginSelectGate.next) {
-		return time.Until(loginSelectGate.next)
-	}
-	loginSelectGate.next = now.Add(loginSelectInterval)
-	return 0
 }
 
 func (r *RobotVo) sendSelectCharacUnsafe(_ string) bool {
