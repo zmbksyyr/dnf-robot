@@ -80,32 +80,33 @@ type RobotVo struct {
 	State     ClientState
 	LastError ClientError
 
-	Token             [512]byte
-	TokenSize         uint32
-	MaxReConn         uint32
-	ConnCount         uint32
-	ReDelay           uint32
-	PacketID          uint32
-	CurVillage        uint8
-	CurArea           uint8
-	CurX              uint16
-	CurY              uint16
-	NccSent           bool
-	CharacListReady   bool
-	SelectCharacSent  bool
-	RunStartTime      uint32
-	IsWaitingItemList bool
-	MoveType          uint8
-	DisconReason      DisconnectReason
-	IP                string
-	Port              int
-	RobotTyp          int
-	LastTradeID       uint16
-	LastTradeState    bool
-	TradeMoney        uint32
-	tradeQuoteLoading bool
-	tradeQuotePending bool
-	tradeQuoteVersion uint64
+	Token              [512]byte
+	TokenSize          uint32
+	MaxReConn          uint32
+	ConnCount          uint32
+	ReDelay            uint32
+	PacketID           uint32
+	CurVillage         uint8
+	CurArea            uint8
+	CurX               uint16
+	CurY               uint16
+	NccSent            bool
+	CharacListReady    bool
+	SelectCharacQueued bool
+	SelectCharacSent   bool
+	RunStartTime       uint32
+	IsWaitingItemList  bool
+	MoveType           uint8
+	DisconReason       DisconnectReason
+	IP                 string
+	Port               int
+	RobotTyp           int
+	LastTradeID        uint16
+	LastTradeState     bool
+	TradeMoney         uint32
+	tradeQuoteLoading  bool
+	tradeQuotePending  bool
+	tradeQuoteVersion  uint64
 
 	TransactionArr [24]*Transaction
 	InfanMap       map[int]Transaction
@@ -243,21 +244,22 @@ type RobotSnapshot struct {
 
 func NewRobotVo(db *sql.DB) *RobotVo {
 	r := &RobotVo{
-		State:             StateStop,
-		LastError:         NoneError,
-		DisconReason:      NoDisconnect,
-		minBufferSize:     4096,
-		done:              make(chan struct{}),
-		SelectCharacSent:  false,
-		NccSent:           false,
-		CharacListReady:   false,
-		IsWaitingItemList: false,
-		LastTradeState:    false,
-		LastTradeID:       0,
-		TradeMoney:        0,
-		RobotTyp:          0,
-		DB:                db,
-		InfanMap:          make(map[int]Transaction),
+		State:              StateStop,
+		LastError:          NoneError,
+		DisconReason:       NoDisconnect,
+		minBufferSize:      4096,
+		done:               make(chan struct{}),
+		SelectCharacSent:   false,
+		NccSent:            false,
+		CharacListReady:    false,
+		SelectCharacQueued: false,
+		IsWaitingItemList:  false,
+		LastTradeState:     false,
+		LastTradeID:        0,
+		TradeMoney:         0,
+		RobotTyp:           0,
+		DB:                 db,
+		InfanMap:           make(map[int]Transaction),
 	}
 
 	tmpEnd := [64]byte{

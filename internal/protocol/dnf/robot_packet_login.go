@@ -4,9 +4,19 @@ import (
 	"encoding/binary"
 	"fmt"
 	"time"
+
+	"robot/internal/foundation/lockhub"
 )
 
-const loginSelectFallbackDelay = 3 * time.Second
+const (
+	loginSelectDelay    = 3 * time.Second
+	loginSelectInterval = time.Second
+)
+
+var loginSelectGate struct {
+	lockhub.Locker
+	next time.Time
+}
 
 func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 	switch packet.typ {
@@ -71,15 +81,12 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 			if err == nil {
 				r.sendRaw(pkt)
 			}
-			if !r.trySelectCharacUnsafe("after type=272 and type=53") {
-				r.scheduleSelectCharacFallbackUnsafe()
-			}
+			r.scheduleSelectCharacUnsafe(loginSelectDelay)
 		}
 
 	case 53:
 		if packet.flag == 0 && r.State == StateLogin && !r.SelectCharacSent {
 			r.CharacListReady = true
-			r.trySelectCharacUnsafe("after type=53 and type=272")
 		}
 
 	case 300:
@@ -121,26 +128,33 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 	}
 }
 
-func (r *RobotVo) trySelectCharacUnsafe(reason string) bool {
-	if !r.NccSent || !r.CharacListReady {
-		return false
+func (r *RobotVo) scheduleSelectCharacUnsafe(minDelay time.Duration) {
+	if r.State != StateLogin || !r.NccSent || r.SelectCharacSent || r.SelectCharacQueued {
+		return
 	}
-	return r.sendSelectCharacUnsafe(reason)
-}
-
-func (r *RobotVo) scheduleSelectCharacFallbackUnsafe() {
-	r.scheduleSelectCharacFallbackAfterUnsafe(loginSelectFallbackDelay)
-}
-
-func (r *RobotVo) scheduleSelectCharacFallbackAfterUnsafe(delay time.Duration) {
-	time.AfterFunc(delay, func() {
+	r.SelectCharacQueued = true
+	time.AfterFunc(reserveLoginSelectDelay(minDelay), func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
+		r.SelectCharacQueued = false
 		if r.State != StateLogin || !r.NccSent || r.SelectCharacSent {
 			return
 		}
-		r.sendSelectCharacUnsafe("after type=272 fallback")
+		r.sendSelectCharacUnsafe("after throttled type=272")
 	})
+}
+
+func reserveLoginSelectDelay(minDelay time.Duration) time.Duration {
+	now := time.Now()
+	earliest := now.Add(minDelay)
+	loginSelectGate.Lock()
+	if loginSelectGate.next.Before(earliest) {
+		loginSelectGate.next = earliest
+	}
+	slot := loginSelectGate.next
+	loginSelectGate.next = slot.Add(loginSelectInterval)
+	loginSelectGate.Unlock()
+	return time.Until(slot)
 }
 
 func (r *RobotVo) sendSelectCharacUnsafe(_ string) bool {

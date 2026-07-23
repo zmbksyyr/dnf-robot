@@ -7,60 +7,71 @@ import (
 	"robot/internal/protocol/dnf/crypt"
 )
 
-func TestSelectCharacWaitsForNCCAndCharacList(t *testing.T) {
+func TestSelectCharacIsDelayedAfterNCC(t *testing.T) {
+	resetLoginSelectGate()
 	conn := &captureSessionConn{}
-	robot := NewRobotVo(nil)
-	robot.Cipher = crypt.NewDNFCipher()
-	if err := robot.Cipher.Initialize(make([]byte, 334)); err != nil {
-		t.Fatal(err)
-	}
-	robot.Conn = conn
-	robot.State = StateLogin
+	robot := newLoginPacketTestRobot(t, conn)
+	robot.NccSent = true
 
-	robot.NccSent = true
-	if robot.trySelectCharacUnsafe("ncc only") {
-		t.Fatal("selected character before character list was ready")
+	robot.mu.Lock()
+	robot.scheduleSelectCharacUnsafe(20 * time.Millisecond)
+	queued := robot.SelectCharacQueued
+	sent := robot.SelectCharacSent
+	robot.mu.Unlock()
+	if !queued || sent {
+		t.Fatalf("queued=%t sent=%t immediately after scheduling", queued, sent)
 	}
-	robot.NccSent = false
-	robot.CharacListReady = true
-	if robot.trySelectCharacUnsafe("character list only") {
-		t.Fatal("selected character before NCC completed")
-	}
-	robot.NccSent = true
-	if !robot.trySelectCharacUnsafe("both ready") {
-		t.Fatal("did not select character after both login prerequisites completed")
-	}
-	if !robot.SelectCharacSent || len(conn.written) == 0 {
+	waitForSelectCharac(t, robot)
+	if len(conn.written) == 0 {
 		t.Fatal("character selection packet was not sent")
 	}
 }
 
-func TestSelectCharacIsSentOnlyOnce(t *testing.T) {
-	conn := &captureSessionConn{}
-	robot := NewRobotVo(nil)
-	robot.Cipher = crypt.NewDNFCipher()
-	if err := robot.Cipher.Initialize(make([]byte, 334)); err != nil {
-		t.Fatal(err)
-	}
-	robot.Conn = conn
-	robot.State = StateLogin
-	robot.NccSent = true
-	robot.CharacListReady = true
-
-	if !robot.trySelectCharacUnsafe("first") {
-		t.Fatal("first character selection was not sent")
-	}
-	written := len(conn.written)
-	if robot.trySelectCharacUnsafe("duplicate") {
-		t.Fatal("duplicate character selection was accepted")
-	}
-	if len(conn.written) != written {
-		t.Fatal("duplicate character selection wrote another packet")
+func TestSelectCharacGateSerializesSessions(t *testing.T) {
+	resetLoginSelectGate()
+	first := reserveLoginSelectDelay(10 * time.Millisecond)
+	second := reserveLoginSelectDelay(10 * time.Millisecond)
+	if first < 0 || second-first < loginSelectInterval-20*time.Millisecond {
+		t.Fatalf("gate delays first=%s second=%s interval=%s", first, second, second-first)
 	}
 }
 
-func TestSelectCharacFallbackSupportsServersWithoutType53(t *testing.T) {
+func TestSelectCharacScheduleIsIdempotent(t *testing.T) {
+	resetLoginSelectGate()
 	conn := &captureSessionConn{}
+	robot := newLoginPacketTestRobot(t, conn)
+	robot.NccSent = true
+
+	robot.mu.Lock()
+	robot.scheduleSelectCharacUnsafe(time.Millisecond)
+	robot.scheduleSelectCharacUnsafe(time.Millisecond)
+	robot.mu.Unlock()
+	waitForSelectCharac(t, robot)
+	written := len(conn.written)
+	time.Sleep(20 * time.Millisecond)
+	if len(conn.written) != written {
+		t.Fatal("duplicate character selection packet was sent")
+	}
+}
+
+func TestSelectCharacScheduleStopsWithLogin(t *testing.T) {
+	resetLoginSelectGate()
+	conn := &captureSessionConn{}
+	robot := newLoginPacketTestRobot(t, conn)
+	robot.NccSent = true
+
+	robot.mu.Lock()
+	robot.scheduleSelectCharacUnsafe(time.Millisecond)
+	robot.State = StateStop
+	robot.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	if robot.SelectCharacSent || len(conn.written) != 0 {
+		t.Fatal("stale schedule selected a character after login stopped")
+	}
+}
+
+func newLoginPacketTestRobot(t *testing.T, conn *captureSessionConn) *RobotVo {
+	t.Helper()
 	robot := NewRobotVo(nil)
 	robot.Cipher = crypt.NewDNFCipher()
 	if err := robot.Cipher.Initialize(make([]byte, 334)); err != nil {
@@ -68,11 +79,11 @@ func TestSelectCharacFallbackSupportsServersWithoutType53(t *testing.T) {
 	}
 	robot.Conn = conn
 	robot.State = StateLogin
-	robot.NccSent = true
+	return robot
+}
 
-	robot.mu.Lock()
-	robot.scheduleSelectCharacFallbackAfterUnsafe(time.Millisecond)
-	robot.mu.Unlock()
+func waitForSelectCharac(t *testing.T, robot *RobotVo) {
+	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		robot.mu.Lock()
@@ -83,26 +94,11 @@ func TestSelectCharacFallbackSupportsServersWithoutType53(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("fallback did not select character without type=53")
+	t.Fatal("character selection was not sent")
 }
 
-func TestSelectCharacFallbackDoesNotSendAfterLoginStops(t *testing.T) {
-	conn := &captureSessionConn{}
-	robot := NewRobotVo(nil)
-	robot.Cipher = crypt.NewDNFCipher()
-	if err := robot.Cipher.Initialize(make([]byte, 334)); err != nil {
-		t.Fatal(err)
-	}
-	robot.Conn = conn
-	robot.State = StateLogin
-	robot.NccSent = true
-
-	robot.mu.Lock()
-	robot.scheduleSelectCharacFallbackAfterUnsafe(time.Millisecond)
-	robot.State = StateStop
-	robot.mu.Unlock()
-	time.Sleep(20 * time.Millisecond)
-	if robot.SelectCharacSent || len(conn.written) != 0 {
-		t.Fatal("stale fallback selected a character after login stopped")
-	}
+func resetLoginSelectGate() {
+	loginSelectGate.Lock()
+	loginSelectGate.next = time.Time{}
+	loginSelectGate.Unlock()
 }
