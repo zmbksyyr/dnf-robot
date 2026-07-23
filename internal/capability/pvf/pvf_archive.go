@@ -288,14 +288,15 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 				level = atoi(nextLine(lines, i))
 			}
 		}
-		for _, area := range parseAreas(body) {
+		for _, area := range parseTownAreas(body) {
+			mapBody := a.text(townMapArchivePath(area.MapPath))
+			xMin, xMax, yMin, yMax, coordinateReady := townMapCoordinateBounds(mapBody)
 			out = append(out, shared.MapCatalogItem{
-				Village: entry.ID, VillageName: villageName, Area: area, Level: level,
-				XMin: 240, XMax: 420, YMin: 180, YMax: 320, Use: true,
+				Village: entry.ID, VillageName: villageName, Area: area.ID, Level: level,
+				XMin: xMin, XMax: xMax, YMin: yMin, YMax: yMax, Use: coordinateReady,
 			})
 		}
 	}
-	out = applyReferenceTownCoordinates(out)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Village == out[j].Village {
 			return out[i].Area < out[j].Area

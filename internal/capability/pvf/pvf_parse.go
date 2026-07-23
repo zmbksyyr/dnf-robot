@@ -267,8 +267,13 @@ func parsePVFList(text string) []pvfListEntry {
 	return out
 }
 
-func parseAreas(body string) []int {
-	var out []int
+type townArea struct {
+	ID      int
+	MapPath string
+}
+
+func parseTownAreas(body string) []townArea {
+	var out []townArea
 	start := 0
 	for {
 		i := strings.Index(body[start:], "[area]")
@@ -283,19 +288,108 @@ func parseAreas(body string) []int {
 		j += i
 		block := body[i+len("[area]") : j]
 		if !strings.Contains(block, "[gate]") {
-			fields := strings.Fields(block)
-			if len(fields) > 0 {
-				if id := atoi(fields[0]); id >= 0 {
-					out = append(out, id)
+			fields := strings.Fields(strings.ReplaceAll(block, "`", ""))
+			if len(fields) >= 2 {
+				id := atoi(fields[0])
+				mapPath := normalizePVFPath(fields[1])
+				if id >= 0 && mapPath != "" {
+					out = append(out, townArea{ID: id, MapPath: mapPath})
 				}
 			}
 		}
 		start = j + len("[/area]")
 	}
-	if len(out) == 0 {
-		out = []int{0}
-	}
 	return out
+}
+
+func townMapArchivePath(path string) string {
+	path = normalizePVFPath(path)
+	if path == "" || strings.HasPrefix(path, "map/") {
+		return path
+	}
+	return "map/" + path
+}
+
+func townMapCoordinateBounds(body string) (xMin, xMax, yMin, yMax int, ok bool) {
+	type rectTag struct {
+		name   string
+		stride int
+	}
+	tags := []rectTag{
+		{name: "town movable area", stride: 6},
+		{name: "virtual movable area", stride: 4},
+		{name: "pvp start area", stride: 4},
+		{name: "pvp practice start area", stride: 4},
+	}
+	found := false
+	for _, tag := range tags {
+		values := pvfTagInts(body, tag.name)
+		for i := 0; i+3 < len(values); i += tag.stride {
+			x, y, width, height := values[i], values[i+1], values[i+2], values[i+3]
+			if width <= 0 || height <= 0 || width > 10000 || height > 10000 {
+				continue
+			}
+			right, bottom := x+width, y+height
+			if !found {
+				xMin, xMax, yMin, yMax = x, right, y, bottom
+				found = true
+				continue
+			}
+			if x < xMin {
+				xMin = x
+			}
+			if right > xMax {
+				xMax = right
+			}
+			if y < yMin {
+				yMin = y
+			}
+			if bottom > yMax {
+				yMax = bottom
+			}
+		}
+	}
+	if !found {
+		return 0, 0, 0, 0, false
+	}
+	if xMin < 0 {
+		xMin = 0
+	}
+	if yMin < 0 {
+		yMin = 0
+	}
+	if xMax > 65535 {
+		xMax = 65535
+	}
+	if yMax > 65535 {
+		yMax = 65535
+	}
+	return xMin, xMax, yMin, yMax, true
+}
+
+func pvfTagInts(body, tag string) []int {
+	lines := splitPVFLines(body)
+	want := strings.ToLower(strings.TrimSpace(tag))
+	for i, line := range lines {
+		if strings.ToLower(cleanPVFString(line)) != want {
+			continue
+		}
+		var out []int
+		for _, valueLine := range lines[i+1:] {
+			trimmed := strings.Trim(strings.TrimSpace(valueLine), "`")
+			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+				break
+			}
+			for _, field := range strings.Fields(trimmed) {
+				value, err := strconv.Atoi(field)
+				if err == nil {
+					out = append(out, value)
+				}
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func parseJobs(text string) []int {
