@@ -12,26 +12,36 @@ import (
 	"robot/internal/foundation/config"
 )
 
-func newMailboxGuardMemory(t *testing.T, site int64) *os.File {
+func newMailboxGuardMemory(t *testing.T) (*os.File, mailboxGuardLayout) {
 	t.Helper()
+	layout := mailboxGuardLayout{invalidItemScanSite: 64, streamListEmptySite: 160}
 	file, err := os.CreateTemp(t.TempDir(), "mailbox-guard-mem")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Truncate(site + 64); err != nil {
+	if err := file.Truncate(layout.streamListEmptySite + 64); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := file.WriteAt(mailboxGuardPrefix, site-int64(len(mailboxGuardPrefix))); err != nil {
+	if _, err := file.WriteAt(mailboxInvalidItemScanPrefix, layout.invalidItemScanSite-int64(len(mailboxInvalidItemScanPrefix))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := file.WriteAt(mailboxGuardOriginal, site); err != nil {
+	if _, err := file.WriteAt(mailboxInvalidItemScanOriginal, layout.invalidItemScanSite); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := file.WriteAt(mailboxGuardSuffix, site+int64(len(mailboxGuardOriginal))); err != nil {
+	if _, err := file.WriteAt(mailboxInvalidItemScanSuffix, layout.invalidItemScanSite+int64(len(mailboxInvalidItemScanOriginal))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt(mailboxStreamListEmptyPrefix, layout.streamListEmptySite-int64(len(mailboxStreamListEmptyPrefix))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt(mailboxStreamListEmptyOriginal, layout.streamListEmptySite); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt(mailboxStreamListEmptySuffix, layout.streamListEmptySite+int64(len(mailboxStreamListEmptyOriginal))); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = file.Close() })
-	return file
+	return file, layout
 }
 
 func TestMailboxGuardConfigDefaultsOff(t *testing.T) {
@@ -69,38 +79,56 @@ func TestMailboxGuardHandlerOnlySavesDesiredState(t *testing.T) {
 }
 
 func TestSetMailboxGuardMemoryOnOff(t *testing.T) {
-	const site int64 = 64
-	mem := newMailboxGuardMemory(t, site)
-	changed, err := setMailboxGuardMemory(mem, site, true)
+	mem, layout := newMailboxGuardMemory(t)
+	changed, err := setMailboxGuardMemory(mem, layout, true)
 	if err != nil || !changed {
 		t.Fatalf("enable changed=%t err=%v", changed, err)
 	}
-	enabled, err := inspectMailboxGuardMemory(mem, site)
+	enabled, err := inspectMailboxGuardMemory(mem, layout)
 	if err != nil || !enabled {
 		t.Fatalf("enabled=%t err=%v", enabled, err)
 	}
-	changed, err = setMailboxGuardMemory(mem, site, false)
+	changed, err = setMailboxGuardMemory(mem, layout, false)
 	if err != nil || !changed {
 		t.Fatalf("disable changed=%t err=%v", changed, err)
 	}
-	enabled, err = inspectMailboxGuardMemory(mem, site)
+	enabled, err = inspectMailboxGuardMemory(mem, layout)
 	if err != nil || enabled {
 		t.Fatalf("enabled=%t err=%v", enabled, err)
 	}
 }
 
 func TestMailboxGuardRejectsUnknownServerVersion(t *testing.T) {
-	const site int64 = 64
-	mem := newMailboxGuardMemory(t, site)
-	if _, err := mem.WriteAt([]byte{0x90}, site-int64(len(mailboxGuardPrefix))); err != nil {
+	mem, layout := newMailboxGuardMemory(t)
+	if _, err := mem.WriteAt([]byte{0x90}, layout.streamListEmptySite-int64(len(mailboxStreamListEmptyPrefix))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := setMailboxGuardMemory(mem, site, true); err == nil || !strings.Contains(err.Error(), "unsupported df_game_r") {
+	if _, err := setMailboxGuardMemory(mem, layout, true); err == nil || !strings.Contains(err.Error(), "unsupported df_game_r") {
 		t.Fatalf("patch error = %v", err)
 	}
-	got, err := readMemory(mem, site, len(mailboxGuardOriginal))
-	if err != nil || !bytes.Equal(got, mailboxGuardOriginal) {
+	got, err := readMemory(mem, layout.invalidItemScanSite, len(mailboxInvalidItemScanOriginal))
+	if err != nil || !bytes.Equal(got, mailboxInvalidItemScanOriginal) {
 		t.Fatalf("unknown target was modified: %x err=%v", got, err)
+	}
+}
+
+func TestMailboxGuardRejectsPartialPatch(t *testing.T) {
+	mem, layout := newMailboxGuardMemory(t)
+	if _, err := mem.WriteAt(mailboxInvalidItemScanPatched, layout.invalidItemScanSite); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inspectMailboxGuardMemory(mem, layout); err == nil || !strings.Contains(err.Error(), "partially applied") {
+		t.Fatalf("partial patch error = %v", err)
+	}
+}
+
+func TestMailboxStreamListEmptyPatchFitsOriginalFunction(t *testing.T) {
+	if len(mailboxStreamListEmptyPatched) != len(mailboxStreamListEmptyOriginal) {
+		t.Fatalf("patched function is %d bytes, want %d", len(mailboxStreamListEmptyPatched), len(mailboxStreamListEmptyOriginal))
+	}
+	want := []byte{0x8b, 0x44, 0x24, 0x04, 0x8b, 0x10, 0x85, 0xd2, 0x0f, 0x44, 0xd0, 0x39, 0xc2, 0x0f, 0x94, 0xc0, 0xc3, 0x90}
+	if !bytes.Equal(mailboxStreamListEmptyPatched, want) {
+		t.Fatalf("patched function = %x, want %x", mailboxStreamListEmptyPatched, want)
 	}
 }
 
