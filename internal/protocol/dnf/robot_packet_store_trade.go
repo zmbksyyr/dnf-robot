@@ -84,7 +84,10 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 				itemPos := int16(binary.LittleEndian.Uint16(pBuf[0:2]))
 				itemNum := int32(binary.LittleEndian.Uint32(pBuf[6:10]))
 				pBuf = pBuf[25:]
-				r.InfanMap[int(itemID)] = Transaction{ItemPos: itemPos, ItemId: itemID, ItemNum: itemNum}
+				// Keep every server-reported slot. The same item can occupy multiple
+				// inventory slots, and collapsing by item ID can make CMD 90 refer to
+				// an arbitrary or stale stack.
+				r.InfanMap[int(itemPos)] = Transaction{ItemPos: itemPos, ItemId: itemID, ItemNum: itemNum}
 			}
 		}
 	case 15:

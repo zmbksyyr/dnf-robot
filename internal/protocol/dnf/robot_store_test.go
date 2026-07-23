@@ -259,6 +259,42 @@ func TestStoreDisplayUnknownErrorRejectsImmediately(t *testing.T) {
 	}
 }
 
+func TestReconcileStoreDisplayUsesOnlineSlotsAndAvailableCounts(t *testing.T) {
+	rows := [][]string{
+		{"3035", "100", "7"},
+		{"3034", "200", "5"},
+		{"3035", "300", "2"},
+	}
+	inventory := map[int]Transaction{
+		105: {ItemPos: 105, ItemId: 3035, ItemNum: 3},
+		106: {ItemPos: 106, ItemId: 3035, ItemNum: 9},
+	}
+
+	got := reconcileStoreDisplay(rows, inventory)
+	if len(got) != 2 {
+		t.Fatalf("store items = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].BoxIndex != 106 || got[0].Count != 7 {
+		t.Fatalf("first item = %+v, want slot 106 count 7", got[0])
+	}
+	if got[1].BoxIndex != 105 || got[1].Count != 2 {
+		t.Fatalf("second item = %+v, want slot 105 count 2", got[1])
+	}
+	if got[0].Index != 0 || got[1].Index != 1 {
+		t.Fatalf("store indexes are not compact: %+v", got)
+	}
+}
+
+func TestReconcileStoreDisplayClampsCountToOnlineStack(t *testing.T) {
+	rows := [][]string{{"3035", "100", "7"}}
+	inventory := map[int]Transaction{105: {ItemPos: 105, ItemId: 3035, ItemNum: 3}}
+
+	got := reconcileStoreDisplay(rows, inventory)
+	if len(got) != 1 || got[0].Count != 3 || got[0].BoxIndex != 105 {
+		t.Fatalf("reconciled store = %+v, want slot 105 count 3", got)
+	}
+}
+
 func newStorePacketTestRobot(t *testing.T, conn net.Conn) *RobotVo {
 	t.Helper()
 	r := NewRobotVo(nil)

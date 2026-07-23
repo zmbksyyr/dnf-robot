@@ -247,24 +247,7 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 		return false
 	}
 
-	var storeInfo []StoreInfo
-	for _, row := range rows {
-		if len(row) >= 3 && row[0] != "" && row[1] != "" && row[2] != "" {
-			tradeItem, _ := strconv.Atoi(row[0])
-			price, _ := strconv.Atoi(row[1])
-			itemNumber, _ := strconv.Atoi(row[2])
-			if price > 0 {
-				if tx, ok := inventory[tradeItem]; ok {
-					storeInfo = append(storeInfo, StoreInfo{
-						Index:    len(storeInfo),
-						BoxIndex: int(tx.ItemPos),
-						Price:    price,
-						Count:    itemNumber,
-					})
-				}
-			}
-		}
-	}
+	storeInfo := reconcileStoreDisplay(rows, inventory)
 
 	if len(storeInfo) > 0 {
 		customTitle := title != ""
@@ -285,6 +268,55 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	}
 
 	return true
+}
+
+func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []StoreInfo {
+	storeInfo := make([]StoreInfo, 0, min(len(rows), 24))
+	usedSlots := make(map[int16]struct{}, len(inventory))
+	for _, row := range rows {
+		if len(storeInfo) >= 24 || len(row) < 3 || row[0] == "" || row[1] == "" || row[2] == "" {
+			continue
+		}
+		tradeItem, errItem := strconv.Atoi(row[0])
+		price, errPrice := strconv.Atoi(row[1])
+		wantedCount, errCount := strconv.Atoi(row[2])
+		if errItem != nil || errPrice != nil || errCount != nil || price <= 0 || wantedCount <= 0 {
+			continue
+		}
+
+		var selected Transaction
+		found := false
+		for _, tx := range inventory {
+			if int(tx.ItemId) != tradeItem || tx.ItemNum <= 0 {
+				continue
+			}
+			if _, used := usedSlots[tx.ItemPos]; used {
+				continue
+			}
+			if !found || tx.ItemNum > selected.ItemNum {
+				selected = tx
+				found = true
+			}
+		}
+		if !found {
+			continue
+		}
+		count := wantedCount
+		if available := int(selected.ItemNum); count > available {
+			count = available
+		}
+		if count <= 0 {
+			continue
+		}
+		usedSlots[selected.ItemPos] = struct{}{}
+		storeInfo = append(storeInfo, StoreInfo{
+			Index:    len(storeInfo),
+			BoxIndex: int(selected.ItemPos),
+			Price:    price,
+			Count:    count,
+		})
+	}
+	return storeInfo
 }
 
 func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
