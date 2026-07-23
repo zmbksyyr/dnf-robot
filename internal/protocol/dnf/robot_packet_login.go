@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const loginSelectFallbackDelay = 3 * time.Second
+
 func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 	switch packet.typ {
 	case 1:
@@ -69,12 +71,15 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 			if err == nil {
 				r.sendRaw(pkt)
 			}
-			r.sendSelectCharacUnsafe("after type=272")
+			if !r.trySelectCharacUnsafe("after type=272 and type=53") {
+				r.scheduleSelectCharacFallbackUnsafe()
+			}
 		}
 
 	case 53:
 		if packet.flag == 0 && r.State == StateLogin && !r.SelectCharacSent {
-			r.sendSelectCharacUnsafe("after type=53")
+			r.CharacListReady = true
+			r.trySelectCharacUnsafe("after type=53 and type=272")
 		}
 
 	case 300:
@@ -114,6 +119,28 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 			}
 		}
 	}
+}
+
+func (r *RobotVo) trySelectCharacUnsafe(reason string) bool {
+	if !r.NccSent || !r.CharacListReady {
+		return false
+	}
+	return r.sendSelectCharacUnsafe(reason)
+}
+
+func (r *RobotVo) scheduleSelectCharacFallbackUnsafe() {
+	r.scheduleSelectCharacFallbackAfterUnsafe(loginSelectFallbackDelay)
+}
+
+func (r *RobotVo) scheduleSelectCharacFallbackAfterUnsafe(delay time.Duration) {
+	time.AfterFunc(delay, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.State != StateLogin || !r.NccSent || r.SelectCharacSent {
+			return
+		}
+		r.sendSelectCharacUnsafe("after type=272 fallback")
+	})
 }
 
 func (r *RobotVo) sendSelectCharacUnsafe(_ string) bool {

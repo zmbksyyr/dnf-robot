@@ -91,6 +91,7 @@ type RobotVo struct {
 	CurX              uint16
 	CurY              uint16
 	NccSent           bool
+	CharacListReady   bool
 	SelectCharacSent  bool
 	RunStartTime      uint32
 	IsWaitingItemList bool
@@ -249,6 +250,7 @@ func NewRobotVo(db *sql.DB) *RobotVo {
 		done:              make(chan struct{}),
 		SelectCharacSent:  false,
 		NccSent:           false,
+		CharacListReady:   false,
 		IsWaitingItemList: false,
 		LastTradeState:    false,
 		LastTradeID:       0,
