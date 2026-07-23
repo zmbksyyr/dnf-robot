@@ -59,12 +59,6 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 			result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateStoreBusy, Message: "store already running for uid"})
 			continue
 		}
-		if err := env.EnsureStoreInventoryAndStall(r, rc); err != nil {
-			result.Failed++
-			result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateStorePrepareFailed, Message: err.Error()})
-			env.EndStoreBusy(r.UID)
-			continue
-		}
 		if st, ok := status[r.UID]; ok && robotcap.ActiveRuntimeStatus(st) {
 			logoutResult, err := env.Logout(robotcap.CommandRequest{UIDs: []int{r.UID}})
 			if err != nil || logoutResult.Confirmed == 0 {
@@ -78,6 +72,16 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 			if rc.ReconnectDelayMS > 0 {
 				time.Sleep(time.Duration(rc.ReconnectDelayMS) * time.Millisecond)
 			}
+		}
+		// Prepare the offline inventory only after logout.  Writing Robot_stall and
+		// the character inventory while the game still has an active session lets
+		// the server's final online snapshot overwrite the prepared rows, which
+		// manifests as store_not_confirmed or store_err_0x11.
+		if err := env.EnsureStoreInventoryAndStall(r, rc); err != nil {
+			result.Failed++
+			result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateStorePrepareFailed, Message: err.Error()})
+			env.EndStoreBusy(r.UID)
+			continue
 		}
 		offline = append(offline, r)
 	}
