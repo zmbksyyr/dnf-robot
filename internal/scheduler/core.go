@@ -164,7 +164,6 @@ type SchemaRepository interface {
 	RobotCID(uid int) (int, error)
 	EnsureStorePermission(uid, cid int) (storecap.PermissionStatus, error)
 	EnsureDisjointProfession(info robotcap.Info) error
-	RepairRobotExpBounds(uid, cid int) (storecap.ExpRepairResult, error)
 	RevokeStorePermission(uid, cid int) error
 	FollowAccountUIDs(account string) ([]int, error)
 	FollowAccountVillageLastPlayed(account string) (int, bool, error)
@@ -344,10 +343,6 @@ func (missingSchemaRepository) EnsureStorePermission(int, int) (storecap.Permiss
 
 func (missingSchemaRepository) EnsureDisjointProfession(robotcap.Info) error {
 	return errors.New("scheduler schema repository is not configured")
-}
-
-func (missingSchemaRepository) RepairRobotExpBounds(int, int) (storecap.ExpRepairResult, error) {
-	return storecap.ExpRepairResult{}, errors.New("scheduler schema repository is not configured")
 }
 
 func (missingSchemaRepository) RevokeStorePermission(int, int) error {

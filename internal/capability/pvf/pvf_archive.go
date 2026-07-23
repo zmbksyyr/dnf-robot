@@ -112,6 +112,35 @@ func extractPVFData(a *pvfArchive) ([]shared.EquipmentCatalogItem, []shared.Equi
 	return equipment, stackable, maps
 }
 
+func extractPVFLevelExp(a *pvfArchive) ([]int, error) {
+	if a == nil {
+		return nil, fmt.Errorf("PVF archive is nil")
+	}
+	text := a.text("character/exptable.tbl")
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("PVF character experience table is missing")
+	}
+	// The PVF table starts at level 2. Keep indexes equal to character levels so
+	// callers cannot accidentally shift the curve by one level.
+	values := []int{0, 0}
+	for _, field := range strings.Fields(text) {
+		value, err := strconv.Atoi(field)
+		if err != nil {
+			continue
+		}
+		values = append(values, value)
+	}
+	if len(values) < 3 {
+		return nil, fmt.Errorf("PVF character experience table has no level values")
+	}
+	for level := 2; level < len(values); level++ {
+		if values[level] < values[level-1] {
+			return nil, fmt.Errorf("PVF character experience decreases at level %d", level)
+		}
+	}
+	return values, nil
+}
+
 func appendItemInfoCreatureArtifacts(equipment []shared.EquipmentCatalogItem, rawItemInfo string) []shared.EquipmentCatalogItem {
 	rows := parsePVFItemInfoRows(formatPVFItemInfoDAT(rawItemInfo))
 	if len(rows) == 0 {

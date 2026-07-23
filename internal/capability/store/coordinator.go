@@ -342,6 +342,10 @@ func (c *PointCoordinator) Release(uid int, pos Position) {
 }
 
 func pointPenaltyReason(reason string) bool {
+	// Protocol meaning: 0x11 is item/inventory validation and 0x72 is account or
+	// trading security protection; neither describes the claimed map point.
+	// This function intentionally preserves the existing cache policy for now;
+	// keep protocol classification separate when changing point penalties later.
 	switch reason {
 	case StoreReasonErr011:
 		return false

@@ -227,6 +227,7 @@ func (b *diagnosticsBuilder) addFileSection() {
 		{"pvf_stackable_catalog.json", filepath.Join(configDir, "pvf_stackable_catalog.json"), true},
 		{"pvf_map_catalog.json", filepath.Join(configDir, "pvf_map_catalog.json"), true},
 		{"pvf_skill_state_catalog.json", filepath.Join(configDir, "pvf_skill_state_catalog.json"), true},
+		{"pvf_level_exp_catalog.json", filepath.Join(configDir, "pvf_level_exp_catalog.json"), true},
 		{"pvf_iteminfo.dat", filepath.Join(configDir, "pvf_iteminfo.dat"), true},
 		{"auction iteminfo.dat", "/home/neople/auction/iteminfo.dat", true},
 		{"point iteminfo.dat", "/home/neople/point/iteminfo.dat", true},

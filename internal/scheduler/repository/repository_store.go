@@ -8,7 +8,6 @@ import (
 	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
 	storecap "robot/internal/capability/store"
-	"robot/internal/shared"
 )
 
 func (r *SQLRepository) MarkStoreStarted(uid int) error {
@@ -208,70 +207,6 @@ func (r *SQLRepository) EnsureDisjointProfession(info robotcap.Info) error {
 	}
 	committed = true
 	return nil
-}
-
-func (r *SQLRepository) RepairRobotExpBounds(uid, cid int) (storecap.ExpRepairResult, error) {
-	if uid <= 0 || cid <= 0 {
-		return storecap.ExpRepairResult{}, nil
-	}
-	exists, err := r.TableExists("taiwan_cain.exp_level_ref")
-	if err != nil {
-		return storecap.ExpRepairResult{}, err
-	}
-	var result storecap.ExpRepairResult
-	if exists {
-		_ = r.QueryRow("SELECT COUNT(*) FROM taiwan_cain.exp_level_ref").Scan(&result.RefRows)
-	}
-	if result.RefRows > 0 {
-		res, err := r.Exec(`UPDATE taiwan_cain.charac_info c
-			JOIN taiwan_cain.exp_level_ref e ON e.lev=c.lev
-			LEFT JOIN taiwan_cain.exp_level_ref n ON n.lev=c.lev+1
-			SET c.exp=e.exp
-			WHERE c.charac_no=? AND (c.exp<e.exp OR (n.exp IS NOT NULL AND c.exp>=n.exp))`, cid)
-		if err != nil {
-			return storecap.ExpRepairResult{}, err
-		}
-		if rows, rowErr := res.RowsAffected(); rowErr == nil {
-			result.Changed += rows
-		}
-		res, err = r.Exec(`UPDATE taiwan_cain.charac_stat s
-			JOIN taiwan_cain.charac_info c ON c.charac_no=s.charac_no
-			JOIN taiwan_cain.exp_level_ref e ON e.lev=c.lev
-			LEFT JOIN taiwan_cain.exp_level_ref n ON n.lev=c.lev+1
-			SET s.exp=e.exp
-			WHERE s.charac_no=? AND (s.exp<e.exp OR (n.exp IS NOT NULL AND s.exp>=n.exp))`, cid)
-		if err != nil {
-			return storecap.ExpRepairResult{}, err
-		}
-		if rows, rowErr := res.RowsAffected(); rowErr == nil {
-			result.Changed += rows
-		}
-		return result, nil
-	}
-	var lev, infoExp, statExp int
-	if err := r.QueryRow(`SELECT IFNULL(c.lev,0),IFNULL(c.exp,0),IFNULL(s.exp,0)
-		FROM taiwan_cain.charac_info c LEFT JOIN taiwan_cain.charac_stat s ON s.charac_no=c.charac_no
-		WHERE c.charac_no=?`, cid).Scan(&lev, &infoExp, &statExp); err != nil {
-		return storecap.ExpRepairResult{}, err
-	}
-	minExp, ok := shared.LevelMinExp(lev)
-	if ok && (infoExp < minExp || statExp < minExp) {
-		res, err := r.Exec("UPDATE taiwan_cain.charac_info SET exp=? WHERE charac_no=? AND exp<?", minExp, cid, minExp)
-		if err != nil {
-			return storecap.ExpRepairResult{}, err
-		}
-		if rows, rowErr := res.RowsAffected(); rowErr == nil {
-			result.Changed += rows
-		}
-		res, err = r.Exec("UPDATE taiwan_cain.charac_stat SET exp=? WHERE charac_no=? AND exp<?", minExp, cid, minExp)
-		if err != nil {
-			return storecap.ExpRepairResult{}, err
-		}
-		if rows, rowErr := res.RowsAffected(); rowErr == nil {
-			result.Changed += rows
-		}
-	}
-	return result, nil
 }
 
 func (r *SQLRepository) RevokeStorePermission(uid, cid int) error {

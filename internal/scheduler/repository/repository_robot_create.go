@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
+	catalogcap "robot/internal/capability/catalog"
 	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
@@ -97,14 +98,18 @@ func (r *SQLRepository) ClearTradePunish(uid int) (int64, error) {
 }
 
 func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
+	exp, ok := catalogcap.LevelMinExp(info.Level)
+	if !ok {
+		return fmt.Errorf("PVF level experience unavailable for level %d", info.Level)
+	}
 	dbName := robottemplate.NameForEncoding(info.Name, "utf8_cp1252")
 	if _, err := r.Exec(
-		"INSERT INTO taiwan_cain.charac_info (m_id,charac_no,charac_name,village,maxHP,maxMP,phy_attack,phy_defense,mag_attack,mag_defense,inven_weight,hp_regen,mp_regen,move_speed,attack_speed,cast_speed,hit_recovery,jump,charac_weight,max_fatigue,lev,job,grow_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		info.UID, info.CID, dbName, info.Village, "1800", "1400", "75", "75", "45", "45", "480000", "0", "500", "8500", "8500", "7000", "6000", "4300", "680000", "156", info.Level, info.Job, info.Grow,
+		"INSERT INTO taiwan_cain.charac_info (m_id,charac_no,charac_name,village,maxHP,maxMP,phy_attack,phy_defense,mag_attack,mag_defense,inven_weight,hp_regen,mp_regen,move_speed,attack_speed,cast_speed,hit_recovery,jump,charac_weight,max_fatigue,lev,exp,job,grow_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		info.UID, info.CID, dbName, info.Village, "1800", "1400", "75", "75", "45", "45", "480000", "0", "500", "8500", "8500", "7000", "6000", "4300", "680000", "156", info.Level, exp, info.Job, info.Grow,
 	); err != nil {
 		return fmt.Errorf("insert charac_info uid=%d cid=%d: %w", info.UID, info.CID, err)
 	}
-	if _, err := r.Exec("INSERT INTO taiwan_cain.charac_stat (charac_no,HP,exp,tutorial_flag,village) VALUES (?,?,?,?,?)", info.CID, "100", 0, "-1", info.Village); err != nil {
+	if _, err := r.Exec("INSERT INTO taiwan_cain.charac_stat (charac_no,HP,exp,tutorial_flag,village) VALUES (?,?,?,?,?)", info.CID, "100", exp, "-1", info.Village); err != nil {
 		return fmt.Errorf("insert charac_stat cid=%d: %w", info.CID, err)
 	}
 	optional := []struct {

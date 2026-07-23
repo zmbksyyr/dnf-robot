@@ -16,12 +16,12 @@ func TestLoginRepairCapabilityCacheLoadsOncePerDatabase(t *testing.T) {
 	calls := 0
 	load := func(*sql.DB) (loginRepairCapabilities, error) {
 		calls++
-		return loginRepairCapabilities{robotRegistry: true}, nil
+		return loginRepairCapabilities{memberPunishInfo: true}, nil
 	}
 
 	for i := 0; i < 2; i++ {
 		capabilities, err := cache.get(ctx, db1, load)
-		if err != nil || !capabilities.robotRegistry {
+		if err != nil || !capabilities.memberPunishInfo {
 			t.Fatalf("db1 load %d: capabilities=%+v err=%v", i, capabilities, err)
 		}
 	}
@@ -65,7 +65,7 @@ func TestLoginRepairCapabilityCacheWaitHonorsContext(t *testing.T) {
 		_, err := cache.get(context.Background(), db, func(*sql.DB) (loginRepairCapabilities, error) {
 			close(started)
 			<-release
-			return loginRepairCapabilities{robotRegistry: true}, nil
+			return loginRepairCapabilities{memberPunishInfo: true}, nil
 		})
 		done <- err
 	}()

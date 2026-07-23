@@ -38,11 +38,6 @@ type PermissionStatus struct {
 	EventEntry int
 }
 
-type ExpRepairResult struct {
-	RefRows int
-	Changed int64
-}
-
 func InventoryPlanFor(startBox int) InventoryPlan {
 	start := startBox
 	if start <= 0 || start == 7 {

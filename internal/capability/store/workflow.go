@@ -345,6 +345,19 @@ func (w Workflow) waitDisplay(uid int, rc robotconfig.RuntimeConfig, shouldStop 
 }
 
 func StoreErrReason(err byte) string {
+	// df_game_r CMD 88 (CreatePrivateStore) error classification, verified from
+	// server-side branches rather than inferred from robot success rates:
+	//   0x38: village object registration failed. Usually a point collision or an
+	//         invalid object position, so changing coordinates is appropriate.
+	//   0x3e: generic "store creation is not allowed here/now". The server reuses
+	//         it for busy state, forbidden village/channel, gate/entrance area and
+	//         village/area mismatch; only some branches are position-related.
+	//   0x52: coordinates are inside a configured restrictive commercial zone;
+	//         this is the definite position error (often NPC/entrance space).
+	//   0x72: account/trading security protection rejected the operation; it is
+	//         not a map-position error and changing coordinates cannot fix it.
+	//   0x11: store item/inventory verification failed after creation; it is not
+	//         a map-position error.
 	if err == 0 {
 		return StoreReasonFailed
 	}
@@ -355,6 +368,9 @@ func StoreErrReason(err byte) string {
 }
 
 func RetryStoreReasonWithNewPoint(reason string) bool {
+	// 0x38 and 0x52 are position failures. 0x3e remains retryable because the
+	// server also uses it for gate/entrance/area restrictions, although it is not
+	// exclusively positional. 0x11 and 0x72 must not be treated as "try a point".
 	switch reason {
 	case "store_err_0x38", "store_err_0x3e", StoreReasonErr052:
 		return true

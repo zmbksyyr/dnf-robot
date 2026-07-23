@@ -21,7 +21,6 @@ type PreparationEnv interface {
 	Logf(format string, args ...interface{})
 	RandBetween(min, max int) int
 	ReplaceStoreStall(uid int, title string, items []StallItem) (StallResult, error)
-	RepairRobotExpBounds(uid, cid int) (ExpRepairResult, error)
 	RobotCID(uid int) (int, error)
 	SaveInventory(cid int, capacity int, raw []byte) error
 	SaveInventoryRaw(cid int, raw []byte) error
@@ -124,13 +123,6 @@ func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.Run
 
 func (p Preparer) EnsureStorePermission(uid, cid int) error {
 	env := p.Env
-	result, err := env.RepairRobotExpBounds(uid, cid)
-	if err != nil {
-		return err
-	}
-	if result.Changed > 0 {
-		env.Logf("[StorePrepare] uid=%d cid=%d repaired_exp_bounds ref_rows=%d rows=%d\n", uid, cid, result.RefRows, result.Changed)
-	}
 	status, err := env.EnsureStorePermissionRecord(uid, cid)
 	if err != nil {
 		return err

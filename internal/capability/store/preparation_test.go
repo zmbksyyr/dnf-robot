@@ -97,10 +97,6 @@ func (e testPreparationEnv) ReplaceStoreStall(uid int, title string, items []Sta
 	return StallResult{}, nil
 }
 
-func (e testPreparationEnv) RepairRobotExpBounds(uid, cid int) (ExpRepairResult, error) {
-	return ExpRepairResult{}, nil
-}
-
 func (e testPreparationEnv) RobotCID(uid int) (int, error) {
 	return 0, nil
 }

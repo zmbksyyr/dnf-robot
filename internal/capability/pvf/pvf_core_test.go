@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"robot/internal/capability/catalog"
 	"robot/internal/shared"
 )
 
@@ -15,8 +16,15 @@ func TestEnsureExportsLoadsExistingSkillCatalogWithoutPVFSource(t *testing.T) {
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := WriteJSON(filepath.Join(dir, pvfLevelExpExportName), []int{0, 0, 1000, 2653}); err != nil {
+		t.Fatal(err)
+	}
 	setSkillStateCatalog(nil)
-	t.Cleanup(func() { setSkillStateCatalog(nil) })
+	catalog.ClearLevelMinExpTable()
+	t.Cleanup(func() {
+		setSkillStateCatalog(nil)
+		catalog.ClearLevelMinExpTable()
+	})
 
 	for _, dfGameR := range []string{"", filepath.Join(dir, "missing", "df_game_r")} {
 		setSkillStateCatalog(nil)
@@ -26,6 +34,28 @@ func TestEnsureExportsLoadsExistingSkillCatalogWithoutPVFSource(t *testing.T) {
 		got := shared.SkillStatesForJob(6)
 		if len(got) != 1 || got[0].SkillIndex != 3 || got[0].State != 22 || got[0].ScriptPath != "sqr/character/thief/shiningcut.nut" {
 			t.Fatalf("loaded skill snapshot for %q = %+v", dfGameR, got)
+		}
+		if exp, ok := catalog.LevelMinExp(3); !ok || exp != 2653 {
+			t.Fatalf("loaded level exp for %q = (%d, %t)", dfGameR, exp, ok)
+		}
+	}
+}
+
+func TestExtractPVFLevelExpIndexesByCharacterLevel(t *testing.T) {
+	archive := &pvfArchive{files: map[string]*pvfFile{
+		"character/exptable.tbl": {Name: "character/exptable.tbl", Data: []byte("#PVF_File\r\n1000\t2653\t5543")},
+	}}
+	got, err := extractPVFLevelExp(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{0, 0, 1000, 2653, 5543}
+	if len(got) != len(want) {
+		t.Fatalf("level exp length got %d want %d", len(got), len(want))
+	}
+	for level := range want {
+		if got[level] != want[level] {
+			t.Fatalf("level %d exp got %d want %d", level, got[level], want[level])
 		}
 	}
 }
@@ -37,6 +67,7 @@ func TestPVFExportsCurrentInvalidatesOldSkillStateSchema(t *testing.T) {
 		"pvf_stackable_catalog.json": []byte(`[{"id": 1}]`),
 		"pvf_map_catalog.json":       []byte(`[{"id": 1}]`),
 		pvfSkillStateExportName:      []byte(`[{"job": 1}]`),
+		pvfLevelExpExportName:        []byte(`[0,0,1000]`),
 		pvfItemInfoExportName:        []byte("iteminfo"),
 	}
 	for name, data := range files {
@@ -99,6 +130,7 @@ func writeCurrentPVFExportFiles(t *testing.T, dir string) {
 		"pvf_stackable_catalog.json": []byte(`[{"id": 1}]`),
 		"pvf_map_catalog.json":       []byte(`[{"id": 1}]`),
 		pvfSkillStateExportName:      []byte(`[{"job": 1, "skill_index": 1, "state": 1}]`),
+		pvfLevelExpExportName:        []byte(`[0,0,1000]`),
 		pvfItemInfoExportName:        []byte("iteminfo"),
 	}
 	for name, data := range files {

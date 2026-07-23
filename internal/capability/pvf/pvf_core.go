@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"robot/internal/capability/catalog"
 	"robot/internal/shared"
 )
 
@@ -32,25 +33,30 @@ const pvfItemInfoExportName = "pvf_iteminfo.dat"
 
 const pvfSkillStateExportName = "pvf_skill_state_catalog.json"
 
+const pvfLevelExpExportName = "pvf_level_exp_catalog.json"
+
 func EnsureExports(dfGameR, configDir string) error {
 	if configDir == "" {
 		return nil
 	}
 	skillCatalogPath := filepath.Join(configDir, pvfSkillStateExportName)
+	levelExpPath := filepath.Join(configDir, pvfLevelExpExportName)
 	if dfGameR == "" {
 		_ = loadSkillStateCatalog(skillCatalogPath)
+		_ = loadLevelExpCatalog(levelExpPath)
 		return nil
 	}
 	pvfPath := filepath.Join(filepath.Dir(dfGameR), "Script.pvf")
 	stat, err := os.Stat(pvfPath)
 	if err != nil {
 		_ = loadSkillStateCatalog(skillCatalogPath)
+		_ = loadLevelExpCatalog(levelExpPath)
 		return nil
 	}
 	manifestPath := filepath.Join(configDir, "pvf_manifest.json")
 	metadata := buildPVFManifestMetadata(pvfPath, stat)
 	if pvfExportsCurrent(manifestPath, metadata, configDir) {
-		if err := loadSkillStateCatalog(skillCatalogPath); err == nil {
+		if err := loadSkillStateCatalog(skillCatalogPath); err == nil && loadLevelExpCatalog(levelExpPath) == nil {
 			return nil
 		}
 	}
@@ -60,7 +66,7 @@ func EnsureExports(dfGameR, configDir string) error {
 		return err
 	}
 	if pvfExportsCurrent(manifestPath, manifest, configDir) {
-		if err := loadSkillStateCatalog(skillCatalogPath); err == nil {
+		if err := loadSkillStateCatalog(skillCatalogPath); err == nil && loadLevelExpCatalog(levelExpPath) == nil {
 			return nil
 		}
 	}
@@ -70,6 +76,10 @@ func EnsureExports(dfGameR, configDir string) error {
 		return fmt.Errorf("parse pvf: %w", err)
 	}
 	equipment, stackable, maps := extractPVFData(archive)
+	levelExp, err := extractPVFLevelExp(archive)
+	if err != nil {
+		return err
+	}
 	removeObsoletePVFExports(configDir)
 	if err := WriteJSON(filepath.Join(configDir, "pvf_equipment_catalog.json"), equipment); err != nil {
 		return err
@@ -79,6 +89,12 @@ func EnsureExports(dfGameR, configDir string) error {
 	}
 	if err := WriteJSON(filepath.Join(configDir, "pvf_map_catalog.json"), maps); err != nil {
 		return err
+	}
+	if err := WriteJSON(levelExpPath, levelExp); err != nil {
+		return err
+	}
+	if err := catalog.SetLevelMinExpTable(levelExp); err != nil {
+		return fmt.Errorf("load PVF level experience: %w", err)
 	}
 	skillStates := extractSkillStateCatalog(archive)
 	if err := WriteJSON(filepath.Join(configDir, pvfSkillStateExportName), skillStates); err != nil {
@@ -113,7 +129,7 @@ func buildPVFManifest(path string, stat os.FileInfo) (pvfManifest, error) {
 }
 
 func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) bool {
-	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json", pvfSkillStateExportName, pvfItemInfoExportName} {
+	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json", pvfSkillStateExportName, pvfLevelExpExportName, pvfItemInfoExportName} {
 		path := filepath.Join(configDir, name)
 		stat, err := os.Stat(path)
 		if err != nil || stat.Size() <= 5 {
@@ -128,6 +144,12 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 		}
 		if name == "pvf_equipment_catalog.json" && !strings.Contains(string(data), `"item_type": 20`) {
 			return false
+		}
+		if name == pvfLevelExpExportName {
+			var values []int
+			if json.Unmarshal(data, &values) != nil || len(values) < 2 {
+				return false
+			}
 		}
 	}
 	data, err := os.ReadFile(manifestPath)
@@ -145,6 +167,18 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 		md5Matches = got.MD5 == want.MD5
 	}
 	return got.Version == want.Version && got.SkillStateVersion == want.SkillStateVersion && got.Source == want.Source && got.Size == want.Size && got.ModTime == want.ModTime && md5Matches
+}
+
+func loadLevelExpCatalog(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var values []int
+	if err := json.Unmarshal(data, &values); err != nil {
+		return err
+	}
+	return catalog.SetLevelMinExpTable(values)
 }
 
 func removeObsoletePVFExports(configDir string) {

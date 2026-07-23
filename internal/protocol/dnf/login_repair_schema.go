@@ -14,8 +14,6 @@ type loginRepairCapabilities struct {
 	dTaiwanMemberSecurityGrade     bool
 	dTaiwanSecuMemberSecurityGrade bool
 	memberPunishInfo               bool
-	robotRegistry                  bool
-	expLevelRefPopulated           bool
 }
 
 func (c loginRepairCapabilities) memberJoinInfoTables() []string {
@@ -108,8 +106,8 @@ func inspectLoginRepairCapabilities(ctx context.Context, db *sql.DB) (loginRepai
 
 	rows, err := db.QueryContext(ctx, `SELECT TABLE_SCHEMA,TABLE_NAME
 		FROM information_schema.TABLES
-		WHERE TABLE_SCHEMA IN ('d_taiwan','taiwan_login','d_taiwan_secu','d_starsky','taiwan_cain')
-		AND TABLE_NAME IN ('member_join_info','member_security_grade','member_punish_info','robot_registry','exp_level_ref')`)
+		WHERE TABLE_SCHEMA IN ('d_taiwan','taiwan_login','d_taiwan_secu')
+		AND TABLE_NAME IN ('member_join_info','member_security_grade','member_punish_info')`)
 	if err != nil {
 		return loginRepairCapabilities{}, fmt.Errorf("query optional login tables: %w", err)
 	}
@@ -136,14 +134,6 @@ func inspectLoginRepairCapabilities(ctx context.Context, db *sql.DB) (loginRepai
 		dTaiwanMemberSecurityGrade:     available["d_taiwan.member_security_grade"],
 		dTaiwanSecuMemberSecurityGrade: available["d_taiwan_secu.member_security_grade"],
 		memberPunishInfo:               available["d_taiwan.member_punish_info"],
-		robotRegistry:                  available["d_starsky.robot_registry"],
-	}
-	if available["taiwan_cain.exp_level_ref"] {
-		var populated int
-		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM taiwan_cain.exp_level_ref LIMIT 1)").Scan(&populated); err != nil {
-			return loginRepairCapabilities{}, fmt.Errorf("inspect exp_level_ref: %w", err)
-		}
-		capabilities.expLevelRefPopulated = populated != 0
 	}
 	return capabilities, nil
 }

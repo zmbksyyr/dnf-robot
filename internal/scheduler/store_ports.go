@@ -131,10 +131,6 @@ func (e storePreparationEnv) ReplaceStoreStall(uid int, title string, items []st
 	return e.manager.schemaRepo().ReplaceStoreStall(uid, title, items)
 }
 
-func (e storePreparationEnv) RepairRobotExpBounds(uid, cid int) (storecap.ExpRepairResult, error) {
-	return e.manager.schemaRepo().RepairRobotExpBounds(uid, cid)
-}
-
 func (e storePreparationEnv) RobotCID(uid int) (int, error) {
 	return e.manager.schemaRepo().RobotCID(uid)
 }

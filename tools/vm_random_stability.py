@@ -878,6 +878,7 @@ class StabilityRun(object):
             "/root/config/market_config.json",
             "/root/config/pvf_equipment_catalog.json",
             "/root/config/pvf_stackable_catalog.json",
+            "/root/config/pvf_level_exp_catalog.json",
             "/root/config/pvf_iteminfo.dat",
             "/home/neople/auction/iteminfo.dat",
             "/home/neople/point/iteminfo.dat",

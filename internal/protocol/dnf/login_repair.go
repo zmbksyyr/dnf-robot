@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"robot/internal/foundation/lockhub"
-	"robot/internal/shared"
 )
 
 type loginStaticRepairKey struct {
@@ -174,14 +173,12 @@ func refreshLoginSession(ctx context.Context, db *sql.DB, uid int, loginIP strin
 	run := func(query string, step string, args ...interface{}) bool {
 		return runOnlineRepairSQL(ctx, db, query, step, args...)
 	}
-	return refreshLoginSessionWith(uid, loginIP, capabilities, run, func() bool {
-		return repairOnlineRobotExpBounds(ctx, db, uid, capabilities)
-	})
+	return refreshLoginSessionWith(uid, loginIP, capabilities, run)
 }
 
 type loginRepairExec func(query string, step string, args ...interface{}) bool
 
-func refreshLoginSessionWith(uid int, loginIP string, capabilities loginRepairCapabilities, run loginRepairExec, repairExp func() bool) bool {
+func refreshLoginSessionWith(uid int, loginIP string, capabilities loginRepairCapabilities, run loginRepairExec) bool {
 	if !run("UPDATE taiwan_login.login_account_3 SET login_status=0 WHERE m_id=?", "reset login status", uid) {
 		return false
 	}
@@ -195,59 +192,8 @@ func refreshLoginSessionWith(uid int, loginIP string, capabilities loginRepairCa
 	if capabilities.memberPunishInfo && !run("DELETE FROM d_taiwan.member_punish_info WHERE m_id=? AND punish_type=11", "clear trade punish", uid) {
 		return false
 	}
-	if repairExp == nil || !repairExp() {
-		return false
-	}
-
 	stmtSQL := "INSERT INTO taiwan_login.member_login (m_id,login_time,expire_time,last_play_time,login_ip,cleanpad_point,tutorial_skipable) VALUES (?,UNIX_TIMESTAMP(),2147483647,UNIX_TIMESTAMP(),?,1,'1') ON DUPLICATE KEY UPDATE login_time=UNIX_TIMESTAMP(),expire_time=2147483647,last_play_time=UNIX_TIMESTAMP(),login_ip=VALUES(login_ip),cleanpad_point=1,tutorial_skipable='1'"
 	return run(stmtSQL, "upsert member_login", uid, loginIP)
-}
-
-func repairOnlineRobotExpBounds(ctx context.Context, db *sql.DB, uid int, capabilities loginRepairCapabilities) bool {
-	if !capabilities.robotRegistry {
-		return true
-	}
-	if capabilities.expLevelRefPopulated {
-		infoSQL := `UPDATE taiwan_cain.charac_info c
-			JOIN d_starsky.robot_registry r ON r.cid=c.charac_no
-			JOIN taiwan_cain.exp_level_ref e ON e.lev=c.lev
-			LEFT JOIN taiwan_cain.exp_level_ref n ON n.lev=c.lev+1
-			SET c.exp=e.exp
-			WHERE r.uid=? AND (c.exp<e.exp OR (n.exp IS NOT NULL AND c.exp>=n.exp))`
-		if !runOnlineRepairSQL(ctx, db, infoSQL, "repair charac_info exp", uid) {
-			return false
-		}
-		statSQL := `UPDATE taiwan_cain.charac_stat s
-			JOIN taiwan_cain.charac_info c ON c.charac_no=s.charac_no
-			JOIN d_starsky.robot_registry r ON r.cid=c.charac_no
-			JOIN taiwan_cain.exp_level_ref e ON e.lev=c.lev
-			LEFT JOIN taiwan_cain.exp_level_ref n ON n.lev=c.lev+1
-			SET s.exp=e.exp
-			WHERE r.uid=? AND (s.exp<e.exp OR (n.exp IS NOT NULL AND s.exp>=n.exp))`
-		return runOnlineRepairSQL(ctx, db, statSQL, "repair charac_stat exp", uid)
-	}
-
-	var lev, infoExp, statExp int
-	err := db.QueryRowContext(ctx, `SELECT IFNULL(c.lev,0),IFNULL(c.exp,0),IFNULL(s.exp,0)
-		FROM d_starsky.robot_registry r
-		JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid
-		LEFT JOIN taiwan_cain.charac_stat s ON s.charac_no=r.cid
-		WHERE r.uid=? LIMIT 1`, uid).Scan(&lev, &infoExp, &statExp)
-	if err == sql.ErrNoRows {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("MsgOnLine preflight sql failed: read robot exp: %v\n", err)
-		return false
-	}
-	minExp, ok := shared.LevelMinExp(lev)
-	if !ok || (infoExp >= minExp && statExp >= minExp) {
-		return true
-	}
-	if !runOnlineRepairSQL(ctx, db, "UPDATE taiwan_cain.charac_info c JOIN d_starsky.robot_registry r ON r.cid=c.charac_no SET c.exp=? WHERE r.uid=? AND c.exp<?", "repair charac_info exp fallback", minExp, uid, minExp) {
-		return false
-	}
-	return runOnlineRepairSQL(ctx, db, "UPDATE taiwan_cain.charac_stat s JOIN d_starsky.robot_registry r ON r.cid=s.charac_no SET s.exp=? WHERE r.uid=? AND s.exp<?", "repair charac_stat exp fallback", minExp, uid, minExp)
 }
 
 func runOnlineRepairSQL(ctx context.Context, db *sql.DB, query string, step string, args ...interface{}) bool {

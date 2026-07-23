@@ -114,7 +114,6 @@ func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
 	db := &sql.DB{}
 	staticCalls := 0
 	steps := make(map[string]int)
-	expRepairs := 0
 	capabilities := loginRepairCapabilities{
 		dTaiwanMemberJoinInfo: true,
 		memberPunishInfo:      true,
@@ -123,11 +122,6 @@ func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
 		steps[step]++
 		return true
 	}
-	repairExp := func() bool {
-		expRepairs++
-		return true
-	}
-
 	for i := 0; i < 2; i++ {
 		if !cache.ensure(ctx, db, 101, func(context.Context) bool {
 			staticCalls++
@@ -135,7 +129,7 @@ func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
 		}) {
 			t.Fatal("static repair unexpectedly failed")
 		}
-		if !refreshLoginSessionWith(101, "127.0.0.1", capabilities, run, repairExp) {
+		if !refreshLoginSessionWith(101, "127.0.0.1", capabilities, run) {
 			t.Fatal("session refresh unexpectedly failed")
 		}
 	}
@@ -145,9 +139,6 @@ func TestLoginStaticCacheDoesNotSkipMutableSessionRepairs(t *testing.T) {
 	}
 	if steps["clear trade punish"] != 2 {
 		t.Fatalf("trade punish repair calls got %d want 2", steps["clear trade punish"])
-	}
-	if expRepairs != 2 {
-		t.Fatalf("exp repair calls got %d want 2", expRepairs)
 	}
 }
 
