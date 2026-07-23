@@ -99,6 +99,28 @@ func TestSelectAvatarScansCatalogAcrossConfiguredSlots(t *testing.T) {
 	}
 }
 
+func TestFilterAvatarSupportedJobsIntersectsConfiguredJobsWithPVFSlots(t *testing.T) {
+	items := make([]shared.EquipmentCatalogItem, 0)
+	for slot := 0; slot < 8; slot++ {
+		items = append(items, shared.EquipmentCatalogItem{ID: 1000 + slot, ItemType: 20 + slot, UseJob: []int{1}})
+	}
+	for slot := 0; slot < 7; slot++ {
+		items = append(items, shared.EquipmentCatalogItem{ID: 2000 + slot, ItemType: 20 + slot, UseJob: []int{8}})
+	}
+
+	got := FilterAvatarSupportedJobs([]int{1, 8, 10}, items, robotconfig.RuntimeConfig{MinAvatarSlots: 8})
+	if len(got) != 1 || got[0] != 1 {
+		t.Fatalf("supported jobs = %v, want [1]", got)
+	}
+}
+
+func TestFilterAvatarSupportedJobsKeepsConfiguredJobsWithoutAvatarCatalog(t *testing.T) {
+	got := FilterAvatarSupportedJobs([]int{1, 8}, []shared.EquipmentCatalogItem{{ID: 100, ItemType: 1}}, robotconfig.RuntimeConfig{MinAvatarSlots: 8})
+	if len(got) != 2 || got[0] != 1 || got[1] != 8 {
+		t.Fatalf("supported jobs = %v, want configured fallback", got)
+	}
+}
+
 func testSetCandidates(qualitySlots, varietySlots int) map[int][]shared.EquipmentCatalogItem {
 	out := make(map[int][]shared.EquipmentCatalogItem)
 	for slot := 0; slot < qualitySlots; slot++ {

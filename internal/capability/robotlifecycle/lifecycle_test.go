@@ -69,6 +69,34 @@ func TestCreatorStopsBeforeAllocationWhenUIDRangePreparationFails(t *testing.T) 
 	}
 }
 
+func TestCreatorUsesConfiguredAndPVFAvatarJobIntersection(t *testing.T) {
+	items := make([]shared.EquipmentCatalogItem, 0)
+	for slot := 0; slot < 8; slot++ {
+		items = append(items, shared.EquipmentCatalogItem{ID: 1000 + slot, ItemType: 20 + slot, UseJob: []int{1}})
+	}
+	env := &testCreateEnv{
+		rc: robotconfig.RuntimeConfig{
+			RobotUIDStart:  17000000,
+			RobotUIDEnd:    17000999,
+			LevelMin:       1,
+			LevelMax:       1,
+			Jobs:           []int{1, 8},
+			GrowTypes:      []int{0},
+			MinAvatarSlots: 8,
+		},
+		equipmentCatalog: items,
+	}
+	robots, err := (Creator{Env: env}).Create(robotcap.CreateRequest{Count: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range robots {
+		if info.Job != 1 {
+			t.Fatalf("created job = %d, want PVF-supported configured job 1", info.Job)
+		}
+	}
+}
+
 func TestCreatorSpawnMapsCoverAreasThenUseSmoothedAreaWeight(t *testing.T) {
 	env := &testCreateEnv{
 		rc: robotconfig.RuntimeConfig{
@@ -140,6 +168,7 @@ type testCreateEnv struct {
 	equipmentBase     *shared.EquipmentCatalogItem
 	stackableBase     *shared.EquipmentCatalogItem
 	maps              []shared.MapCatalogItem
+	equipmentCatalog  []shared.EquipmentCatalogItem
 	prepareErr        error
 	prepared          bool
 	allocated         bool
@@ -198,8 +227,12 @@ func (e *testCreateEnv) EquipFromCatalog(_ int, _ int, _ int, _ robotconfig.Runt
 
 func (e *testCreateEnv) LoadCreateCatalogs() CreateCatalogs {
 	e.catalogLoads++
+	equipment := e.equipmentCatalog
+	if equipment == nil {
+		equipment = []shared.EquipmentCatalogItem{{ID: 1001}}
+	}
 	return CreateCatalogs{
-		Equipment: []shared.EquipmentCatalogItem{{ID: 1001}},
+		Equipment: equipment,
 		Stackable: []shared.EquipmentCatalogItem{{ID: 2001}},
 	}
 }

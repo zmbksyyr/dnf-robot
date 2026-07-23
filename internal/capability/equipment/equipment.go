@@ -94,6 +94,51 @@ func AvatarUsableByJob(item shared.EquipmentCatalogItem, job int) bool {
 	return false
 }
 
+// FilterAvatarSupportedJobs intersects the configured creation jobs with the
+// jobs that can fill the configured minimum number of avatar slots from PVF.
+// A missing avatar catalog keeps the configured jobs so environments without
+// an exported catalog retain their existing creation behavior.
+func FilterAvatarSupportedJobs(jobs []int, items []shared.EquipmentCatalogItem, rc robotconfig.RuntimeConfig) []int {
+	if len(jobs) == 0 || rc.MinAvatarSlots <= 0 {
+		return append([]int(nil), jobs...)
+	}
+	slots := rc.AvatarSlots
+	if len(slots) == 0 {
+		slots = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	}
+	wantedTypes := make(map[int]struct{}, len(slots))
+	for _, slot := range slots {
+		if slot >= 0 && slot <= 9 {
+			wantedTypes[slot+20] = struct{}{}
+		}
+	}
+	eligible := make([]shared.EquipmentCatalogItem, 0)
+	for _, item := range items {
+		if item.ID == 0 || item.Expire {
+			continue
+		}
+		if _, ok := wantedTypes[item.ItemType]; ok {
+			eligible = append(eligible, item)
+		}
+	}
+	if len(eligible) == 0 {
+		return append([]int(nil), jobs...)
+	}
+	out := make([]int, 0, len(jobs))
+	for _, job := range jobs {
+		covered := make(map[int]struct{}, len(wantedTypes))
+		for _, item := range eligible {
+			if AvatarUsableByJob(item, job) {
+				covered[item.ItemType] = struct{}{}
+			}
+		}
+		if len(covered) >= rc.MinAvatarSlots {
+			out = append(out, job)
+		}
+	}
+	return out
+}
+
 func SafeAvg(total, count int) int {
 	if count <= 0 {
 		return 0

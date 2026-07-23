@@ -3,6 +3,7 @@ package robotlifecycle
 import (
 	"fmt"
 	"math"
+	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/shared"
@@ -64,6 +65,11 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	if rc.RobotUIDGuard != 0 && rc.RobotUIDGuard <= rc.RobotUIDEnd {
 		return nil, fmt.Errorf("robot_uid_guard %d must be greater than robot_uid_end %d, or 0 to disable", rc.RobotUIDGuard, rc.RobotUIDEnd)
 	}
+	catalogs := env.LoadCreateCatalogs()
+	jobs := equipcap.FilterAvatarSupportedJobs(rc.Jobs, catalogs.Equipment, rc)
+	if len(rc.Jobs) > 0 && len(jobs) == 0 {
+		return nil, fmt.Errorf("configured jobs %v have no PVF avatar support for at least %d slots", rc.Jobs, rc.MinAvatarSlots)
+	}
 	if err := env.PrepareRobotUIDRange(rc.RobotUIDStart, rc.RobotUIDEnd, rc.RobotUIDGuard); err != nil {
 		return nil, err
 	}
@@ -71,7 +77,6 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	catalogs := env.LoadCreateCatalogs()
 	robots := make([]robotcap.Info, 0, req.Count)
 	usedNames := make(map[string]struct{}, req.Count)
 	levels := make([]int, req.Count)
@@ -85,7 +90,7 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 			CID:     allocation.FirstCID + i,
 			Name:    env.RobotName(allocation.UIDs[i], usedNames, rc),
 			Level:   levels[i],
-			Job:     env.RandomFrom(rc.Jobs),
+			Job:     env.RandomFrom(jobs),
 			Grow:    env.RandomFrom(rc.GrowTypes),
 			Port:    env.RobotGamePort(),
 			Village: rc.SpawnFallbackVillage,
