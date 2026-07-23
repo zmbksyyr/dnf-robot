@@ -127,6 +127,13 @@ func stackablePoolKind(item shared.EquipmentCatalogItem) (PoolKind, bool) {
 		return 0, false
 	}
 	slot := strings.ToLower(strings.TrimSpace(item.Slot))
+	path := strings.ToLower(strings.TrimSpace(item.Path))
+	// Professional materials belong to inventory type 10, not the normal
+	// material bag used by private stores on legacy servers. Monster cards also
+	// carry an expert-job label but are verified to trade from the material bag.
+	if strings.Contains(path, "professional/") {
+		return 0, false
+	}
 	switch {
 	case strings.Contains(slot, "material"):
 		return PoolMaterial, true

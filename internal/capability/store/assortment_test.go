@@ -18,6 +18,7 @@ func TestBuildItemPoolClassifiesTradeablePVFItems(t *testing.T) {
 		{ID: 201, Slot: "waste", Attach: "trade"},
 		{ID: 202, Slot: "recipe", Attach: "trade", StackLimit: 10},
 		{ID: 203, Slot: "waste", Attach: "trade", StackLimit: 1},
+		{ID: 204, Slot: "material expert job", Path: "stackable/professional/material/product.stk", Attach: "free"},
 	}, 13)
 
 	if len(pool.Equipment) != 1 || pool.Equipment[0].Item.ID != 100 {
