@@ -151,7 +151,7 @@ func TestLoadFileKeepsDefaultsForMissingValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Default()
-	if rc.LevelMin != 60 || rc.LevelMax != want.LevelMax || rc.RobotUIDStart != want.RobotUIDStart || rc.RobotUIDEnd != 17000999 || rc.RobotUIDGuard != 17999999 {
+	if rc.LevelMin != 60 || rc.LevelMax != want.LevelMax || rc.RobotUIDStart != want.RobotUIDStart || rc.RobotUIDEnd != 17000999 || rc.RobotUIDGuard != 17999999 || rc.MinAvatarSlots != 8 {
 		t.Fatalf("defaults not preserved: %+v", rc)
 	}
 }
