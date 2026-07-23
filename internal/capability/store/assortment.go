@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	StoreStackableSlots = 12
-	StoreEquipmentSlots = 12
-	StoreStackFallback  = 2000
+	StoreStackableSlots  = 12
+	StoreEquipmentSlots  = 12
+	StoreStackFallback   = 2000
+	StoreTotalPriceLimit = 500000000
 )
 
 type PoolKind uint8

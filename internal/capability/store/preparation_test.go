@@ -60,11 +60,19 @@ func assertInventoryRangeType(t *testing.T, raw []byte, startBox, count, invento
 	}
 }
 
-func TestStorePoolPriceKeepsStackTotalInSignedProtocolRange(t *testing.T) {
+func TestStorePoolPricesKeepWholeDisplayInOldServerRange(t *testing.T) {
 	env := testPreparationEnv{randValue: 5000000}
-	price := storePoolPrice(env, robotconfig.RuntimeConfig{StorePriceMin: 100000, StorePriceMax: 5000000}, 2000)
-	if int64(price)*2000 > int64(^uint32(0)>>1) {
-		t.Fatalf("price=%d count=2000 exceeds signed protocol total", price)
+	items := make([]StallItem, 24)
+	for index := range items {
+		items[index].Count = 2000
+	}
+	assignStorePoolPrices(env, robotconfig.RuntimeConfig{StorePriceMin: 100000, StorePriceMax: 5000000}, items)
+	total := int64(0)
+	for _, item := range items {
+		total += int64(item.Price) * int64(item.Count)
+	}
+	if total > StoreTotalPriceLimit {
+		t.Fatalf("whole store total=%d exceeds limit=%d", total, StoreTotalPriceLimit)
 	}
 }
 

@@ -167,7 +167,7 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 			count = limit
 		}
 		WriteInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], entry.Item, count, inventoryType)
-		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: count, Price: storePoolPrice(env, rc, count)})
+		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: count})
 	}
 	for index, entry := range equipment {
 		boxIndex := rc.StoreEquipmentStartBox + index
@@ -176,12 +176,13 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 			continue
 		}
 		copy(invRaw[rawIndex*61:(rawIndex+1)*61], entry.SlotBytes[:])
-		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: 1, Price: storePoolPrice(env, rc, 1)})
+		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: 1})
 	}
 	if len(stallItems) == 0 {
 		env.Logf("[StorePrepare] uid=%d cid=%d pool_empty=1\n", info.UID, info.CID)
 		return nil
 	}
+	assignStorePoolPrices(env, rc, stallItems)
 	if err := env.SaveInventory(info.CID, rc.InventoryCapacity, invRaw); err != nil {
 		return err
 	}
@@ -205,22 +206,32 @@ func clearInventoryRange(raw []byte, startBox, count int) {
 	}
 }
 
-func storePoolPrice(env PreparationEnv, rc robotconfig.RuntimeConfig, count int) int {
-	price := env.RandBetween(rc.StorePriceMin, rc.StorePriceMax)
-	if price <= 0 {
-		price = 100000
+func assignStorePoolPrices(env PreparationEnv, rc robotconfig.RuntimeConfig, items []StallItem) {
+	totalUnits := 0
+	for _, item := range items {
+		count := item.Count
+		if count <= 0 {
+			count = 1
+		}
+		totalUnits += count
 	}
-	if count <= 0 {
-		count = 1
+	if totalUnits <= 0 {
+		totalUnits = 1
 	}
-	const maxStoreTotal = int(^uint32(0) >> 1)
-	if maxPrice := maxStoreTotal / count; price > maxPrice {
-		price = maxPrice
+	maxUnitPrice := StoreTotalPriceLimit / totalUnits
+	if maxUnitPrice <= 0 {
+		maxUnitPrice = 1
 	}
-	if price <= 0 {
-		price = 1
+	for index := range items {
+		price := env.RandBetween(rc.StorePriceMin, rc.StorePriceMax)
+		if price <= 0 {
+			price = 100000
+		}
+		if price > maxUnitPrice {
+			price = maxUnitPrice
+		}
+		items[index].Price = price
 	}
-	return price
 }
 
 func (p Preparer) EnsureStorePermission(uid, cid int) error {
