@@ -43,6 +43,8 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 func (s *Server) ListenAndServe() error {
 	stopPartyCompat := s.startPartyCompatSupervisor()
 	defer stopPartyCompat()
+	stopMailboxGuard := s.startMailboxGuardSupervisor()
+	defer stopMailboxGuard()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/login", s.handleLogin)
@@ -56,6 +58,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/monitor-service", s.requireAuth(s.handleMonitorService))
 	mux.HandleFunc("/api/relay-service", s.requireAuth(s.handleRelayService))
 	mux.HandleFunc("/api/party-compat", s.requireAuth(s.handlePartyCompat))
+	mux.HandleFunc("/api/compat", s.requireAuth(s.handleCompat))
 	mux.HandleFunc("/api/diagnostics", s.requireAuth(s.handleDiagnostics))
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
 	server := &http.Server{
