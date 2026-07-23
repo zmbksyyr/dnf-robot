@@ -420,7 +420,9 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		if count <= 0 {
 			count = 1
 		}
-		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: sr.Pos.BoxType, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
+		// CMD 90's box-type byte is not the inventory table's type field. This
+		// legacy protocol uses zero with the global bag index for all three bags.
+		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
 	}
 	sent := r.completeDisplay(title, storeInfo)
 	r.mu.Unlock()
