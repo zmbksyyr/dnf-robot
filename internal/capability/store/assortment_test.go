@@ -14,11 +14,12 @@ func TestBuildItemPoolClassifiesTradeablePVFItems(t *testing.T) {
 		{ID: 101, ItemType: 3, Attach: "trade"},
 		{ID: 102, ItemType: 4, Attach: "sealing", NoTrade: true},
 	}, []shared.EquipmentCatalogItem{
-		{ID: 200, Slot: "material", Attach: "free", StackLimit: 1000},
+		{ID: 200, Slot: "material", Icon: "Item/stackable/material.img", Attach: "free", StackLimit: 1000},
 		{ID: 201, Slot: "waste", Attach: "trade"},
 		{ID: 202, Slot: "recipe", Attach: "trade", StackLimit: 10},
 		{ID: 203, Slot: "waste", Attach: "trade", StackLimit: 1},
 		{ID: 204, Slot: "material expert job", Path: "stackable/professional/material/product.stk", Attach: "free"},
+		{ID: 205, Slot: "material", Icon: "Item/IconMaterial.img", Attach: "free"},
 	}, 13)
 
 	if len(pool.Equipment) != 1 || pool.Equipment[0].Item.ID != 100 {

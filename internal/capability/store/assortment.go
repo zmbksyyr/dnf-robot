@@ -134,6 +134,10 @@ func stackablePoolKind(item shared.EquipmentCatalogItem) (PoolKind, bool) {
 	if strings.Contains(path, "professional/") {
 		return 0, false
 	}
+	icon := strings.ToLower(strings.TrimSpace(item.Icon))
+	if !strings.Contains(icon, "stackable/material.img") && !strings.Contains(icon, "monstercard") {
+		return 0, false
+	}
 	switch {
 	case strings.Contains(slot, "material"):
 		return PoolMaterial, true
