@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
 
@@ -25,17 +26,17 @@ func TestBuildItemPoolClassifiesTradeablePVFItems(t *testing.T) {
 	if pool.Equipment[0].SlotBytes[1] != 1 || pool.Equipment[0].SlotBytes[6] != 13 {
 		t.Fatalf("equipment template type=%d intensify=%d", pool.Equipment[0].SlotBytes[1], pool.Equipment[0].SlotBytes[6])
 	}
+	if !bytes.Equal(pool.Equipment[0].SlotBytes[7:12], make([]byte, 5)) {
+		t.Fatalf("store equipment instance bytes = %x, want zero", pool.Equipment[0].SlotBytes[7:12])
+	}
 	if got := int(binary.LittleEndian.Uint32(pool.Equipment[0].SlotBytes[2:6])); got != 100 {
 		t.Fatalf("equipment template item id = %d", got)
 	}
-	if len(pool.Stackable) != 2 {
-		t.Fatalf("stackable pool size = %d, want 2", len(pool.Stackable))
+	if len(pool.Stackable) != 1 {
+		t.Fatalf("stackable pool size = %d, want 1", len(pool.Stackable))
 	}
 	if pool.Stackable[0].Kind != PoolMaterial || pool.Stackable[0].MaxCount != 1000 {
 		t.Fatalf("material entry = %+v", pool.Stackable[0])
-	}
-	if pool.Stackable[1].Kind != PoolConsumable || pool.Stackable[1].MaxCount != StoreStackFallback {
-		t.Fatalf("consumable entry = %+v", pool.Stackable[1])
 	}
 }
 

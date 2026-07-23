@@ -130,8 +130,6 @@ func stackablePoolKind(item shared.EquipmentCatalogItem) (PoolKind, bool) {
 	switch {
 	case strings.Contains(slot, "material"):
 		return PoolMaterial, true
-	case strings.Contains(slot, "waste"), slot == "throw", slot == "booster", strings.Contains(slot, "potion"), slot == "feed":
-		return PoolConsumable, true
 	default:
 		return 0, false
 	}

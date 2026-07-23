@@ -412,6 +412,10 @@ func WriteStoreEquipSlot(dst []byte, item shared.EquipmentCatalogItem, rng *rand
 		intensify = 255
 	}
 	dst[6] = byte(intensify)
+	// In inventory records bytes 7..11 are instance/expiry fields, not the
+	// random equipment values used by equipped-slot templates. Old servers
+	// discard the item during login when these contain an invalid small value.
+	clear(dst[7:12])
 }
 
 func safeRandIntn(randIntn func(int) int, n int) int {
