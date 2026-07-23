@@ -116,6 +116,7 @@ type RobotVo struct {
 	StoreCreateRejected   bool
 	LastStoreError        byte
 	StoreCreated          bool
+	LastStoreDisplay      []StoreInfo
 	storeInventoryVersion uint64
 	LoginInfo             UserLoginInfo
 

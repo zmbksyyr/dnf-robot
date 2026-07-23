@@ -14,6 +14,7 @@ const storeQueryTimeout = 3 * time.Second
 
 type StoreInfo struct {
 	Index    int
+	ItemID   int
 	BoxType  int
 	BoxIndex int
 	Price    int
@@ -40,6 +41,7 @@ func (r *RobotVo) ResetPrivateStoreState() {
 	r.LastStoreError = 0
 	r.StoreCreated = false
 	r.PendingStoreTitle = ""
+	r.LastStoreDisplay = nil
 }
 
 func (r *RobotVo) ResetDisjointStoreState() {
@@ -64,6 +66,7 @@ func (r *RobotVo) PreparePrivateStoreState(title string) {
 	r.StoreCreateRejected = false
 	r.LastStoreError = 0
 	r.StoreCreated = false
+	r.LastStoreDisplay = nil
 	r.RobotTyp = 2
 }
 
@@ -170,6 +173,8 @@ func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) bool {
 	r.PacketID++
 	r.StoreDisplaySent = true
 	r.StoreDisplayAck = false
+	r.LastStoreDisplay = append(r.LastStoreDisplay[:0], storeInfo...)
+	fmt.Printf("[STORE_90_SENT] uid=%d items=%d list=%+v\n", r.UID, len(storeInfo), storeInfo)
 	return true
 }
 
@@ -311,6 +316,7 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 		usedSlots[selected.ItemPos] = struct{}{}
 		storeInfo = append(storeInfo, StoreInfo{
 			Index:    len(storeInfo),
+			ItemID:   tradeItem,
 			BoxIndex: int(selected.ItemPos),
 			Price:    price,
 			Count:    count,
@@ -366,9 +372,10 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	}
 
 	type storeRow struct {
-		Price int
-		Count int
-		Pos   invPos
+		ItemID int
+		Price  int
+		Count  int
+		Pos    invPos
 	}
 	storeRows := make([]storeRow, 0, len(rows))
 	for _, row := range rows {
@@ -391,7 +398,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		if pos.Count > 0 && itemNumber > pos.Count {
 			itemNumber = pos.Count
 		}
-		storeRows = append(storeRows, storeRow{Price: price, Count: itemNumber, Pos: pos})
+		storeRows = append(storeRows, storeRow{ItemID: tradeItem, Price: price, Count: itemNumber, Pos: pos})
 	}
 	if len(storeRows) == 0 {
 		return false
@@ -413,7 +420,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		if count <= 0 {
 			count = 1
 		}
-		storeInfo = append(storeInfo, StoreInfo{Index: i, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
+		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
 	}
 	sent := r.completeDisplay(title, storeInfo)
 	r.mu.Unlock()

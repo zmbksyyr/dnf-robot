@@ -60,6 +60,7 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 			} else if !r.StoreDisplayAck {
 				r.StoreDisplayRejected = true
 				r.LastStoreError = storeErr
+				fmt.Printf("[STORE_90_REJECT] uid=%d error=0x%02x items=%d list=%+v\n", r.UID, storeErr, len(r.LastStoreDisplay), r.LastStoreDisplay)
 			}
 		}
 
@@ -88,6 +89,9 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 				// inventory slots, and collapsing by item ID can make CMD 90 refer to
 				// an arbitrary or stale stack.
 				r.InfanMap[int(itemPos)] = Transaction{ItemPos: itemPos, ItemId: itemID, ItemNum: itemNum}
+			}
+			if r.RobotTyp == 2 {
+				fmt.Printf("[STORE_13_ITEMS] uid=%d items=%d list=%+v\n", r.UID, len(r.InfanMap), r.InfanMap)
 			}
 		}
 	case 15:
