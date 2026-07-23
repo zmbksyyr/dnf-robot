@@ -131,9 +131,11 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 	if err != nil || len(invRaw) < 249*61 {
 		invRaw = make([]byte, 249*61)
 	}
-	clearInventoryRange(invRaw, rc.StoreEquipmentStartBox, StoreEquipmentSlots)
-	clearInventoryRange(invRaw, rc.StoreConsumableStartBox, StoreStackableSlots)
-	clearInventoryRange(invRaw, rc.StoreMaterialStartBox, StoreStackableSlots)
+	// Clear the full reserved range so an upgrade cannot leave stale generated
+	// goods in any of the three bags; the display itself is always 7+7.
+	clearInventoryRange(invRaw, rc.StoreEquipmentStartBox, StoreInventoryClearSlots)
+	clearInventoryRange(invRaw, rc.StoreConsumableStartBox, StoreInventoryClearSlots)
+	clearInventoryRange(invRaw, rc.StoreMaterialStartBox, StoreInventoryClearSlots)
 
 	stackable, equipment := p.Pool.Draw(info.UID)
 	stallItems := make([]StallItem, 0, len(stackable)+len(equipment))

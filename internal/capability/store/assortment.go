@@ -10,10 +10,13 @@ import (
 )
 
 const (
-	StoreStackableSlots  = 12
-	StoreEquipmentSlots  = 12
-	StoreStackFallback   = 2000
-	StoreTotalPriceLimit = 500000000
+	// The legacy private-store window has 14 display slots in total. Keep the
+	// two item classes balanced so every generated row can be displayed.
+	StoreStackableSlots      = 7
+	StoreEquipmentSlots      = 7
+	StoreInventoryClearSlots = 12
+	StoreStackFallback       = 2000
+	StoreTotalPriceLimit     = 500000000
 )
 
 type PoolKind uint8

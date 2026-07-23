@@ -39,14 +39,14 @@ func TestBuildItemPoolClassifiesTradeablePVFItems(t *testing.T) {
 	}
 }
 
-func TestItemPoolDrawsTwelveOfEachWithoutDuplicates(t *testing.T) {
+func TestItemPoolDrawsSevenOfEachWithoutDuplicates(t *testing.T) {
 	pool := &ItemPool{}
 	for id := 1; id <= 30; id++ {
 		pool.Stackable = append(pool.Stackable, PoolEntry{Item: shared.EquipmentCatalogItem{ID: id}})
 		pool.Equipment = append(pool.Equipment, PoolEntry{Item: shared.EquipmentCatalogItem{ID: 1000 + id}})
 	}
 	stackable, equipment := pool.Draw(17000001)
-	if len(stackable) != 12 || len(equipment) != 12 {
+	if len(stackable) != 7 || len(equipment) != 7 {
 		t.Fatalf("draw sizes stackable=%d equipment=%d", len(stackable), len(equipment))
 	}
 	assertUniquePoolEntries(t, stackable)

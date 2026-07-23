@@ -35,15 +35,27 @@ func TestPreparePoolInventoryUsesSeparateBagStarts(t *testing.T) {
 	if err := preparer.EnsureInventoryAndStall(robotcap.Info{UID: 17000001, CID: 1}, rc); err != nil {
 		t.Fatal(err)
 	}
-	if len(stalls) != 24 {
-		t.Fatalf("stall rows = %d, want 24", len(stalls))
+	if len(stalls) != 14 {
+		t.Fatalf("stall rows = %d, want 14", len(stalls))
 	}
 	if len(saved) != 249*61 {
 		t.Fatalf("saved inventory bytes = %d", len(saved))
 	}
-	assertInventoryRangeType(t, saved, 7, 12, 1)
-	assertInventoryRangeType(t, saved, 56, 6, 2)
-	assertInventoryRangeType(t, saved, 105, 6, 3)
+	assertInventoryRangeType(t, saved, 7, 7, 1)
+	if got := countInventoryType(saved, 2) + countInventoryType(saved, 3); got != 7 {
+		t.Fatalf("stackable inventory slots = %d, want 7", got)
+	}
+}
+
+func countInventoryType(raw []byte, inventoryType int) int {
+	count := 0
+	for rawIndex := 0; rawIndex < 249; rawIndex++ {
+		slot := raw[rawIndex*61 : (rawIndex+1)*61]
+		if int(binary.BigEndian.Uint16(slot[:2])) == inventoryType && binary.LittleEndian.Uint32(slot[2:6]) != 0 {
+			count++
+		}
+	}
+	return count
 }
 
 func assertInventoryRangeType(t *testing.T, raw []byte, startBox, count, inventoryType int) {
