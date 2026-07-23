@@ -310,10 +310,15 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 			continue
 		}
 		count := wantedCount
-		if available := int(selected.ItemNum); available > 0 && count > available {
+		if selected.ItemNum <= 0 {
+			// Equipment is transferred as the whole inventory instance. Its online
+			// quantity field is zero; sending one makes old servers compare 1 > 0
+			// and reject CMD 90 with 0x11.
+			count = 0
+		} else if available := int(selected.ItemNum); count > available {
 			count = available
 		}
-		if count <= 0 {
+		if count < 0 {
 			continue
 		}
 		usedSlots[selected.ItemPos] = struct{}{}
@@ -417,8 +422,10 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	storeInfo := make([]StoreInfo, 0, len(storeRows))
 	for i, sr := range storeRows {
 		count := sr.Count
-		if count <= 0 {
-			count = 1
+		if !isStoreStackableType(sr.Pos.BoxType) {
+			count = 0
+		} else if count <= 0 {
+			continue
 		}
 		// CMD 90's box-type byte is not the inventory table's type field. This
 		// legacy protocol uses zero with the global bag index for all three bags.
