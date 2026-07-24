@@ -284,6 +284,28 @@ func TestReconcileStoreDisplayUsesOnlineSlotsAndAvailableCounts(t *testing.T) {
 	if got[0].Index != 0 || got[1].Index != 1 {
 		t.Fatalf("store indexes are not compact: %+v", got)
 	}
+	if got[0].BoxType != 7 || got[1].BoxType != 7 {
+		t.Fatalf("material item spaces = %d/%d, want 7/7", got[0].BoxType, got[1].BoxType)
+	}
+}
+
+func TestPrivateStoreItemSpaceUsesLegacyBagMapping(t *testing.T) {
+	tests := []struct {
+		boxIndex int
+		want     int
+	}{
+		{boxIndex: 7, want: 0},
+		{boxIndex: 54, want: 0},
+		{boxIndex: 55, want: 1},
+		{boxIndex: 102, want: 1},
+		{boxIndex: 103, want: 7},
+		{boxIndex: 150, want: 7},
+	}
+	for _, tt := range tests {
+		if got := privateStoreItemSpaceForBoxIndex(tt.boxIndex); got != tt.want {
+			t.Fatalf("box index %d item space = %d, want %d", tt.boxIndex, got, tt.want)
+		}
+	}
 }
 
 func TestReconcileStoreDisplayClampsCountToOnlineStack(t *testing.T) {

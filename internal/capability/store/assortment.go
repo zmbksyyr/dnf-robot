@@ -131,6 +131,12 @@ func stackablePoolKind(item shared.EquipmentCatalogItem) (PoolKind, bool) {
 	if item.ID <= 0 || item.Expire || item.NoTrade || item.TradeBlock {
 		return 0, false
 	}
+	// This legacy server rejects newer/indirect stackables in CMD 90 with
+	// 0x11 even when PVF marks them as free or tradeable. Keep only PVF entries
+	// explicitly classified as basic free materials for the normal material bag.
+	if !item.BasicMaterial || !strings.EqualFold(strings.TrimSpace(item.Attach), "free") {
+		return 0, false
+	}
 	slot := strings.ToLower(strings.TrimSpace(item.Slot))
 	path := strings.ToLower(strings.TrimSpace(item.Path))
 	// Professional materials belong to inventory type 10, not the normal
