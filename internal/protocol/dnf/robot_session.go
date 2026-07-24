@@ -109,16 +109,19 @@ type RobotVo struct {
 	TransactionArr [24]*Transaction
 	InfanMap       map[int]Transaction
 
-	PendingStoreTitle     string
-	StoreDisplaySent      bool
-	StoreDisplayAck       bool
-	StoreDisplayRejected  bool
-	StoreCreateRejected   bool
-	LastStoreError        byte
-	StoreCreated          bool
-	LastStoreDisplay      []StoreInfo
-	storeInventoryVersion uint64
-	LoginInfo             UserLoginInfo
+	PendingStoreTitle       string
+	StoreDisplaySent        bool
+	StoreDisplayAck         bool
+	StoreDisplayRejected    bool
+	StoreCreateRejected     bool
+	LastStoreError          byte
+	StoreCreated            bool
+	LastStoreDisplay        []StoreInfo
+	storeDisplayCandidates  []StoreInfo
+	storeDisplayRetryPrefix int
+	storeDisplayRetrySingle int
+	storeInventoryVersion   uint64
+	LoginInfo               UserLoginInfo
 
 	DisjointCreateSent       bool
 	DisjointDirectAck        bool

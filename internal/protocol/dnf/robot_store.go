@@ -45,6 +45,9 @@ func (r *RobotVo) ResetPrivateStoreState() {
 	r.StoreCreated = false
 	r.PendingStoreTitle = ""
 	r.LastStoreDisplay = nil
+	r.storeDisplayCandidates = nil
+	r.storeDisplayRetryPrefix = 0
+	r.storeDisplayRetrySingle = 0
 }
 
 func (r *RobotVo) ResetDisjointStoreState() {
@@ -70,6 +73,9 @@ func (r *RobotVo) PreparePrivateStoreState(title string) {
 	r.LastStoreError = 0
 	r.StoreCreated = false
 	r.LastStoreDisplay = nil
+	r.storeDisplayCandidates = nil
+	r.storeDisplayRetryPrefix = 0
+	r.storeDisplayRetrySingle = 0
 	r.RobotTyp = 2
 }
 
@@ -142,6 +148,14 @@ func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) bool {
 	if r.StoreDisplaySent {
 		return false
 	}
+	if len(storeInfo) == 0 {
+		return false
+	}
+	if len(r.storeDisplayCandidates) == 0 {
+		r.storeDisplayCandidates = append([]StoreInfo(nil), storeInfo...)
+		r.storeDisplayRetryPrefix = len(storeInfo) - 1
+		r.storeDisplayRetrySingle = 1
+	}
 
 	realSize := 4 + len(title) + 1 + len(storeInfo)*13 + 2
 	alinSize := alignTo(realSize, 8)
@@ -179,6 +193,42 @@ func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) bool {
 	r.LastStoreDisplay = append(r.LastStoreDisplay[:0], storeInfo...)
 	fmt.Printf("[STORE_90_SENT] uid=%d items=%d list=%+v\n", r.UID, len(storeInfo), storeInfo)
 	return true
+}
+
+// retryPrivateStoreDisplayUnsafe retries CMD 90 after the legacy server has
+// rejected a slot with 0x11. The server resets its temporary item list on that
+// error but keeps the store in the created state, so another display packet can
+// be sent on the same connection. Prefer the largest prefix first (which keeps
+// most goods when trailing cached slots are empty), then probe the remaining
+// individual slots so any valid item can still open the stall.
+func (r *RobotVo) retryPrivateStoreDisplayUnsafe() bool {
+	candidates := r.storeDisplayCandidates
+	if len(candidates) <= 1 {
+		return false
+	}
+	var next []StoreInfo
+	mode := ""
+	if r.storeDisplayRetryPrefix >= 1 {
+		count := r.storeDisplayRetryPrefix
+		r.storeDisplayRetryPrefix--
+		next = append([]StoreInfo(nil), candidates[:count]...)
+		mode = "prefix"
+	} else if r.storeDisplayRetrySingle < len(candidates) {
+		index := r.storeDisplayRetrySingle
+		r.storeDisplayRetrySingle++
+		next = []StoreInfo{candidates[index]}
+		mode = "single"
+	} else {
+		return false
+	}
+	for index := range next {
+		next[index].Index = index
+	}
+	r.StoreDisplaySent = false
+	r.StoreDisplayRejected = false
+	r.LastStoreError = 0
+	fmt.Printf("[STORE_90_RETRY] uid=%d mode=%s items=%d list=%+v\n", r.UID, mode, len(next), next)
+	return r.completeDisplay(r.PendingStoreTitle, next)
 }
 
 func (r *RobotVo) GetCompleteDisplay(flag int) bool {

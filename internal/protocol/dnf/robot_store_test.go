@@ -260,6 +260,46 @@ func TestStoreDisplayUnknownErrorRejectsImmediately(t *testing.T) {
 	}
 }
 
+func TestStoreDisplayError11RetriesPrefixesThenIndividualSlots(t *testing.T) {
+	conn := &captureSessionConn{}
+	r := newStorePacketTestRobot(t, conn)
+	r.PacketID = 20
+	r.RobotTyp = 2
+	r.PendingStoreTitle = "store"
+	items := []StoreInfo{
+		{Index: 0, ItemID: 100, BoxIndex: 107, Price: 10, Count: 1},
+		{Index: 1, ItemID: 200, BoxIndex: 108, Price: 20, Count: 1},
+		{Index: 2, ItemID: 300, BoxIndex: 9, Price: 30, Count: 1},
+	}
+	if !r.CompleteDisplay("store", items) {
+		t.Fatal("initial display send failed")
+	}
+
+	wants := [][]int{{100, 200}, {100}, {200}, {300}}
+	for attempt, want := range wants {
+		r.handleStoreTradePacketUnsafe(storeReplyPacket(90, 0, 0x11))
+		if r.StoreDisplayRejected {
+			t.Fatalf("attempt %d rejected before retries were exhausted", attempt+1)
+		}
+		if len(r.LastStoreDisplay) != len(want) {
+			t.Fatalf("attempt %d items = %+v, want IDs %v", attempt+1, r.LastStoreDisplay, want)
+		}
+		for index, itemID := range want {
+			if r.LastStoreDisplay[index].ItemID != itemID || r.LastStoreDisplay[index].Index != index {
+				t.Fatalf("attempt %d item %d = %+v, want ID %d compact index %d", attempt+1, index, r.LastStoreDisplay[index], itemID, index)
+			}
+		}
+	}
+
+	r.handleStoreTradePacketUnsafe(storeReplyPacket(90, 0, 0x11))
+	if !r.StoreDisplayRejected || r.LastStoreError != 0x11 {
+		t.Fatalf("exhausted retries rejected=%v error=%#x", r.StoreDisplayRejected, r.LastStoreError)
+	}
+	if r.PacketID != 25 {
+		t.Fatalf("packet id = %d, want five display attempts", r.PacketID)
+	}
+}
+
 func TestReconcileStoreDisplayUsesOnlineSlotsAndAvailableCounts(t *testing.T) {
 	rows := [][]string{
 		{"3035", "100", "7"},

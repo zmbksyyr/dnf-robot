@@ -58,9 +58,12 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 				r.StoreDisplayRejected = false
 				r.LastStoreError = 0
 			} else if !r.StoreDisplayAck {
+				fmt.Printf("[STORE_90_REJECT] uid=%d error=0x%02x items=%d list=%+v\n", r.UID, storeErr, len(r.LastStoreDisplay), r.LastStoreDisplay)
+				if storeErr == 0x11 && r.retryPrivateStoreDisplayUnsafe() {
+					return
+				}
 				r.StoreDisplayRejected = true
 				r.LastStoreError = storeErr
-				fmt.Printf("[STORE_90_REJECT] uid=%d error=0x%02x items=%d list=%+v\n", r.UID, storeErr, len(r.LastStoreDisplay), r.LastStoreDisplay)
 			}
 		}
 
