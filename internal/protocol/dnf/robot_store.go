@@ -339,9 +339,13 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 		}
 		usedSlots[selected.ItemPos] = struct{}{}
 		storeInfo = append(storeInfo, StoreInfo{
-			Index:    len(storeInfo),
-			ItemID:   tradeItem,
-			BoxType:  privateStoreItemSpaceForBoxIndex(int(selected.ItemPos)),
+			Index:  len(storeInfo),
+			ItemID: tradeItem,
+			// CMD 90 uses the legacy normal-inventory item space (0) for all
+			// global bag indexes on this server.  The index itself selects the
+			// equipment/material range; sending 7 for material makes this build
+			// reject otherwise valid items with 0x11.
+			BoxType:  0,
 			BoxIndex: int(selected.ItemPos),
 			Price:    price,
 			Count:    count,
@@ -441,36 +445,11 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 		} else if count <= 0 {
 			continue
 		}
-		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: privateStoreItemSpaceForInventoryType(sr.Pos.BoxType), BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
+		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
 	}
 	sent := r.completeDisplay(title, storeInfo)
 	r.mu.Unlock()
 	return sent
-}
-
-// CMD 90 carries ENUM_ITEMSPACE, not the inventory record's type byte. The
-// legacy server maps item spaces 0/1/7 to equipment/consumable/material bags.
-// Generated store goods use the global bag indexes below.
-func privateStoreItemSpaceForBoxIndex(boxIndex int) int {
-	switch {
-	case boxIndex >= 55 && boxIndex <= 102:
-		return 1
-	case boxIndex >= 103 && boxIndex <= 150:
-		return 7
-	default:
-		return 0
-	}
-}
-
-func privateStoreItemSpaceForInventoryType(inventoryType int) int {
-	switch inventoryType {
-	case 2:
-		return 1
-	case 3:
-		return 7
-	default:
-		return 0
-	}
 }
 
 func isStoreStackableType(itemType int) bool {

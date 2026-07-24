@@ -2,11 +2,56 @@ package store
 
 import (
 	"encoding/binary"
+	"fmt"
+	"testing"
+
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/shared"
-	"testing"
 )
+
+func TestSaveInventoryStableRewritesLateServerSnapshot(t *testing.T) {
+	desired := []byte{1, 2, 3}
+	env := &overwritingPreparationEnv{desired: desired, staleReads: 1}
+	if err := saveInventoryStable(env, 7, 16, desired); err != nil {
+		t.Fatal(err)
+	}
+	if env.saves < 2 {
+		t.Fatalf("inventory saves = %d, want rewrite after stale read", env.saves)
+	}
+}
+
+type overwritingPreparationEnv struct {
+	desired    []byte
+	staleReads int
+	saves      int
+}
+
+func (e *overwritingPreparationEnv) LoadInventory(int) ([]byte, error) {
+	if e.staleReads > 0 {
+		e.staleReads--
+		return []byte{9}, nil
+	}
+	return append([]byte(nil), e.desired...), nil
+}
+
+func (e *overwritingPreparationEnv) SaveInventory(int, int, []byte) error {
+	e.saves++
+	return nil
+}
+func (*overwritingPreparationEnv) EnsureStorePermissionRecord(int, int) (PermissionStatus, error) {
+	return PermissionStatus{}, nil
+}
+func (*overwritingPreparationEnv) Logf(string, ...interface{}) {}
+func (*overwritingPreparationEnv) RandBetween(int, int) int    { return 1 }
+func (*overwritingPreparationEnv) ReplaceStoreStall(int, string, []StallItem) (StallResult, error) {
+	return StallResult{}, nil
+}
+func (*overwritingPreparationEnv) RobotCID(int) (int, error)          { return 0, fmt.Errorf("unused") }
+func (*overwritingPreparationEnv) SaveInventoryRaw(int, []byte) error { return nil }
+func (*overwritingPreparationEnv) StackableCatalog() []shared.EquipmentCatalogItem {
+	return nil
+}
 
 func TestPreparePoolInventoryUsesSeparateBagStarts(t *testing.T) {
 	pool := &ItemPool{}
@@ -168,6 +213,9 @@ func (e testPreparationEnv) EnsureStorePermissionRecord(uid, cid int) (Permissio
 }
 
 func (e testPreparationEnv) LoadInventory(cid int) ([]byte, error) {
+	if e.saved != nil && *e.saved != nil {
+		return append([]byte(nil), (*e.saved)...), nil
+	}
 	return nil, nil
 }
 

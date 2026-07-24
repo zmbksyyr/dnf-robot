@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math/rand"
@@ -8,6 +9,18 @@ import (
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/shared"
 	"strings"
+	"time"
+)
+
+const (
+	// The game server writes its last in-memory inventory asynchronously after
+	// logout.  A direct SQL replacement can therefore be overwritten again just
+	// after it succeeds.  Keep the prepared blob stable for a short quiet window
+	// before logging the character back in; otherwise CMD 90 validates the old
+	// slots and returns 0x11.
+	storeInventoryStablePoll   = 200 * time.Millisecond
+	storeInventoryStableWindow = 1200 * time.Millisecond
+	storeInventoryStableWait   = 8 * time.Second
 )
 
 type Preparer struct {
@@ -67,7 +80,7 @@ func (p Preparer) PopulateInventoryFromCatalog(info robotcap.Info, rc robotconfi
 	}
 	env.Logf("[StorePrepare] uid=%d cid=%d store_plan=%s selected_items=%d slots=%d start_box=%d capacity=%d\n",
 		info.UID, info.CID, plan.Name, len(items), rc.StoreItemSlots, plan.StartBox, rc.InventoryCapacity)
-	if err := env.SaveInventory(info.CID, rc.InventoryCapacity, invRaw); err != nil {
+	if err := saveInventoryStable(env, info.CID, rc.InventoryCapacity, invRaw); err != nil {
 		return err
 	}
 	p.WorldHorns.Invalidate(info.CID)
@@ -182,7 +195,7 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 		return nil
 	}
 	assignStorePoolPrices(env, rc, stallItems)
-	if err := env.SaveInventory(info.CID, rc.InventoryCapacity, invRaw); err != nil {
+	if err := saveInventoryStable(env, info.CID, rc.InventoryCapacity, invRaw); err != nil {
 		return err
 	}
 	p.WorldHorns.Invalidate(info.CID)
@@ -194,6 +207,37 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 	env.Logf("[StorePrepare] uid=%d cid=%d pool_stackable=%d pool_equipment=%d material=%d consumable=%d stall_rows=%d title=%s\n",
 		info.UID, info.CID, len(stackable), len(equipment), materialIndex, consumableIndex, result.StallRows, title)
 	return nil
+}
+
+// saveInventoryStable writes the desired inventory and verifies that the same
+// blob remains visible in SQL for a quiet window.  Legacy game processes can
+// flush their pre-logout in-memory snapshot after the first UPDATE; rewriting
+// on a mismatch closes that race without relying on a server-specific timeout.
+func saveInventoryStable(env PreparationEnv, cid, capacity int, desired []byte) error {
+	if err := env.SaveInventory(cid, capacity, desired); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(storeInventoryStableWait)
+	stableSince := time.Time{}
+	for time.Now().Before(deadline) {
+		current, err := env.LoadInventory(cid)
+		if err == nil && bytes.Equal(current, desired) {
+			if stableSince.IsZero() {
+				stableSince = time.Now()
+			}
+			if time.Since(stableSince) >= storeInventoryStableWindow {
+				return nil
+			}
+		} else {
+			env.Logf("[StorePrepare] cid=%d inventory_overwritten_after_save load_err=%v; rewriting\n", cid, err)
+			stableSince = time.Time{}
+			if err := env.SaveInventory(cid, capacity, desired); err != nil {
+				return err
+			}
+		}
+		time.Sleep(storeInventoryStablePoll)
+	}
+	return fmt.Errorf("inventory did not remain stable for cid=%d", cid)
 }
 
 func clearInventoryRange(raw []byte, startBox, count int) {
