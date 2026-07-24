@@ -44,25 +44,25 @@ func TestBuildItemPoolClassifiesTradeablePVFItems(t *testing.T) {
 	if got := int(binary.LittleEndian.Uint32(pool.Equipment[0].SlotBytes[2:6])); got != 100 {
 		t.Fatalf("equipment template item id = %d", got)
 	}
-	if len(pool.Stackable) != 1 {
-		t.Fatalf("stackable pool size = %d, want 1", len(pool.Stackable))
+	if len(pool.Materials) != 1 {
+		t.Fatalf("material pool size = %d, want 1", len(pool.Materials))
 	}
-	if pool.Stackable[0].Kind != PoolMaterial || pool.Stackable[0].MaxCount != 1000 {
-		t.Fatalf("material entry = %+v", pool.Stackable[0])
+	if pool.Materials[0].Item.ID != 200 {
+		t.Fatalf("material entry = %+v", pool.Materials[0])
 	}
 }
 
 func TestItemPoolDrawsNormalPrivateStoreLayoutWithoutDuplicates(t *testing.T) {
 	pool := &ItemPool{}
 	for id := 1; id <= 30; id++ {
-		pool.Stackable = append(pool.Stackable, PoolEntry{Item: shared.EquipmentCatalogItem{ID: id}})
+		pool.Materials = append(pool.Materials, PoolEntry{Item: shared.EquipmentCatalogItem{ID: id}})
 		pool.Equipment = append(pool.Equipment, PoolEntry{Item: shared.EquipmentCatalogItem{ID: 1000 + id}})
 	}
-	stackable, equipment := pool.Draw(17000001)
-	if len(stackable) != 3 || len(equipment) != 4 {
-		t.Fatalf("draw sizes stackable=%d equipment=%d", len(stackable), len(equipment))
+	materials, equipment := pool.Draw(17000001)
+	if len(materials) != 3 || len(equipment) != 4 {
+		t.Fatalf("draw sizes material=%d equipment=%d", len(materials), len(equipment))
 	}
-	assertUniquePoolEntries(t, stackable)
+	assertUniquePoolEntries(t, materials)
 	assertUniquePoolEntries(t, equipment)
 }
 

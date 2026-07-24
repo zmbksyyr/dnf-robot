@@ -10,34 +10,21 @@ import (
 )
 
 const (
-	// A normal legacy private store accepts slot indexes 0..6. The 14-slot
-	// path is reserved for stores created with a shop doll, which robots do not
-	// use. Keep stackables in the three field-verified material positions and
-	// fill the remaining four display slots with equipment.
-	StoreStackableSlots      = 3
-	StoreEquipmentSlots      = 4
-	StoreInventoryClearSlots = 12
-	StoreStackFallback       = 1000
-	StoreTotalPriceLimit     = 500000000
-)
-
-type PoolKind uint8
-
-const (
-	PoolConsumable PoolKind = iota + 1
-	PoolMaterial
-	PoolEquipment
+	// DFGamer private stores without a shop doll accept display indexes 0..6.
+	// Field verification found three reliable material positions and four
+	// equipment positions, so generated stores intentionally use a 3+4 layout.
+	StoreMaterialSlots   = 3
+	StoreEquipmentSlots  = 4
+	StoreTotalPriceLimit = 500000000
 )
 
 type PoolEntry struct {
 	Item      shared.EquipmentCatalogItem
-	Kind      PoolKind
-	MaxCount  int
 	SlotBytes [61]byte
 }
 
 type ItemPool struct {
-	Stackable []PoolEntry
+	Materials []PoolEntry
 	Equipment []PoolEntry
 }
 
@@ -51,29 +38,24 @@ func BuildItemPool(equipment, stackable []shared.EquipmentCatalogItem, intensify
 	pool := &ItemPool{}
 	seenStackable := make(map[int]struct{})
 	for _, item := range stackable {
-		kind, ok := stackablePoolKind(item)
-		if !ok || !storeTradeAllowed(item) {
+		if !isStoreMaterial(item) || !storeTradeAllowed(item) {
 			continue
 		}
 		if _, exists := seenStackable[item.ID]; exists {
 			continue
 		}
-		limit := item.StackLimit
-		if limit == 1 {
+		if item.StackLimit == 1 {
 			continue
 		}
-		if limit <= 0 {
-			limit = StoreStackFallback
-		}
 		seenStackable[item.ID] = struct{}{}
-		pool.Stackable = append(pool.Stackable, PoolEntry{Item: item, Kind: kind, MaxCount: limit})
+		pool.Materials = append(pool.Materials, PoolEntry{Item: item})
 	}
 
 	seenEquipment := make(map[int]struct{})
 	for _, item := range equipment {
-		// Legacy private stores accept the original weapon, armor, and accessory
-		// types (1..10). Later support/magic-stone types can exist in the PVF while
-		// the server's CPrivateStore validation still rejects them with 0x11.
+		// The tested DFGamer store validator accepts equipment types 1..10.
+		// Later support/magic-stone types can exist in PVF but are rejected by
+		// CPrivateStore::CheckValidItem with CMD 90 error 0x11.
 		if item.ID <= 0 || item.ItemType < 1 || item.ItemType > 10 || item.Expire || item.NoTrade || item.TradeBlock {
 			continue
 		}
@@ -88,23 +70,23 @@ func BuildItemPool(equipment, stackable []shared.EquipmentCatalogItem, intensify
 			continue
 		}
 		seenEquipment[item.ID] = struct{}{}
-		entry := PoolEntry{Item: item, Kind: PoolEquipment, MaxCount: 1}
+		entry := PoolEntry{Item: item}
 		rng := rand.New(rand.NewSource(int64(item.ID)))
 		equipcap.WriteStoreEquipSlot(entry.SlotBytes[:], item, rng, intensify)
 		pool.Equipment = append(pool.Equipment, entry)
 	}
-	sort.Slice(pool.Stackable, func(i, j int) bool { return pool.Stackable[i].Item.ID < pool.Stackable[j].Item.ID })
+	sort.Slice(pool.Materials, func(i, j int) bool { return pool.Materials[i].Item.ID < pool.Materials[j].Item.ID })
 	sort.Slice(pool.Equipment, func(i, j int) bool { return pool.Equipment[i].Item.ID < pool.Equipment[j].Item.ID })
 	return pool
 }
 
-func (p *ItemPool) Draw(uid int) (stackable, equipment []PoolEntry) {
+func (p *ItemPool) Draw(uid int) (materials, equipment []PoolEntry) {
 	if p == nil {
 		return nil, nil
 	}
 	seed := int64(uid)*0x5deece66d + 0xb
 	rng := rand.New(rand.NewSource(seed))
-	return drawPoolEntries(p.Stackable, StoreStackableSlots, rng), drawPoolEntries(p.Equipment, StoreEquipmentSlots, rng)
+	return drawPoolEntries(p.Materials, StoreMaterialSlots, rng), drawPoolEntries(p.Equipment, StoreEquipmentSlots, rng)
 }
 
 func drawPoolEntries(source []PoolEntry, count int, rng *rand.Rand) []PoolEntry {
@@ -127,34 +109,27 @@ func drawPoolEntries(source []PoolEntry, count int, rng *rand.Rand) []PoolEntry 
 	return out
 }
 
-func stackablePoolKind(item shared.EquipmentCatalogItem) (PoolKind, bool) {
+func isStoreMaterial(item shared.EquipmentCatalogItem) bool {
 	if item.ID <= 0 || item.Expire || item.NoTrade || item.TradeBlock {
-		return 0, false
+		return false
 	}
-	// This legacy server rejects newer/indirect stackables in CMD 90 with
-	// 0x11 even when PVF marks them as free or tradeable. Keep only PVF entries
-	// explicitly classified as basic free materials for the normal material bag.
+	// The tested DFGamer validator rejects indirect stackables with 0x11 even
+	// when PVF marks them tradeable. Only basic free materials are field-verified.
 	if !item.BasicMaterial || !strings.EqualFold(strings.TrimSpace(item.Attach), "free") {
-		return 0, false
+		return false
 	}
 	slot := strings.ToLower(strings.TrimSpace(item.Slot))
 	path := strings.ToLower(strings.TrimSpace(item.Path))
-	// Professional materials belong to inventory type 10, not the normal
-	// material bag used by private stores on legacy servers. Monster cards also
-	// carry an expert-job label but are verified to trade from the material bag.
+	// Professional materials belong to inventory type 10. Monster cards can
+	// carry an expert-job label but are verified in the normal material bag.
 	if strings.Contains(path, "professional/") {
-		return 0, false
+		return false
 	}
 	icon := strings.ToLower(strings.TrimSpace(item.Icon))
 	if !strings.Contains(icon, "stackable/material.img") && !strings.Contains(icon, "monstercard") {
-		return 0, false
+		return false
 	}
-	switch {
-	case strings.Contains(slot, "material"):
-		return PoolMaterial, true
-	default:
-		return 0, false
-	}
+	return strings.Contains(slot, "material")
 }
 
 func storeTradeAllowed(item shared.EquipmentCatalogItem) bool {

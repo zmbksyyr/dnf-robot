@@ -53,7 +53,6 @@ type RuntimeConfig struct {
 	StorePriceMax                 int    `json:"store_price_max"`
 	StoreInventoryStartBox        int    `json:"store_inventory_start_box_index"`
 	StoreEquipmentStartBox        int    `json:"store_equipment_start_box_index"`
-	StoreConsumableStartBox       int    `json:"store_consumable_start_box_index"`
 	StoreMaterialStartBox         int    `json:"store_material_start_box_index"`
 	StoreEquipmentIntensify       int    `json:"store_equipment_intensify"`
 	StoreItemAllowIDs             []int  `json:"store_item_allow_ids"`

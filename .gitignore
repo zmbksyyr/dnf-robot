@@ -3,6 +3,11 @@
 *.test
 *.out
 coverage.out
+/robot-linux-amd64*
+
+# Local protocol investigation captures
+/real_inventory_sample.tsv
+/robot*_inventory.hex
 
 # Python tooling artifacts
 __pycache__/

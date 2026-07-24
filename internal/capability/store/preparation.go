@@ -79,7 +79,7 @@ func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.Run
 	if err := p.EnsureStorePermission(info.UID, info.CID); err != nil {
 		return err
 	}
-	if p.Pool != nil && (len(p.Pool.Stackable) > 0 || len(p.Pool.Equipment) > 0) {
+	if p.Pool != nil && (len(p.Pool.Materials) > 0 || len(p.Pool.Equipment) > 0) {
 		return p.preparePoolInventoryAndStall(info, rc)
 	}
 	if err := p.PopulateInventory(info, rc); err != nil {
@@ -131,41 +131,22 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 	if err != nil || len(invRaw) < 249*61 {
 		invRaw = make([]byte, 249*61)
 	}
-	// Clear the full reserved range so an upgrade cannot leave stale generated
-	// goods in any of the three bags; a normal legacy private store displays 3+4.
-	clearInventoryRange(invRaw, rc.StoreEquipmentStartBox, StoreInventoryClearSlots)
-	clearInventoryRange(invRaw, rc.StoreConsumableStartBox, StoreInventoryClearSlots)
-	clearInventoryRange(invRaw, rc.StoreMaterialStartBox, StoreInventoryClearSlots)
+	// Only clear the slots owned by the verified 3+4 generated-store layout.
+	clearInventoryRange(invRaw, rc.StoreEquipmentStartBox, StoreEquipmentSlots)
+	clearInventoryRange(invRaw, rc.StoreMaterialStartBox, StoreMaterialSlots)
 
-	stackable, equipment := p.Pool.Draw(info.UID)
-	stallItems := make([]StallItem, 0, len(stackable)+len(equipment))
+	materials, equipment := p.Pool.Draw(info.UID)
+	stallItems := make([]StallItem, 0, len(materials)+len(equipment))
 	materialIndex := 0
-	consumableIndex := 0
-	for _, entry := range stackable {
-		boxIndex := 0
-		inventoryType := 0
-		switch entry.Kind {
-		case PoolConsumable:
-			boxIndex = rc.StoreConsumableStartBox + consumableIndex
-			consumableIndex++
-			inventoryType = 2
-		case PoolMaterial:
-			boxIndex = rc.StoreMaterialStartBox + materialIndex
-			materialIndex++
-			inventoryType = 3
-		default:
-			continue
-		}
+	for _, entry := range materials {
+		boxIndex := rc.StoreMaterialStartBox + materialIndex
+		materialIndex++
 		rawIndex := boxIndex + 2
 		if rawIndex < 0 || rawIndex >= 249 {
 			continue
 		}
-		limit := entry.MaxCount
-		if limit <= 0 {
-			limit = StoreStackFallback
-		}
 		count := 1
-		WriteInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], entry.Item, count, inventoryType)
+		WriteInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], entry.Item, count, 3)
 		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: count})
 	}
 	for index, entry := range equipment {
@@ -191,8 +172,8 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 	if err != nil {
 		return err
 	}
-	env.Logf("[StorePrepare] uid=%d cid=%d pool_stackable=%d pool_equipment=%d material=%d consumable=%d stall_rows=%d title=%s\n",
-		info.UID, info.CID, len(stackable), len(equipment), materialIndex, consumableIndex, result.StallRows, title)
+	env.Logf("[StorePrepare] uid=%d cid=%d pool_material=%d pool_equipment=%d stall_rows=%d title=%s\n",
+		info.UID, info.CID, materialIndex, len(equipment), result.StallRows, title)
 	return nil
 }
 

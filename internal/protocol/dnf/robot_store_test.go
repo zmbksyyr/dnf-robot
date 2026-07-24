@@ -235,6 +235,21 @@ func TestStoreDisplayIsSentOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestStoreDisplayCapsDirectInputAtSevenItems(t *testing.T) {
+	conn := &captureSessionConn{}
+	r := newStorePacketTestRobot(t, conn)
+	items := make([]StoreInfo, 8)
+	for index := range items {
+		items[index] = StoreInfo{Index: index, ItemID: 1000 + index, BoxIndex: 7 + index, Price: 10, Count: 1}
+	}
+	if !r.CompleteDisplay("store", items) {
+		t.Fatal("display send failed")
+	}
+	if len(r.LastStoreDisplay) != privateStoreDisplayLimit || len(r.storeDisplayCandidates) != privateStoreDisplayLimit {
+		t.Fatalf("display=%d candidates=%d want=%d", len(r.LastStoreDisplay), len(r.storeDisplayCandidates), privateStoreDisplayLimit)
+	}
+}
+
 func TestStoreDisplayAckIgnoresLateRejection(t *testing.T) {
 	r := NewRobotVo(nil)
 	r.State = StateRun

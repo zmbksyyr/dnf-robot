@@ -95,9 +95,9 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 	if !vo.CreatePrivateStore() {
 		return
 	}
-	// Legacy clients request the inventory immediately after CMD 88. Some old
-	// servers stop replying to CMD 20 once the private store has already reached
-	// state 1, so do not serialize this request behind the create acknowledgement.
+	// DFGamer variants can require CMD 20 immediately after CMD 88 and may stop
+	// replying once the store reaches state 1. Do not serialize the inventory
+	// request behind the create acknowledgement.
 	if !vo.GetCompleteDisplay(0) {
 		return
 	}

@@ -9,17 +9,13 @@ import (
 	"robot/internal/shared"
 )
 
-func TestPreparePoolInventoryUsesSeparateBagStarts(t *testing.T) {
+func TestPreparePoolInventoryUsesVerifiedMaterialAndEquipmentSlots(t *testing.T) {
 	pool := &ItemPool{}
 	for id := 1; id <= 12; id++ {
-		kind := PoolMaterial
-		if id%2 == 0 {
-			kind = PoolConsumable
-		}
-		pool.Stackable = append(pool.Stackable, PoolEntry{
-			Item: shared.EquipmentCatalogItem{ID: 3000 + id}, Kind: kind, MaxCount: 100,
+		pool.Materials = append(pool.Materials, PoolEntry{
+			Item: shared.EquipmentCatalogItem{ID: 3000 + id},
 		})
-		entry := PoolEntry{Item: shared.EquipmentCatalogItem{ID: 10000 + id}, Kind: PoolEquipment, MaxCount: 1}
+		entry := PoolEntry{Item: shared.EquipmentCatalogItem{ID: 10000 + id}}
 		entry.SlotBytes[1] = 1
 		binary.LittleEndian.PutUint32(entry.SlotBytes[2:6], uint32(entry.Item.ID))
 		entry.SlotBytes[6] = 13
@@ -31,7 +27,6 @@ func TestPreparePoolInventoryUsesSeparateBagStarts(t *testing.T) {
 	preparer := Preparer{Env: env, Pool: pool, WorldHorns: NewWorldHornCache()}
 	rc := robotconfig.Default()
 	rc.StoreEquipmentStartBox = 7
-	rc.StoreConsumableStartBox = 56
 	rc.StoreMaterialStartBox = 105
 	if err := preparer.EnsureInventoryAndStall(robotcap.Info{UID: 17000001, CID: 1}, rc); err != nil {
 		t.Fatal(err)
@@ -43,8 +38,9 @@ func TestPreparePoolInventoryUsesSeparateBagStarts(t *testing.T) {
 		t.Fatalf("saved inventory bytes = %d", len(saved))
 	}
 	assertInventoryRangeType(t, saved, 7, 4, 1)
-	if got := countInventoryType(saved, 2) + countInventoryType(saved, 3); got != 3 {
-		t.Fatalf("stackable inventory slots = %d, want 3", got)
+	assertInventoryRangeType(t, saved, 105, 3, 3)
+	if got := countInventoryType(saved, 2); got != 0 {
+		t.Fatalf("unexpected consumable inventory slots = %d", got)
 	}
 }
 
@@ -73,7 +69,7 @@ func assertInventoryRangeType(t *testing.T, raw []byte, startBox, count, invento
 	}
 }
 
-func TestStorePoolPricesKeepWholeDisplayInOldServerRange(t *testing.T) {
+func TestStorePoolPricesKeepWholeDisplayInDFGamerRange(t *testing.T) {
 	env := testPreparationEnv{randValue: 5000000}
 	items := make([]StallItem, 24)
 	for index := range items {

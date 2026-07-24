@@ -151,6 +151,9 @@ func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) bool {
 	if len(storeInfo) == 0 {
 		return false
 	}
+	if len(storeInfo) > privateStoreDisplayLimit {
+		storeInfo = storeInfo[:privateStoreDisplayLimit]
+	}
 	if len(r.storeDisplayCandidates) == 0 {
 		r.storeDisplayCandidates = append([]StoreInfo(nil), storeInfo...)
 		r.storeDisplayRetryPrefix = len(storeInfo) - 1
@@ -191,33 +194,29 @@ func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) bool {
 	r.StoreDisplaySent = true
 	r.StoreDisplayAck = false
 	r.LastStoreDisplay = append(r.LastStoreDisplay[:0], storeInfo...)
-	fmt.Printf("[STORE_90_SENT] uid=%d items=%d list=%+v\n", r.UID, len(storeInfo), storeInfo)
 	return true
 }
 
-// retryPrivateStoreDisplayUnsafe retries CMD 90 after the legacy server has
-// rejected a slot with 0x11. The server resets its temporary item list on that
-// error but keeps the store in the created state, so another display packet can
-// be sent on the same connection. Prefer the largest prefix first (which keeps
-// most goods when trailing cached slots are empty), then probe the remaining
-// individual slots so any valid item can still open the stall.
+// retryPrivateStoreDisplayUnsafe handles CMD 90 error 0x11, which reverse
+// engineering traced to CPrivateStore::CheckValidItem rejecting at least one
+// referenced inventory slot. The server clears the temporary display list but
+// keeps the store created, so the same connection can retry. Largest prefixes
+// preserve the most goods; individual slots guarantee that any valid item can
+// still open the store.
 func (r *RobotVo) retryPrivateStoreDisplayUnsafe() bool {
 	candidates := r.storeDisplayCandidates
 	if len(candidates) <= 1 {
 		return false
 	}
 	var next []StoreInfo
-	mode := ""
 	if r.storeDisplayRetryPrefix >= 1 {
 		count := r.storeDisplayRetryPrefix
 		r.storeDisplayRetryPrefix--
 		next = append([]StoreInfo(nil), candidates[:count]...)
-		mode = "prefix"
 	} else if r.storeDisplayRetrySingle < len(candidates) {
 		index := r.storeDisplayRetrySingle
 		r.storeDisplayRetrySingle++
 		next = []StoreInfo{candidates[index]}
-		mode = "single"
 	} else {
 		return false
 	}
@@ -227,7 +226,6 @@ func (r *RobotVo) retryPrivateStoreDisplayUnsafe() bool {
 	r.StoreDisplaySent = false
 	r.StoreDisplayRejected = false
 	r.LastStoreError = 0
-	fmt.Printf("[STORE_90_RETRY] uid=%d mode=%s items=%d list=%+v\n", r.UID, mode, len(next), next)
 	return r.completeDisplay(r.PendingStoreTitle, next)
 }
 
@@ -297,9 +295,9 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 
 	ctx, cancel := context.WithTimeout(context.Background(), storeQueryTimeout)
 	defer cancel()
-	// CMD 20/CMD 13 reports stackable bags on this legacy build but omits
-	// singleton equipment. Merge equipment records from the persisted inventory;
-	// reconciliation below still accepts only IDs present in the prepared stall.
+	// This DFGamer protocol path reports stackable bags in CMD 13 but can omit
+	// singleton equipment. Merge persisted equipment instances; reconciliation
+	// still accepts only item IDs present in the prepared stall.
 	var invRaw []byte
 	if err := db.QueryRowContext(ctx, "SELECT UNCOMPRESS(inventory) FROM taiwan_cain_2nd.inventory WHERE charac_no=?", cid).Scan(&invRaw); err == nil {
 		for rawIndex := 2; (rawIndex+1)*61 <= len(invRaw); rawIndex++ {
@@ -391,10 +389,9 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 		storeInfo = append(storeInfo, StoreInfo{
 			Index:  len(storeInfo),
 			ItemID: tradeItem,
-			// CMD 90 uses the legacy normal-inventory item space (0) for all
-			// global bag indexes on this server.  The index itself selects the
-			// equipment/material range; sending 7 for material makes this build
-			// reject otherwise valid items with 0x11.
+			// In the tested DFGamer protocol, CMD 90 uses item space 0 with a
+			// global inventory index. Sending material item space 7 is rejected
+			// with 0x11 even when the referenced material is otherwise valid.
 			BoxType:  0,
 			BoxIndex: int(selected.ItemPos),
 			Price:    price,
@@ -417,14 +414,13 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 
 	ctx, cancel := context.WithTimeout(context.Background(), storeQueryTimeout)
 	defer cancel()
-	rows, err := sqlpkg.SelectContext(ctx, db, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID,id limit 14", uid)
+	rows, err := sqlpkg.SelectContext(ctx, db, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID,id limit 7", uid)
 	if err != nil || len(rows) == 0 {
 		return false
 	}
 
 	type invPos struct {
 		BoxType      int
-		RawBoxIndex  int
 		GameBoxIndex int
 		Count        int
 	}
@@ -439,7 +435,7 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 			count := int(binary.LittleEndian.Uint32(slot[7:11]))
 			if boxType > 0 && itemID > 0 {
 				gameIndex := rawIndex
-				pos := invPos{BoxType: boxType, RawBoxIndex: rawIndex, GameBoxIndex: gameIndex, Count: count}
+				pos := invPos{BoxType: boxType, GameBoxIndex: gameIndex, Count: count}
 				if old, ok := inventory[itemID]; !ok || (!isStoreStackableType(old.BoxType) && isStoreStackableType(boxType)) {
 					inventory[itemID] = pos
 				}

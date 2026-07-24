@@ -119,7 +119,7 @@ func (m *RobotManager) storePool(rc robotconfig.RuntimeConfig) *storecap.ItemPoo
 	if m.storeItemPool == nil {
 		catalogs := m.loadCreateCatalogs()
 		m.storeItemPool = storecap.BuildItemPool(catalogs.Equipment, catalogs.Stackable, rc.StoreEquipmentIntensify)
-		robotLogf("[StorePool] generated stackable=%d equipment=%d intensify=%d\n", len(m.storeItemPool.Stackable), len(m.storeItemPool.Equipment), rc.StoreEquipmentIntensify)
+		robotLogf("[StorePool] generated material=%d equipment=%d intensify=%d\n", len(m.storeItemPool.Materials), len(m.storeItemPool.Equipment), rc.StoreEquipmentIntensify)
 	}
 	return m.storeItemPool
 }
