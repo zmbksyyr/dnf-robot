@@ -186,7 +186,7 @@ func TestStoreSendFailureKeepsPacketSequenceAndState(t *testing.T) {
 		{name: "display", send: func(r *RobotVo) bool {
 			return r.CompleteDisplay("store", []StoreInfo{{Index: 0, BoxIndex: 1, Price: 10, Count: 1}})
 		}, displayFailed: true},
-		{name: "item list", send: func(r *RobotVo) bool { return r.GetCompleteDisplay(0) }, needsCreated: true, displayFailed: true},
+		{name: "item list", send: func(r *RobotVo) bool { return r.GetCompleteDisplay(0) }, displayFailed: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -301,12 +301,12 @@ func TestReconcileStoreDisplayAcceptsNonStackableOnlineItem(t *testing.T) {
 	inventory := map[int]Transaction{7: {ItemPos: 7, ItemId: 10016, ItemNum: 0}}
 
 	got := reconcileStoreDisplay(rows, inventory)
-	if len(got) != 1 || got[0].Count != 0 || got[0].BoxType != 0 || got[0].BoxIndex != 7 {
-		t.Fatalf("reconciled equipment = %+v, want type 0 slot 7 count 0", got)
+	if len(got) != 1 || got[0].Count != 1 || got[0].BoxType != 0 || got[0].BoxIndex != 7 {
+		t.Fatalf("reconciled equipment = %+v, want type 0 slot 7 count 1", got)
 	}
 }
 
-func TestReconcileStoreDisplayCapsLegacyWindowAtFourteenItems(t *testing.T) {
+func TestReconcileStoreDisplayCapsNormalStoreAtSevenItems(t *testing.T) {
 	rows := make([][]string, 0, 20)
 	inventory := make(map[int]Transaction, 20)
 	for index := 0; index < 20; index++ {
@@ -314,24 +314,8 @@ func TestReconcileStoreDisplayCapsLegacyWindowAtFourteenItems(t *testing.T) {
 		rows = append(rows, []string{strconv.Itoa(itemID), "100000", "1"})
 		inventory[index+7] = Transaction{ItemPos: int16(index + 7), ItemId: int32(itemID), ItemNum: 1}
 	}
-	if got := reconcileStoreDisplay(rows, inventory); len(got) != 14 {
-		t.Fatalf("store items = %d, want legacy display limit 14", len(got))
-	}
-}
-
-func TestSilentEquipmentDisplayCanConfirmWithoutReply(t *testing.T) {
-	r := NewRobotVo(nil)
-	r.StoreCreated = true
-	r.StoreDisplaySent = true
-	r.LastStoreDisplay = []StoreInfo{{ItemID: 10016, BoxIndex: 7, Count: 0}}
-	if !r.ConfirmPrivateStoreEquipmentDisplayIfSilent() || !r.StoreDisplayAck {
-		t.Fatal("silent equipment display was not confirmed")
-	}
-
-	r.StoreDisplayAck = false
-	r.StoreDisplayRejected = true
-	if r.ConfirmPrivateStoreEquipmentDisplayIfSilent() || r.StoreDisplayAck {
-		t.Fatal("explicit rejection was overridden by silent confirmation")
+	if got := reconcileStoreDisplay(rows, inventory); len(got) != 7 {
+		t.Fatalf("store items = %d, want normal store display limit 7", len(got))
 	}
 }
 

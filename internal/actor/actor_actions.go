@@ -74,9 +74,10 @@ func (a *Actor) handleCommand(cmd Command) robotcap.ActionResult {
 		}
 		return a.runtime.Shout(uid, true)
 	case CommandStore:
-		if res, ok := a.ensureOnlineForCommand(); !ok {
-			return res
-		}
+		// The store workflow prepares inventory while offline and performs its
+		// own confirmed login. A preliminary login here makes the workflow log
+		// straight back out and can leave legacy servers reusing the old inventory
+		// snapshot on the second login.
 		res := a.runtime.Store(uid)
 		if res.OK {
 			rc := a.runtime.Config()

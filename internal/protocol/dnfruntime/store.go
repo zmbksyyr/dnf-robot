@@ -95,6 +95,12 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 	if !vo.CreatePrivateStore() {
 		return
 	}
+	// Legacy clients request the inventory immediately after CMD 88. Some old
+	// servers stop replying to CMD 20 once the private store has already reached
+	// state 1, so do not serialize this request behind the create acknowledgement.
+	if !vo.GetCompleteDisplay(0) {
+		return
+	}
 	waitStoreCreated(vo, 5*time.Second)
 	if snap := vo.Snapshot(); snap.PartyActive || shared.StateName(int(snap.State)) != shared.RuntimeStateRunning {
 		return
@@ -102,10 +108,11 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 		vo.MarkPrivateStoreCreateFailed()
 		return
 	}
-	if !vo.GetCompleteDisplay(0) {
-		return
+	waitStoreItemList(vo, 2*time.Second)
+	if !vo.PrivateStoreItemListReceived() {
+		_ = vo.GetCompleteDisplay(0)
+		waitStoreItemList(vo, 4*time.Second)
 	}
-	waitStoreItemList(vo, 4*time.Second)
 	if !storeRobotReady(vo) {
 		return
 	}
@@ -113,10 +120,6 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 	if snap := vo.Snapshot(); !snap.StoreDisplaySent && !snap.StoreDisplayAck && !snap.StoreDisplayRejected {
 		vo.CompleteDisplayFromStallFallback()
 	}
-	// Some legacy servers consume equipment (quantity zero) without replying to
-	// CMD 90. Give an explicit rejection time to arrive before accepting silence.
-	time.Sleep(1500 * time.Millisecond)
-	vo.ConfirmPrivateStoreEquipmentDisplayIfSilent()
 	vo.MarkPrivateStoreDisplayFailed()
 }
 

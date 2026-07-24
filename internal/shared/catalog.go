@@ -12,6 +12,7 @@ type EquipmentCatalogItem struct {
 	Rarity        int    `json:"rarity,omitempty"`
 	Price         int    `json:"price,omitempty"`
 	Value         int    `json:"value,omitempty"`
+	Durability    int    `json:"durability,omitempty"`
 	Attach        string `json:"attach,omitempty"`
 	Trade         bool   `json:"trade,omitempty"`
 	NoTrade       bool   `json:"no_trade,omitempty"`

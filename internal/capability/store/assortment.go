@@ -10,10 +10,12 @@ import (
 )
 
 const (
-	// The legacy private-store window has 14 display slots in total. Keep the
-	// two item classes balanced so every generated row can be displayed.
-	StoreStackableSlots      = 7
-	StoreEquipmentSlots      = 7
+	// A normal legacy private store accepts slot indexes 0..6. The 14-slot
+	// path is reserved for stores created with a shop doll, which robots do not
+	// use. Keep stackables in the three field-verified material positions and
+	// fill the remaining four display slots with equipment.
+	StoreStackableSlots      = 3
+	StoreEquipmentSlots      = 4
 	StoreInventoryClearSlots = 12
 	StoreStackFallback       = 1000
 	StoreTotalPriceLimit     = 500000000
@@ -69,7 +71,10 @@ func BuildItemPool(equipment, stackable []shared.EquipmentCatalogItem, intensify
 
 	seenEquipment := make(map[int]struct{})
 	for _, item := range equipment {
-		if item.ID <= 0 || item.ItemType < 1 || item.ItemType > 12 || item.Expire || item.NoTrade || item.TradeBlock {
+		// Legacy private stores accept the original weapon, armor, and accessory
+		// types (1..10). Later support/magic-stone types can exist in the PVF while
+		// the server's CPrivateStore validation still rejects them with 0x11.
+		if item.ID <= 0 || item.ItemType < 1 || item.ItemType > 10 || item.Expire || item.NoTrade || item.TradeBlock {
 			continue
 		}
 		if item.CanTrade != nil && !*item.CanTrade {

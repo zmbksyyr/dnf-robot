@@ -90,9 +90,6 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 				// an arbitrary or stale stack.
 				r.InfanMap[int(itemPos)] = Transaction{ItemPos: itemPos, ItemId: itemID, ItemNum: itemNum}
 			}
-			if r.RobotTyp == 2 {
-				fmt.Printf("[STORE_13_ITEMS] uid=%d items=%d list=%+v\n", r.UID, len(r.InfanMap), r.InfanMap)
-			}
 		}
 	case 15:
 		if packet.flag != 0 || r.State != StateRun {

@@ -256,6 +256,8 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 				item.Price = atoi(nextLine(lines, i))
 			case "[value]":
 				item.Value = atoi(nextLine(lines, i))
+			case "[durability]":
+				item.Durability = atoi(nextLine(lines, i))
 			case "[minimum level]":
 				item.Level = atoi(nextLine(lines, i))
 			case "[stack limit]":

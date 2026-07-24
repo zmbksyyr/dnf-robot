@@ -405,6 +405,22 @@ func WriteStoreEquipSlot(dst []byte, item shared.EquipmentCatalogItem, rng *rand
 	if len(dst) < 61 {
 		return
 	}
+	// Inventory byte 0 is the sealed-instance flag. PVF "sealing"
+	// equipment must enter the bag sealed or the server treats the instance as
+	// trade-restricted when CPrivateStore::AddItem validates it.
+	dst[0] = 1
+	clear(dst[7:11])
+	durability := item.Durability
+	if durability <= 0 {
+		// Catalogs exported before durability was included remain usable. One is
+		// valid for durable equipment and avoids generating a value above the PVF
+		// maximum, which legacy private-store validation rejects with 0x11.
+		durability = 1
+	}
+	if durability > 65535 {
+		durability = 65535
+	}
+	binary.LittleEndian.PutUint16(dst[11:13], uint16(durability))
 	if intensify < 0 {
 		intensify = 0
 	}
@@ -412,10 +428,6 @@ func WriteStoreEquipSlot(dst []byte, item shared.EquipmentCatalogItem, rng *rand
 		intensify = 255
 	}
 	dst[6] = byte(intensify)
-	// In inventory records bytes 7..11 are instance/expiry fields, not the
-	// random equipment values used by equipped-slot templates. Old servers
-	// discard the item during login when these contain an invalid small value.
-	clear(dst[7:12])
 }
 
 func safeRandIntn(randIntn func(int) int, n int) int {

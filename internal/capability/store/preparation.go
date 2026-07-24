@@ -132,7 +132,7 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 		invRaw = make([]byte, 249*61)
 	}
 	// Clear the full reserved range so an upgrade cannot leave stale generated
-	// goods in any of the three bags; the display itself is always 7+7.
+	// goods in any of the three bags; a normal legacy private store displays 3+4.
 	clearInventoryRange(invRaw, rc.StoreEquipmentStartBox, StoreInventoryClearSlots)
 	clearInventoryRange(invRaw, rc.StoreConsumableStartBox, StoreInventoryClearSlots)
 	clearInventoryRange(invRaw, rc.StoreMaterialStartBox, StoreInventoryClearSlots)
@@ -164,10 +164,7 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 		if limit <= 0 {
 			limit = StoreStackFallback
 		}
-		count := env.RandBetween(1, limit)
-		if count <= 0 || count > limit {
-			count = limit
-		}
+		count := 1
 		WriteInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], entry.Item, count, inventoryType)
 		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: count})
 	}

@@ -12,7 +12,7 @@ import (
 
 const (
 	storeQueryTimeout        = 3 * time.Second
-	privateStoreDisplayLimit = 14
+	privateStoreDisplayLimit = 7
 )
 
 type StoreInfo struct {
@@ -188,10 +188,6 @@ func (r *RobotVo) GetCompleteDisplay(flag int) bool {
 	if r.State != StateRun || r.partyActiveUnsafe() {
 		return false
 	}
-	if !r.StoreCreated {
-		return false
-	}
-
 	r.IsWaitingItemList = true
 	var data [8]byte
 	data[0] = byte(flag)
@@ -232,33 +228,14 @@ func (r *RobotVo) MarkPrivateStoreDisplayFailed() {
 	r.LastStoreError = 0
 }
 
-// ConfirmPrivateStoreEquipmentDisplayIfSilent supports old servers that move
-// singleton equipment into the store but do not reply to CMD 90. Equipment is
-// distinguishable by its protocol quantity of zero. Explicit rejections always
-// win and material-only displays still require the normal acknowledgement.
-func (r *RobotVo) ConfirmPrivateStoreEquipmentDisplayIfSilent() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.StoreCreated || !r.StoreDisplaySent || r.StoreDisplayAck || r.StoreDisplayRejected {
-		return false
-	}
-	for _, item := range r.LastStoreDisplay {
-		if item.Count == 0 {
-			r.StoreDisplayAck = true
-			fmt.Printf("[STORE_90_SILENT_ACK] uid=%d items=%d\n", r.UID, len(r.LastStoreDisplay))
-			return true
-		}
-	}
-	return false
-}
-
 func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	r.mu.Lock()
-	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || len(r.InfanMap) == 0 || r.DB == nil {
+	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.DB == nil {
 		r.mu.Unlock()
 		return false
 	}
 	uid := r.UID
+	cid := r.CID
 	db := r.DB
 	title := r.PendingStoreTitle
 	inventoryVersion := r.storeInventoryVersion
@@ -270,6 +247,25 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 
 	ctx, cancel := context.WithTimeout(context.Background(), storeQueryTimeout)
 	defer cancel()
+	// CMD 20/CMD 13 reports stackable bags on this legacy build but omits
+	// singleton equipment. Merge equipment records from the persisted inventory;
+	// reconciliation below still accepts only IDs present in the prepared stall.
+	var invRaw []byte
+	if err := db.QueryRowContext(ctx, "SELECT UNCOMPRESS(inventory) FROM taiwan_cain_2nd.inventory WHERE charac_no=?", cid).Scan(&invRaw); err == nil {
+		for rawIndex := 2; (rawIndex+1)*61 <= len(invRaw); rawIndex++ {
+			slot := invRaw[rawIndex*61 : (rawIndex+1)*61]
+			// Byte 0 is the sealed-instance flag; byte 1 is the inventory
+			// type. Sealed equipment therefore starts with 01 01, not 00 01.
+			if slot[1] != 1 {
+				continue
+			}
+			itemID := int32(binary.LittleEndian.Uint32(slot[2:6]))
+			if itemID > 0 {
+				boxIndex := rawIndex
+				inventory[boxIndex] = Transaction{ItemPos: int16(boxIndex), ItemId: itemID, ItemNum: 0}
+			}
+		}
+	}
 	rows, err := sqlpkg.SelectContext(ctx, db, "select Trade_item,price,item_number from d_starsky.Robot_stall where function_type=2 and state=1 and (UID=? or UID=0) order by UID", uid)
 	if err != nil {
 		return false
@@ -331,10 +327,10 @@ func reconcileStoreDisplay(rows [][]string, inventory map[int]Transaction) []Sto
 		}
 		count := wantedCount
 		if selected.ItemNum <= 0 {
-			// Equipment is transferred as the whole inventory instance. Its online
-			// quantity field is zero; sending one makes old servers compare 1 > 0
-			// and reject CMD 90 with 0x11.
-			count = 0
+			// CMD 13 reports singleton equipment with quantity zero, while CMD 90
+			// requires every non-special item to carry a positive sale quantity.
+			// Selling one transfers the complete equipment instance from this slot.
+			count = 1
 		} else if available := int(selected.ItemNum); count > available {
 			count = available
 		}
@@ -384,14 +380,11 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	if err == nil {
 		for rawIndex := 0; rawIndex+1 < 249 && (rawIndex+1)*61 <= len(invRaw); rawIndex++ {
 			slot := invRaw[rawIndex*61 : (rawIndex+1)*61]
-			boxType := int(binary.BigEndian.Uint16(slot[0:2]))
+			boxType := int(slot[1])
 			itemID := int(binary.LittleEndian.Uint32(slot[2:6]))
 			count := int(binary.LittleEndian.Uint32(slot[7:11]))
 			if boxType > 0 && itemID > 0 {
-				gameIndex := rawIndex - 2
-				if gameIndex <= 0 {
-					gameIndex = rawIndex
-				}
+				gameIndex := rawIndex
 				pos := invPos{BoxType: boxType, RawBoxIndex: rawIndex, GameBoxIndex: gameIndex, Count: count}
 				if old, ok := inventory[itemID]; !ok || (!isStoreStackableType(old.BoxType) && isStoreStackableType(boxType)) {
 					inventory[itemID] = pos
@@ -444,12 +437,10 @@ func (r *RobotVo) CompleteDisplayFromStallFallback() bool {
 	for i, sr := range storeRows {
 		count := sr.Count
 		if !isStoreStackableType(sr.Pos.BoxType) {
-			count = 0
+			count = 1
 		} else if count <= 0 {
 			continue
 		}
-		// This legacy CMD 90 uses zero for both material and singleton equipment
-		// slots; inventory table types 1/2/3 are not accepted here.
 		storeInfo = append(storeInfo, StoreInfo{Index: i, ItemID: sr.ItemID, BoxType: 0, BoxIndex: sr.Pos.GameBoxIndex, Price: sr.Price, Count: count})
 	}
 	sent := r.completeDisplay(title, storeInfo)

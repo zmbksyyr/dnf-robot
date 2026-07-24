@@ -35,15 +35,15 @@ func TestPreparePoolInventoryUsesSeparateBagStarts(t *testing.T) {
 	if err := preparer.EnsureInventoryAndStall(robotcap.Info{UID: 17000001, CID: 1}, rc); err != nil {
 		t.Fatal(err)
 	}
-	if len(stalls) != 14 {
-		t.Fatalf("stall rows = %d, want 14", len(stalls))
+	if len(stalls) != 7 {
+		t.Fatalf("stall rows = %d, want 7", len(stalls))
 	}
 	if len(saved) != 249*61 {
 		t.Fatalf("saved inventory bytes = %d", len(saved))
 	}
-	assertInventoryRangeType(t, saved, 7, 7, 1)
-	if got := countInventoryType(saved, 2) + countInventoryType(saved, 3); got != 7 {
-		t.Fatalf("stackable inventory slots = %d, want 7", got)
+	assertInventoryRangeType(t, saved, 7, 4, 1)
+	if got := countInventoryType(saved, 2) + countInventoryType(saved, 3); got != 3 {
+		t.Fatalf("stackable inventory slots = %d, want 3", got)
 	}
 }
 
