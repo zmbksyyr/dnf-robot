@@ -68,7 +68,7 @@ func TestExecuteRobotPositionUpdatesSplitsAtBatchBoundary(t *testing.T) {
 func TestBuildRobotPositionUpdateHasIdentityAndRoleGuards(t *testing.T) {
 	query, args := buildRobotPositionUpdate(makePositionUpdates(1))
 	guards := []string{
-		"SELECT ? AS uid,? AS cid,? AS curvill",
+		"SELECT CAST(? AS UNSIGNED) AS uid,CAST(? AS UNSIGNED) AS cid,? AS curvill",
 		"ON d.UID=p.uid AND d.CID=p.cid",
 		"d.function_type='0'",
 	}

@@ -57,9 +57,9 @@ func buildRobotPositionUpdate(updates []robotcap.PositionUpdate) (string, []inte
 	args := make([]interface{}, 0, len(updates)*6)
 	for index, update := range updates {
 		if index == 0 {
-			query.WriteString("SELECT ? AS uid,? AS cid,? AS curvill,? AS curarea,? AS curx,? AS cury")
+			query.WriteString("SELECT CAST(? AS UNSIGNED) AS uid,CAST(? AS UNSIGNED) AS cid,? AS curvill,? AS curarea,? AS curx,? AS cury")
 		} else {
-			query.WriteString(" UNION ALL SELECT ?,?,?,?,?,?")
+			query.WriteString(" UNION ALL SELECT CAST(? AS UNSIGNED),CAST(? AS UNSIGNED),?,?,?,?")
 		}
 		args = append(args,
 			update.UID,
