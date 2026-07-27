@@ -17,6 +17,7 @@ type MaintenanceEnv interface {
 	Logf(format string, args ...interface{})
 	RandBetween(min, max int) int
 	RandomMap(maps []shared.MapCatalogItem, level int) (shared.MapCatalogItem, bool)
+	RobotLocations() ([]shared.MapLocation, error)
 	ResetPrivateStore(uid int)
 	RestoreDummyNormal(info robotcap.Info) error
 	RevokeStorePermission(uid, cid int) error
@@ -65,11 +66,26 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 	normal.X = env.RandBetween(rc.SpawnXMin, rc.SpawnXMax)
 	normal.Y = env.RandBetween(rc.SpawnYMin, rc.SpawnYMax)
 	safeMaps := filterEligibleMaps(maps)
-	if mp, ok := env.RandomMap(safeMaps, normal.Level); ok {
-		normal.Village = mp.Village
-		normal.Area = mp.Area
-		if x, y, pointOK := robotspawn.RandomPointInMap(env, mp); pointOK {
-			normal.X, normal.Y = x, y
+	locations, locationErr := env.RobotLocations()
+	balanced := false
+	if locationErr == nil {
+		if target, ok := robotspawn.BalancedLocation(env, safeMaps, normal.Level, locations); ok {
+			normal.Village = target.Map.Village
+			normal.Area = target.Map.Area
+			normal.X = env.RandBetween(target.Rectangle.XMin, target.Rectangle.XMax)
+			normal.Y = env.RandBetween(target.Rectangle.YMin, target.Rectangle.YMax)
+			balanced = true
+		}
+	} else {
+		env.Logf("[AutoStore] uid=%d restore_normal_locations_failed err=%v\n", normal.UID, locationErr)
+	}
+	if !balanced {
+		if mp, ok := env.RandomMap(safeMaps, normal.Level); ok {
+			normal.Village = mp.Village
+			normal.Area = mp.Area
+			if x, y, pointOK := robotspawn.RandomPointInMap(env, mp); pointOK {
+				normal.X, normal.Y = x, y
+			}
 		}
 	}
 	env.ApplyConfiguredLocation(&normal, rc, safeMaps)

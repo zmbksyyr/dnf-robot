@@ -212,6 +212,10 @@ func (e storeMaintenanceEnv) RandomMap(maps []shared.MapCatalogItem, level int) 
 	return e.manager.randomMap(maps, level)
 }
 
+func (e storeMaintenanceEnv) RobotLocations() ([]shared.MapLocation, error) {
+	return e.manager.schemaRepo().RobotLocations()
+}
+
 func (e storeMaintenanceEnv) ResetPrivateStore(uid int) {
 	if e.manager.doll != nil {
 		e.manager.doll.ResetPrivateStore(uid)

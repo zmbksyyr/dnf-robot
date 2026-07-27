@@ -138,7 +138,12 @@ func (m *RobotManager) releaseAutoItemStoreSlot() {
 }
 
 func (m *RobotManager) restoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) robotcap.Info {
-	return m.storeMaintenance().RestoreAutoNormalPosition(info, rc, reason)
+	normal := info
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerNormalPosition, "restore_normal_position", func() error {
+		normal = m.storeMaintenance().RestoreAutoNormalPosition(info, rc, reason)
+		return nil
+	})
+	return normal
 }
 
 func (m *RobotManager) restoreAutoNormalOnline(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, bool) {

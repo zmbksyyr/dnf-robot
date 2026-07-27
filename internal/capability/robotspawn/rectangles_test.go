@@ -60,3 +60,18 @@ func TestIntersectRectanglesKeepsDisconnectedGeometry(t *testing.T) {
 		}
 	}
 }
+
+func TestBalancedLocationIgnoresOccupancyOutsideMovableRectangles(t *testing.T) {
+	maps := []shared.MapCatalogItem{
+		{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 0, XMax: 9, YMin: 0, YMax: 9}}},
+		{Village: 2, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 100, XMax: 109, YMin: 0, YMax: 9}}},
+	}
+	locations := []shared.MapLocation{{Village: 1, Area: 0, X: 50, Y: 5}}
+	target, ok := BalancedLocation(&sequenceRangeRandom{}, maps, 85, locations)
+	if !ok {
+		t.Fatal("BalancedLocation returned no target")
+	}
+	if target.Map.Village != 1 {
+		t.Fatalf("target=%+v, outer-gap occupancy incorrectly filled village 1", target)
+	}
+}

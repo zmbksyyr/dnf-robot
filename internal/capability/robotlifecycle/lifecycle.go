@@ -2,7 +2,6 @@ package robotlifecycle
 
 import (
 	"fmt"
-	"math"
 	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
@@ -112,9 +111,9 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 		} else if mp, ok := env.RandomMap(maps, info.Level); ok {
 			info.Village = mp.Village
 			info.Area = mp.Area
-			rectangle := randomMapRectangle(env, mp)
-			info.X = env.RandBetween(rectangle.XMin, rectangle.XMax)
-			info.Y = env.RandBetween(rectangle.YMin, rectangle.YMax)
+			if x, y, pointOK := robotspawn.RandomPointInMap(env, mp); pointOK {
+				info.X, info.Y = x, y
+			}
 		}
 		env.ApplyConfiguredLocation(&info, rc, maps)
 		if err := c.createRobot(info, rc, catalogs); err != nil {
@@ -125,193 +124,21 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	return robots, nil
 }
 
-type spawnMapCandidate struct {
-	mp         shared.MapCatalogItem
-	rectangles []shared.MapRectangle
-	weight     int
-}
-
 type spawnTarget struct {
 	mp        shared.MapCatalogItem
 	rectangle shared.MapRectangle
 }
 
-type mapRectangleKey struct {
-	area  shared.MapAreaKey
-	index int
-}
-
 func distributedSpawnTargets(env CreateEnv, maps []shared.MapCatalogItem, levels []int, locations []shared.MapLocation) ([]spawnTarget, bool) {
-	if len(levels) == 0 {
+	targets, ok := robotspawn.DistributedTargets(env, maps, levels, locations)
+	if !ok {
 		return nil, false
 	}
-	candidates := make([]spawnMapCandidate, 0, len(maps))
-	for _, mp := range maps {
-		if mp.Use && mp.Village >= 0 && mp.Area >= 0 {
-			rectangles := mapRectangles(mp)
-			if len(rectangles) > 0 {
-				candidates = append(candidates, spawnMapCandidate{mp: mp, rectangles: rectangles, weight: smoothedRectanglesWeight(rectangles)})
-			}
-		}
-	}
-	if len(candidates) == 0 {
-		return nil, false
-	}
-	areaCounts := make(map[shared.MapAreaKey]int, len(candidates))
-	rectangleCounts := make(map[mapRectangleKey]int)
-	for _, location := range locations {
-		area := shared.MapAreaKey{Village: location.Village, Area: location.Area}
-		areaCounts[area]++
-		for _, candidate := range candidates {
-			if mapAreaKey(candidate.mp) != area {
-				continue
-			}
-			for rectangleIndex, rectangle := range candidate.rectangles {
-				if rectangleContains(rectangle, location.X, location.Y) {
-					rectangleCounts[mapRectangleKey{area: area, index: rectangleIndex}]++
-					break
-				}
-			}
-			break
-		}
-	}
-	out := make([]spawnTarget, 0, len(levels))
-	for _, level := range levels {
-		eligible := eligibleSpawnMapIndexes(candidates, areaCounts, level, true)
-		if len(eligible) == 0 {
-			eligible = eligibleSpawnMapIndexes(candidates, areaCounts, level, false)
-		}
-		if len(eligible) == 0 {
-			out = append(out, spawnTarget{})
-			continue
-		}
-		chosen := randomSpawnMapIndex(env, eligible)
-		if areaCounts[mapAreaKey(candidates[chosen].mp)] > 0 {
-			chosen = leastLoadedSpawnMapIndex(env, candidates, eligible, areaCounts)
-		}
-		candidate := candidates[chosen]
-		area := mapAreaKey(candidate.mp)
-		rectangleIndex := selectSpawnRectangleIndex(env, candidate.rectangles, area, rectangleCounts)
-		areaCounts[area]++
-		rectangleCounts[mapRectangleKey{area: area, index: rectangleIndex}]++
-		out = append(out, spawnTarget{mp: candidate.mp, rectangle: candidate.rectangles[rectangleIndex]})
+	out := make([]spawnTarget, len(targets))
+	for index, target := range targets {
+		out[index] = spawnTarget{mp: target.Map, rectangle: target.Rectangle}
 	}
 	return out, true
-}
-
-func eligibleSpawnMapIndexes(candidates []spawnMapCandidate, counts map[shared.MapAreaKey]int, level int, emptyOnly bool) []int {
-	eligible := make([]int, 0, len(candidates))
-	for i, c := range candidates {
-		if c.mp.Level > level {
-			continue
-		}
-		if emptyOnly && counts[mapAreaKey(c.mp)] > 0 {
-			continue
-		}
-		eligible = append(eligible, i)
-	}
-	return eligible
-}
-
-func randomSpawnMapIndex(env CreateEnv, indexes []int) int {
-	choice := env.RandBetween(0, len(indexes)-1)
-	if choice < 0 || choice >= len(indexes) {
-		choice = 0
-	}
-	return indexes[choice]
-}
-
-func leastLoadedSpawnMapIndex(env CreateEnv, candidates []spawnMapCandidate, indexes []int, counts map[shared.MapAreaKey]int) int {
-	best := []int{indexes[0]}
-	for _, idx := range indexes[1:] {
-		bestIdx := best[0]
-		left := counts[mapAreaKey(candidates[idx].mp)] * candidates[bestIdx].weight
-		right := counts[mapAreaKey(candidates[bestIdx].mp)] * candidates[idx].weight
-		switch {
-		case left < right:
-			best = []int{idx}
-		case left == right:
-			best = append(best, idx)
-		}
-	}
-	return randomSpawnMapIndex(env, best)
-}
-
-func mapAreaKey(mp shared.MapCatalogItem) shared.MapAreaKey {
-	return shared.MapAreaKey{Village: mp.Village, Area: mp.Area}
-}
-
-func mapRectangles(mp shared.MapCatalogItem) []shared.MapRectangle {
-	return robotspawn.MapRectangles(mp)
-}
-
-func randomMapRectangle(env CreateEnv, mp shared.MapCatalogItem) shared.MapRectangle {
-	rectangles := mapRectangles(mp)
-	if len(rectangles) == 0 {
-		return shared.MapRectangle{}
-	}
-	return rectangles[randomSpawnMapIndex(env, rectangleIndexes(len(rectangles)))]
-}
-
-func selectSpawnRectangleIndex(env CreateEnv, rectangles []shared.MapRectangle, area shared.MapAreaKey, counts map[mapRectangleKey]int) int {
-	empty := make([]int, 0, len(rectangles))
-	all := rectangleIndexes(len(rectangles))
-	for _, index := range all {
-		if counts[mapRectangleKey{area: area, index: index}] == 0 {
-			empty = append(empty, index)
-		}
-	}
-	if len(empty) > 0 {
-		return randomSpawnMapIndex(env, empty)
-	}
-	best := []int{all[0]}
-	for _, index := range all[1:] {
-		bestIndex := best[0]
-		left := counts[mapRectangleKey{area: area, index: index}] * smoothedRectangleWeight(rectangles[bestIndex])
-		right := counts[mapRectangleKey{area: area, index: bestIndex}] * smoothedRectangleWeight(rectangles[index])
-		switch {
-		case left < right:
-			best = []int{index}
-		case left == right:
-			best = append(best, index)
-		}
-	}
-	return randomSpawnMapIndex(env, best)
-}
-
-func rectangleIndexes(count int) []int {
-	indexes := make([]int, count)
-	for i := range indexes {
-		indexes[i] = i
-	}
-	return indexes
-}
-
-func rectangleContains(rectangle shared.MapRectangle, x, y int) bool {
-	return robotspawn.RectangleContains(rectangle, x, y)
-}
-
-func smoothedRectanglesWeight(rectangles []shared.MapRectangle) int {
-	area := 0
-	for _, rectangle := range rectangles {
-		area += rectangleArea(rectangle)
-	}
-	if area <= 0 {
-		return 1
-	}
-	weight := int(math.Sqrt(float64(area)))
-	if weight < 1 {
-		return 1
-	}
-	return weight
-}
-
-func smoothedRectangleWeight(rectangle shared.MapRectangle) int {
-	return robotspawn.SmoothedRectangleWeight(rectangle)
-}
-
-func rectangleArea(rectangle shared.MapRectangle) int {
-	return robotspawn.RectangleArea(rectangle)
 }
 
 func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig, catalogs CreateCatalogs) error {

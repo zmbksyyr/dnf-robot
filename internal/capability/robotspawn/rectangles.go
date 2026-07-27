@@ -47,7 +47,18 @@ func RectangleArea(rectangle shared.MapRectangle) int {
 }
 
 func SmoothedRectangleWeight(rectangle shared.MapRectangle) int {
-	area := RectangleArea(rectangle)
+	return smoothedAreaWeight(RectangleArea(rectangle))
+}
+
+func SmoothedRectanglesWeight(rectangles []shared.MapRectangle) int {
+	area := 0
+	for _, rectangle := range rectangles {
+		area += RectangleArea(rectangle)
+	}
+	return smoothedAreaWeight(area)
+}
+
+func smoothedAreaWeight(area int) int {
 	if area <= 0 {
 		return 1
 	}
