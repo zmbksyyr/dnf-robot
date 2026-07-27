@@ -190,7 +190,6 @@ func (r *SQLRepository) BatchDeleteRobotData(uids, cids []int) error {
 	uidTables := map[string]string{
 		"d_starsky.Dummylist":                 "UID",
 		"d_starsky.v4_ai_user":                "uid",
-		"d_starsky.robot_store_role":          "uid",
 		"d_starsky.robot_registry":            "uid",
 		"d_starsky.Robot_stall":               "UID",
 		"d_starsky.Robot_stall_config":        "UID",
@@ -256,7 +255,6 @@ func (r *SQLRepository) BatchDeleteRobotMetadata(uids []int) error {
 	}{
 		{name: "d_starsky.Dummylist", col: "UID"},
 		{name: "d_starsky.v4_ai_user", col: "uid"},
-		{name: "d_starsky.robot_store_role", col: "uid"},
 		{name: "d_starsky.Robot_stall", col: "UID"},
 		{name: "d_starsky.Robot_stall_config", col: "UID"},
 		{name: "d_starsky.robot_registry", col: "uid"},
@@ -288,11 +286,11 @@ func (r *SQLRepository) BatchDeleteRobotMetadata(uids []int) error {
 }
 
 func (r *SQLRepository) batchDeleteByInts(tx *sql.Tx, table, col string, ids []int) error {
-	cols, err := r.TableColumns(table)
+	ready, err := cleanupTableReady(table, col, r.TableExists, r.TableColumns)
 	if err != nil {
 		return err
 	}
-	if !cols[col] {
+	if !ready {
 		return nil
 	}
 	for i := 0; i < len(ids); i += 500 {
@@ -314,11 +312,11 @@ func (r *SQLRepository) batchDeleteByInts(tx *sql.Tx, table, col string, ids []i
 }
 
 func (r *SQLRepository) batchDeleteByStrings(tx *sql.Tx, table, col string, values []string) error {
-	cols, err := r.TableColumns(table)
+	ready, err := cleanupTableReady(table, col, r.TableExists, r.TableColumns)
 	if err != nil {
 		return err
 	}
-	if !cols[col] {
+	if !ready {
 		return nil
 	}
 	for i := 0; i < len(values); i += 500 {
@@ -337,4 +335,20 @@ func (r *SQLRepository) batchDeleteByStrings(tx *sql.Tx, table, col string, valu
 		}
 	}
 	return nil
+}
+
+func cleanupTableReady(
+	table, col string,
+	tableExists func(string) (bool, error),
+	tableColumns func(string) (map[string]bool, error),
+) (bool, error) {
+	exists, err := tableExists(table)
+	if err != nil || !exists {
+		return false, err
+	}
+	cols, err := tableColumns(table)
+	if err != nil {
+		return false, err
+	}
+	return cols[col], nil
 }
