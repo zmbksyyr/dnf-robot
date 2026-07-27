@@ -3,6 +3,7 @@ package store
 import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
+	robotspawn "robot/internal/capability/robotspawn"
 	"robot/internal/shared"
 )
 
@@ -67,8 +68,9 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 	if mp, ok := env.RandomMap(safeMaps, normal.Level); ok {
 		normal.Village = mp.Village
 		normal.Area = mp.Area
-		normal.X = env.RandBetween(mp.XMin, mp.XMax)
-		normal.Y = env.RandBetween(mp.YMin, mp.YMax)
+		if x, y, pointOK := robotspawn.RandomPointInMap(env, mp); pointOK {
+			normal.X, normal.Y = x, y
+		}
 	}
 	env.ApplyConfiguredLocation(&normal, rc, safeMaps)
 	if !IsAreaEligible(normal.Village, normal.Area) {

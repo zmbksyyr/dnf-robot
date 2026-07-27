@@ -3,6 +3,7 @@ package robotaction
 import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
+	robotspawn "robot/internal/capability/robotspawn"
 	"robot/internal/foundation/mathx"
 	"robot/internal/shared"
 	"time"
@@ -144,43 +145,44 @@ func (s MoveService) followTarget(info robotcap.Info, target FollowTarget, rc ro
 	}
 	for _, mp := range maps {
 		if mp.Use && mp.Village == target.Village && mp.Area == target.Area {
-			xMin = mathx.MaxInt(mp.XMin, xMin)
-			xMax = mathx.MinInt(mp.XMax, xMax)
-			yMin = mathx.MaxInt(mp.YMin, yMin)
-			yMax = mathx.MinInt(mp.YMax, yMax)
-			break
+			intersections := robotspawn.IntersectRectangles(robotspawn.MapRectangles(mp), shared.MapRectangle{XMin: xMin, XMax: xMax, YMin: yMin, YMax: yMax})
+			if x, y, ok := robotspawn.RandomPoint(s.Env, intersections); ok {
+				return x, y
+			}
+			return s.randomTarget(info, rc, maps)
 		}
 	}
-	if xMax <= xMin || yMax <= yMin {
-		return s.randomTarget(info, rc, maps)
-	}
-	return s.Env.RandBetween(xMin, xMax), s.Env.RandBetween(yMin, yMax)
+	return s.randomTarget(info, rc, maps)
 }
 
 func (s MoveService) randomTarget(info robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem) (int, int) {
-	xMin, xMax := rc.SpawnXMin, rc.SpawnXMax
-	yMin, yMax := rc.SpawnYMin, rc.SpawnYMax
-	if !rc.SpawnFixed {
-		for _, mp := range maps {
-			if mp.Village == info.Village && mp.Area == info.Area {
-				xMin, xMax = mp.XMin, mp.XMax
-				yMin, yMax = mp.YMin, mp.YMax
-				break
-			}
+	var rectangles []shared.MapRectangle
+	for _, mp := range maps {
+		if mp.Use && mp.Village == info.Village && mp.Area == info.Area {
+			rectangles = robotspawn.MapRectangles(mp)
+			break
 		}
 	}
-	if xMax <= xMin {
-		xMin, xMax = mathx.MaxInt(0, info.X-120), info.X+120
+	if rc.SpawnFixed {
+		configured := robotspawn.IntersectRectangles(rectangles, shared.MapRectangle{XMin: rc.SpawnXMin, XMax: rc.SpawnXMax, YMin: rc.SpawnYMin, YMax: rc.SpawnYMax})
+		if len(configured) > 0 {
+			rectangles = configured
+		}
 	}
-	if yMax <= yMin {
-		yMin, yMax = mathx.MaxInt(0, info.Y-40), info.Y+40
+	if len(rectangles) == 0 {
+		rectangles = []shared.MapRectangle{{XMin: mathx.MaxInt(0, info.X-120), XMax: info.X + 120, YMin: mathx.MaxInt(0, info.Y-40), YMax: info.Y + 40}}
 	}
 	for i := 0; i < 12; i++ {
-		x := s.Env.RandBetween(xMin, xMax)
-		y := s.Env.RandBetween(yMin, yMax)
+		x, y, ok := robotspawn.RandomPoint(s.Env, rectangles)
+		if !ok {
+			break
+		}
 		if mathx.AbsInt(x-info.X) >= 40 || mathx.AbsInt(y-info.Y) >= 15 {
 			return x, y
 		}
 	}
-	return s.Env.RandBetween(xMin, xMax), s.Env.RandBetween(yMin, yMax)
+	if x, y, ok := robotspawn.RandomPoint(s.Env, rectangles); ok {
+		return x, y
+	}
+	return info.X, info.Y
 }

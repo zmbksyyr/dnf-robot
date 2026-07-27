@@ -199,6 +199,25 @@ func TestBuildStoreGridPointsUsesLowerHalf(t *testing.T) {
 	}
 }
 
+func TestBuildStoreGridPointsSkipsGapsBetweenMovableRectangles(t *testing.T) {
+	points := BuildGridPoints([]shared.MapCatalogItem{{
+		Village: 3, Area: 0, Use: true,
+		XMin: 1, XMax: 301, YMin: 200, YMax: 440,
+		Rectangles: []shared.MapRectangle{
+			{XMin: 1, XMax: 1, YMin: 200, YMax: 200},
+			{XMin: 301, XMax: 301, YMin: 440, YMax: 440},
+		},
+	}})
+	if len(points) != 2 {
+		t.Fatalf("points=%+v, want one point per rectangle", points)
+	}
+	for _, point := range points {
+		if point.X != 1 && point.X != 301 {
+			t.Fatalf("point=%+v landed in outer-bound gap", point)
+		}
+	}
+}
+
 func TestBuildStoreGridPointsExcludesUnsafeVillageArea(t *testing.T) {
 	points := BuildGridPoints([]shared.MapCatalogItem{
 		{Village: 3, Area: 1, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},

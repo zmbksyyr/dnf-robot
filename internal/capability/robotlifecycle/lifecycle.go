@@ -6,6 +6,7 @@ import (
 	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
+	robotspawn "robot/internal/capability/robotspawn"
 	"robot/internal/shared"
 )
 
@@ -241,27 +242,13 @@ func mapAreaKey(mp shared.MapCatalogItem) shared.MapAreaKey {
 }
 
 func mapRectangles(mp shared.MapCatalogItem) []shared.MapRectangle {
-	if len(mp.Rectangles) > 0 {
-		out := make([]shared.MapRectangle, 0, len(mp.Rectangles))
-		for _, rectangle := range mp.Rectangles {
-			if rectangle.XMax >= rectangle.XMin && rectangle.YMax >= rectangle.YMin {
-				out = append(out, rectangle)
-			}
-		}
-		if len(out) > 0 {
-			return out
-		}
-	}
-	if mp.XMax < mp.XMin || mp.YMax < mp.YMin {
-		return nil
-	}
-	return []shared.MapRectangle{{XMin: mp.XMin, XMax: mp.XMax, YMin: mp.YMin, YMax: mp.YMax}}
+	return robotspawn.MapRectangles(mp)
 }
 
 func randomMapRectangle(env CreateEnv, mp shared.MapCatalogItem) shared.MapRectangle {
 	rectangles := mapRectangles(mp)
 	if len(rectangles) == 0 {
-		return shared.MapRectangle{XMin: mp.XMin, XMax: mp.XMax, YMin: mp.YMin, YMax: mp.YMax}
+		return shared.MapRectangle{}
 	}
 	return rectangles[randomSpawnMapIndex(env, rectangleIndexes(len(rectangles)))]
 }
@@ -301,7 +288,7 @@ func rectangleIndexes(count int) []int {
 }
 
 func rectangleContains(rectangle shared.MapRectangle, x, y int) bool {
-	return x >= rectangle.XMin && x <= rectangle.XMax && y >= rectangle.YMin && y <= rectangle.YMax
+	return robotspawn.RectangleContains(rectangle, x, y)
 }
 
 func smoothedRectanglesWeight(rectangles []shared.MapRectangle) int {
@@ -320,24 +307,11 @@ func smoothedRectanglesWeight(rectangles []shared.MapRectangle) int {
 }
 
 func smoothedRectangleWeight(rectangle shared.MapRectangle) int {
-	area := rectangleArea(rectangle)
-	if area <= 0 {
-		return 1
-	}
-	weight := int(math.Sqrt(float64(area)))
-	if weight < 1 {
-		return 1
-	}
-	return weight
+	return robotspawn.SmoothedRectangleWeight(rectangle)
 }
 
 func rectangleArea(rectangle shared.MapRectangle) int {
-	width := rectangle.XMax - rectangle.XMin + 1
-	height := rectangle.YMax - rectangle.YMin + 1
-	if width <= 0 || height <= 0 {
-		return 0
-	}
-	return width * height
+	return robotspawn.RectangleArea(rectangle)
 }
 
 func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig, catalogs CreateCatalogs) error {

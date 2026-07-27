@@ -5,7 +5,6 @@ import (
 
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
-	"robot/internal/foundation/mathx"
 	"robot/internal/shared"
 )
 
@@ -65,26 +64,14 @@ func ApplyVillageLocation(env Env, info *robotcap.Info, village int, rc robotcon
 	}
 	mp := candidates[safeRandIntn(env, len(candidates))]
 	info.Area = mp.Area
-	xMin, xMax := mp.XMin, mp.XMax
-	yMin, yMax := mp.YMin, mp.YMax
-	if rxMin, rxMax, ok := mathx.IntersectRange(mp.XMin, mp.XMax, rc.SpawnXMin, rc.SpawnXMax); ok {
-		xMin, xMax = rxMin, rxMax
+	rectangles := MapRectangles(mp)
+	configured := IntersectRectangles(rectangles, shared.MapRectangle{XMin: rc.SpawnXMin, XMax: rc.SpawnXMax, YMin: rc.SpawnYMin, YMax: rc.SpawnYMax})
+	if len(configured) > 0 {
+		rectangles = configured
 	}
-	if ryMin, ryMax, ok := mathx.IntersectRange(mp.YMin, mp.YMax, rc.SpawnYMin, rc.SpawnYMax); ok {
-		yMin, yMax = ryMin, ryMax
+	if x, y, ok := RandomPoint(env, rectangles); ok {
+		info.X, info.Y = x, y
 	}
-	if rc.FollowRadiusX > 0 {
-		center := (xMin + xMax) / 2
-		xMin = mathx.MaxInt(xMin, center-rc.FollowRadiusX)
-		xMax = mathx.MinInt(xMax, center+rc.FollowRadiusX)
-	}
-	if rc.FollowRadiusY > 0 {
-		center := (yMin + yMax) / 2
-		yMin = mathx.MaxInt(yMin, center-rc.FollowRadiusY)
-		yMax = mathx.MinInt(yMax, center+rc.FollowRadiusY)
-	}
-	info.X = env.RandBetween(xMin, xMax)
-	info.Y = env.RandBetween(yMin, yMax)
 }
 
 func RandomMap(env Env, maps []shared.MapCatalogItem, level int) (shared.MapCatalogItem, bool) {

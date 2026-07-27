@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"sort"
 
+	robotspawn "robot/internal/capability/robotspawn"
 	"robot/internal/shared"
 )
 
 const (
 	PointCacheFile = "store_points_cache.json"
-	PointCacheVer  = 4
+	PointCacheVer  = 1
 	PointXStep     = 120
 	PointYStep     = 80
 	RestrictHalfX  = 80
@@ -45,22 +46,29 @@ type areaKey [2]int
 
 func BuildGridPoints(maps []shared.MapCatalogItem) []GridPoint {
 	var points []GridPoint
+	seen := make(map[string]struct{})
 	for _, mp := range maps {
-		if !mp.Use || mp.XMax < mp.XMin || mp.YMax < mp.YMin {
+		if !mp.Use {
 			continue
 		}
 		if !IsAreaEligible(mp.Village, mp.Area) {
 			continue
 		}
-		for y := PointYStart(mp); y <= mp.YMax; y += PointYStep {
-			for x := mp.XMin; x <= mp.XMax; x += PointXStep {
-				if x <= 0 || y <= 0 {
-					continue
+		for _, rectangle := range robotspawn.MapRectangles(mp) {
+			for y := PointYStart(rectangle); y <= rectangle.YMax; y += PointYStep {
+				for x := rectangle.XMin; x <= rectangle.XMax; x += PointXStep {
+					if x <= 0 || y <= 0 {
+						continue
+					}
+					id := fmt.Sprintf("%d-%d-%d-%d", mp.Village, mp.Area, x, y)
+					if _, exists := seen[id]; exists {
+						continue
+					}
+					seen[id] = struct{}{}
+					points = append(points, GridPoint{
+						ID: id, Village: mp.Village, Area: mp.Area, X: x, Y: y, Status: PointStatusUnknown,
+					})
 				}
-				points = append(points, GridPoint{
-					ID:      fmt.Sprintf("%d-%d-%d-%d", mp.Village, mp.Area, x, y),
-					Village: mp.Village, Area: mp.Area, X: x, Y: y, Status: PointStatusUnknown,
-				})
 			}
 		}
 	}
@@ -94,11 +102,11 @@ func FilterEligibleGridPoints(points []GridPoint) []GridPoint {
 	return out
 }
 
-func PointYStart(mp shared.MapCatalogItem) int {
-	if mp.YMax <= mp.YMin {
-		return mp.YMin
+func PointYStart(rectangle shared.MapRectangle) int {
+	if rectangle.YMax <= rectangle.YMin {
+		return rectangle.YMin
 	}
-	return mp.YMin + (mp.YMax-mp.YMin)/2
+	return rectangle.YMin + (rectangle.YMax-rectangle.YMin)/2
 }
 
 func IsAreaEligible(village, area int) bool {
