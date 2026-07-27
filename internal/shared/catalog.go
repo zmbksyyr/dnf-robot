@@ -35,15 +35,23 @@ type EquipmentCatalogItem struct {
 }
 
 type MapCatalogItem struct {
-	Village     int    `json:"village"`
-	VillageName string `json:"village_name,omitempty"`
-	Area        int    `json:"area"`
-	Level       int    `json:"level"`
-	XMin        int    `json:"x_min"`
-	XMax        int    `json:"x_max"`
-	YMin        int    `json:"y_min"`
-	YMax        int    `json:"y_max"`
-	Use         bool   `json:"use"`
+	Village     int            `json:"village"`
+	VillageName string         `json:"village_name,omitempty"`
+	Area        int            `json:"area"`
+	Level       int            `json:"level"`
+	XMin        int            `json:"x_min"`
+	XMax        int            `json:"x_max"`
+	YMin        int            `json:"y_min"`
+	YMax        int            `json:"y_max"`
+	Rectangles  []MapRectangle `json:"rectangles,omitempty"`
+	Use         bool           `json:"use"`
+}
+
+type MapRectangle struct {
+	XMin int `json:"x_min"`
+	XMax int `json:"x_max"`
+	YMin int `json:"y_min"`
+	YMax int `json:"y_max"`
 }
 
 type MapAreaKey struct {

@@ -333,10 +333,11 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 		}
 		for _, area := range parseTownAreas(body) {
 			mapBody := a.text(townMapArchivePath(area.MapPath))
+			rectangles := townMapCoordinateRectangles(mapBody)
 			xMin, xMax, yMin, yMax, coordinateReady := townMapCoordinateBounds(mapBody)
 			out = append(out, shared.MapCatalogItem{
 				Village: entry.ID, VillageName: villageName, Area: area.ID, Level: level,
-				XMin: xMin, XMax: xMax, YMin: yMin, YMax: yMax, Use: coordinateReady,
+				XMin: xMin, XMax: xMax, YMin: yMin, YMax: yMax, Rectangles: rectangles, Use: coordinateReady,
 			})
 		}
 	}

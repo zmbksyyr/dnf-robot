@@ -598,48 +598,116 @@ func townMapArchivePath(path string) string {
 }
 
 func townMapCoordinateBounds(body string) (xMin, xMax, yMin, yMax int, ok bool) {
-	found := false
-	values := pvfTagInts(body, "town movable area")
+	rectangles := townMapCoordinateRectangles(body)
+	if len(rectangles) == 0 {
+		return 0, 0, 0, 0, false
+	}
+	xMin, xMax = rectangles[0].XMin, rectangles[0].XMax
+	yMin, yMax = rectangles[0].YMin, rectangles[0].YMax
+	for _, rectangle := range rectangles[1:] {
+		if rectangle.XMin < xMin {
+			xMin = rectangle.XMin
+		}
+		if rectangle.XMax > xMax {
+			xMax = rectangle.XMax
+		}
+		if rectangle.YMin < yMin {
+			yMin = rectangle.YMin
+		}
+		if rectangle.YMax > yMax {
+			yMax = rectangle.YMax
+		}
+	}
+	return xMin, xMax, yMin, yMax, true
+}
+
+func townMapCoordinateRectangles(body string) []shared.MapRectangle {
+	values := pvfDirectTagInts(body, "town movable area")
+	if len(values)%6 != 0 {
+		return nil
+	}
+	rectangles := make([]shared.MapRectangle, 0, len(values)/6)
 	for i := 0; i+3 < len(values); i += 6 {
 		x, y, width, height := values[i], values[i+1], values[i+2], values[i+3]
 		if width <= 0 || height <= 0 || width > 10000 || height > 10000 {
 			continue
 		}
 		right, bottom := x+width, y+height
-		if !found {
-			xMin, xMax, yMin, yMax = x, right, y, bottom
-			found = true
+		if right < 0 || bottom < 0 || x > 65535 || y > 65535 {
 			continue
 		}
-		if x < xMin {
-			xMin = x
+		if x < 0 {
+			x = 0
 		}
-		if right > xMax {
-			xMax = right
+		if y < 0 {
+			y = 0
 		}
-		if y < yMin {
-			yMin = y
+		if right > 65535 {
+			right = 65535
 		}
-		if bottom > yMax {
-			yMax = bottom
+		if bottom > 65535 {
+			bottom = 65535
+		}
+		rectangles = append(rectangles, shared.MapRectangle{XMin: x, XMax: right, YMin: y, YMax: bottom})
+	}
+	return rectangles
+}
+
+func pvfDirectTagInts(body, tag string) []int {
+	lines := splitPVFLines(body)
+	want := strings.ToLower(strings.TrimSpace(tag))
+	inside := false
+	depth := 0
+	var out []int
+	for _, line := range lines {
+		trimmed := strings.Trim(strings.TrimSpace(line), "`")
+		name, closing, isTag := pvfTagLine(trimmed)
+		if !inside {
+			if isTag && !closing && name == want {
+				inside = true
+			}
+			continue
+		}
+		if isTag {
+			if closing && depth == 0 && name == want {
+				return out
+			}
+			if closing {
+				if depth > 0 {
+					depth--
+				}
+			} else {
+				depth++
+			}
+			continue
+		}
+		if depth > 0 {
+			continue
+		}
+		for _, field := range strings.Fields(trimmed) {
+			value, err := strconv.Atoi(field)
+			if err == nil {
+				out = append(out, value)
+			}
 		}
 	}
-	if !found {
-		return 0, 0, 0, 0, false
+	return out
+}
+
+func pvfTagLine(line string) (name string, closing, ok bool) {
+	line = strings.TrimSpace(line)
+	if len(line) < 2 || (!strings.HasPrefix(line, "[") && !strings.HasSuffix(line, "]")) {
+		return "", false, false
 	}
-	if xMin < 0 {
-		xMin = 0
+	name = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+	if strings.HasPrefix(name, "/") {
+		closing = true
+		name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
 	}
-	if yMin < 0 {
-		yMin = 0
+	if name == "" {
+		return "", false, false
 	}
-	if xMax > 65535 {
-		xMax = 65535
-	}
-	if yMax > 65535 {
-		yMax = 65535
-	}
-	return xMin, xMax, yMin, yMax, true
+	return strings.ToLower(name), closing, true
 }
 
 func pvfTagInts(body, tag string) []int {
