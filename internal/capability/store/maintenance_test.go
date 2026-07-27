@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 
 	robotcap "robot/internal/capability/robot"
@@ -9,9 +10,11 @@ import (
 )
 
 type maintenanceTestEnv struct {
-	maps      []shared.MapCatalogItem
-	locations []shared.MapLocation
-	restored  robotcap.Info
+	maps       []shared.MapCatalogItem
+	locations  []shared.MapLocation
+	restored   robotcap.Info
+	restoreErr error
+	synced     bool
 }
 
 func (*maintenanceTestEnv) ApplyConfiguredLocation(*robotcap.Info, robotconfig.RuntimeConfig, []shared.MapCatalogItem) {
@@ -31,13 +34,16 @@ func (e *maintenanceTestEnv) RobotLocations() ([]shared.MapLocation, error) {
 func (*maintenanceTestEnv) ResetPrivateStore(int) {}
 func (e *maintenanceTestEnv) RestoreDummyNormal(info robotcap.Info) error {
 	e.restored = info
-	return nil
+	return e.restoreErr
 }
 func (*maintenanceTestEnv) RevokeStorePermission(int, int) error { return nil }
 func (*maintenanceTestEnv) SelectRobots(robotcap.CommandRequest) ([]robotcap.Info, error) {
 	return nil, nil
 }
-func (*maintenanceTestEnv) SyncCharacterVillage(int, int) (int, error) { return 0, nil }
+func (e *maintenanceTestEnv) SyncCharacterVillage(int, int) (int, error) {
+	e.synced = true
+	return 0, nil
+}
 
 func TestRestoreAutoNormalPositionSelectsEmptyMovableArea(t *testing.T) {
 	env := &maintenanceTestEnv{
@@ -48,11 +54,30 @@ func TestRestoreAutoNormalPositionSelectsEmptyMovableArea(t *testing.T) {
 		locations: []shared.MapLocation{{Village: 1, Area: 0, X: 15, Y: 35}},
 	}
 	info := robotcap.Info{UID: 17000001, CID: 1, Level: 85}
-	normal := (Maintenance{Env: env}).RestoreAutoNormalPosition(info, robotconfig.Default(), "test")
+	normal, err := (Maintenance{Env: env}).RestoreAutoNormalPosition(info, robotconfig.Default(), "test")
+	if err != nil {
+		t.Fatalf("restore normal: %v", err)
+	}
 	if normal.Village != 2 || normal.Area != 0 || normal.X != 100 || normal.Y != 130 {
 		t.Fatalf("normal=%+v, want empty village 2 rectangle", normal)
 	}
 	if env.restored != normal {
 		t.Fatalf("restored=%+v, want %+v", env.restored, normal)
+	}
+}
+
+func TestRestoreAutoNormalPositionStopsWhenDummyWriteFails(t *testing.T) {
+	wantErr := errors.New("write failed")
+	env := &maintenanceTestEnv{
+		maps:       []shared.MapCatalogItem{{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 10, XMax: 20, YMin: 30, YMax: 40}}}},
+		restoreErr: wantErr,
+	}
+	info := robotcap.Info{UID: 17000001, CID: 1, Level: 85}
+	_, err := (Maintenance{Env: env}).RestoreAutoNormalPosition(info, robotconfig.Default(), "test")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("restore error=%v want=%v", err, wantErr)
+	}
+	if env.synced {
+		t.Fatal("character village sync ran after dummy write failure")
 	}
 }

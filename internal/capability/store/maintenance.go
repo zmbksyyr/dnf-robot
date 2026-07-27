@@ -25,11 +25,15 @@ type MaintenanceEnv interface {
 	SyncCharacterVillage(cid int, village int) (int, error)
 }
 
-func (m Maintenance) RestoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) robotcap.Info {
+func (m Maintenance) RestoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, error) {
 	env := m.Env
 	maps := env.LoadMapCatalog()
 	normal := m.randomNormalPosition(info, rc, maps)
-	_ = env.RestoreDummyNormal(normal)
+	if err := env.RestoreDummyNormal(normal); err != nil {
+		env.Logf("[AutoStore] uid=%d restore_normal_write_failed reason=%s pos=%d/%d/%d/%d err=%v\n",
+			normal.UID, reason, normal.Village, normal.Area, normal.X, normal.Y, err)
+		return normal, err
+	}
 	if statPrev, err := env.SyncCharacterVillage(normal.CID, normal.Village); err != nil {
 		env.Logf("[AutoStore] uid=%d restore_charac_village_sync_failed cid=%d village=%d err=%v\n",
 			normal.UID, normal.CID, normal.Village, err)
@@ -38,7 +42,7 @@ func (m Maintenance) RestoreAutoNormalPosition(info robotcap.Info, rc robotconfi
 	}
 	env.Logf("[AutoStore] uid=%d restore_normal reason=%s pos=%d/%d/%d/%d\n",
 		normal.UID, reason, normal.Village, normal.Area, normal.X, normal.Y)
-	return normal
+	return normal, nil
 }
 
 func (m Maintenance) FinishStoreState(uid, cid int, reason string) {

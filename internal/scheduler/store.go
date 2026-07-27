@@ -137,18 +137,24 @@ func (m *RobotManager) releaseAutoItemStoreSlot() {
 	})
 }
 
-func (m *RobotManager) restoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) robotcap.Info {
+func (m *RobotManager) restoreAutoNormalPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, error) {
 	normal := info
-	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerNormalPosition, "restore_normal_position", func() error {
-		normal = m.storeMaintenance().RestoreAutoNormalPosition(info, rc, reason)
-		return nil
+	err := m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerNormalPosition, "restore_normal_position", func() error {
+		var restoreErr error
+		normal, restoreErr = m.storeMaintenance().RestoreAutoNormalPosition(info, rc, reason)
+		return restoreErr
 	})
-	return normal
+	return normal, err
 }
 
 func (m *RobotManager) restoreAutoNormalOnline(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, bool) {
 	started := time.Now()
-	normal := m.restoreAutoNormalPosition(info, rc, reason)
+	normal, err := m.restoreAutoNormalPosition(info, rc, reason)
+	if err != nil {
+		robotLogf("[AutoStore] uid=%d restore_normal_failed reason=%s elapsed_ms=%d err=%v\n",
+			normal.UID, reason, time.Since(started).Milliseconds(), err)
+		return normal, false
+	}
 	if err := m.invalidateCharacterCache(normal.UID); err != nil {
 		robotLogf("[AutoStore] uid=%d restore_normal_cache_invalidation_failed reason=%s elapsed_ms=%d err=%v\n",
 			normal.UID, reason, time.Since(started).Milliseconds(), err)

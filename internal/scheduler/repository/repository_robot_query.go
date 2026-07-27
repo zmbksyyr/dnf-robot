@@ -133,11 +133,7 @@ ORDER BY r.uid` + limit
 }
 
 func (r *SQLRepository) RobotLocations() ([]shared.MapLocation, error) {
-	rows, err := r.Query(`
-SELECT CAST(d.curvill AS SIGNED),CAST(d.curarea AS SIGNED),CAST(d.curx AS SIGNED),CAST(d.cury AS SIGNED)
-FROM d_starsky.Dummylist d
-JOIN d_starsky.robot_registry r ON r.uid=CAST(d.UID AS UNSIGNED)
-JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.m_id=r.uid AND c.delete_flag=0`)
+	rows, err := r.Query(robotLocationsQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -154,3 +150,10 @@ JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.m_id=r.uid AND c.delet
 	}
 	return locations, rows.Err()
 }
+
+const robotLocationsQuery = `
+SELECT CAST(d.curvill AS SIGNED),CAST(d.curarea AS SIGNED),CAST(d.curx AS SIGNED),CAST(d.cury AS SIGNED)
+FROM d_starsky.Dummylist d
+JOIN d_starsky.robot_registry r ON r.uid=CAST(d.UID AS UNSIGNED)
+JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.m_id=r.uid AND c.delete_flag=0
+WHERE CAST(d.function_type AS SIGNED)=0`
