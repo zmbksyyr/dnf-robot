@@ -170,22 +170,6 @@ func (r *SQLRepository) NextInt(query string, fallback int) (int, error) {
 	return int(v.Int64), nil
 }
 
-func (r *SQLRepository) FollowAccountVillage(account string) (int, bool, error) {
-	var village sql.NullInt64
-	err := r.QueryRow(`
-SELECT COALESCE(NULLIF(s.village,0), c.village)
-FROM d_taiwan.accounts a
-JOIN taiwan_cain.charac_info c ON c.m_id=a.UID AND c.delete_flag=0
-LEFT JOIN taiwan_cain.charac_stat s ON s.charac_no=c.charac_no
-WHERE a.accountname=?
-ORDER BY c.charac_no DESC
-LIMIT 1`, account).Scan(&village)
-	if err != nil || !village.Valid {
-		return 0, false, err
-	}
-	return int(village.Int64), true, nil
-}
-
 var schemaStatements = [...]string{
 	"CREATE DATABASE IF NOT EXISTS d_starsky DEFAULT CHARACTER SET gbk",
 	"CREATE TABLE IF NOT EXISTS d_starsky.Dummylist (ID VARCHAR(32), YID VARCHAR(32), UID VARCHAR(32), port VARCHAR(16), curvill VARCHAR(32), curarea VARCHAR(32), curx VARCHAR(32), cury VARCHAR(32), CID VARCHAR(32), ip VARCHAR(64), function_type VARCHAR(8), discost VARCHAR(8), PRIMARY KEY (UID)) DEFAULT CHARSET=gbk",

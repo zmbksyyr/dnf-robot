@@ -154,7 +154,6 @@ type SchemaRepository interface {
 	CreateBaseCharacter(info robotcap.Info, rc robotconfig.RuntimeConfig) error
 	SaveEquipmentSlots(cid int, raw []byte) error
 	ReplaceAvatarItems(cid int, selected map[int]shared.EquipmentCatalogItem) error
-	FollowAccountVillage(account string) (int, bool, error)
 	MarkStoreStarted(uid int) error
 	PrepareStorePosition(info robotcap.Info) error
 	PrepareDisjointPosition(info robotcap.Info, cost int) error
@@ -168,7 +167,6 @@ type SchemaRepository interface {
 	AccountOnline(uid int) (bool, error)
 	EnsureDisjointProfession(info robotcap.Info) error
 	RevokeStorePermission(uid, cid int) error
-	FollowAccountUIDs(account string) ([]int, error)
 	FollowAccountVillageLastPlayed(account string) (int, bool, error)
 	RobotCharacterName(uid int) (string, error)
 	AliveRobotUIDs(uids []int) (map[int]bool, error)
@@ -297,10 +295,6 @@ func (missingSchemaRepository) ReplaceAvatarItems(int, map[int]shared.EquipmentC
 	return errors.New("scheduler schema repository is not configured")
 }
 
-func (missingSchemaRepository) FollowAccountVillage(string) (int, bool, error) {
-	return 0, false, errors.New("scheduler schema repository is not configured")
-}
-
 func (missingSchemaRepository) MarkStoreStarted(int) error {
 	return errors.New("scheduler schema repository is not configured")
 }
@@ -351,10 +345,6 @@ func (missingSchemaRepository) EnsureDisjointProfession(robotcap.Info) error {
 
 func (missingSchemaRepository) RevokeStorePermission(int, int) error {
 	return errors.New("scheduler schema repository is not configured")
-}
-
-func (missingSchemaRepository) FollowAccountUIDs(string) ([]int, error) {
-	return nil, errors.New("scheduler schema repository is not configured")
 }
 
 type missingPositionRepository struct{}

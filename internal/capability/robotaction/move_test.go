@@ -50,7 +50,7 @@ func TestAutoMovePreservesSourceWhenFollowingAcrossAreas(t *testing.T) {
 	env := &captureMoveEnv{}
 	service := MoveService{Env: env}
 	source := robotcap.Info{UID: 101, CID: 201, Village: 1, Area: 2, X: 100, Y: 50}
-	target := FollowTarget{UID: 999, Village: 3, Area: 4, X: 500, Y: 200}
+	target := FollowTarget{Village: 3, Area: 4, X: 500, Y: 200}
 	rc := robotconfig.RuntimeConfig{
 		MoveSteps:     2,
 		MoveSpeedMin:  100,

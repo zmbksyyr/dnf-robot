@@ -39,23 +39,6 @@ func (r *SQLRepository) SelectRobots(req robotcap.CommandRequest) ([]robotcap.In
 	return out, rows.Err()
 }
 
-func (r *SQLRepository) FollowAccountUIDs(account string) ([]int, error) {
-	rows, err := r.Query(`SELECT uid FROM d_starsky.robot_registry WHERE account=? ORDER BY uid DESC LIMIT 20`, account)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var uids []int
-	for rows.Next() {
-		var uid int
-		if err := rows.Scan(&uid); err != nil {
-			return nil, err
-		}
-		uids = append(uids, uid)
-	}
-	return uids, rows.Err()
-}
-
 func (r *SQLRepository) FollowAccountVillageLastPlayed(account string) (int, bool, error) {
 	var village sql.NullInt64
 	err := r.QueryRow(`

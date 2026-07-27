@@ -23,7 +23,6 @@ type MoveEnv interface {
 }
 
 type FollowTarget struct {
-	UID     int
 	Village int
 	Area    int
 	X       int

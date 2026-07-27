@@ -9,7 +9,6 @@ const (
 
 type followAccountLookup struct {
 	account     string
-	uids        []int
 	village     int
 	villageOK   bool
 	refreshedAt time.Time
@@ -40,7 +39,6 @@ func (m *RobotManager) loadFollowAccount(account string) (followAccountLookup, b
 
 func (m *RobotManager) refreshFollowAccount(account string) {
 	repo := m.schemaRepo()
-	uids, uidsErr := repo.FollowAccountUIDs(account)
 	village, villageOK, villageErr := repo.FollowAccountVillageLastPlayed(account)
 	now := time.Now()
 
@@ -49,7 +47,7 @@ func (m *RobotManager) refreshFollowAccount(account string) {
 	if m.followLookupInFlight == account {
 		m.followLookupInFlight = ""
 	}
-	if uidsErr != nil && villageErr != nil {
+	if villageErr != nil {
 		if m.followLookup.account != account {
 			m.followLookup = followAccountLookup{account: account}
 		}
@@ -58,7 +56,6 @@ func (m *RobotManager) refreshFollowAccount(account string) {
 	}
 	m.followLookup = followAccountLookup{
 		account:     account,
-		uids:        append([]int(nil), uids...),
 		village:     village,
 		villageOK:   villageErr == nil && villageOK,
 		refreshedAt: now,
@@ -71,6 +68,5 @@ func followAccountLookupUsable(cached followAccountLookup, now time.Time) bool {
 }
 
 func cloneFollowAccountLookup(value followAccountLookup) followAccountLookup {
-	value.uids = append([]int(nil), value.uids...)
 	return value
 }

@@ -121,7 +121,7 @@ func (r *RobotRuntime) AutoMove(uid int) robotcap.ActionResult {
 		target, hasTarget := r.manager.currentFollowTarget(rc, maps)
 		info := robotcap.Info{UID: st.UID, CID: st.CID, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y}
 		var err error
-		if hasTarget && target.UID != st.UID {
+		if hasTarget {
 			err = r.manager.moveService().AutoMove(info, rc, maps, &target)
 		} else {
 			err = r.manager.moveService().AutoMove(info, rc, maps, nil)
@@ -495,15 +495,6 @@ func (m *RobotManager) currentFollowTarget(rc robotconfig.RuntimeConfig, maps []
 	if !ok {
 		return robotaction.FollowTarget{}, false
 	}
-	if len(lookup.uids) > 0 {
-		status := m.runtimeStatusMap()
-		for _, uid := range lookup.uids {
-			if st, ok := status[uid]; ok && robotcap.ActiveRuntimeStatus(st) {
-				return robotaction.FollowTarget{UID: uid, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y}, true
-			}
-		}
-	}
-
 	if !lookup.villageOK {
 		return robotaction.FollowTarget{}, false
 	}

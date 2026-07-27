@@ -79,7 +79,7 @@ type spawnEnv struct {
 }
 
 func (e spawnEnv) FollowAccountVillage(account string) (int, bool, error) {
-	return e.manager.schemaRepo().FollowAccountVillage(account)
+	return e.manager.schemaRepo().FollowAccountVillageLastPlayed(account)
 }
 
 func (e spawnEnv) RandBetween(min, max int) int {
