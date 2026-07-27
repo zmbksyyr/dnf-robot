@@ -149,27 +149,25 @@ ORDER BY r.uid` + limit
 	return out, rows.Err()
 }
 
-func (r *SQLRepository) RobotAreaCounts() (map[shared.MapAreaKey]int, error) {
+func (r *SQLRepository) RobotLocations() ([]shared.MapLocation, error) {
 	rows, err := r.Query(`
-SELECT CAST(d.curvill AS SIGNED),CAST(d.curarea AS SIGNED),COUNT(*)
+SELECT CAST(d.curvill AS SIGNED),CAST(d.curarea AS SIGNED),CAST(d.curx AS SIGNED),CAST(d.cury AS SIGNED)
 FROM d_starsky.Dummylist d
 JOIN d_starsky.robot_registry r ON r.uid=CAST(d.UID AS UNSIGNED)
-JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.m_id=r.uid AND c.delete_flag=0
-GROUP BY CAST(d.curvill AS SIGNED),CAST(d.curarea AS SIGNED)`)
+JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.m_id=r.uid AND c.delete_flag=0`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	counts := make(map[shared.MapAreaKey]int)
+	var locations []shared.MapLocation
 	for rows.Next() {
-		var key shared.MapAreaKey
-		var count int
-		if err := rows.Scan(&key.Village, &key.Area, &count); err != nil {
+		var location shared.MapLocation
+		if err := rows.Scan(&location.Village, &location.Area, &location.X, &location.Y); err != nil {
 			return nil, err
 		}
-		if key.Village >= 0 && key.Area >= 0 && count > 0 {
-			counts[key] = count
+		if location.Village >= 0 && location.Area >= 0 {
+			locations = append(locations, location)
 		}
 	}
-	return counts, rows.Err()
+	return locations, rows.Err()
 }

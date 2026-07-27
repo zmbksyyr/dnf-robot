@@ -150,7 +150,7 @@ func TestCreatorSpawnMapsFillGloballyEmptyAreasAcrossBatches(t *testing.T) {
 			{Village: 1, Area: 0, XMin: 0, XMax: 999, YMin: 0, YMax: 999, Use: true},
 			{Village: 1, Area: 1, XMin: 0, XMax: 99, YMin: 0, YMax: 99, Use: true},
 		},
-		areaCounts: map[shared.MapAreaKey]int{{Village: 1, Area: 0}: 10},
+		locations: []shared.MapLocation{{Village: 1, Area: 0}},
 	}
 	robots, err := (Creator{Env: env}).Create(robotcap.CreateRequest{Count: 1})
 	if err != nil {
@@ -168,16 +168,67 @@ func TestDistributedSpawnMapsKeepsSmallAreasPopulatedAfterCoverage(t *testing.T)
 		{Village: 1, Area: 1, XMin: 0, XMax: 39, YMin: 0, YMax: 39, Use: true},
 	}
 	levels := make([]int, 10)
-	assigned, ok := distributedSpawnMaps(env, maps, levels, nil)
+	assigned, ok := distributedSpawnTargets(env, maps, levels, nil)
 	if !ok || len(assigned) != len(levels) {
 		t.Fatalf("assigned=%+v ok=%t", assigned, ok)
 	}
 	counts := map[int]int{}
-	for _, mp := range assigned {
-		counts[mp.Area]++
+	for _, target := range assigned {
+		counts[target.mp.Area]++
 	}
 	if counts[0] != 2 || counts[1] != 8 {
 		t.Fatalf("area counts = %v, want smoothed 1:4 distribution", counts)
+	}
+}
+
+func TestCreatorSpawnRectanglesFillGloballyEmptyRectanglesAcrossBatches(t *testing.T) {
+	env := &testCreateEnv{
+		rc: robotconfig.RuntimeConfig{
+			RobotUIDStart: 17000000,
+			RobotUIDEnd:   17999999,
+			LevelMin:      1,
+			LevelMax:      1,
+			Jobs:          []int{1},
+			GrowTypes:     []int{0},
+			RobotUIDGuard: 18000000,
+		},
+		maps: []shared.MapCatalogItem{{
+			Village: 1, Area: 0, Use: true,
+			Rectangles: []shared.MapRectangle{
+				{XMin: 10, XMax: 20, YMin: 30, YMax: 40},
+				{XMin: 100, XMax: 120, YMin: 130, YMax: 140},
+			},
+		}},
+		locations: []shared.MapLocation{{Village: 1, Area: 0, X: 15, Y: 35}},
+	}
+	robots, err := (Creator{Env: env}).Create(robotcap.CreateRequest{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(robots) != 1 || robots[0].X != 100 || robots[0].Y != 130 {
+		t.Fatalf("robots = %+v, want the globally empty second rectangle", robots)
+	}
+}
+
+func TestDistributedSpawnTargetsKeepsSmallRectanglesPopulatedAfterCoverage(t *testing.T) {
+	env := &testCreateEnv{}
+	maps := []shared.MapCatalogItem{{
+		Village: 1, Area: 0, Use: true,
+		Rectangles: []shared.MapRectangle{
+			{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
+			{XMin: 100, XMax: 139, YMin: 100, YMax: 139},
+		},
+	}}
+	targets, ok := distributedSpawnTargets(env, maps, make([]int, 10), nil)
+	if !ok || len(targets) != 10 {
+		t.Fatalf("targets=%+v ok=%t", targets, ok)
+	}
+	counts := map[int]int{}
+	for _, target := range targets {
+		counts[target.rectangle.XMin]++
+	}
+	if counts[0] != 2 || counts[100] != 8 {
+		t.Fatalf("rectangle counts = %v, want smoothed 1:4 distribution", counts)
 	}
 }
 
@@ -234,7 +285,7 @@ type testCreateEnv struct {
 	equipmentBase     *shared.EquipmentCatalogItem
 	maps              []shared.MapCatalogItem
 	equipmentCatalog  []shared.EquipmentCatalogItem
-	areaCounts        map[shared.MapAreaKey]int
+	locations         []shared.MapLocation
 	prepareErr        error
 	prepared          bool
 	allocated         bool
@@ -304,8 +355,8 @@ func (e *testCreateEnv) LoadCreateCatalogs() CreateCatalogs {
 
 func (e *testCreateEnv) LoadMapCatalog() []shared.MapCatalogItem { return e.maps }
 
-func (e *testCreateEnv) RobotAreaCounts() (map[shared.MapAreaKey]int, error) {
-	return e.areaCounts, nil
+func (e *testCreateEnv) RobotLocations() ([]shared.MapLocation, error) {
+	return e.locations, nil
 }
 
 func (e *testCreateEnv) PrepareRobotUIDRange(int, int, int) error {

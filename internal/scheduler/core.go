@@ -173,7 +173,7 @@ type SchemaRepository interface {
 	RobotCharacterName(uid int) (string, error)
 	AliveRobotUIDs(uids []int) (map[int]bool, error)
 	RobotStatusRows(req robotcap.CommandRequest) ([]robotcap.StatusItem, error)
-	RobotAreaCounts() (map[shared.MapAreaKey]int, error)
+	RobotLocations() ([]shared.MapLocation, error)
 	CleanupCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, error)
 	BatchDeleteRobotData(uids, cids []int) error
 	BatchDeleteRobotMetadata(uids []int) error
@@ -379,7 +379,7 @@ func (missingSchemaRepository) RobotStatusRows(robotcap.CommandRequest) ([]robot
 	return nil, errors.New("scheduler schema repository is not configured")
 }
 
-func (missingSchemaRepository) RobotAreaCounts() (map[shared.MapAreaKey]int, error) {
+func (missingSchemaRepository) RobotLocations() ([]shared.MapLocation, error) {
 	return nil, errors.New("scheduler schema repository is not configured")
 }
 

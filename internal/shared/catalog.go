@@ -58,3 +58,10 @@ type MapAreaKey struct {
 	Village int
 	Area    int
 }
+
+type MapLocation struct {
+	Village int
+	Area    int
+	X       int
+	Y       int
+}

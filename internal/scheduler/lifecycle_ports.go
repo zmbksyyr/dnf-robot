@@ -66,8 +66,8 @@ func (e lifecycleCreateEnv) LoadMapCatalog() []shared.MapCatalogItem {
 	return e.manager.loadMapCatalog()
 }
 
-func (e lifecycleCreateEnv) RobotAreaCounts() (map[shared.MapAreaKey]int, error) {
-	return e.manager.schemaRepo().RobotAreaCounts()
+func (e lifecycleCreateEnv) RobotLocations() ([]shared.MapLocation, error) {
+	return e.manager.schemaRepo().RobotLocations()
 }
 
 func (e lifecycleCreateEnv) PrepareRobotUIDRange(uidStart, uidEnd, uidGuard int) error {
