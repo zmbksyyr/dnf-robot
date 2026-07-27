@@ -26,14 +26,11 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 				Account: account,
 				Reason:  "confirmed broken uid without registry row",
 			}
-			accountName, err := r.accountName(uid)
+			accountName, characterCount, err := r.unregisteredCleanupIdentity(uid)
 			if err != nil {
 				return nil, err
 			}
-			if accountName != "" && accountName != account {
-				c.Protected = true
-				c.Reason = "accountname does not equal uid"
-			}
+			classifyUnregisteredCleanupCandidate(&c, accountName, characterCount)
 			candidates = append(candidates, c)
 		}
 	}
@@ -49,12 +46,12 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 
 func (r *SQLRepository) cleanupRegisteredCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, map[int]bool, error) {
 	query := `SELECT r.uid,r.cid,r.charac_name,r.account,IF(a.UID IS NULL,0,1),a.accountname,
-IFNULL(d.UID,''),
-IF(EXISTS(SELECT 1 FROM taiwan_cain.charac_info c WHERE c.delete_flag=0 AND c.charac_no=r.cid)
-OR EXISTS(SELECT 1 FROM taiwan_cain.charac_info c WHERE c.delete_flag=0 AND c.m_id=r.uid),1,0)
+IFNULL(d.UID,''),IF(rc.charac_no IS NULL,0,1),IFNULL(rc.m_id,0),
+(SELECT COUNT(*) FROM taiwan_cain.charac_info owned WHERE owned.m_id=r.uid)
 FROM d_starsky.robot_registry r
 LEFT JOIN d_taiwan.accounts a ON a.UID=r.uid
-LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid`
+LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid
+LEFT JOIN taiwan_cain.charac_info rc ON rc.charac_no=r.cid`
 	var rows *sql.Rows
 	var err error
 	if len(req.UIDs) > 0 {
@@ -87,28 +84,44 @@ LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid`
 	for rows.Next() {
 		var c robotcap.CleanupCandidate
 		var accountName, dummyUID sql.NullString
-		var accountExists, coreExists int
-		if err := rows.Scan(&c.UID, &c.CID, &c.Name, &c.Account, &accountExists, &accountName, &dummyUID, &coreExists); err != nil {
+		var accountExists, registeredCharacterExists, registeredCharacterOwner, ownerCharacterCount int
+		if err := rows.Scan(
+			&c.UID, &c.CID, &c.Name, &c.Account, &accountExists, &accountName, &dummyUID,
+			&registeredCharacterExists, &registeredCharacterOwner, &ownerCharacterCount,
+		); err != nil {
 			return nil, nil, err
 		}
 		seen[c.UID] = true
-		classifyRegisteredCleanupCandidate(&c, accountExists != 0, accountName, dummyUID.String != "", coreExists != 0, req.InternalConfirmedBroken)
+		classifyRegisteredCleanupCandidate(
+			&c, accountExists != 0, accountName, dummyUID.String != "",
+			registeredCharacterExists != 0, registeredCharacterOwner, ownerCharacterCount,
+			req.InternalConfirmedBroken,
+		)
 		out = append(out, c)
 	}
 	return out, seen, rows.Err()
 }
 
-func classifyRegisteredCleanupCandidate(c *robotcap.CleanupCandidate, accountExists bool, accountName sql.NullString, dummyExists, coreExists, confirmedBroken bool) {
+func classifyRegisteredCleanupCandidate(
+	c *robotcap.CleanupCandidate,
+	accountExists bool,
+	accountName sql.NullString,
+	dummyExists bool,
+	registeredCharacterExists bool,
+	registeredCharacterOwner int,
+	ownerCharacterCount int,
+	confirmedBroken bool,
+) {
 	expected := fmt.Sprintf("%d", c.UID)
 	registryMatches := c.Account == expected
 	accountMatches := accountExists && accountName.Valid && accountName.String == expected
 	if accountExists && !accountMatches {
 		c.Protected = true
 		c.Reason = "accountname does not equal uid"
-	} else if !accountExists && !coreExists && registryMatches {
+	} else if !accountExists && !registeredCharacterExists && ownerCharacterCount == 0 && registryMatches {
 		c.MetadataOnly = true
 		c.Reason = "account and character missing; robot metadata only"
-	} else if !accountExists && coreExists {
+	} else if !accountExists && (registeredCharacterExists || ownerCharacterCount > 0) {
 		c.Protected = true
 		c.Reason = "account missing but character data exists"
 	} else if !dummyExists && !confirmedBroken {
@@ -117,22 +130,42 @@ func classifyRegisteredCleanupCandidate(c *robotcap.CleanupCandidate, accountExi
 	} else if !registryMatches || !accountMatches {
 		c.Protected = true
 		c.Reason = "registry account does not equal uid"
+	} else if registeredCharacterExists && registeredCharacterOwner != c.UID {
+		c.Protected = true
+		c.Reason = "registry cid belongs to another uid"
+	} else if ownerCharacterCount > 0 && !registeredCharacterExists {
+		c.Protected = true
+		c.Reason = "uid character does not match registry cid"
+	} else if ownerCharacterCount > 1 {
+		c.Protected = true
+		c.Reason = "uid has additional characters outside registry"
 	}
 }
 
-func (r *SQLRepository) accountName(uid int) (string, error) {
+func (r *SQLRepository) unregisteredCleanupIdentity(uid int) (sql.NullString, int, error) {
 	var accountName sql.NullString
-	err := r.QueryRow("SELECT accountname FROM d_taiwan.accounts WHERE UID=? LIMIT 1", uid).Scan(&accountName)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
+	var characterCount int
+	err := r.QueryRow(`SELECT
+(SELECT accountname FROM d_taiwan.accounts WHERE UID=? LIMIT 1),
+(SELECT COUNT(*) FROM taiwan_cain.charac_info WHERE m_id=?)`, uid, uid).Scan(&accountName, &characterCount)
 	if err != nil {
-		return "", err
+		return sql.NullString{}, 0, err
 	}
-	if !accountName.Valid {
-		return "", nil
+	return accountName, characterCount, nil
+}
+
+func classifyUnregisteredCleanupCandidate(c *robotcap.CleanupCandidate, accountName sql.NullString, characterCount int) {
+	expected := fmt.Sprintf("%d", c.UID)
+	if accountName.Valid && accountName.String != expected {
+		c.Protected = true
+		c.Reason = "accountname does not equal uid"
+	} else if characterCount > 0 {
+		c.Protected = true
+		c.Reason = "registry missing but character data exists"
+	} else if !accountName.Valid {
+		c.MetadataOnly = true
+		c.Reason = "account and character missing; robot metadata only"
 	}
-	return accountName.String, nil
 }
 
 func (r *SQLRepository) orphanStorePermissionCandidates(minUID, maxUID int, seen map[int]bool) ([]robotcap.CleanupCandidate, error) {
@@ -146,7 +179,8 @@ func (r *SQLRepository) orphanStorePermissionCandidates(minUID, maxUID int, seen
 		minUID, maxUID = maxUID, minUID
 	}
 	rows, err := r.Query(`
-SELECT x.uid,IFNULL(a.accountname,'')
+SELECT x.uid,a.accountname,
+(SELECT COUNT(*) FROM taiwan_cain.charac_info c WHERE c.m_id=x.uid)
 FROM (
   SELECT m_id AS uid FROM taiwan_login.member_premium WHERE m_id BETWEEN ? AND ?
   UNION SELECT UID AS uid FROM d_starsky.Robot_stall WHERE UID BETWEEN ? AND ?
@@ -163,8 +197,9 @@ ORDER BY x.uid`, minUID, maxUID, minUID, maxUID, minUID, maxUID)
 	var out []robotcap.CleanupCandidate
 	for rows.Next() {
 		var uid int
-		var accountName string
-		if err := rows.Scan(&uid, &accountName); err != nil {
+		var accountName sql.NullString
+		var characterCount int
+		if err := rows.Scan(&uid, &accountName, &characterCount); err != nil {
 			return nil, err
 		}
 		if seen[uid] {
@@ -172,10 +207,7 @@ ORDER BY x.uid`, minUID, maxUID, minUID, maxUID, minUID, maxUID)
 		}
 		seen[uid] = true
 		c := robotcap.CleanupCandidate{UID: uid, CID: 0, Name: "orphan-store-permission", Account: fmt.Sprintf("%d", uid)}
-		if accountName != "" && accountName != c.Account {
-			c.Protected = true
-			c.Reason = "accountname does not equal uid"
-		}
+		classifyUnregisteredCleanupCandidate(&c, accountName, characterCount)
 		out = append(out, c)
 	}
 	return out, rows.Err()
