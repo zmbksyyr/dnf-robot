@@ -132,6 +132,14 @@ func (e lifecycleCleanupEnv) BatchDeleteRobotData(uids, cids []int) error {
 	return nil
 }
 
+func (e lifecycleCleanupEnv) BatchDeleteRobotMetadata(uids []int) error {
+	if err := e.manager.schemaRepo().BatchDeleteRobotMetadata(uids); err != nil {
+		return err
+	}
+	e.manager.invalidateLoginRepairs(uids)
+	return nil
+}
+
 func (e lifecycleCleanupEnv) CleanupCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, error) {
 	return e.manager.schemaRepo().CleanupCandidates(req)
 }

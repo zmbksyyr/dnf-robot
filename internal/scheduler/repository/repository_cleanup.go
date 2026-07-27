@@ -48,6 +48,13 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 }
 
 func (r *SQLRepository) cleanupRegisteredCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, map[int]bool, error) {
+	query := `SELECT r.uid,r.cid,r.charac_name,r.account,IF(a.UID IS NULL,0,1),a.accountname,
+IFNULL(d.UID,''),
+IF(EXISTS(SELECT 1 FROM taiwan_cain.charac_info c WHERE c.delete_flag=0 AND c.charac_no=r.cid)
+OR EXISTS(SELECT 1 FROM taiwan_cain.charac_info c WHERE c.delete_flag=0 AND c.m_id=r.uid),1,0)
+FROM d_starsky.robot_registry r
+LEFT JOIN d_taiwan.accounts a ON a.UID=r.uid
+LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid`
 	var rows *sql.Rows
 	var err error
 	if len(req.UIDs) > 0 {
@@ -56,7 +63,7 @@ func (r *SQLRepository) cleanupRegisteredCandidates(req robotcap.CleanupRequest)
 		for i, uid := range req.UIDs {
 			args[i] = uid
 		}
-		rows, err = r.Query("SELECT r.uid,r.cid,r.charac_name,r.account,IFNULL(a.accountname,''),IFNULL(d.UID,'') FROM d_starsky.robot_registry r LEFT JOIN d_taiwan.accounts a ON a.UID=r.uid LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid WHERE r.uid IN ("+holders+") ORDER BY r.uid", args...)
+		rows, err = r.Query(query+" WHERE r.uid IN ("+holders+") ORDER BY r.uid", args...)
 	} else if req.MinUID > 0 || req.MaxUID > 0 {
 		if req.MaxUID <= 0 {
 			req.MaxUID = req.MinUID
@@ -67,9 +74,9 @@ func (r *SQLRepository) cleanupRegisteredCandidates(req robotcap.CleanupRequest)
 		if req.MinUID > req.MaxUID {
 			req.MinUID, req.MaxUID = req.MaxUID, req.MinUID
 		}
-		rows, err = r.Query("SELECT r.uid,r.cid,r.charac_name,r.account,IFNULL(a.accountname,''),IFNULL(d.UID,'') FROM d_starsky.robot_registry r LEFT JOIN d_taiwan.accounts a ON a.UID=r.uid LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid WHERE r.uid BETWEEN ? AND ? ORDER BY r.uid", req.MinUID, req.MaxUID)
+		rows, err = r.Query(query+" WHERE r.uid BETWEEN ? AND ? ORDER BY r.uid", req.MinUID, req.MaxUID)
 	} else {
-		rows, err = r.Query("SELECT r.uid,r.cid,r.charac_name,r.account,IFNULL(a.accountname,''),IFNULL(d.UID,'') FROM d_starsky.robot_registry r LEFT JOIN d_taiwan.accounts a ON a.UID=r.uid LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid ORDER BY r.uid")
+		rows, err = r.Query(query + " ORDER BY r.uid")
 	}
 	if err != nil {
 		return nil, nil, err
@@ -79,25 +86,38 @@ func (r *SQLRepository) cleanupRegisteredCandidates(req robotcap.CleanupRequest)
 	seen := make(map[int]bool)
 	for rows.Next() {
 		var c robotcap.CleanupCandidate
-		var accountName, dummyUID string
-		if err := rows.Scan(&c.UID, &c.CID, &c.Name, &c.Account, &accountName, &dummyUID); err != nil {
+		var accountName, dummyUID sql.NullString
+		var accountExists, coreExists int
+		if err := rows.Scan(&c.UID, &c.CID, &c.Name, &c.Account, &accountExists, &accountName, &dummyUID, &coreExists); err != nil {
 			return nil, nil, err
 		}
 		seen[c.UID] = true
-		expected := fmt.Sprintf("%d", c.UID)
-		if accountName != expected {
-			c.Protected = true
-			c.Reason = "accountname does not equal uid"
-		} else if dummyUID == "" && !req.InternalConfirmedBroken {
-			c.Protected = true
-			c.Reason = "missing Dummylist row"
-		} else if c.Account != expected {
-			c.Protected = true
-			c.Reason = "registry account does not equal uid"
-		}
+		classifyRegisteredCleanupCandidate(&c, accountExists != 0, accountName, dummyUID.String != "", coreExists != 0, req.InternalConfirmedBroken)
 		out = append(out, c)
 	}
 	return out, seen, rows.Err()
+}
+
+func classifyRegisteredCleanupCandidate(c *robotcap.CleanupCandidate, accountExists bool, accountName sql.NullString, dummyExists, coreExists, confirmedBroken bool) {
+	expected := fmt.Sprintf("%d", c.UID)
+	registryMatches := c.Account == expected
+	accountMatches := accountExists && accountName.Valid && accountName.String == expected
+	if accountExists && !accountMatches {
+		c.Protected = true
+		c.Reason = "accountname does not equal uid"
+	} else if !accountExists && !coreExists && registryMatches {
+		c.MetadataOnly = true
+		c.Reason = "account and character missing; robot metadata only"
+	} else if !accountExists && coreExists {
+		c.Protected = true
+		c.Reason = "account missing but character data exists"
+	} else if !dummyExists && !confirmedBroken {
+		c.Protected = true
+		c.Reason = "missing Dummylist row"
+	} else if !registryMatches || !accountMatches {
+		c.Protected = true
+		c.Reason = "registry account does not equal uid"
+	}
 }
 
 func (r *SQLRepository) accountName(uid int) (string, error) {
@@ -222,6 +242,47 @@ func (r *SQLRepository) BatchDeleteRobotData(uids, cids []int) error {
 	}
 	if err := r.batchDeleteByInts(tx, "taiwan_game_event.event_1306_account_reward", "m_id", uids); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func (r *SQLRepository) BatchDeleteRobotMetadata(uids []int) error {
+	if len(uids) == 0 {
+		return nil
+	}
+	tables := []struct {
+		name string
+		col  string
+	}{
+		{name: "d_starsky.Dummylist", col: "UID"},
+		{name: "d_starsky.v4_ai_user", col: "uid"},
+		{name: "d_starsky.robot_store_role", col: "uid"},
+		{name: "d_starsky.Robot_stall", col: "UID"},
+		{name: "d_starsky.Robot_stall_config", col: "UID"},
+		{name: "d_starsky.robot_registry", col: "uid"},
+	}
+	present := make([]struct {
+		name string
+		col  string
+	}, 0, len(tables))
+	for _, table := range tables {
+		exists, err := r.TableExists(table.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			present = append(present, table)
+		}
+	}
+	tx, err := r.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range present {
+		if err := r.batchDeleteByInts(tx, table.name, table.col, uids); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

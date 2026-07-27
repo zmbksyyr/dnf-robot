@@ -232,6 +232,7 @@ func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig, c
 
 type CleanupEnv interface {
 	BatchDeleteRobotData(uids, cids []int) error
+	BatchDeleteRobotMetadata(uids []int) error
 	CleanupCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, error)
 	EnsureSchema() error
 	PrepareDelete(uids []int) func()
@@ -259,38 +260,62 @@ func (c Cleaner) Cleanup(req robotcap.CleanupRequest) (robotcap.CleanupResult, e
 		}
 		return result, nil
 	}
-	deleteIndexes := make([]int, 0, len(candidates))
-	uids := make([]int, 0, len(candidates))
-	cids := make([]int, 0, len(candidates))
+	fullDeleteIndexes := make([]int, 0, len(candidates))
+	fullUIDs := make([]int, 0, len(candidates))
+	fullCIDs := make([]int, 0, len(candidates))
+	metadataDeleteIndexes := make([]int, 0, len(candidates))
+	metadataUIDs := make([]int, 0, len(candidates))
 	for i, candidate := range candidates {
 		if candidate.Protected {
 			result.Skipped++
 			continue
 		}
-		deleteIndexes = append(deleteIndexes, i)
-		uids = append(uids, candidate.UID)
+		if candidate.MetadataOnly {
+			metadataDeleteIndexes = append(metadataDeleteIndexes, i)
+			metadataUIDs = append(metadataUIDs, candidate.UID)
+			continue
+		}
+		fullDeleteIndexes = append(fullDeleteIndexes, i)
+		fullUIDs = append(fullUIDs, candidate.UID)
 		if candidate.CID > 0 {
-			cids = append(cids, candidate.CID)
+			fullCIDs = append(fullCIDs, candidate.CID)
 		}
 	}
-	if len(uids) == 0 {
+	if len(fullUIDs) == 0 && len(metadataUIDs) == 0 {
 		return result, nil
 	}
-	finishDelete := env.PrepareDelete(uids)
+	allUIDs := append(append([]int(nil), fullUIDs...), metadataUIDs...)
+	finishDelete := env.PrepareDelete(allUIDs)
 	if finishDelete != nil {
 		defer finishDelete()
 	}
-	if err := env.BatchDeleteRobotData(uids, cids); err != nil {
-		for _, i := range deleteIndexes {
-			result.Candidates[i].Protected = true
-			result.Candidates[i].Reason = err.Error()
-			result.Skipped++
+	if len(metadataUIDs) > 0 {
+		if err := env.BatchDeleteRobotMetadata(metadataUIDs); err != nil {
+			for _, i := range metadataDeleteIndexes {
+				result.Candidates[i].Protected = true
+				result.Candidates[i].Reason = err.Error()
+				result.Skipped++
+			}
+		} else {
+			for _, i := range metadataDeleteIndexes {
+				result.Candidates[i].Deleted = true
+				result.Deleted++
+			}
 		}
-		return result, nil
 	}
-	for _, i := range deleteIndexes {
-		result.Candidates[i].Deleted = true
-		result.Deleted++
+	if len(fullUIDs) > 0 {
+		if err := env.BatchDeleteRobotData(fullUIDs, fullCIDs); err != nil {
+			for _, i := range fullDeleteIndexes {
+				result.Candidates[i].Protected = true
+				result.Candidates[i].Reason = err.Error()
+				result.Skipped++
+			}
+		} else {
+			for _, i := range fullDeleteIndexes {
+				result.Candidates[i].Deleted = true
+				result.Deleted++
+			}
+		}
 	}
 	return result, nil
 }

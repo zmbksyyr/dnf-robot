@@ -157,6 +157,27 @@ func TestCleanerDryRunAndForce(t *testing.T) {
 	}
 }
 
+func TestCleanerSeparatesMetadataOnlyAndFullDeletes(t *testing.T) {
+	env := &testCleanupEnv{candidates: []robotcap.CleanupCandidate{
+		{UID: 1, CID: 11},
+		{UID: 2, CID: 22, MetadataOnly: true},
+		{UID: 3, CID: 33, Protected: true},
+	}}
+	result, err := (Cleaner{Env: env}).Cleanup(robotcap.CleanupRequest{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 2 || result.Skipped != 1 {
+		t.Fatalf("result = %+v, want two deleted and one skipped", result)
+	}
+	if len(env.deletedUIDs) != 1 || env.deletedUIDs[0] != 1 {
+		t.Fatalf("full deleted UIDs = %v, want [1]", env.deletedUIDs)
+	}
+	if len(env.metadataDeletedUIDs) != 1 || env.metadataDeletedUIDs[0] != 2 {
+		t.Fatalf("metadata deleted UIDs = %v, want [2]", env.metadataDeletedUIDs)
+	}
+}
+
 type testCreateEnv struct {
 	rc                robotconfig.RuntimeConfig
 	created           int
@@ -272,9 +293,10 @@ func (e *testCreateEnv) RobotName(uid int, used map[string]struct{}, rc robotcon
 func (e *testCreateEnv) UpsertDummy(robotcap.Info, string) error { return nil }
 
 type testCleanupEnv struct {
-	candidates  []robotcap.CleanupCandidate
-	deletedUIDs []int
-	finished    bool
+	candidates          []robotcap.CleanupCandidate
+	deletedUIDs         []int
+	metadataDeletedUIDs []int
+	finished            bool
 }
 
 func (e *testCleanupEnv) BatchDeleteRobotData(uids, cids []int) error {
@@ -282,6 +304,14 @@ func (e *testCleanupEnv) BatchDeleteRobotData(uids, cids []int) error {
 		return errors.New("empty delete")
 	}
 	e.deletedUIDs = append([]int(nil), uids...)
+	return nil
+}
+
+func (e *testCleanupEnv) BatchDeleteRobotMetadata(uids []int) error {
+	if len(uids) == 0 {
+		return errors.New("empty metadata delete")
+	}
+	e.metadataDeletedUIDs = append([]int(nil), uids...)
 	return nil
 }
 

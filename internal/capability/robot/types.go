@@ -175,13 +175,14 @@ func CommandOperationSummary(res CommandResult, err error) string {
 }
 
 type CleanupCandidate struct {
-	UID       int    `json:"uid"`
-	CID       int    `json:"cid"`
-	Name      string `json:"name"`
-	Account   string `json:"account"`
-	Protected bool   `json:"protected"`
-	Reason    string `json:"reason,omitempty"`
-	Deleted   bool   `json:"deleted,omitempty"`
+	UID          int    `json:"uid"`
+	CID          int    `json:"cid"`
+	Name         string `json:"name"`
+	Account      string `json:"account"`
+	Protected    bool   `json:"protected"`
+	MetadataOnly bool   `json:"metadata_only,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Deleted      bool   `json:"deleted,omitempty"`
 }
 
 type CleanupResult struct {

@@ -30,6 +30,7 @@ func (*loginRepairInvalidationRepository) EnsureAccount(int, string) error { ret
 func (*loginRepairInvalidationRepository) BatchDeleteRobotData([]int, []int) error {
 	return nil
 }
+func (*loginRepairInvalidationRepository) BatchDeleteRobotMetadata([]int) error { return nil }
 
 func TestLifecycleInvalidatesLoginRepairCacheForCreateAndCleanup(t *testing.T) {
 	runtime := &loginRepairInvalidationRuntime{}
