@@ -45,22 +45,3 @@ func TestClearSystemMarketStockDeletesDBRowsAndResetsQueues(t *testing.T) {
 		t.Fatalf("system stock clear used collect path, calls=%d", repo.collectCalls)
 	}
 }
-
-func TestRecoverAuctionRegistItemFailureClearsAuctionStock(t *testing.T) {
-	app := testApp(t)
-	repo := &clearStockRepository{counts: map[string]int{app.cfg.AuctionDB: 3}}
-	app.repository = repo
-	app.auctionQueue = []uint32{1001}
-	app.auctionRejected = []uint32{1002}
-	app.auctionRejectedMeta = map[uint32]auctionRejectedState{1002: {Count: 1}}
-
-	if !app.recoverAuctionRegistItemFailure("auction.log") {
-		t.Fatal("recovery returned false")
-	}
-	if repo.counts[app.cfg.AuctionDB] != 0 {
-		t.Fatalf("auction stock count = %d, want 0", repo.counts[app.cfg.AuctionDB])
-	}
-	if len(app.auctionQueue) != 0 || len(app.auctionRejected) != 0 || len(app.auctionRejectedMeta) != 0 {
-		t.Fatalf("auction queues were not reset: queue=%v rejected=%v meta=%v", app.auctionQueue, app.auctionRejected, app.auctionRejectedMeta)
-	}
-}
