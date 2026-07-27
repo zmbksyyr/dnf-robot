@@ -51,13 +51,13 @@ func TestExecuteRobotPositionUpdatesSplitsAtBatchBoundary(t *testing.T) {
 	if got := len(calls[1].args); got != 6 {
 		t.Fatalf("second args got %d want 6", got)
 	}
-	if got, ok := calls[0].args[0].(string); !ok || got != "1000" {
+	if got, ok := calls[0].args[0].(int); !ok || got != 1000 {
 		t.Fatalf("first UID arg got %#v", calls[0].args[0])
 	}
-	if got, ok := calls[0].args[1].(string); !ok || got != "2000" {
+	if got, ok := calls[0].args[1].(int); !ok || got != 2000 {
 		t.Fatalf("first CID arg got %#v", calls[0].args[1])
 	}
-	if got, ok := calls[1].args[0].(string); !ok || got != "1128" {
+	if got, ok := calls[1].args[0].(int); !ok || got != 1128 {
 		t.Fatalf("second batch UID arg got %#v", calls[1].args[0])
 	}
 	if unions := strings.Count(calls[0].query, "UNION ALL SELECT"); unions != robotPositionBatchSize-1 {

@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"strconv"
 	"strings"
 
 	robotcap "robot/internal/capability/robot"
@@ -63,8 +62,8 @@ func buildRobotPositionUpdate(updates []robotcap.PositionUpdate) (string, []inte
 			query.WriteString(" UNION ALL SELECT ?,?,?,?,?,?")
 		}
 		args = append(args,
-			strconv.Itoa(update.UID),
-			strconv.Itoa(update.CID),
+			update.UID,
+			update.CID,
 			update.Village,
 			update.Area,
 			update.X,
