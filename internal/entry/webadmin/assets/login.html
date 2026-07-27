@@ -1,0 +1,6 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Robot Login</title><style>
+body{font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;background:#eef2f6;color:#17202a;margin:0;display:grid;place-items:center;min-height:100vh}
+form{width:320px;background:#fff;border:1px solid #d7dee8;border-radius:8px;padding:22px;box-shadow:0 16px 45px rgba(15,23,42,.12)}
+h1{font-size:18px;margin:0 0 16px}label{display:block;font-size:13px;color:#64748b;margin-bottom:6px}input{width:100%;box-sizing:border-box;height:36px;border:1px solid #b8c2d0;border-radius:6px;padding:0 10px;font:inherit}button{width:100%;height:36px;margin-top:14px;border:0;border-radius:6px;background:#2563eb;color:white;font:inherit;cursor:pointer}.err{margin-top:10px;color:#b91c1c;font-size:13px}
+</style></head><body><form method="post" action="/login"><h1>Robot Web</h1><label>Password</label><input name="password" type="password" autofocus><button>Login</button>{{if .Error}}<div class="err">{{.Error}}</div>{{end}}</form></body></html>

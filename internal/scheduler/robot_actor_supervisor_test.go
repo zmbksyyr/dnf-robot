@@ -1,0 +1,285 @@
+package scheduler
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	actormodel "robot/internal/actor"
+	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
+)
+
+func TestSupervisorMaintainsAutoActorSlots(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	s.ensureAutoActorSlots(robotconfig.RuntimeConfig{SchedulerOnlineBatchSize: 3}, 3)
+	if got := s.actorCounts(time.Now(), robotconfig.RuntimeConfig{}).Auto; got != 3 {
+		t.Fatalf("active actors got %d want 3", got)
+	}
+	s.ensureAutoActorSlots(robotconfig.RuntimeConfig{SchedulerOnlineBatchSize: 3}, 1)
+	if got := s.actorCounts(time.Now(), robotconfig.RuntimeConfig{}).Auto; got != 1 {
+		t.Fatalf("active actors after shrink got %d want 1", got)
+	}
+	s.stopAll()
+}
+
+func TestSupervisorLeaseUIDSkipsDuplicatesAndBlocked(t *testing.T) {
+	ledger := actormodel.NewLedger()
+	a := testRobotActor(t, 1, 0, 0)
+	if !ledger.TryLeaseUID(101, a) {
+		t.Fatalf("first lease should succeed")
+	}
+	if ledger.TryLeaseUID(101, testRobotActor(t, 2, 0, 0)) {
+		t.Fatalf("duplicate lease should fail")
+	}
+	ledger.UnleaseUID(101, a)
+	ledger.BlockUID(101)
+	if ledger.TryLeaseUID(101, a) {
+		t.Fatalf("blocked uid should not lease")
+	}
+}
+
+func TestSupervisorStopUIDsRemovesActorsAndBlocked(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
+	actors := ensureSupervisorActors(t, s, 2)
+	a1, a2 := actors[0], actors[1]
+	s.ledger.TryLeaseUID(101, a1)
+	s.ledger.TryLeaseUID(102, a2)
+	s.ledger.BlockUID(101)
+
+	if got := registry.StopUIDs([]int{101, 102, 102}, false); got != 2 {
+		t.Fatalf("StopUIDs got %d want 2", got)
+	}
+	counts := s.ledger.Counts(time.Now(), robotconfig.RuntimeConfig{})
+	if counts.Auto != 0 || counts.Leased != 0 {
+		t.Fatalf("StopUIDs should remove actors and leases, actors=%d leases=%d", counts.Auto, counts.Leased)
+	}
+	if s.ledger.BlockedCount() != 0 {
+		t.Fatalf("StopUIDs should clear blocked marker for removed uid")
+	}
+}
+
+func TestSupervisorStopUIDsWithoutLogoutSkipsDetachedRuntime(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	runtime := NewRobotRuntime(m)
+	s := NewRobotSupervisor(m, runtime)
+	registry := newSupervisorActorRegistry(s)
+	if got := registry.StopUIDs([]int{999}, false); got != 0 {
+		t.Fatalf("StopUIDs got %d want 0 for missing uid", got)
+	}
+	if runtime.uidLocks.Active(999) {
+		t.Fatalf("StopUIDs logout=false should not call runtime logout for detached uid")
+	}
+}
+
+func TestSupervisorStopUIDsSkipsInactiveDetachedRuntime(t *testing.T) {
+	runtime := &countingLogoutRuntime{active: map[int]bool{101: true}}
+	s := NewRobotSupervisor(testRobotManagerWithConfig(t, ""), runtime)
+	registry := newSupervisorActorRegistry(s)
+
+	if got := registry.StopUIDs([]int{101, 102}, true); got != 0 {
+		t.Fatalf("StopUIDs got %d want 0 for missing actors", got)
+	}
+	if runtime.logoutCount != 1 || runtime.lastLogoutUID != 101 {
+		t.Fatalf("logout count=%d uid=%d want one active uid 101", runtime.logoutCount, runtime.lastLogoutUID)
+	}
+}
+
+func TestRuntimeUIDLocksAreReleasedAfterAction(t *testing.T) {
+	runtime := NewRobotRuntime(testRobotManagerWithConfig(t, ""))
+	res := runtime.run(101, func() robotcap.ActionResult {
+		return robotcap.ActionResult{UID: 101, OK: true}
+	})
+	if !res.OK {
+		t.Fatalf("runtime action should pass")
+	}
+	if runtime.uidLocks.Active(101) {
+		t.Fatalf("runtime uid lock should be removed after last action")
+	}
+}
+
+type countingLogoutRuntime struct {
+	actorTestRuntime
+	active        map[int]bool
+	logoutCount   int
+	lastLogoutUID int
+}
+
+func (r *countingLogoutRuntime) IsActive(uid int) bool {
+	return r.active[uid]
+}
+
+func (r *countingLogoutRuntime) Logout(uid int) robotcap.ActionResult {
+	r.logoutCount++
+	r.lastLogoutUID = uid
+	return robotcap.ActionResult{UID: uid, OK: true}
+}
+
+func TestReleaseBrokenLeasesHonorsInterval(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	m.database = nil
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	a := ensureSupervisorActors(t, s, 1)[0]
+	if !a.AssignAndWait(101, time.Second) {
+		t.Fatalf("assign actor uid 101")
+	}
+	s.ledger.TryLeaseUID(101, a)
+	s.nextLeaseHealth = time.Now().Add(time.Minute)
+
+	s.releaseBrokenLeases(time.Now(), robotconfig.RuntimeConfig{SchedulerMetricsIntervalSec: 10})
+	if !s.ledger.HasUID(101) {
+		t.Fatalf("lease health should be skipped before interval without touching ledger")
+	}
+}
+
+func TestSupervisorActorOwnsUIDWithoutLease(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	a := ensureSupervisorActors(t, s, 1)[0]
+	if !a.AssignAndWait(101, time.Second) {
+		t.Fatalf("assign actor uid 101")
+	}
+	if !s.actorOwnsUID(101) {
+		t.Fatalf("actorOwnsUID should see uid held by actor even without lease")
+	}
+	if s.actorOwnsUID(202) {
+		t.Fatalf("actorOwnsUID should reject uid not held by actor")
+	}
+}
+func TestRobotActorControlReturnsWhenStopped(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	a := newRobotActor(1, actormodel.ModeAuto, NewRobotRuntime(m))
+	a.Start()
+	a.StopAndWait(time.Second)
+	if a.AssignAndWait(101, 0) {
+		t.Fatalf("assign on stopped actor should fail instead of blocking")
+	}
+}
+
+func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
+	a := ensureSupervisorActors(t, s, 1)[0]
+
+	if !registry.AttachUID(101, time.Second) {
+		t.Fatalf("AttachUID should use empty actor")
+	}
+	if !registry.HasUID(101) {
+		t.Fatalf("attached uid should be leased")
+	}
+	if snap := a.Snapshot(); snap.UID != 101 || snap.State != actormodel.StateAssigned {
+		t.Fatalf("actor snapshot uid=%d state=%s", snap.UID, snap.State)
+	}
+	if registry.AttachUID(102, time.Second) {
+		t.Fatalf("AttachUID should fail when no empty actor remains")
+	}
+}
+
+func TestSupervisorAttachUIDOwnershipBoundaries(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
+	ensureSupervisorActors(t, s, 1)
+
+	if !registry.AttachUID(101, time.Second) {
+		t.Fatalf("AttachUID should attach uid")
+	}
+	if !registry.AttachUID(101, time.Second) {
+		t.Fatalf("AttachUID should be idempotent for leased uid")
+	}
+	s.ledger.BlockUID(102)
+	if registry.AttachUID(102, time.Second) {
+		t.Fatalf("AttachUID should reject blocked uid")
+	}
+}
+
+func TestManagerCurrentActorRegistry(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	if got := m.currentActorRegistry(); got != nil {
+		t.Fatalf("empty manager registry got %#v want nil", got)
+	}
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	m.supervisor = s
+	if got := m.currentActorRegistry(); got == nil {
+		t.Fatalf("manager should expose actor registry when supervisor exists")
+	}
+}
+
+func TestManagedRuntimeActionsRequireActorRegistry(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	actions := []struct {
+		name string
+		run  func() (robotcap.CommandResult, error)
+	}{
+		{name: "online", run: func() (robotcap.CommandResult, error) { return m.OnlineManaged(robotcap.CommandRequest{Count: 1}) }},
+		{name: "move", run: func() (robotcap.CommandResult, error) { return m.MoveManaged(robotcap.CommandRequest{Count: 1}) }},
+		{name: "shout", run: func() (robotcap.CommandResult, error) {
+			return m.ShoutManaged(robotcap.CommandRequest{Count: 1}, false)
+		}},
+		{name: "shout_both", run: func() (robotcap.CommandResult, error) { return m.ShoutBothManaged(robotcap.CommandRequest{Count: 1}) }},
+		{name: "store", run: func() (robotcap.CommandResult, error) { return m.StoreManaged(robotcap.CommandRequest{Count: 1}) }},
+		{name: "logout", run: func() (robotcap.CommandResult, error) { return m.LogoutManaged(robotcap.CommandRequest{Count: 1}) }},
+	}
+	for _, action := range actions {
+		if _, err := action.run(); !errors.Is(err, errActorRegistryUnavailable) {
+			t.Fatalf("%s err=%v want actor registry unavailable", action.name, err)
+		}
+	}
+}
+
+func TestUserActorCommandBusyFollowsAutoAndManualPolicy(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	s := NewRobotSupervisor(m, NewRobotRuntime(m))
+	registry := newSupervisorActorRegistry(s)
+	rc := robotconfig.RuntimeConfig{AutoActions: true, AutoTargetOnlineCount: 2}
+
+	m.autoEnabled = true
+	if busy, reason := m.userActorCommandBusy(registry, rc); !busy || reason != "auto_filling actors=0 target=2" {
+		t.Fatalf("auto under target busy=%v reason=%q", busy, reason)
+	}
+
+	m.autoEnabled = false
+	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+		t.Fatalf("manual empty container should be available, reason=%q", reason)
+	}
+}
+
+func TestUserActorCommandBusyRejectsContainerTransitions(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	rc := robotconfig.RuntimeConfig{AutoActions: false, AutoTargetOnlineCount: 1}
+	m.autoEnabled = false
+
+	for _, state := range []actormodel.State{actormodel.StateAssigned, actormodel.StateOnline, actormodel.StateReleasing} {
+		registry := snapshotActorRegistry{snapshots: []actormodel.Snapshot{{UID: 101, State: state}}}
+		if busy, reason := m.userActorCommandBusy(registry, rc); !busy || reason != "actor_state="+string(state) {
+			t.Fatalf("state %s busy=%v reason=%q", state, busy, reason)
+		}
+	}
+}
+
+func TestRobotActorSnapshotHelpers(t *testing.T) {
+	cases := []struct {
+		name    string
+		snap    actormodel.Snapshot
+		pending bool
+		empty   bool
+	}{
+		{name: "empty", snap: actormodel.Snapshot{}, pending: true, empty: true},
+		{name: "offline attached", snap: actormodel.Snapshot{UID: 1, State: actormodel.StateOffline}, pending: true},
+		{name: "online pending", snap: actormodel.Snapshot{UID: 1, State: actormodel.StateOnline}, pending: true},
+		{name: "running", snap: actormodel.Snapshot{UID: 1, State: actormodel.StateRunning}, pending: false},
+		{name: "busy", snap: actormodel.Snapshot{UID: 1, State: actormodel.StateBusy}, pending: false},
+	}
+	for _, tc := range cases {
+		if got := actormodel.SnapshotSchedulerPending(tc.snap); got != tc.pending {
+			t.Fatalf("%s pending got %v want %v", tc.name, got, tc.pending)
+		}
+		if got := actormodel.SnapshotEmpty(tc.snap); got != tc.empty {
+			t.Fatalf("%s empty got %v want %v", tc.name, got, tc.empty)
+		}
+	}
+}

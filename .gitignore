@@ -1,0 +1,26 @@
+# Go build/test artifacts
+*.exe
+*.test
+*.out
+coverage.out
+/robot-linux-amd64*
+/build/
+
+# Local protocol investigation captures
+/real_inventory_sample.tsv
+/robot*_inventory.hex
+
+# Python tooling artifacts
+__pycache__/
+*.py[cod]
+
+# Local runtime/config artifacts
+/config/
+logs/
+*.log
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
