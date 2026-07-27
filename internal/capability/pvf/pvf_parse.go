@@ -597,8 +597,8 @@ func townMapArchivePath(path string) string {
 	return "map/" + path
 }
 
-func townMapCoordinateBounds(body string) (xMin, xMax, yMin, yMax int, ok bool) {
-	rectangles := townMapCoordinateRectangles(body)
+func townMapMovableBounds(body string) (xMin, xMax, yMin, yMax int, ok bool) {
+	rectangles := townMapMovableRectangles(body)
 	if len(rectangles) == 0 {
 		return 0, 0, 0, 0, false
 	}
@@ -621,13 +621,13 @@ func townMapCoordinateBounds(body string) (xMin, xMax, yMin, yMax int, ok bool) 
 	return xMin, xMax, yMin, yMax, true
 }
 
-func townMapCoordinateRectangles(body string) []shared.MapRectangle {
-	values := pvfDirectTagInts(body, "town movable area")
-	if len(values)%6 != 0 {
+func townMapMovableRectangles(body string) []shared.MapRectangle {
+	values := pvfDirectTagInts(body, "virtual movable area")
+	if len(values)%4 != 0 {
 		return nil
 	}
-	rectangles := make([]shared.MapRectangle, 0, len(values)/6)
-	for i := 0; i+3 < len(values); i += 6 {
+	rectangles := make([]shared.MapRectangle, 0, len(values)/4)
+	for i := 0; i+3 < len(values); i += 4 {
 		x, y, width, height := values[i], values[i+1], values[i+2], values[i+3]
 		if width <= 0 || height <= 0 || width > 10000 || height > 10000 {
 			continue
