@@ -31,6 +31,7 @@ type CreateEnv interface {
 	EquipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error
 	LoadCreateCatalogs() CreateCatalogs
 	LoadMapCatalog() []shared.MapCatalogItem
+	RobotAreaCounts() (map[shared.MapAreaKey]int, error)
 	PrepareRobotUIDRange(uidStart, uidEnd, uidGuard int) error
 	RebuildCharacView(uid int) error
 	RegisterRobot(info robotcap.Info) error
@@ -81,7 +82,11 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	for i := range levels {
 		levels[i] = env.RandBetween(rc.LevelMin, rc.LevelMax)
 	}
-	spawnMaps, hasSpawnMaps := distributedSpawnMaps(env, maps, levels)
+	areaCounts, err := env.RobotAreaCounts()
+	if err != nil {
+		return nil, err
+	}
+	spawnMaps, hasSpawnMaps := distributedSpawnMaps(env, maps, levels, areaCounts)
 	for i := 0; i < req.Count; i++ {
 		info := robotcap.Info{
 			UID:     allocation.UIDs[i],
@@ -122,7 +127,7 @@ type spawnMapCandidate struct {
 	weight int
 }
 
-func distributedSpawnMaps(env CreateEnv, maps []shared.MapCatalogItem, levels []int) ([]shared.MapCatalogItem, bool) {
+func distributedSpawnMaps(env CreateEnv, maps []shared.MapCatalogItem, levels []int, areaCounts map[shared.MapAreaKey]int) ([]shared.MapCatalogItem, bool) {
 	if len(levels) == 0 {
 		return nil, false
 	}
@@ -135,31 +140,39 @@ func distributedSpawnMaps(env CreateEnv, maps []shared.MapCatalogItem, levels []
 	if len(candidates) == 0 {
 		return nil, false
 	}
+	counts := make(map[shared.MapAreaKey]int, len(areaCounts)+len(candidates))
+	for key, count := range areaCounts {
+		if count > 0 {
+			counts[key] = count
+		}
+	}
 	out := make([]shared.MapCatalogItem, 0, len(levels))
-	assigned := make([]int, len(candidates))
 	for _, level := range levels {
-		eligible := eligibleSpawnMapIndexes(candidates, assigned, level, true)
+		eligible := eligibleSpawnMapIndexes(candidates, counts, level, true)
 		if len(eligible) == 0 {
-			eligible = eligibleSpawnMapIndexes(candidates, assigned, level, false)
+			eligible = eligibleSpawnMapIndexes(candidates, counts, level, false)
 		}
 		if len(eligible) == 0 {
 			out = append(out, shared.MapCatalogItem{})
 			continue
 		}
-		chosen := weightedSpawnMapIndex(env, candidates, eligible)
-		assigned[chosen]++
+		chosen := randomSpawnMapIndex(env, eligible)
+		if counts[mapAreaKey(candidates[chosen].mp)] > 0 {
+			chosen = leastLoadedSpawnMapIndex(env, candidates, eligible, counts)
+		}
+		counts[mapAreaKey(candidates[chosen].mp)]++
 		out = append(out, candidates[chosen].mp)
 	}
 	return out, true
 }
 
-func eligibleSpawnMapIndexes(candidates []spawnMapCandidate, assigned []int, level int, unassignedOnly bool) []int {
+func eligibleSpawnMapIndexes(candidates []spawnMapCandidate, counts map[shared.MapAreaKey]int, level int, emptyOnly bool) []int {
 	eligible := make([]int, 0, len(candidates))
 	for i, c := range candidates {
 		if c.mp.Level > level {
 			continue
 		}
-		if unassignedOnly && assigned[i] > 0 {
+		if emptyOnly && counts[mapAreaKey(c.mp)] > 0 {
 			continue
 		}
 		eligible = append(eligible, i)
@@ -167,26 +180,32 @@ func eligibleSpawnMapIndexes(candidates []spawnMapCandidate, assigned []int, lev
 	return eligible
 }
 
-func weightedSpawnMapIndex(env CreateEnv, candidates []spawnMapCandidate, indexes []int) int {
-	total := 0
-	for _, idx := range indexes {
-		total += candidates[idx].weight
-	}
-	if total <= 0 {
-		return indexes[0]
-	}
-	choice := env.RandBetween(0, total-1)
-	if choice < 0 || choice >= total {
+func randomSpawnMapIndex(env CreateEnv, indexes []int) int {
+	choice := env.RandBetween(0, len(indexes)-1)
+	if choice < 0 || choice >= len(indexes) {
 		choice = 0
 	}
-	for _, idx := range indexes {
-		weight := candidates[idx].weight
-		if choice < weight {
-			return idx
+	return indexes[choice]
+}
+
+func leastLoadedSpawnMapIndex(env CreateEnv, candidates []spawnMapCandidate, indexes []int, counts map[shared.MapAreaKey]int) int {
+	best := []int{indexes[0]}
+	for _, idx := range indexes[1:] {
+		bestIdx := best[0]
+		left := counts[mapAreaKey(candidates[idx].mp)] * candidates[bestIdx].weight
+		right := counts[mapAreaKey(candidates[bestIdx].mp)] * candidates[idx].weight
+		switch {
+		case left < right:
+			best = []int{idx}
+		case left == right:
+			best = append(best, idx)
 		}
-		choice -= weight
 	}
-	return indexes[len(indexes)-1]
+	return randomSpawnMapIndex(env, best)
+}
+
+func mapAreaKey(mp shared.MapCatalogItem) shared.MapAreaKey {
+	return shared.MapAreaKey{Village: mp.Village, Area: mp.Area}
 }
 
 func smoothedMapAreaWeight(mp shared.MapCatalogItem) int {

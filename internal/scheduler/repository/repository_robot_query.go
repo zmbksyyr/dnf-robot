@@ -5,6 +5,7 @@ import (
 
 	robotcap "robot/internal/capability/robot"
 	foundsql "robot/internal/foundation/sql"
+	"robot/internal/shared"
 )
 
 func (r *SQLRepository) SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error) {
@@ -146,4 +147,29 @@ ORDER BY r.uid` + limit
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (r *SQLRepository) RobotAreaCounts() (map[shared.MapAreaKey]int, error) {
+	rows, err := r.Query(`
+SELECT CAST(d.curvill AS SIGNED),CAST(d.curarea AS SIGNED),COUNT(*)
+FROM d_starsky.Dummylist d
+JOIN d_starsky.robot_registry r ON r.uid=CAST(d.UID AS UNSIGNED)
+JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.m_id=r.uid AND c.delete_flag=0
+GROUP BY CAST(d.curvill AS SIGNED),CAST(d.curarea AS SIGNED)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := make(map[shared.MapAreaKey]int)
+	for rows.Next() {
+		var key shared.MapAreaKey
+		var count int
+		if err := rows.Scan(&key.Village, &key.Area, &count); err != nil {
+			return nil, err
+		}
+		if key.Village >= 0 && key.Area >= 0 && count > 0 {
+			counts[key] = count
+		}
+	}
+	return counts, rows.Err()
 }

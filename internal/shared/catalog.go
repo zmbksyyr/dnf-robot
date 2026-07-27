@@ -45,3 +45,8 @@ type MapCatalogItem struct {
 	YMax        int    `json:"y_max"`
 	Use         bool   `json:"use"`
 }
+
+type MapAreaKey struct {
+	Village int
+	Area    int
+}
