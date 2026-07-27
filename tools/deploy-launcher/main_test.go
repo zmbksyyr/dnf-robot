@@ -2,9 +2,71 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLoadLauncherConfigUsesDefaultsWhenFileIsMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), launcherConfigName)
+	config, err := loadLauncherConfig(path)
+	if err != nil {
+		t.Fatalf("loadLauncherConfig: %v", err)
+	}
+	if config != defaultLauncherConfig() {
+		t.Fatalf("config = %+v, want defaults %+v", config, defaultLauncherConfig())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("default config was not created: %v", err)
+	}
+	if string(raw) != string(formatLauncherConfig(defaultLauncherConfig())) {
+		t.Fatalf("generated config = %q", raw)
+	}
+}
+
+func TestLoadLauncherConfigUsesConfiguredSSHValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), launcherConfigName)
+	raw := `[ssh]
+host = 10.0.0.8
+user = deploy
+password = secret=value
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := loadLauncherConfig(path)
+	if err != nil {
+		t.Fatalf("loadLauncherConfig: %v", err)
+	}
+	want := launcherConfig{Host: "10.0.0.8", User: "deploy", Password: "secret=value"}
+	if config != want {
+		t.Fatalf("config = %+v, want %+v", config, want)
+	}
+}
+
+func TestLoadLauncherConfigKeepsDefaultsForMissingOrEmptyValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), launcherConfigName)
+	raw := `[SSH]
+host = 10.0.0.9
+user =
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := loadLauncherConfig(path)
+	if err != nil {
+		t.Fatalf("loadLauncherConfig: %v", err)
+	}
+	want := defaultLauncherConfig()
+	want.Host = "10.0.0.9"
+	if config != want {
+		t.Fatalf("config = %+v, want %+v", config, want)
+	}
+}
 
 func TestParseRobotListenPortsUsesConfiguredPorts(t *testing.T) {
 	ports, err := parseRobotListenPorts(`

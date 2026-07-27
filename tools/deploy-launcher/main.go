@@ -20,7 +20,6 @@ type DeployWindow struct {
 	*walk.MainWindow
 	deployBtn  *walk.PushButton
 	restartBtn *walk.PushButton
-	runBtn     *walk.PushButton
 	hostEdit   *walk.LineEdit
 	userEdit   *walk.LineEdit
 	passEdit   *walk.LineEdit
@@ -63,66 +62,74 @@ func (dw *DeployWindow) validateInput() error {
 }
 
 func (dw *DeployWindow) deploy() {
+	dw.logEdit.SetText("")
 	if err := dw.validateInput(); err != nil {
-		walk.MsgBox(dw.MainWindow, "输入错误", err.Error(), walk.MsgBoxIconError)
+		dw.appendLog(fmt.Sprintf("部署失败: %v", err))
+		dw.appendLog("end")
 		return
 	}
 
 	dw.deployBtn.SetEnabled(false)
 	dw.deployBtn.SetText("部署中...")
-	dw.logEdit.SetText("")
 
 	go func() {
+		var operationErr error
 		defer func() {
 			if r := recover(); r != nil {
-				dw.safeSync(func() {
-					walk.MsgBox(dw.MainWindow, "异常", fmt.Sprintf("部署异常: %v", r), walk.MsgBoxIconError)
-				})
+				operationErr = fmt.Errorf("部署异常: %v", r)
 			}
+			if operationErr != nil {
+				dw.appendLog(fmt.Sprintf("部署失败: %v", operationErr))
+			} else {
+				dw.appendLog("部署成功: robot 已运行")
+			}
+			dw.appendLog("end")
+			dw.safeSync(func() {
+				if dw.deployBtn == nil {
+					return
+				}
+				dw.deployBtn.SetEnabled(true)
+				dw.deployBtn.SetText("部署 robot")
+			})
 		}()
 
-		err := dw.doDeploy()
-		dw.deployBtn.Synchronize(func() {
-			dw.deployBtn.SetEnabled(true)
-			dw.deployBtn.SetText("部署 robot")
-			if err != nil {
-				walk.MsgBox(dw.MainWindow, "部署失败", err.Error(), walk.MsgBoxIconError)
-			} else {
-				walk.MsgBox(dw.MainWindow, "部署成功", "部署 robot 完成，新进程已运行", walk.MsgBoxIconInformation)
-			}
-		})
+		operationErr = dw.doDeploy()
 	}()
 }
 
 func (dw *DeployWindow) restart() {
+	dw.logEdit.SetText("")
 	if err := dw.validateInput(); err != nil {
-		walk.MsgBox(dw.MainWindow, "输入错误", err.Error(), walk.MsgBoxIconError)
+		dw.appendLog(fmt.Sprintf("重启失败: %v", err))
+		dw.appendLog("end")
 		return
 	}
 
 	dw.restartBtn.SetEnabled(false)
 	dw.restartBtn.SetText("重启中...")
-	dw.logEdit.SetText("")
 
 	go func() {
+		var operationErr error
 		defer func() {
 			if r := recover(); r != nil {
-				dw.safeSync(func() {
-					walk.MsgBox(dw.MainWindow, "异常", fmt.Sprintf("重启异常: %v", r), walk.MsgBoxIconError)
-				})
+				operationErr = fmt.Errorf("重启异常: %v", r)
 			}
+			if operationErr != nil {
+				dw.appendLog(fmt.Sprintf("重启失败: %v", operationErr))
+			} else {
+				dw.appendLog("重启成功: robot 已运行")
+			}
+			dw.appendLog("end")
+			dw.safeSync(func() {
+				if dw.restartBtn == nil {
+					return
+				}
+				dw.restartBtn.SetEnabled(true)
+				dw.restartBtn.SetText("重启 robot")
+			})
 		}()
 
-		err := dw.doRestart()
-		dw.restartBtn.Synchronize(func() {
-			dw.restartBtn.SetEnabled(true)
-			dw.restartBtn.SetText("重启 robot")
-			if err != nil {
-				walk.MsgBox(dw.MainWindow, "重启失败", err.Error(), walk.MsgBoxIconError)
-			} else {
-				walk.MsgBox(dw.MainWindow, "重启成功", "robot 已重启", walk.MsgBoxIconInformation)
-			}
-		})
+		operationErr = dw.doRestart()
 	}()
 }
 
@@ -142,8 +149,9 @@ func (dw *DeployWindow) doRestart() error {
 
 	time.Sleep(2 * time.Second)
 
-	robotPid, err := verifyRemoteRobot(client)
+	robotPid, err := verifyRemoteRobot(client, dw.appendLog)
 	if err != nil {
+		dw.appendRemoteRobotDiagnostics(client)
 		return err
 	}
 	dw.appendLog(fmt.Sprintf("robot 已启动 (pid: %s)", robotPid))
@@ -233,8 +241,9 @@ func (dw *DeployWindow) doDeploy() error {
 
 	time.Sleep(2 * time.Second)
 
-	robotPid, err := verifyRemoteRobot(client)
+	robotPid, err := verifyRemoteRobot(client, dw.appendLog)
 	if err != nil {
+		dw.appendRemoteRobotDiagnostics(client)
 		return err
 	}
 	dw.appendLog(fmt.Sprintf("新 robot 已启动 (pid: %s)", robotPid))
@@ -242,180 +251,77 @@ func (dw *DeployWindow) doDeploy() error {
 	return nil
 }
 
-func verifyRemoteRobot(client *ssh.Client) (string, error) {
+func verifyRemoteRobot(client *ssh.Client, report func(string)) (string, error) {
 	expectedPorts, err := readRemoteRobotListenPorts(client)
 	if err != nil {
 		return "", fmt.Errorf("robot 启动校验失败: %w", err)
 	}
+	if report != nil {
+		report(fmt.Sprintf("开始启动校验: RobotAPI=%d Web=%d，最长等待180秒", expectedPorts.robotAPI, expectedPorts.web))
+	}
 
 	lastReason := ""
+	lastReportedReason := ""
+	missingMainChecks := 0
 	for attempt := 0; attempt < 180; attempt++ {
 		robotPID, _ := runCmdOutput(client, "pgrep -f '^/root/robot$' | head -1 || true")
 		robotPID = strings.TrimSpace(robotPID)
 		if robotPID == "" {
 			lastReason = "主进程未运行"
+			missingMainChecks++
 		} else {
+			missingMainChecks = 0
 			sinkPID, _ := runCmdOutput(client, "pgrep -f '^/root/robot --bounded-log-sink /root/config/robot_stdout.log( |$)' | head -1 || true")
 			if strings.TrimSpace(sinkPID) == "" {
 				lastReason = "stdout 日志进程未运行"
 			} else {
 				ports, _ := runCmdOutput(client, "ss -ltn 2>/dev/null | awk 'NR>1 {print $4}' || true")
 				if listenerPortsReady(ports, expectedPorts) {
+					if report != nil {
+						report(fmt.Sprintf("启动校验通过: pid=%s，端口 %d/%d 已监听", robotPID, expectedPorts.robotAPI, expectedPorts.web))
+					}
 					return robotPID, nil
 				}
 				lastReason = fmt.Sprintf("端口 %d/%d 未就绪", expectedPorts.robotAPI, expectedPorts.web)
 			}
+		}
+		if report != nil && (lastReason != lastReportedReason || (attempt+1)%5 == 0) {
+			report(fmt.Sprintf("等待 robot 启动: %s，已等待%d秒", lastReason, attempt+1))
+			lastReportedReason = lastReason
+		}
+		if missingMainChecks >= 5 {
+			return "", fmt.Errorf("robot 启动校验失败: 主进程连续5秒未运行")
 		}
 		time.Sleep(time.Second)
 	}
 	return "", fmt.Errorf("robot 启动校验失败: %s，请检查 /root/config/robot_start_error.log", lastReason)
 }
 
-func (dw *DeployWindow) runGame() {
-	if err := dw.validateInput(); err != nil {
-		walk.MsgBox(dw.MainWindow, "输入错误", err.Error(), walk.MsgBoxIconError)
-		return
-	}
-
-	dw.runBtn.SetEnabled(false)
-	dw.runBtn.SetText("启动中...")
-	dw.logEdit.SetText("")
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				dw.safeSync(func() {
-					walk.MsgBox(dw.MainWindow, "异常", fmt.Sprintf("启动异常: %v", r), walk.MsgBoxIconError)
-				})
-			}
-		}()
-
-		defer dw.runBtn.Synchronize(func() {
-			if dw.runBtn == nil {
-				return
-			}
-			dw.runBtn.SetEnabled(true)
-			dw.runBtn.SetText("启动 /root/run")
-		})
-
-		client, err := sshConnectWithRetry(dw.hostEdit.Text(), dw.userEdit.Text(), dw.passEdit.Text(), 2)
-		if err != nil {
-			dw.appendLog(fmt.Sprintf("SSH 连接失败(已重试): %v", err))
-			return
-		}
-		defer client.Close()
-		dw.appendLog("SSH 连接成功，正在启动游戏服务 ...")
-
-		if err := runCmdBg(client, "nohup /root/run >/dev/null 2>&1 &"); err != nil {
-			dw.appendLog(fmt.Sprintf("执行 /root/run 失败: %v", err))
-			return
-		}
-		dw.appendLog("/root/run 已提交，开始监控 ...")
-
-		processFound := false
-		stableCount := 0
-		lastProcCount := 0
-		stableAt := 0
-		seenPorts := make(map[string]bool)
-		portStable := 0
-		lastPortCount := -1
-		success := false
-
-		for i := 1; i <= 60; i++ {
-			time.Sleep(2 * time.Second)
-
-			out, _ := runCmdOutput(client, "pgrep -cf 'df_game_r' || true")
-			procCount, _ := strconv.Atoi(strings.TrimSpace(out))
-
-			if procCount >= 1 {
-				if procCount == lastProcCount {
-					stableCount++
-				} else {
-					stableCount = 1
-					lastProcCount = procCount
-				}
-				if !processFound && stableCount >= 3 && procCount >= 1 {
-					processFound = true
-					stableAt = i
-					dw.appendLog(fmt.Sprintf("[%ds] df_game_r 进程已稳定 (%d 个)，等待端口就绪 ...", i*2, procCount))
-				}
-			} else {
-				stableCount = 0
-				lastProcCount = 0
-			}
-
-			// 进程稳定后等 3 个周期再开始检测端口
-			shouldCheckPorts := processFound && i > stableAt+3
-
-			if shouldCheckPorts {
-				allPorts := detectOpenGamePorts(client)
-				for _, p := range allPorts {
-					if !seenPorts[p] {
-						seenPorts[p] = true
-						dw.appendLog(fmt.Sprintf("[%ds] 游戏端口 %s 已监听", i*2, p))
-					}
-				}
-				if len(allPorts) > 0 {
-					if len(allPorts) == lastPortCount {
-						portStable++
-					} else {
-						portStable = 1
-						lastPortCount = len(allPorts)
-					}
-					if portStable >= 3 {
-						success = true
-						break
-					}
-				} else {
-					portStable = 0
-					lastPortCount = -1
-				}
-			}
-
-			if i%5 == 0 {
-				pc := "OK"
-				if !processFound {
-					pc = "等待"
-				}
-				dw.appendLog(fmt.Sprintf("[%ds] 进程:%s 端口:%d 个", i*2, pc, len(seenPorts)))
-			}
-		}
-
-		if success {
-			portList := make([]string, 0, len(seenPorts))
-			for p := range seenPorts {
-				portList = append(portList, p)
-			}
-			dw.Synchronize(func() {
-				walk.MsgBox(dw.MainWindow, "启动成功",
-					fmt.Sprintf("游戏服务已完全启动！（df_game_r 运行中，端口 %s 已监听）", strings.Join(portList, ", ")),
-					walk.MsgBoxIconInformation)
-			})
-		} else {
-			if !processFound {
-				dw.appendLog("--- 启动监控超时: df_game_r 未启动 ---")
-			} else {
-				dw.appendLog("--- 启动监控超时: df_game_r 已运行但无端口监听 ---")
-			}
-		}
-	}()
+func (dw *DeployWindow) appendRemoteRobotDiagnostics(client *ssh.Client) {
+	dw.appendLog("--- robot 启动失败诊断 ---")
+	dw.appendRemoteDiagnostic(client, "进程", "pgrep -af '^/root/robot$|^/root/robot --web-admin|^/root/robot --bounded-log-sink' || true")
+	dw.appendRemoteDiagnostic(client, "监听端口", "ss -ltnp 2>/dev/null | grep -E ':(8111|8112)\\b' || true")
+	dw.appendRemoteDiagnostic(client, "robot_start_error.log", "tail -n 40 /root/config/robot_start_error.log 2>/dev/null || true")
+	dw.appendRemoteDiagnostic(client, "robot_stdout.log", "tail -n 60 /root/config/robot_stdout.log 2>/dev/null || true")
+	dw.appendRemoteDiagnostic(client, "log_robot", "tail -n 60 /root/config/log_robot 2>/dev/null || true")
+	dw.appendLog("--- 诊断结束 ---")
 }
 
-func detectOpenGamePorts(client *ssh.Client) []string {
-	cmd := "ss -tlnp 2>/dev/null | grep df_game_r | awk '{for(i=4;i<=NF;i++) if($i~/:([0-9]+)$/){split($i,a,\":\"); print a[length(a)]}}' | sort -nu"
-	out, err := runCmdOutput(client, cmd)
-	if err != nil || strings.TrimSpace(out) == "" {
-		cmd2 := "netstat -tlnp 2>/dev/null | grep df_game_r | awk '{for(i=4;i<=NF;i++) if($i~/:([0-9]+)$/){split($i,a,\":\"); print a[length(a)]}}' | sort -nu"
-		out, _ = runCmdOutput(client, cmd2)
+func (dw *DeployWindow) appendRemoteDiagnostic(client *ssh.Client, label, command string) {
+	out, err := runCmdOutput(client, command)
+	if err != nil {
+		dw.appendLog(fmt.Sprintf("[%s] 读取失败: %v", label, err))
+		return
 	}
-	var ports []string
-	for _, p := range strings.Split(strings.TrimSpace(out), "\n") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			ports = append(ports, p)
-		}
+	dw.appendLog("[" + label + "]")
+	out = strings.TrimSpace(out)
+	if out == "" {
+		dw.appendLog("(无输出)")
+		return
 	}
-	return ports
+	for _, line := range strings.Split(out, "\n") {
+		dw.appendLog(strings.TrimRight(line, "\r"))
+	}
 }
 
 func sshConnectWithRetry(host, user, pass string, retries int) (*ssh.Client, error) {
@@ -498,6 +404,18 @@ func uploadFile(client *ssh.Client, local, remote string) error {
 
 func main() {
 	var dw DeployWindow
+	launcherCfg := defaultLauncherConfig()
+	if exe, err := os.Executable(); err != nil {
+		fmt.Fprintf(os.Stderr, "无法获取启动器配置路径，使用默认配置: %v\n", err)
+	} else {
+		configPath := filepath.Join(filepath.Dir(exe), launcherConfigName)
+		loaded, loadErr := loadLauncherConfig(configPath)
+		if loadErr != nil {
+			fmt.Fprintf(os.Stderr, "读取启动器配置失败，使用默认配置: %v\n", loadErr)
+		} else {
+			launcherCfg = loaded
+		}
+	}
 
 	if _, err := (MainWindow{
 		AssignTo: &dw.MainWindow,
@@ -511,11 +429,11 @@ func main() {
 				Layout: Grid{Columns: 2},
 				Children: []Widget{
 					Label{Text: "主机:"},
-					LineEdit{AssignTo: &dw.hostEdit, Text: "192.168.200.131"},
+					LineEdit{AssignTo: &dw.hostEdit, Text: launcherCfg.Host},
 					Label{Text: "用户:"},
-					LineEdit{AssignTo: &dw.userEdit, Text: "root"},
+					LineEdit{AssignTo: &dw.userEdit, Text: launcherCfg.User},
 					Label{Text: "密码:"},
-					LineEdit{AssignTo: &dw.passEdit, Text: "123456"},
+					LineEdit{AssignTo: &dw.passEdit, Text: launcherCfg.Password},
 				},
 			},
 			Composite{
@@ -533,13 +451,6 @@ func main() {
 						Text:     "重启 robot",
 						OnClicked: func() {
 							dw.restart()
-						},
-					},
-					PushButton{
-						AssignTo: &dw.runBtn,
-						Text:     "启动 /root/run",
-						OnClicked: func() {
-							dw.runGame()
 						},
 					},
 				},
