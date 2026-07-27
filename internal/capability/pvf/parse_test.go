@@ -144,7 +144,7 @@ func TestTownMapCoordinateBoundsUsesPVFRectangles(t *testing.T) {
 		"[virtual movable area]\n30 90 100 60\n[/virtual movable area]\n" +
 		"[pvp start area]\n200 110 50 20\n[type]\n`[normal]`\n"
 	xMin, xMax, yMin, yMax, ok := townMapCoordinateBounds(body)
-	if !ok || xMin != 10 || xMax != 530 || yMin != 90 || yMax != 170 {
+	if !ok || xMin != 10 || xMax != 530 || yMin != 100 || yMax != 170 {
 		t.Fatalf("bounds=%d..%d/%d..%d ok=%t", xMin, xMax, yMin, yMax, ok)
 	}
 }
@@ -154,9 +154,15 @@ func TestTownMapCoordinateBoundsClampsAndRejectsMissingData(t *testing.T) {
 	if ok || xMin != 0 || xMax != 0 || yMin != 0 || yMax != 0 {
 		t.Fatalf("oversized rectangle produced coordinates: %d..%d/%d..%d ok=%t", xMin, xMax, yMin, yMax, ok)
 	}
-	xMin, xMax, yMin, yMax, ok = townMapCoordinateBounds("[virtual movable area]\n-20 -10 100 80\n[/virtual movable area]")
-	if !ok || xMin != 0 || xMax != 80 || yMin != 0 || yMax != 70 {
-		t.Fatalf("clamped bounds=%d..%d/%d..%d ok=%t", xMin, xMax, yMin, yMax, ok)
+	for _, body := range []string{
+		"[virtual movable area]\n-20 -10 100 80\n[/virtual movable area]",
+		"[pvp start area]\n10 20 100 80\n[/pvp start area]",
+		"[pvp practice start area]\n10 20 100 80\n[/pvp practice start area]",
+	} {
+		xMin, xMax, yMin, yMax, ok = townMapCoordinateBounds(body)
+		if ok || xMin != 0 || xMax != 0 || yMin != 0 || yMax != 0 {
+			t.Fatalf("non-town area produced coordinates: %d..%d/%d..%d ok=%t", xMin, xMax, yMin, yMax, ok)
+		}
 	}
 }
 
@@ -165,19 +171,24 @@ func TestExtractMapListNeverFabricatesAreasOrCoordinates(t *testing.T) {
 		"town/town.lst": {Data: []byte("1 `Example.twn`")},
 		"town/example.twn": {Data: []byte("[name]\n`Example`\n[limit level]\n10\n" +
 			"[area]\n0 `Example/Ready.map`\n`[normal]`\n[/area]\n" +
-			"[area]\n1 `Example/Missing.map`\n`[normal]`\n[/area]\n" +
-			"[area]\n2 `Example/Gate.map`\n`[gate]`\n474 234\n[/area]\n")},
-		"map/example/ready.map": {Data: []byte("[virtual movable area]\n10 20 300 100\n[/virtual movable area]\n")},
+			"[area]\n1 `Example/Virtual.map`\n`[normal]`\n[/area]\n" +
+			"[area]\n2 `Example/Missing.map`\n`[normal]`\n[/area]\n" +
+			"[area]\n3 `Example/Gate.map`\n`[gate]`\n474 234\n[/area]\n")},
+		"map/example/ready.map":   {Data: []byte("[town movable area]\n10 20 300 100 1 0\n[/town movable area]\n")},
+		"map/example/virtual.map": {Data: []byte("[virtual movable area]\n10 20 300 100\n[/virtual movable area]\n")},
 	}}
 	maps := extractMapList(a, "town/town.lst", "town/")
-	if len(maps) != 2 {
+	if len(maps) != 3 {
 		t.Fatalf("maps=%+v", maps)
 	}
 	if !maps[0].Use || maps[0].XMin != 10 || maps[0].XMax != 310 || maps[0].YMin != 20 || maps[0].YMax != 120 {
 		t.Fatalf("ready map=%+v", maps[0])
 	}
 	if maps[1].Use || maps[1].XMin != 0 || maps[1].XMax != 0 || maps[1].YMin != 0 || maps[1].YMax != 0 {
-		t.Fatalf("missing map fabricated coordinates: %+v", maps[1])
+		t.Fatalf("virtual-only map produced usable coordinates: %+v", maps[1])
+	}
+	if maps[2].Use || maps[2].XMin != 0 || maps[2].XMax != 0 || maps[2].YMin != 0 || maps[2].YMax != 0 {
+		t.Fatalf("missing map fabricated coordinates: %+v", maps[2])
 	}
 
 	if areas := parseTownAreas("[name]\n`No Areas`"); len(areas) != 0 {

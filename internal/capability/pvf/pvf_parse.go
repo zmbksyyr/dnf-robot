@@ -598,42 +598,30 @@ func townMapArchivePath(path string) string {
 }
 
 func townMapCoordinateBounds(body string) (xMin, xMax, yMin, yMax int, ok bool) {
-	type rectTag struct {
-		name   string
-		stride int
-	}
-	tags := []rectTag{
-		{name: "town movable area", stride: 6},
-		{name: "virtual movable area", stride: 4},
-		{name: "pvp start area", stride: 4},
-		{name: "pvp practice start area", stride: 4},
-	}
 	found := false
-	for _, tag := range tags {
-		values := pvfTagInts(body, tag.name)
-		for i := 0; i+3 < len(values); i += tag.stride {
-			x, y, width, height := values[i], values[i+1], values[i+2], values[i+3]
-			if width <= 0 || height <= 0 || width > 10000 || height > 10000 {
-				continue
-			}
-			right, bottom := x+width, y+height
-			if !found {
-				xMin, xMax, yMin, yMax = x, right, y, bottom
-				found = true
-				continue
-			}
-			if x < xMin {
-				xMin = x
-			}
-			if right > xMax {
-				xMax = right
-			}
-			if y < yMin {
-				yMin = y
-			}
-			if bottom > yMax {
-				yMax = bottom
-			}
+	values := pvfTagInts(body, "town movable area")
+	for i := 0; i+3 < len(values); i += 6 {
+		x, y, width, height := values[i], values[i+1], values[i+2], values[i+3]
+		if width <= 0 || height <= 0 || width > 10000 || height > 10000 {
+			continue
+		}
+		right, bottom := x+width, y+height
+		if !found {
+			xMin, xMax, yMin, yMax = x, right, y, bottom
+			found = true
+			continue
+		}
+		if x < xMin {
+			xMin = x
+		}
+		if right > xMax {
+			xMax = right
+		}
+		if y < yMin {
+			yMin = y
+		}
+		if bottom > yMax {
+			yMax = bottom
 		}
 	}
 	if !found {
