@@ -14,8 +14,9 @@ func Default() RuntimeConfig {
 		EquipSlots: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, EquipRarityMin: 0, EquipRarityMax: 5, EquipIntensifyMin: 7, EquipIntensifyMax: 10, EquipSmithingMin: 0, EquipSmithingMax: 8,
 		PreferEquipSets: true, EquipSetMinSlots: 2,
 		AvatarSlots: []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, MinAvatarSlots: 8, PreferAvatarSets: true, AvatarSetMinSlots: 2,
-		StoreItemSlots: 1, StoreItemCountMin: 1, StoreItemCountMax: 1, StorePriceMin: 100000, StorePriceMax: 5000000, StoreInventoryStartBox: 7,
+		StoreItemSlots: 1, StoreItemCountMin: 1, StoreItemCountMax: 1, StoreInventoryStartBox: 7,
 		StoreEquipmentStartBox: 7, StoreMaterialStartBox: 105, StoreEquipmentIntensify: 13,
+		StoreEquipmentPriceMin: 500000, StoreEquipmentPriceMax: 1000000, StoreMaterialPriceMin: 10, StoreMaterialPriceMax: 50,
 		StoreItemAllowIDs: []int{3037, 3031, 3032, 3034, 3035}, StoreItemDenyIDs: []int{7312, 7404, 7560, 7563, 7567, 7746},
 		StoreConfirmTimeoutSec: 30,
 		FollowRadiusX:          120, FollowRadiusY: 30, ShoutDelayMS: 1000, ShoutSendEnabled: true,
@@ -267,11 +268,23 @@ func Normalize(rc *RuntimeConfig) {
 	if rc.StoreItemCountMax < rc.StoreItemCountMin {
 		rc.StoreItemCountMin, rc.StoreItemCountMax = rc.StoreItemCountMax, rc.StoreItemCountMin
 	}
-	if rc.StorePriceMin <= 0 {
-		rc.StorePriceMin = 100000
+	if rc.StoreEquipmentPriceMin <= 0 {
+		rc.StoreEquipmentPriceMin = 500000
 	}
-	if rc.StorePriceMax < rc.StorePriceMin {
-		rc.StorePriceMin, rc.StorePriceMax = rc.StorePriceMax, rc.StorePriceMin
+	if rc.StoreEquipmentPriceMax <= 0 {
+		rc.StoreEquipmentPriceMax = 1000000
+	}
+	if rc.StoreEquipmentPriceMax < rc.StoreEquipmentPriceMin {
+		rc.StoreEquipmentPriceMin, rc.StoreEquipmentPriceMax = rc.StoreEquipmentPriceMax, rc.StoreEquipmentPriceMin
+	}
+	if rc.StoreMaterialPriceMin <= 0 {
+		rc.StoreMaterialPriceMin = 10
+	}
+	if rc.StoreMaterialPriceMax <= 0 {
+		rc.StoreMaterialPriceMax = 50
+	}
+	if rc.StoreMaterialPriceMax < rc.StoreMaterialPriceMin {
+		rc.StoreMaterialPriceMin, rc.StoreMaterialPriceMax = rc.StoreMaterialPriceMax, rc.StoreMaterialPriceMin
 	}
 	if rc.StoreInventoryStartBox <= 0 || rc.StoreInventoryStartBox == 105 {
 		rc.StoreInventoryStartBox = 7

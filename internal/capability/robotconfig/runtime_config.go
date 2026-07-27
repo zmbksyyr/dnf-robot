@@ -49,8 +49,10 @@ type RuntimeConfig struct {
 	StoreItemSlots                int    `json:"store_item_slots"`
 	StoreItemCountMin             int    `json:"store_item_count_min"`
 	StoreItemCountMax             int    `json:"store_item_count_max"`
-	StorePriceMin                 int    `json:"store_price_min"`
-	StorePriceMax                 int    `json:"store_price_max"`
+	StoreEquipmentPriceMin        int    `json:"store_equipment_price_min"`
+	StoreEquipmentPriceMax        int    `json:"store_equipment_price_max"`
+	StoreMaterialPriceMin         int    `json:"store_material_price_min"`
+	StoreMaterialPriceMax         int    `json:"store_material_price_max"`
 	StoreInventoryStartBox        int    `json:"store_inventory_start_box_index"`
 	StoreEquipmentStartBox        int    `json:"store_equipment_start_box_index"`
 	StoreMaterialStartBox         int    `json:"store_material_start_box_index"`

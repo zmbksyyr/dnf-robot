@@ -114,19 +114,38 @@ func assertInventoryRawRangeType(t *testing.T, raw []byte, start, count, invento
 	}
 }
 
-func TestStorePoolPricesKeepWholeDisplayInDFGamerRange(t *testing.T) {
-	env := testPreparationEnv{randValue: 5000000}
-	items := make([]StallItem, 24)
-	for index := range items {
-		items[index].Count = 2000
+func TestStorePoolPricesUseSeparateMaterialAndEquipmentRanges(t *testing.T) {
+	env := testPreparationEnv{}
+	materials := []StallItem{{Count: 1000}}
+	equipment := []StallItem{{Count: 1}}
+	rc := robotconfig.RuntimeConfig{
+		StoreMaterialPriceMin:  10,
+		StoreMaterialPriceMax:  50,
+		StoreEquipmentPriceMin: 500000,
+		StoreEquipmentPriceMax: 1000000,
 	}
-	assignStorePoolPrices(env, robotconfig.RuntimeConfig{StorePriceMin: 100000, StorePriceMax: 5000000}, items)
-	total := int64(0)
-	for _, item := range items {
-		total += int64(item.Price) * int64(item.Count)
+	assignStorePoolPrices(env, rc, materials, equipment)
+	if materials[0].Price != 10 || equipment[0].Price != 500000 {
+		t.Fatalf("prices material=%d equipment=%d", materials[0].Price, equipment[0].Price)
 	}
-	if total > StoreTotalPriceLimit {
+}
+
+func TestStorePoolPricesScaleAllRowsWhenWholeDisplayExceedsLimit(t *testing.T) {
+	env := testPreparationEnv{}
+	materials := []StallItem{{Count: 1000}}
+	equipment := []StallItem{{Count: 1}}
+	rc := robotconfig.RuntimeConfig{
+		StoreMaterialPriceMin:  1000000,
+		StoreMaterialPriceMax:  1000000,
+		StoreEquipmentPriceMin: 2000000,
+		StoreEquipmentPriceMax: 2000000,
+	}
+	assignStorePoolPrices(env, rc, materials, equipment)
+	if total := storeItemsTotalPrice(materials) + storeItemsTotalPrice(equipment); total > StoreTotalPriceLimit {
 		t.Fatalf("whole store total=%d exceeds limit=%d", total, StoreTotalPriceLimit)
+	}
+	if difference := equipment[0].Price - 2*materials[0].Price; difference < -1 || difference > 1 {
+		t.Fatalf("proportional prices material=%d equipment=%d", materials[0].Price, equipment[0].Price)
 	}
 }
 

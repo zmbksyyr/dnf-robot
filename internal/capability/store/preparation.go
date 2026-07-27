@@ -102,11 +102,7 @@ func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.Run
 		itemID := int(binary.LittleEndian.Uint32(slotData[2:6]))
 		count := int(binary.LittleEndian.Uint32(slotData[7:11]))
 		if boxType > 0 && itemID > 0 && count > 0 {
-			price := env.RandBetween(rc.StorePriceMin, rc.StorePriceMax)
-			if price <= 0 {
-				price = 100000
-			}
-			stallItems = append(stallItems, StallItem{ItemID: itemID, Count: count, Price: price})
+			stallItems = append(stallItems, StallItem{ItemID: itemID, Count: count})
 			foundItems = append(foundItems, itemID)
 		}
 	}
@@ -114,6 +110,7 @@ func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.Run
 		env.Logf("[StorePrepare] uid=%d cid=%d store_plan=%s inventory_found=0\n", info.UID, info.CID, plan.Name)
 		return nil
 	}
+	assignStorePoolPrices(env, rc, stallItems, nil)
 	title := fmt.Sprintf("tw-%d", info.UID%100000)
 	stallResult, err := env.ReplaceStoreStall(info.UID, title, stallItems)
 	if err != nil {
@@ -150,6 +147,7 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 		WriteInventoryStack(invRaw[rawIndex*61:(rawIndex+1)*61], entry.Item, count, 3)
 		stallItems = append(stallItems, StallItem{ItemID: entry.Item.ID, Count: count})
 	}
+	materialRows := len(stallItems)
 	for index, entry := range equipment {
 		rawIndex := rc.StoreEquipmentStartBox + index + 2
 		if rawIndex < 0 || rawIndex >= 249 {
@@ -162,7 +160,7 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 		env.Logf("[StorePrepare] uid=%d cid=%d pool_empty=1\n", info.UID, info.CID)
 		return nil
 	}
-	assignStorePoolPrices(env, rc, stallItems)
+	assignStorePoolPrices(env, rc, stallItems[:materialRows], stallItems[materialRows:])
 	if err := env.SaveInventory(info.CID, rc.InventoryCapacity, invRaw); err != nil {
 		return err
 	}
@@ -196,32 +194,48 @@ func clearInventoryRawRange(raw []byte, start, count int) {
 	}
 }
 
-func assignStorePoolPrices(env PreparationEnv, rc robotconfig.RuntimeConfig, items []StallItem) {
-	totalUnits := 0
+func assignStorePoolPrices(env PreparationEnv, rc robotconfig.RuntimeConfig, materials, equipment []StallItem) {
+	assignStorePrices(env, materials, rc.StoreMaterialPriceMin, rc.StoreMaterialPriceMax)
+	assignStorePrices(env, equipment, rc.StoreEquipmentPriceMin, rc.StoreEquipmentPriceMax)
+
+	totalPrice := storeItemsTotalPrice(materials) + storeItemsTotalPrice(equipment)
+	if totalPrice <= StoreTotalPriceLimit {
+		return
+	}
+	scaleStorePrices(materials, totalPrice)
+	scaleStorePrices(equipment, totalPrice)
+}
+
+func assignStorePrices(env PreparationEnv, items []StallItem, minPrice, maxPrice int) {
+	for index := range items {
+		price := env.RandBetween(minPrice, maxPrice)
+		if price <= 0 {
+			price = 1
+		}
+		items[index].Price = price
+	}
+}
+
+func scaleStorePrices(items []StallItem, totalPrice int64) {
+	for index := range items {
+		price := int(int64(items[index].Price) * StoreTotalPriceLimit / totalPrice)
+		if price <= 0 {
+			price = 1
+		}
+		items[index].Price = price
+	}
+}
+
+func storeItemsTotalPrice(items []StallItem) int64 {
+	total := int64(0)
 	for _, item := range items {
 		count := item.Count
 		if count <= 0 {
 			count = 1
 		}
-		totalUnits += count
+		total += int64(item.Price) * int64(count)
 	}
-	if totalUnits <= 0 {
-		totalUnits = 1
-	}
-	maxUnitPrice := StoreTotalPriceLimit / totalUnits
-	if maxUnitPrice <= 0 {
-		maxUnitPrice = 1
-	}
-	for index := range items {
-		price := env.RandBetween(rc.StorePriceMin, rc.StorePriceMax)
-		if price <= 0 {
-			price = 100000
-		}
-		if price > maxUnitPrice {
-			price = maxUnitPrice
-		}
-		items[index].Price = price
-	}
+	return total
 }
 
 func (p Preparer) EnsureStorePermission(uid, cid int) error {
