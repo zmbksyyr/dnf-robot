@@ -75,3 +75,74 @@ func TestBalancedLocationIgnoresOccupancyOutsideMovableRectangles(t *testing.T) 
 		t.Fatalf("target=%+v, outer-gap occupancy incorrectly filled village 1", target)
 	}
 }
+
+func TestBalancedLocationCoversEmptyAreaBeforeEmptyRectangle(t *testing.T) {
+	maps := []shared.MapCatalogItem{
+		{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{
+			{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
+			{XMin: 20, XMax: 29, YMin: 0, YMax: 9},
+		}},
+		{Village: 2, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 100, XMax: 109, YMin: 0, YMax: 9}}},
+	}
+	locations := []shared.MapLocation{{Village: 1, Area: 0, X: 5, Y: 5}}
+	target, ok := BalancedLocation(&sequenceRangeRandom{}, maps, 85, locations)
+	if !ok || target.Map.Village != 2 {
+		t.Fatalf("target=%+v ok=%t, want empty village 2 before secondary rectangle", target, ok)
+	}
+}
+
+func TestBalancedLocationCoversGlobalEmptyRectangleAfterAreas(t *testing.T) {
+	maps := []shared.MapCatalogItem{
+		{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{
+			{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
+			{XMin: 20, XMax: 29, YMin: 0, YMax: 9},
+		}},
+		{Village: 2, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 100, XMax: 109, YMin: 0, YMax: 9}}},
+	}
+	locations := []shared.MapLocation{
+		{Village: 1, Area: 0, X: 5, Y: 5},
+		{Village: 2, Area: 0, X: 105, Y: 5},
+	}
+	target, ok := BalancedLocation(&sequenceRangeRandom{}, maps, 85, locations)
+	want := maps[0].Rectangles[1]
+	if !ok || target.Map.Village != 1 || target.Rectangle != want {
+		t.Fatalf("target=%+v ok=%t, want global empty rectangle %+v", target, ok, want)
+	}
+}
+
+func TestBalancedLocationEmptyRectangleRespectsLevel(t *testing.T) {
+	maps := []shared.MapCatalogItem{
+		{Village: 1, Area: 0, Level: 1, Use: true, Rectangles: []shared.MapRectangle{
+			{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
+			{XMin: 20, XMax: 29, YMin: 0, YMax: 9},
+		}},
+		{Village: 2, Area: 0, Level: 85, Use: true, Rectangles: []shared.MapRectangle{
+			{XMin: 100, XMax: 109, YMin: 0, YMax: 9},
+			{XMin: 120, XMax: 129, YMin: 0, YMax: 9},
+		}},
+	}
+	locations := []shared.MapLocation{
+		{Village: 1, Area: 0, X: 5, Y: 5},
+		{Village: 2, Area: 0, X: 105, Y: 5},
+	}
+	target, ok := BalancedLocation(&sequenceRangeRandom{}, maps, 50, locations)
+	want := maps[0].Rectangles[1]
+	if !ok || target.Map.Village != 1 || target.Rectangle != want {
+		t.Fatalf("target=%+v ok=%t, low-level role must use eligible empty rectangle %+v", target, ok, want)
+	}
+}
+
+func TestBalancedLocationUsesAreaWeightAfterRectangleCoverage(t *testing.T) {
+	maps := []shared.MapCatalogItem{
+		{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 0, XMax: 9, YMin: 0, YMax: 9}}},
+		{Village: 2, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 100, XMax: 199, YMin: 0, YMax: 99}}},
+	}
+	locations := []shared.MapLocation{
+		{Village: 1, Area: 0, X: 5, Y: 5},
+		{Village: 2, Area: 0, X: 150, Y: 50},
+	}
+	target, ok := BalancedLocation(&sequenceRangeRandom{}, maps, 85, locations)
+	if !ok || target.Map.Village != 2 {
+		t.Fatalf("target=%+v ok=%t, want larger village after full coverage", target, ok)
+	}
+}

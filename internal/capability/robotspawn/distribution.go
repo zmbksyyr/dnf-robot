@@ -18,6 +18,11 @@ type rectangleKey struct {
 	index int
 }
 
+type rectangleTargetIndex struct {
+	mapIndex       int
+	rectangleIndex int
+}
+
 func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []int, locations []shared.MapLocation) ([]BalancedTarget, bool) {
 	if env == nil || len(levels) == 0 {
 		return nil, false
@@ -58,21 +63,33 @@ func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []
 
 	out := make([]BalancedTarget, 0, len(levels))
 	for _, level := range levels {
-		eligible := eligibleMapIndexes(candidates, areaCounts, level, true)
-		if len(eligible) == 0 {
+		emptyAreas := eligibleMapIndexes(candidates, areaCounts, level, true)
+		eligible := emptyAreas
+		if len(emptyAreas) == 0 {
 			eligible = eligibleMapIndexes(candidates, areaCounts, level, false)
 		}
 		if len(eligible) == 0 {
 			out = append(out, BalancedTarget{})
 			continue
 		}
-		chosen := randomIndex(env, eligible)
-		if areaCounts[mapAreaKey(candidates[chosen].mp)] > 0 {
+
+		chosen := 0
+		rectangleIndex := 0
+		if len(emptyAreas) > 0 {
+			chosen = randomIndex(env, emptyAreas)
+			candidate := candidates[chosen]
+			rectangleIndex = leastLoadedRectangleIndex(env, candidate.rectangles, mapAreaKey(candidate.mp), rectangleCounts)
+		} else if target, ok := randomEmptyRectangleTarget(env, candidates, eligible, rectangleCounts); ok {
+			chosen = target.mapIndex
+			rectangleIndex = target.rectangleIndex
+		} else {
 			chosen = leastLoadedMapIndex(env, candidates, eligible, areaCounts)
+			candidate := candidates[chosen]
+			rectangleIndex = leastLoadedRectangleIndex(env, candidate.rectangles, mapAreaKey(candidate.mp), rectangleCounts)
 		}
+
 		candidate := candidates[chosen]
 		area := mapAreaKey(candidate.mp)
-		rectangleIndex := leastLoadedRectangleIndex(env, candidate.rectangles, area, rectangleCounts)
 		areaCounts[area]++
 		rectangleCounts[rectangleKey{area: area, index: rectangleIndex}]++
 		out = append(out, BalancedTarget{Map: candidate.mp, Rectangle: candidate.rectangles[rectangleIndex]})
@@ -100,6 +117,23 @@ func eligibleMapIndexes(candidates []mapCandidate, counts map[shared.MapAreaKey]
 		eligible = append(eligible, index)
 	}
 	return eligible
+}
+
+func randomEmptyRectangleTarget(env RangeRandom, candidates []mapCandidate, mapIndexes []int, counts map[rectangleKey]int) (rectangleTargetIndex, bool) {
+	targets := make([]rectangleTargetIndex, 0)
+	for _, mapIndex := range mapIndexes {
+		candidate := candidates[mapIndex]
+		area := mapAreaKey(candidate.mp)
+		for rectangleIndex := range candidate.rectangles {
+			if counts[rectangleKey{area: area, index: rectangleIndex}] == 0 {
+				targets = append(targets, rectangleTargetIndex{mapIndex: mapIndex, rectangleIndex: rectangleIndex})
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return rectangleTargetIndex{}, false
+	}
+	return targets[randomIndex(env, indexes(len(targets)))], true
 }
 
 func leastLoadedMapIndex(env RangeRandom, candidates []mapCandidate, indexes []int, counts map[shared.MapAreaKey]int) int {
