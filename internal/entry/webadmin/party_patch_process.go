@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	processfoundation "robot/internal/foundation/process"
 )
 
 var errPartyCompatUnavailable = errors.New("df_game_r is not listening")
@@ -23,22 +25,19 @@ func inspectPartyCompat(port int, cfg partyCompatConfig) partyCompatStatus {
 		return status
 	}
 	status.PID = pid
-	mem, err := os.Open(fmt.Sprintf("/proc/%d/mem", pid))
+	var enabled, rewardTimerEnabled bool
+	var start, end uint32
+	err = processfoundation.WithMemoryFile(pid, false, defaultPartyCompatLayout.site, func(mem processfoundation.MemoryFile, _ bool) error {
+		var inspectErr error
+		enabled, start, end, inspectErr = inspectPartyCompatMemory(mem, defaultPartyCompatLayout)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		rewardTimerEnabled, inspectErr = inspectPartyCompatRewardTimer(mem, defaultPartyCompatLayout)
+		return inspectErr
+	})
 	if err != nil {
 		status.State = "error"
-		status.Message = err.Error()
-		return status
-	}
-	defer mem.Close()
-	enabled, start, end, err := inspectPartyCompatMemory(mem, defaultPartyCompatLayout)
-	if err != nil {
-		status.State = "unknown"
-		status.Message = err.Error()
-		return status
-	}
-	rewardTimerEnabled, err := inspectPartyCompatRewardTimer(mem, defaultPartyCompatLayout)
-	if err != nil {
-		status.State = "unknown"
 		status.Message = err.Error()
 		return status
 	}
@@ -61,27 +60,31 @@ func setPartyCompat(port int, cfg partyCompatConfig, enable bool) (partyCompatSt
 		return status, err
 	}
 	status.PID = pid
-	mem, err := os.OpenFile(fmt.Sprintf("/proc/%d/mem", pid), os.O_RDWR, 0)
+	var enabled, rewardTimerEnabled bool
+	var start, end uint32
+	err = processfoundation.WithMemoryFile(pid, true, defaultPartyCompatLayout.site, func(mem processfoundation.MemoryFile, traced bool) error {
+		apply := func() error {
+			_, err := setPartyCompatMemory(mem, defaultPartyCompatLayout, cfg.AccountStart, cfg.AccountEnd, enable)
+			return err
+		}
+		if traced {
+			if err := apply(); err != nil {
+				return err
+			}
+		} else if err := withStoppedProcess(pid, apply); err != nil {
+			return err
+		}
+		var inspectErr error
+		enabled, start, end, inspectErr = inspectPartyCompatMemory(mem, defaultPartyCompatLayout)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		rewardTimerEnabled, inspectErr = inspectPartyCompatRewardTimer(mem, defaultPartyCompatLayout)
+		return inspectErr
+	})
 	if err != nil {
-		return status, err
-	}
-	defer mem.Close()
-
-	if err := withStoppedProcess(pid, func() error {
-		_, err := setPartyCompatMemory(mem, defaultPartyCompatLayout, cfg.AccountStart, cfg.AccountEnd, enable)
-		return err
-	}); err != nil {
 		status.State = "error"
 		status.Message = err.Error()
-		return status, err
-	}
-
-	enabled, start, end, err := inspectPartyCompatMemory(mem, defaultPartyCompatLayout)
-	if err != nil {
-		return status, err
-	}
-	rewardTimerEnabled, err := inspectPartyCompatRewardTimer(mem, defaultPartyCompatLayout)
-	if err != nil {
 		return status, err
 	}
 	status.Enabled = enabled && rewardTimerEnabled

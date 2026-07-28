@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	processfoundation "robot/internal/foundation/process"
 )
 
 type auctionMemoryPatchSpec struct {
@@ -38,38 +40,39 @@ func InspectAuctionMemoryPatch() (AuctionMemoryPatchResult, error) {
 		return AuctionMemoryPatchResult{}, err
 	}
 	result := AuctionMemoryPatchResult{PID: pid, Target: fmt.Sprintf("/proc/%d/mem", pid)}
-	mem, err := os.Open(result.Target)
-	if err != nil {
-		return result, err
-	}
-	defer mem.Close()
 	segments, err := executableSegments(pid, "df_auction_r")
 	if err != nil {
 		return result, err
 	}
-	for _, spec := range auctionMemoryPatchSpecs {
-		entry := AuctionMemoryPatchEntry{Name: spec.name, Expect: spec.expect, Value: spec.value}
-		address, err := locateAuctionPatchAddress(mem, segments, spec)
-		if err != nil {
-			entry.Address = fmt.Sprintf("0x%08x", spec.fallbackAddr)
-			entry.Message = err.Error()
+	err = processfoundation.WithMemoryFile(pid, false, segments[0].start, func(mem processfoundation.MemoryFile, _ bool) error {
+		for _, spec := range auctionMemoryPatchSpecs {
+			entry := AuctionMemoryPatchEntry{Name: spec.name, Expect: spec.expect, Value: spec.value}
+			address, err := locateAuctionPatchAddress(mem, segments, spec)
+			if err != nil {
+				entry.Address = fmt.Sprintf("0x%08x", spec.fallbackAddr)
+				entry.Message = err.Error()
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
+			entry.Address = fmt.Sprintf("0x%08x", address)
+			var buf [1]byte
+			if _, err := mem.ReadAt(buf[:], address); err != nil {
+				entry.Message = err.Error()
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
+			entry.Before = buf[0]
+			entry.After = buf[0]
+			entry.OK = buf[0] == spec.value
+			if !entry.OK {
+				entry.Message = fmt.Sprintf("supported original byte 0x%02x is not patched", buf[0])
+			}
 			result.Entries = append(result.Entries, entry)
-			continue
 		}
-		entry.Address = fmt.Sprintf("0x%08x", address)
-		var buf [1]byte
-		if _, err := mem.ReadAt(buf[:], address); err != nil {
-			entry.Message = err.Error()
-			result.Entries = append(result.Entries, entry)
-			continue
-		}
-		entry.Before = buf[0]
-		entry.After = buf[0]
-		entry.OK = buf[0] == spec.value
-		if !entry.OK {
-			entry.Message = fmt.Sprintf("supported original byte 0x%02x is not patched", buf[0])
-		}
-		result.Entries = append(result.Entries, entry)
+		return nil
+	})
+	if err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -92,63 +95,63 @@ func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
 		PID:    pid,
 		Target: fmt.Sprintf("/proc/%d/mem", pid),
 	}
-	mem, err := os.OpenFile(result.Target, os.O_RDWR, 0)
-	if err != nil {
-		return result, err
-	}
-	defer mem.Close()
 	segments, err := executableSegments(pid, "df_auction_r")
 	if err != nil {
 		return result, err
 	}
-
-	for _, spec := range auctionMemoryPatchSpecs {
-		entry := AuctionMemoryPatchEntry{
-			Name:   spec.name,
-			Expect: spec.expect,
-			Value:  spec.value,
-		}
-		address, err := locateAuctionPatchAddress(mem, segments, spec)
-		if err != nil {
-			entry.Address = fmt.Sprintf("0x%08x", spec.fallbackAddr)
-			entry.Message = err.Error()
-			result.Entries = append(result.Entries, entry)
-			continue
-		}
-		entry.Address = fmt.Sprintf("0x%08x", address)
-		var buf [1]byte
-		if _, err := mem.ReadAt(buf[:], address); err != nil {
-			entry.Message = err.Error()
-			result.Entries = append(result.Entries, entry)
-			continue
-		}
-		entry.Before = buf[0]
-		switch {
-		case buf[0] == spec.value:
-		case isSupportedAuctionPatchOriginal(spec, buf[0]):
-			if _, err := mem.WriteAt([]byte{spec.value}, address); err != nil {
+	err = processfoundation.WithMemoryFile(pid, true, segments[0].start, func(mem processfoundation.MemoryFile, _ bool) error {
+		for _, spec := range auctionMemoryPatchSpecs {
+			entry := AuctionMemoryPatchEntry{
+				Name:   spec.name,
+				Expect: spec.expect,
+				Value:  spec.value,
+			}
+			address, err := locateAuctionPatchAddress(mem, segments, spec)
+			if err != nil {
+				entry.Address = fmt.Sprintf("0x%08x", spec.fallbackAddr)
 				entry.Message = err.Error()
 				result.Entries = append(result.Entries, entry)
 				continue
 			}
-			entry.Changed = true
-			result.Patched++
-		default:
-			entry.Message = fmt.Sprintf("unexpected byte 0x%02x at %s", buf[0], entry.Address)
+			entry.Address = fmt.Sprintf("0x%08x", address)
+			var buf [1]byte
+			if _, err := mem.ReadAt(buf[:], address); err != nil {
+				entry.Message = err.Error()
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
+			entry.Before = buf[0]
+			switch {
+			case buf[0] == spec.value:
+			case isSupportedAuctionPatchOriginal(spec, buf[0]):
+				if _, err := mem.WriteAt([]byte{spec.value}, address); err != nil {
+					entry.Message = err.Error()
+					result.Entries = append(result.Entries, entry)
+					continue
+				}
+				entry.Changed = true
+				result.Patched++
+			default:
+				entry.Message = fmt.Sprintf("unexpected byte 0x%02x at %s", buf[0], entry.Address)
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
+			if _, err := mem.ReadAt(buf[:], address); err != nil {
+				entry.Message = err.Error()
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
+			entry.After = buf[0]
+			entry.OK = entry.After == spec.value
+			if !entry.OK {
+				entry.Message = "patch value not applied"
+			}
 			result.Entries = append(result.Entries, entry)
-			continue
 		}
-		if _, err := mem.ReadAt(buf[:], address); err != nil {
-			entry.Message = err.Error()
-			result.Entries = append(result.Entries, entry)
-			continue
-		}
-		entry.After = buf[0]
-		entry.OK = entry.After == spec.value
-		if !entry.OK {
-			entry.Message = "patch value not applied"
-		}
-		result.Entries = append(result.Entries, entry)
+		return nil
+	})
+	if err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -205,7 +208,7 @@ func executableSegments(pid int, name string) ([]memorySegment, error) {
 	return segments, nil
 }
 
-func locateAuctionPatchAddress(mem *os.File, segments []memorySegment, spec auctionMemoryPatchSpec) (int64, error) {
+func locateAuctionPatchAddress(mem io.ReaderAt, segments []memorySegment, spec auctionMemoryPatchSpec) (int64, error) {
 	if len(spec.pattern) == 0 || spec.targetOffset < 0 || spec.targetOffset >= len(spec.pattern) {
 		return 0, fmt.Errorf("%s has invalid pattern", spec.name)
 	}

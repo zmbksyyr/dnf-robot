@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
+
+	processfoundation "robot/internal/foundation/process"
 )
 
 var defaultMailboxGuardLayout = mailboxGuardLayout{
@@ -44,16 +45,14 @@ func inspectMailboxGuard(port int) mailboxGuardStatus {
 		return status
 	}
 	status.PID = pid
-	mem, err := os.Open(fmt.Sprintf("/proc/%d/mem", pid))
+	var enabled bool
+	err = processfoundation.WithMemoryFile(pid, false, defaultMailboxGuardLayout.invalidItemScanSite, func(mem processfoundation.MemoryFile, _ bool) error {
+		var inspectErr error
+		enabled, inspectErr = inspectMailboxGuardMemory(mem, defaultMailboxGuardLayout)
+		return inspectErr
+	})
 	if err != nil {
 		status.State = "error"
-		status.Message = err.Error()
-		return status
-	}
-	defer mem.Close()
-	enabled, err := inspectMailboxGuardMemory(mem, defaultMailboxGuardLayout)
-	if err != nil {
-		status.State = "unsupported"
 		status.Message = err.Error()
 		return status
 	}
@@ -72,21 +71,26 @@ func setMailboxGuard(port int, enable bool) (mailboxGuardStatus, error) {
 		return status, err
 	}
 	status.PID = pid
-	mem, err := os.OpenFile(fmt.Sprintf("/proc/%d/mem", pid), os.O_RDWR, 0)
+	var actual bool
+	err = processfoundation.WithMemoryFile(pid, true, defaultMailboxGuardLayout.invalidItemScanSite, func(mem processfoundation.MemoryFile, traced bool) error {
+		apply := func() error {
+			_, err := setMailboxGuardMemory(mem, defaultMailboxGuardLayout, enable)
+			return err
+		}
+		if traced {
+			if err := apply(); err != nil {
+				return err
+			}
+		} else if err := withStoppedProcess(pid, apply); err != nil {
+			return err
+		}
+		var inspectErr error
+		actual, inspectErr = inspectMailboxGuardMemory(mem, defaultMailboxGuardLayout)
+		return inspectErr
+	})
 	if err != nil {
-		return status, err
-	}
-	defer mem.Close()
-	if err := withStoppedProcess(pid, func() error {
-		_, err := setMailboxGuardMemory(mem, defaultMailboxGuardLayout, enable)
-		return err
-	}); err != nil {
 		status.State = "error"
 		status.Message = err.Error()
-		return status, err
-	}
-	actual, err := inspectMailboxGuardMemory(mem, defaultMailboxGuardLayout)
-	if err != nil {
 		return status, err
 	}
 	status.Enabled = actual
