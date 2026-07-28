@@ -558,6 +558,7 @@ type townArea struct {
 	ID      int
 	MapPath string
 	Gate    bool
+	Kind    string
 }
 
 func parseTownAreas(body string) []townArea {
@@ -580,7 +581,17 @@ func parseTownAreas(body string) []townArea {
 			id := atoi(fields[0])
 			mapPath := normalizePVFPath(fields[1])
 			if id >= 0 && mapPath != "" {
-				out = append(out, townArea{ID: id, MapPath: mapPath, Gate: strings.Contains(strings.ToLower(block), "[gate]")})
+				lowerBlock := strings.ToLower(block)
+				kind := "other"
+				switch {
+				case strings.Contains(lowerBlock, "[pvp]"):
+					kind = "pvp"
+				case strings.Contains(lowerBlock, "[gate]"):
+					kind = "gate"
+				case strings.Contains(lowerBlock, "[normal]"):
+					kind = "normal"
+				}
+				out = append(out, townArea{ID: id, MapPath: mapPath, Gate: kind == "gate", Kind: kind})
 			}
 		}
 		start = j + len("[/area]")

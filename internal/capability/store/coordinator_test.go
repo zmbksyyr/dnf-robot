@@ -136,15 +136,15 @@ func TestStoreRuntimeFailureDoesNotPollutePointExploration(t *testing.T) {
 	}
 }
 
-func TestBuildStoreGridPointsExcludesKnownBadStoreAreas(t *testing.T) {
+func TestBuildStoreGridPointsUsesPVFStoreEligibility(t *testing.T) {
 	points := BuildGridPoints([]shared.MapCatalogItem{
-		{Village: 2, Area: 3, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
-		{Village: 9, Area: 3, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
-		{Village: 11, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
-		{Village: 11, Area: 1, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
-		{Village: 14, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
-		{Village: 14, Area: 1, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
-		{Village: 3, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
+		{Village: 2, Area: 3, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(false)},
+		{Village: 9, Area: 3, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(false)},
+		{Village: 11, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(false)},
+		{Village: 11, Area: 1, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(false)},
+		{Village: 14, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(false)},
+		{Village: 14, Area: 1, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(false)},
+		{Village: 3, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(true)},
 	})
 	if len(points) != 1 || points[0].Village != 3 || points[0].Area != 0 {
 		t.Fatalf("bad store areas were not filtered: %+v", points)
@@ -220,8 +220,8 @@ func TestBuildStoreGridPointsSkipsGapsBetweenMovableRectangles(t *testing.T) {
 
 func TestBuildStoreGridPointsExcludesUnsafeVillageArea(t *testing.T) {
 	points := BuildGridPoints([]shared.MapCatalogItem{
-		{Village: 3, Area: 1, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
-		{Village: 3, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true},
+		{Village: 3, Area: 1, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(false)},
+		{Village: 3, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true, StoreEligible: eligibility(true)},
 	})
 	if len(points) != 1 {
 		t.Fatalf("points got %d want 1", len(points))

@@ -82,7 +82,7 @@ func TestPVFExportsCurrentInvalidatesOldSkillStateSchema(t *testing.T) {
 	files := map[string][]byte{
 		"pvf_equipment_catalog.json": []byte(`[{"item_type": 20}]`),
 		"pvf_stackable_catalog.json": []byte(`[{"id": 1}]`),
-		"pvf_map_catalog.json":       []byte(`[{"id": 1}]`),
+		"pvf_map_catalog.json":       []byte(`[{"normal_eligible":true,"store_eligible":true}]`),
 		pvfSkillStateExportName:      []byte(`[{"job": 1}]`),
 		pvfLevelExpExportName:        []byte(`[0,0,1000]`),
 		pvfItemInfoExportName:        []byte("iteminfo"),
@@ -140,12 +140,31 @@ func TestPVFExportsCurrentAcceptsMetadataMatchWithStoredMD5(t *testing.T) {
 	}
 }
 
+func TestPVFExportsCurrentInvalidatesOldMapEligibilitySchema(t *testing.T) {
+	dir := t.TempDir()
+	writeCurrentPVFExportFiles(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "pvf_map_catalog.json"), []byte(`[{"village":1,"area":0,"use":true}]`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	want := pvfManifest{
+		Version: pvfExportVersion, SkillStateVersion: pvfSkillStateExportVersion,
+		Source: "/game/Script.pvf", Size: 100, ModTime: 200, MD5: "abc",
+	}
+	manifestPath := filepath.Join(dir, "pvf_manifest.json")
+	if err := WriteJSON(manifestPath, want); err != nil {
+		t.Fatal(err)
+	}
+	if pvfExportsCurrent(manifestPath, want, dir) {
+		t.Fatal("map catalog without dynamic eligibility was treated as current")
+	}
+}
+
 func writeCurrentPVFExportFiles(t *testing.T, dir string) {
 	t.Helper()
 	files := map[string][]byte{
 		"pvf_equipment_catalog.json": []byte(`[{"item_type": 20}]`),
 		"pvf_stackable_catalog.json": []byte(`[{"id": 1}]`),
-		"pvf_map_catalog.json":       []byte(`[{"id": 1}]`),
+		"pvf_map_catalog.json":       []byte(`[{"normal_eligible":true,"store_eligible":true}]`),
 		pvfSkillStateExportName:      []byte(`[{"job": 1, "skill_index": 1, "state": 1}]`),
 		pvfLevelExpExportName:        []byte(`[0,0,1000]`),
 		pvfItemInfoExportName:        []byte("iteminfo"),

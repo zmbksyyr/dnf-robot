@@ -93,12 +93,12 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 		}
 	}
 	env.ApplyConfiguredLocation(&normal, rc, normalMaps)
-	if !IsNormalAreaEligible(normal.Village, normal.Area) {
+	if !mapAreaIncluded(normalMaps, normal.Village, normal.Area) {
 		normal.Village = rc.SpawnFallbackVillage
 		normal.Area = rc.SpawnArea
 		normal.X = env.RandBetween(rc.SpawnXMin, rc.SpawnXMax)
 		normal.Y = env.RandBetween(rc.SpawnYMin, rc.SpawnYMax)
-		if !IsNormalAreaEligible(normal.Village, normal.Area) {
+		if !mapAreaIncluded(normalMaps, normal.Village, normal.Area) {
 			normal.Village = 1
 			normal.Area = 0
 		}
@@ -112,9 +112,18 @@ func FilterNormalMaps(maps []shared.MapCatalogItem) []shared.MapCatalogItem {
 	}
 	out := make([]shared.MapCatalogItem, 0, len(maps))
 	for _, mp := range maps {
-		if mp.Use && (mp.Gate || IsNormalAreaEligible(mp.Village, mp.Area)) {
+		if IsNormalMapEligible(mp) {
 			out = append(out, mp)
 		}
 	}
 	return out
+}
+
+func mapAreaIncluded(maps []shared.MapCatalogItem, village, area int) bool {
+	for _, mp := range maps {
+		if mp.Village == village && mp.Area == area {
+			return true
+		}
+	}
+	return false
 }

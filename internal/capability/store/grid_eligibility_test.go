@@ -6,22 +6,30 @@ import (
 	"robot/internal/shared"
 )
 
+func eligibility(value bool) *bool { return &value }
+
 func TestGateAreaEligibilityDiffersForNormalAndStoreRoles(t *testing.T) {
-	const village, area = 1, 1
-	if !IsNormalAreaEligible(village, area) {
+	mp := shared.MapCatalogItem{Use: true, Gate: true, NormalEligible: eligibility(true), StoreEligible: eligibility(false)}
+	if !IsNormalMapEligible(mp) {
 		t.Fatal("gate area must be eligible for normal robots")
 	}
-	if IsStoreAreaEligible(village, area) {
+	if IsStoreMapEligible(mp) {
 		t.Fatal("gate area must not be eligible for private stores")
 	}
 }
 
-func TestGateRobotCanMoveToStoreEligibleArea(t *testing.T) {
-	if !CanMoveToStoreArea(1, 1, 1, 0) {
-		t.Fatal("normal robot in gate area must be allowed to migrate to a store-safe area")
+func TestStoreCoordinatorValidatesTargetFromCurrentCatalog(t *testing.T) {
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{
+		{Village: 1, Area: 0, Use: true, StoreEligible: eligibility(true), Rectangles: []shared.MapRectangle{{XMin: 1, XMax: 200, YMin: 1, YMax: 200}}},
+		{Village: 1, Area: 1, Use: true, Gate: true, StoreEligible: eligibility(false), Rectangles: []shared.MapRectangle{{XMin: 1, XMax: 200, YMin: 1, YMax: 200}}},
+	})
+	coordinator := NewPointCoordinator(configDir, nil)
+	if !coordinator.HasArea(1, 0) {
+		t.Fatal("current PVF store area was not available as a migration target")
 	}
-	if CanMoveToStoreArea(1, 0, 1, 1) {
-		t.Fatal("store target must not be a gate area")
+	if coordinator.HasArea(1, 1) {
+		t.Fatal("gate area became a store migration target")
 	}
 }
 
@@ -37,9 +45,9 @@ func TestBuildGridPointsRejectsCatalogGateMetadata(t *testing.T) {
 
 func TestFilterNormalMapsKeepsSafeAreasAndGatesOnly(t *testing.T) {
 	maps := []shared.MapCatalogItem{
-		{Village: 1, Area: 0, Use: true},
-		{Village: 1, Area: 1, Use: true, Gate: true},
-		{Village: 3, Area: 1, Use: true},
+		{Village: 1, Area: 0, Use: true, NormalEligible: eligibility(true)},
+		{Village: 1, Area: 1, Use: true, Gate: true, NormalEligible: eligibility(true)},
+		{Village: 3, Area: 1, Use: true, NormalEligible: eligibility(false)},
 		{Village: 2, Area: 0, Use: false},
 	}
 	got := FilterNormalMaps(maps)

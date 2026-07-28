@@ -335,9 +335,12 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 			mapBody := a.text(townMapArchivePath(area.MapPath))
 			rectangles := townMapMovableRectangles(mapBody)
 			xMin, xMax, yMin, yMax, coordinateReady := townMapMovableBounds(mapBody)
+			normalEligible := coordinateReady && area.Kind != "pvp"
+			storeEligible := coordinateReady && area.Kind == "normal"
 			out = append(out, shared.MapCatalogItem{
 				Village: entry.ID, VillageName: villageName, Area: area.ID, Level: level,
 				XMin: xMin, XMax: xMax, YMin: yMin, YMax: yMax, Rectangles: rectangles, Use: coordinateReady, Gate: area.Gate,
+				NormalEligible: boolPointer(normalEligible), StoreEligible: boolPointer(storeEligible),
 			})
 		}
 	}
@@ -348,6 +351,10 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 		return out[i].Village < out[j].Village
 	})
 	return out
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func (a *pvfArchive) text(path string) string {

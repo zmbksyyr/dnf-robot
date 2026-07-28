@@ -359,7 +359,7 @@ func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 		return w.startAndWaitDisplay(info, rc, try, shouldStop)
 	}
 	if stOK && (stAfterOnline.Village != info.Village || stAfterOnline.Area != info.Area) {
-		if !CanMoveToStoreArea(stAfterOnline.Village, stAfterOnline.Area, info.Village, info.Area) {
+		if points := env.StorePoints(); points == nil || !points.HasArea(info.Village, info.Area) {
 			env.Logf("[AutoStore] uid=%d set_area_skipped_unsafe try=%d from=%d/%d to=%d/%d\n", info.UID, try, stAfterOnline.Village, stAfterOnline.Area, info.Village, info.Area)
 			return false, StoreReasonSetAreaFailed
 		}

@@ -93,6 +93,15 @@ type pointClaim struct {
 	ReuseAfter time.Duration
 }
 
+func (c *PointCoordinator) HasArea(village, area int) bool {
+	if c == nil {
+		return false
+	}
+	c.pointMu.Lock()
+	defer c.pointMu.Unlock()
+	return len(c.byArea[areaKey{village, area}]) > 0
+}
+
 func NewPointCoordinator(configDir string, logf func(string, ...interface{})) *PointCoordinator {
 	if logf == nil {
 		logf = func(string, ...interface{}) {}

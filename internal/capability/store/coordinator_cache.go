@@ -86,6 +86,10 @@ func (c *PointCoordinator) load() error {
 	}
 	sum := md5.Sum(sourceData)
 	sourceMD5 := hex.EncodeToString(sum[:])
+	var maps []shared.MapCatalogItem
+	if err := json.Unmarshal(sourceData, &maps); err != nil {
+		return err
+	}
 	cachePath := filepath.Join(c.configDir, PointCacheFile)
 	if cacheData, err := os.ReadFile(cachePath); err == nil {
 		var cache PointCache
@@ -98,7 +102,7 @@ func (c *PointCoordinator) load() error {
 			c.sourceName = cache.SourceFile
 			c.sourceMD5 = cache.SourceMD5
 			c.generatedAt = cache.Generated
-			c.points = FilterEligibleGridPoints(cache.Points)
+			c.points = FilterEligibleGridPoints(cache.Points, maps)
 			if len(c.points) > 0 {
 				c.rebuildIndexes()
 				active := c.loadActiveOccupancies()
@@ -106,10 +110,6 @@ func (c *PointCoordinator) load() error {
 				return nil
 			}
 		}
-	}
-	var maps []shared.MapCatalogItem
-	if err := json.Unmarshal(sourceData, &maps); err != nil {
-		return err
 	}
 	points := BuildGridPoints(maps)
 	if len(points) == 0 {
@@ -169,10 +169,6 @@ func (c *PointCoordinator) rebuildIndexes() {
 		c.areaOrder = append(c.areaOrder, key)
 	}
 	sort.Slice(c.areaOrder, func(i, j int) bool {
-		pi, pj := AreaPriority[c.areaOrder[i]], AreaPriority[c.areaOrder[j]]
-		if pi != pj {
-			return pi > pj
-		}
 		if c.areaOrder[i][0] != c.areaOrder[j][0] {
 			return c.areaOrder[i][0] < c.areaOrder[j][0]
 		}

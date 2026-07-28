@@ -145,6 +145,9 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 		if name == "pvf_equipment_catalog.json" && !strings.Contains(string(data), `"item_type": 20`) {
 			return false
 		}
+		if name == "pvf_map_catalog.json" && (!strings.Contains(string(data), `"normal_eligible"`) || !strings.Contains(string(data), `"store_eligible"`)) {
+			return false
+		}
 		if name == pvfLevelExpExportName {
 			var values []int
 			if json.Unmarshal(data, &values) != nil || len(values) < 2 {

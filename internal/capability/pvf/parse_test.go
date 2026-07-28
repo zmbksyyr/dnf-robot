@@ -132,14 +132,21 @@ func TestParseTownAreasKeepsMapPathAndGateMetadata(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("areas=%+v", got)
 	}
-	if got[0].ID != 0 || got[0].MapPath != "hendonmyre/hendon.map" || got[0].Gate {
+	if got[0].ID != 0 || got[0].MapPath != "hendonmyre/hendon.map" || got[0].Gate || got[0].Kind != "normal" {
 		t.Fatalf("first area=%+v", got[0])
 	}
-	if got[1].ID != 1 || got[1].MapPath != "hendonmyre/gate.map" || !got[1].Gate {
+	if got[1].ID != 1 || got[1].MapPath != "hendonmyre/gate.map" || !got[1].Gate || got[1].Kind != "gate" {
 		t.Fatalf("second area=%+v", got[1])
 	}
-	if got[2].ID != 2 || got[2].MapPath != "hendonmyre/hendon_auction.map" || got[2].Gate {
+	if got[2].ID != 2 || got[2].MapPath != "hendonmyre/hendon_auction.map" || got[2].Gate || got[2].Kind != "normal" {
 		t.Fatalf("third area=%+v", got[2])
+	}
+}
+
+func TestParseTownAreasMarksExplicitPVP(t *testing.T) {
+	got := parseTownAreas("[area]\n7 `Arena/Ready.map`\n`[pvp]`\n[/area]\n[end]")
+	if len(got) != 1 || got[0].Kind != "pvp" || got[0].Gate {
+		t.Fatalf("pvp area=%+v", got)
 	}
 }
 
@@ -207,6 +214,9 @@ func TestExtractMapListNeverFabricatesAreasOrCoordinates(t *testing.T) {
 	if !maps[0].Use || maps[0].XMin != 10 || maps[0].XMax != 310 || maps[0].YMin != 20 || maps[0].YMax != 120 || len(maps[0].Rectangles) != 1 {
 		t.Fatalf("ready map=%+v", maps[0])
 	}
+	if maps[0].NormalEligible == nil || !*maps[0].NormalEligible || maps[0].StoreEligible == nil || !*maps[0].StoreEligible {
+		t.Fatalf("normal map eligibility was not exported: %+v", maps[0])
+	}
 	if !maps[1].Use || maps[1].XMin != 10 || maps[1].XMax != 310 || maps[1].YMin != 20 || maps[1].YMax != 120 || len(maps[1].Rectangles) != 1 {
 		t.Fatalf("virtual-only map was not usable: %+v", maps[1])
 	}
@@ -216,11 +226,41 @@ func TestExtractMapListNeverFabricatesAreasOrCoordinates(t *testing.T) {
 	if !maps[3].Gate || !maps[3].Use || maps[3].XMin != 50 || maps[3].XMax != 450 {
 		t.Fatalf("gate map with virtual geometry was not exported: %+v", maps[3])
 	}
+	if maps[3].NormalEligible == nil || !*maps[3].NormalEligible || maps[3].StoreEligible == nil || *maps[3].StoreEligible {
+		t.Fatalf("gate eligibility was not split: %+v", maps[3])
+	}
 	if !maps[4].Gate || maps[4].Use {
 		t.Fatalf("gate map without virtual geometry became usable: %+v", maps[4])
 	}
 
 	if areas := parseTownAreas("[name]\n`No Areas`"); len(areas) != 0 {
 		t.Fatalf("missing area block fabricated areas: %+v", areas)
+	}
+}
+
+func TestExtractMapListDerivesEligibilityFromPVFAreaKind(t *testing.T) {
+	geometry := []byte("[virtual movable area]\n10 20 300 100\n[/virtual movable area]\n")
+	a := &pvfArchive{files: map[string]*pvfFile{
+		"town/town.lst": {Data: []byte("1 `Example.twn`")},
+		"town/example.twn": {Data: []byte(
+			"[name]\n`Example`\n[area]\n0 `Example/Normal.map`\n`[normal]`\n[/area]\n" +
+				"[area]\n1 `Example/Waiting.map`\n[/area]\n" +
+				"[area]\n2 `Example/PVP.map`\n`[pvp]`\n[/area]\n[end]\n")},
+		"map/example/normal.map":  {Data: geometry},
+		"map/example/waiting.map": {Data: geometry},
+		"map/example/pvp.map":     {Data: geometry},
+	}}
+	maps := extractMapList(a, "town/town.lst", "town/")
+	if len(maps) != 3 {
+		t.Fatalf("maps=%+v", maps)
+	}
+	if !*maps[0].NormalEligible || !*maps[0].StoreEligible {
+		t.Fatalf("normal eligibility=%+v", maps[0])
+	}
+	if !*maps[1].NormalEligible || *maps[1].StoreEligible {
+		t.Fatalf("waiting eligibility=%+v", maps[1])
+	}
+	if *maps[2].NormalEligible || *maps[2].StoreEligible {
+		t.Fatalf("pvp eligibility=%+v", maps[2])
 	}
 }
