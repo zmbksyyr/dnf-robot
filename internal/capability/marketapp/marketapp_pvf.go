@@ -27,7 +27,13 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
 		return status
 	}
-	if changed, err := a.ensureCeraItemInfoFile(status.SourcePath); err != nil {
+	donors, err := loadNativeCeraItemInfoRows(status.Targets, a.cfg.Cera.Items)
+	if err != nil {
+		status.Error = fmt.Sprintf("prepare cera iteminfo %s: %v", status.SourcePath, err)
+		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusFailed, Message: status.Error})
+		return status
+	}
+	if changed, err := a.ensureCeraItemInfoFile(status.SourcePath, donors); err != nil {
 		status.Error = fmt.Sprintf("prepare cera iteminfo %s: %v", status.SourcePath, err)
 		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusFailed, Message: status.Error})
 		return status

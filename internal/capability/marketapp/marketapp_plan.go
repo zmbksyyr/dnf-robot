@@ -87,7 +87,22 @@ func (a *App) planAuctionMarket(req RestockRequest, catalog map[uint32]catalogIt
 
 func (a *App) planCeraMarket(haveCera map[uint32]int, occ map[uint32]int, decision *marketDecisionSnapshot, result *PlanResult) {
 	decision.Cera = true
+	if err := a.ceraItemInfoError(); err != "" {
+		decision.ItemInfoError = err
+		for _, row := range a.cfg.Cera.Items {
+			if row.ItemID > 0 && row.RestockQty > 0 && row.Enabled {
+				result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameCera, ItemID: row.ItemID, Name: row.Label, Reason: "missing_native_iteminfo"})
+			}
+		}
+		return
+	}
 	a.planCera(a.cfg.Cera.Items, nil, haveCera, occ, result)
+}
+
+func (a *App) ceraItemInfoError() string {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.itemInfo.Error
 }
 
 func summarizePlan(actions []Action, skipped []SkippedItem, existingRecords int) PlanSummary {
