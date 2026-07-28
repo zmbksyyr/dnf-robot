@@ -72,6 +72,7 @@ type UserLoginInfo struct {
 	MaxReConn uint32
 	ReDelay   uint32
 	BirthPos  [4]uint32
+	GateArea  uint32
 }
 
 type RobotVo struct {
@@ -94,6 +95,7 @@ type RobotVo struct {
 	CurArea              uint8
 	CurX                 uint16
 	CurY                 uint16
+	GateArea             uint8
 	NccSent              bool
 	SelectCharacSent     bool
 	ReturnSelectPending  bool
@@ -368,6 +370,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.CurArea = uint8(info.BirthPos[1])
 	r.CurX = uint16(info.BirthPos[2])
 	r.CurY = uint16(info.BirthPos[3])
+	r.GateArea = uint8(info.GateArea)
 	r.Cipher = crypt.NewDNFCipher()
 	r.MoveType = 5
 	r.SelectCharacSent = false

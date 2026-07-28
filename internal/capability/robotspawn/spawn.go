@@ -23,9 +23,6 @@ func ApplyConfiguredLocation(env Env, info *robotcap.Info, rc robotconfig.Runtim
 		if village < 1 {
 			village = 1
 		}
-		if village > 3 {
-			village = 3
-		}
 		ApplyVillageLocation(env, info, village, rc, maps)
 		return
 	}
@@ -41,16 +38,16 @@ func ApplyConfiguredLocation(env Env, info *robotcap.Info, rc robotconfig.Runtim
 }
 
 func ApplyVillageLocation(env Env, info *robotcap.Info, village int, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem) {
-	info.Village = village
 	var candidates []shared.MapCatalogItem
 	for _, mp := range maps {
-		if mp.Use && mp.Village == info.Village && mp.Level <= info.Level {
+		if mp.Use && mp.Village == village && mp.Level <= info.Level {
 			candidates = append(candidates, mp)
 		}
 	}
 	if len(candidates) == 0 {
 		return
 	}
+	info.Village = village
 	if rc.SpawnArea >= 0 {
 		var areaMatches []shared.MapCatalogItem
 		for _, mp := range candidates {

@@ -12,6 +12,7 @@ type RuntimeOnlineUser struct {
 	ReconnectDelay int
 	BirthVillage   int
 	BirthArea      int
+	BirthGateArea  int
 	BirthX         int
 	BirthY         int
 	// DisjointCost queues CMD 238 on the login session itself. Zero keeps the

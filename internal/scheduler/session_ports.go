@@ -117,8 +117,25 @@ func (e sessionActionEnv) SendLogout(uid int) error {
 }
 
 func (e sessionActionEnv) SendOnline(userinfos []shared.RuntimeOnlineUser) error {
+	maps := e.manager.loadMapCatalog()
+	for index := range userinfos {
+		if gateArea, ok := gateAreaForVillage(maps, userinfos[index].BirthVillage); ok {
+			userinfos[index].BirthGateArea = gateArea
+		} else {
+			userinfos[index].BirthGateArea = userinfos[index].BirthArea
+		}
+	}
 	e.manager.waitSessionRelogin(userinfos)
 	return e.manager.doll.Online(userinfos)
+}
+
+func gateAreaForVillage(maps []shared.MapCatalogItem, village int) (int, bool) {
+	for _, mp := range maps {
+		if mp.Use && mp.Gate && mp.Village == village {
+			return mp.Area, true
+		}
+	}
+	return 0, false
 }
 
 func (m *RobotManager) markSessionLogout(uid int, at time.Time) {

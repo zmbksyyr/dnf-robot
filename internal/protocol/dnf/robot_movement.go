@@ -83,16 +83,3 @@ func (r *RobotVo) setPositionUnsafe(x, y uint16, typ uint8, speed uint16) bool {
 	r.MoveType = typ
 	return true
 }
-
-func dnfGateAreaForVillage(village int) int {
-	if area, ok := dnfGateAreaByVillage[village]; ok {
-		return area
-	}
-	return 1
-}
-
-var dnfGateAreaByVillage = map[int]int{
-	1: 1, 2: 5, 3: 2, 4: 1, 5: 1, 6: 4, 8: 1, 9: 2, 10: 1, 11: 3,
-	14: 3, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0, 21: 7, 23: 0,
-	24: 0, 25: 0, 26: 0,
-}

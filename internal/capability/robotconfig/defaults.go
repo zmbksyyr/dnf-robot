@@ -313,7 +313,4 @@ func Normalize(rc *RuntimeConfig) {
 	if rc.SpawnVillage < 1 {
 		rc.SpawnVillage = 1
 	}
-	if rc.SpawnVillage > 3 {
-		rc.SpawnVillage = 3
-	}
 }

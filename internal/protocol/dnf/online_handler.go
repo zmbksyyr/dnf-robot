@@ -70,6 +70,7 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 				uint32(user.BirthX),
 				uint32(user.BirthY),
 			},
+			GateArea: uint32(user.BirthGateArea),
 		}
 		setLoginToken(&loginInfo, resolveLoginToken(user.Token, user.UID, rsaKey.Load()))
 
