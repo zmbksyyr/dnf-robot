@@ -126,19 +126,33 @@ func gamePIDForPort(port int) (int, error) {
 
 func parseGamePIDForPort(data []byte, port int) (int, error) {
 	portPattern := regexp.MustCompile(`:` + regexp.QuoteMeta(strconv.Itoa(port)) + `\s`)
-	pidPattern := regexp.MustCompile(`pid=([0-9]+)`)
 	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		if !portPattern.Match(line) {
 			continue
 		}
-		match := pidPattern.FindSubmatch(line)
-		if len(match) != 2 {
-			continue
-		}
-		pid, err := strconv.Atoi(string(match[1]))
-		if err == nil && pid > 0 {
+		_, pid, ok := parseSSProcess(string(line))
+		if ok {
 			return pid, nil
 		}
 	}
 	return 0, fmt.Errorf("%w on port %d", errPartyCompatUnavailable, port)
+}
+
+var (
+	modernSSProcessPattern = regexp.MustCompile(`"([^"]+)",pid=([0-9]+)`)
+	legacySSProcessPattern = regexp.MustCompile(`"([^"]+)",([0-9]+),`)
+)
+
+func parseSSProcess(line string) (string, int, bool) {
+	for _, pattern := range []*regexp.Regexp{modernSSProcessPattern, legacySSProcessPattern} {
+		match := pattern.FindStringSubmatch(line)
+		if len(match) != 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(match[2])
+		if err == nil && pid > 0 {
+			return match[1], pid, true
+		}
+	}
+	return "", 0, false
 }

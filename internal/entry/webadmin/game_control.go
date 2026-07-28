@@ -279,12 +279,11 @@ func gameConfigNameForPort(port int) (string, bool) {
 	if len(line) == 0 {
 		return "", false
 	}
-	re := regexp.MustCompile(`pid=([0-9]+)`)
-	m := re.FindSubmatch(line)
-	if len(m) != 2 {
+	_, pid, ok := parseSSProcess(string(line))
+	if !ok {
 		return "", false
 	}
-	cmdline, err := os.ReadFile(filepath.Join("/proc", string(m[1]), "cmdline"))
+	cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
 	if err != nil {
 		return "", false
 	}

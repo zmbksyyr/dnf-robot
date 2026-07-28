@@ -309,3 +309,16 @@ LISTEN 0 128 :::8111 :::* users:(("robot",pid=12,fd=8))`)
 		t.Fatalf("missing game port error = %v", err)
 	}
 }
+
+func TestParseGamePIDForPortSupportsLegacySSOutput(t *testing.T) {
+	data := []byte(`LISTEN 0 128 *:10011 *:* users:(("df_game_r",3270,66))
+LISTEN 0 128 *:8111 *:* users:(("robot",2230,9))`)
+	pid, err := parseGamePIDForPort(data, 10011)
+	if err != nil || pid != 3270 {
+		t.Fatalf("pid=%d err=%v", pid, err)
+	}
+	name, pid, ok := parseSSProcess(string(data))
+	if !ok || name != "df_game_r" || pid != 3270 {
+		t.Fatalf("process=%q pid=%d ok=%t", name, pid, ok)
+	}
+}

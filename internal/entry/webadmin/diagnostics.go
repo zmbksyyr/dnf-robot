@@ -352,7 +352,6 @@ func listeningProcessPorts() (map[int]listeningPort, error) {
 		return nil, err
 	}
 	portRE := regexp.MustCompile(`[:.]([0-9]{1,5})\s`)
-	procRE := regexp.MustCompile(`"([^"]+)",pid=([0-9]+)`)
 	result := map[int]listeningPort{}
 	for _, line := range strings.Split(string(out), "\n") {
 		pm := portRE.FindStringSubmatch(line)
@@ -364,9 +363,9 @@ func listeningProcessPorts() (map[int]listeningPort, error) {
 			continue
 		}
 		entry := listeningPort{Port: port, Line: strings.TrimSpace(line)}
-		if m := procRE.FindStringSubmatch(line); len(m) == 3 {
-			entry.Process = m[1]
-			entry.PID, _ = strconv.Atoi(m[2])
+		if name, pid, ok := parseSSProcess(line); ok {
+			entry.Process = name
+			entry.PID = pid
 		}
 		result[port] = entry
 	}
