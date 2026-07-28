@@ -12,6 +12,11 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 	if err != nil {
 		return nil, err
 	}
+	legacy, err := r.cleanupLegacyDummyCandidates(req, seen)
+	if err != nil {
+		return nil, err
+	}
+	candidates = append(candidates, legacy...)
 	if req.InternalConfirmedBroken && len(req.UIDs) > 0 {
 		for _, uid := range req.UIDs {
 			if uid <= 0 || seen[uid] {
@@ -42,6 +47,91 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 		candidates = append(candidates, orphans...)
 	}
 	return candidates, nil
+}
+
+func (r *SQLRepository) cleanupLegacyDummyCandidates(req robotcap.CleanupRequest, seen map[int]bool) ([]robotcap.CleanupCandidate, error) {
+	query := `SELECT CAST(d.UID AS UNSIGNED),CAST(d.CID AS UNSIGNED),IFNULL(c.charac_name,''),a.accountname,
+IF(c.charac_no IS NULL,0,1),IFNULL(c.m_id,0),
+(SELECT COUNT(*) FROM taiwan_cain.charac_info owned WHERE owned.m_id=CAST(d.UID AS UNSIGNED))
+FROM d_starsky.Dummylist d
+LEFT JOIN d_starsky.robot_registry r ON r.uid=CAST(d.UID AS UNSIGNED)
+LEFT JOIN d_taiwan.accounts a ON a.UID=CAST(d.UID AS UNSIGNED)
+LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=CAST(d.CID AS UNSIGNED)
+WHERE r.uid IS NULL AND d.UID REGEXP '^[0-9]+$' AND CAST(d.UID AS UNSIGNED)>0`
+	args := make([]interface{}, 0, len(req.UIDs))
+	if len(req.UIDs) > 0 {
+		query += " AND CAST(d.UID AS UNSIGNED) IN (" + foundsql.Placeholders(len(req.UIDs)) + ")"
+		for _, uid := range req.UIDs {
+			args = append(args, uid)
+		}
+	} else if req.MinUID > 0 || req.MaxUID > 0 {
+		minUID, maxUID := req.MinUID, req.MaxUID
+		if maxUID <= 0 {
+			maxUID = minUID
+		}
+		if minUID <= 0 {
+			minUID = maxUID
+		}
+		if minUID > maxUID {
+			minUID, maxUID = maxUID, minUID
+		}
+		query += " AND CAST(d.UID AS UNSIGNED) BETWEEN ? AND ?"
+		args = append(args, minUID, maxUID)
+	}
+	rows, err := r.Query(query+" ORDER BY CAST(d.UID AS UNSIGNED)", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []robotcap.CleanupCandidate
+	for rows.Next() {
+		var c robotcap.CleanupCandidate
+		var accountName sql.NullString
+		var characterExists, characterOwner, ownerCharacterCount int
+		if err := rows.Scan(&c.UID, &c.CID, &c.Name, &accountName, &characterExists, &characterOwner, &ownerCharacterCount); err != nil {
+			return nil, err
+		}
+		if seen[c.UID] {
+			continue
+		}
+		seen[c.UID] = true
+		c.Account = fmt.Sprintf("%d", c.UID)
+		if c.Name == "" {
+			c.Name = "legacy-dummy"
+		}
+		classifyLegacyDummyCleanupCandidate(&c, accountName, characterExists != 0, characterOwner, ownerCharacterCount)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func classifyLegacyDummyCleanupCandidate(
+	c *robotcap.CleanupCandidate,
+	accountName sql.NullString,
+	characterExists bool,
+	characterOwner int,
+	ownerCharacterCount int,
+) {
+	expected := fmt.Sprintf("%d", c.UID)
+	if accountName.Valid && accountName.String != expected {
+		c.Protected = true
+		c.Reason = "accountname does not equal uid"
+	} else if !accountName.Valid && !characterExists && ownerCharacterCount == 0 {
+		c.MetadataOnly = true
+		c.Reason = "legacy Dummylist metadata only"
+	} else if !accountName.Valid && (characterExists || ownerCharacterCount > 0) {
+		c.Protected = true
+		c.Reason = "account missing but character data exists"
+	} else if characterExists && characterOwner != c.UID {
+		c.Protected = true
+		c.Reason = "Dummylist cid belongs to another uid"
+	} else if ownerCharacterCount > 0 && !characterExists {
+		c.Protected = true
+		c.Reason = "uid character does not match Dummylist cid"
+	} else if ownerCharacterCount > 1 {
+		c.Protected = true
+		c.Reason = "uid has additional characters outside Dummylist"
+	}
 }
 
 func (r *SQLRepository) cleanupRegisteredCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, map[int]bool, error) {
