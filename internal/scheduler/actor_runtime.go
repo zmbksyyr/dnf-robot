@@ -334,7 +334,7 @@ func (r *RobotRuntime) tryDisjointPositionInCurrentSession(info robotcap.Info, s
 	if !ok || st.StateName != robotcap.RuntimeStateRunning || st.DisconnectReason != 0 {
 		return false, "runtime_stopped"
 	}
-	if !storecap.IsAreaEligible(st.Village, st.Area) || !storecap.IsAreaEligible(info.Village, info.Area) {
+	if !storecap.CanMoveToStoreArea(st.Village, st.Area, info.Village, info.Area) {
 		return false, "set_area_failed"
 	}
 	if !r.manager.doll.SetAreaFrom(info.UID, info.Village, info.Area, info.X, info.Y, st.Village, st.Area) {

@@ -69,11 +69,11 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 	normal.Area = rc.SpawnArea
 	normal.X = env.RandBetween(rc.SpawnXMin, rc.SpawnXMax)
 	normal.Y = env.RandBetween(rc.SpawnYMin, rc.SpawnYMax)
-	safeMaps := filterEligibleMaps(maps)
+	normalMaps := filterNormalMaps(maps)
 	locations, locationErr := env.RobotLocations()
 	balanced := false
 	if locationErr == nil {
-		if target, ok := robotspawn.BalancedLocation(env, safeMaps, normal.Level, locations); ok {
+		if target, ok := robotspawn.BalancedLocation(env, normalMaps, normal.Level, locations); ok {
 			normal.Village = target.Map.Village
 			normal.Area = target.Map.Area
 			normal.X = target.X
@@ -84,7 +84,7 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 		env.Logf("[AutoStore] uid=%d restore_normal_locations_failed err=%v\n", normal.UID, locationErr)
 	}
 	if !balanced {
-		if mp, ok := env.RandomMap(safeMaps, normal.Level); ok {
+		if mp, ok := env.RandomMap(normalMaps, normal.Level); ok {
 			normal.Village = mp.Village
 			normal.Area = mp.Area
 			if x, y, pointOK := robotspawn.RandomPointInMap(env, mp); pointOK {
@@ -92,13 +92,13 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 			}
 		}
 	}
-	env.ApplyConfiguredLocation(&normal, rc, safeMaps)
-	if !IsAreaEligible(normal.Village, normal.Area) {
+	env.ApplyConfiguredLocation(&normal, rc, normalMaps)
+	if !IsNormalAreaEligible(normal.Village, normal.Area) {
 		normal.Village = rc.SpawnFallbackVillage
 		normal.Area = rc.SpawnArea
 		normal.X = env.RandBetween(rc.SpawnXMin, rc.SpawnXMax)
 		normal.Y = env.RandBetween(rc.SpawnYMin, rc.SpawnYMax)
-		if !IsAreaEligible(normal.Village, normal.Area) {
+		if !IsNormalAreaEligible(normal.Village, normal.Area) {
 			normal.Village = 1
 			normal.Area = 0
 		}
@@ -106,13 +106,13 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 	return normal
 }
 
-func filterEligibleMaps(maps []shared.MapCatalogItem) []shared.MapCatalogItem {
+func filterNormalMaps(maps []shared.MapCatalogItem) []shared.MapCatalogItem {
 	if len(maps) == 0 {
 		return nil
 	}
 	out := make([]shared.MapCatalogItem, 0, len(maps))
 	for _, mp := range maps {
-		if mp.Use && IsAreaEligible(mp.Village, mp.Area) {
+		if mp.Use && (mp.Gate || IsNormalAreaEligible(mp.Village, mp.Area)) {
 			out = append(out, mp)
 		}
 	}

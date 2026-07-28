@@ -94,7 +94,7 @@ func FilterEligibleGridPoints(points []GridPoint) []GridPoint {
 	}
 	out := points[:0]
 	for _, pt := range points {
-		if !IsAreaEligible(pt.Village, pt.Area) || pt.X <= 0 || pt.Y <= 0 {
+		if !IsStoreAreaEligible(pt.Village, pt.Area) || pt.X <= 0 || pt.Y <= 0 {
 			continue
 		}
 		out = append(out, pt)
@@ -109,13 +109,13 @@ func PointYStart(rectangle shared.MapRectangle) int {
 	return rectangle.YMin + (rectangle.YMax-rectangle.YMin)/2
 }
 
-func IsAreaEligible(village, area int) bool {
-	return IsStoreAreaEligible(village, area)
-}
-
 func IsNormalAreaEligible(village, area int) bool {
 	key := areaKey{village, area}
 	return GateArea[key] || AreaEligible[key]
+}
+
+func CanMoveToStoreArea(fromVillage, fromArea, toVillage, toArea int) bool {
+	return IsNormalAreaEligible(fromVillage, fromArea) && IsStoreAreaEligible(toVillage, toArea)
 }
 
 func IsStoreAreaEligible(village, area int) bool {

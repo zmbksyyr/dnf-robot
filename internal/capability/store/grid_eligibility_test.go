@@ -16,6 +16,15 @@ func TestGateAreaEligibilityDiffersForNormalAndStoreRoles(t *testing.T) {
 	}
 }
 
+func TestGateRobotCanMoveToStoreEligibleArea(t *testing.T) {
+	if !CanMoveToStoreArea(1, 1, 1, 0) {
+		t.Fatal("normal robot in gate area must be allowed to migrate to a store-safe area")
+	}
+	if CanMoveToStoreArea(1, 0, 1, 1) {
+		t.Fatal("store target must not be a gate area")
+	}
+}
+
 func TestBuildGridPointsRejectsCatalogGateMetadata(t *testing.T) {
 	points := BuildGridPoints([]shared.MapCatalogItem{{
 		Village: 3, Area: 0, Use: true, Gate: true,
