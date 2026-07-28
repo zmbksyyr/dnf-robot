@@ -116,3 +116,24 @@ func TestLoadNativeCeraItemInfoRowsAcceptsNativeNamesWithSpaces(t *testing.T) {
 		t.Fatalf("native row with spaces was rejected: rows=%q err=%v", rows, err)
 	}
 }
+
+func TestMergeNativeItemInfoRowsPreservesServiceOnlyItems(t *testing.T) {
+	data := []byte("2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `item_2675336` `name2_2675336` 13002\r\n")
+	donors := map[uint32][]byte{
+		2675336: []byte("2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `native_gold` `native_gold` 13002"),
+		2681762: []byte("2681762 2 1 1 1 1 1 1 1 1 1 1 1 1 `native_point` `native_point` 13002"),
+	}
+	got, changed := mergeNativeItemInfoRows(data, donors, map[uint32]bool{2675336: true})
+	if !changed {
+		t.Fatal("native rows should be merged")
+	}
+	text := string(got)
+	for _, want := range []string{"`native_gold`", "2681762 ", "`native_point`"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("merged iteminfo missing %q: %q", want, text)
+		}
+	}
+	if strings.Contains(text, "`item_2675336`") {
+		t.Fatalf("gold placeholder was not replaced: %q", text)
+	}
+}

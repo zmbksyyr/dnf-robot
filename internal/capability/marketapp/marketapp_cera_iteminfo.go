@@ -11,6 +11,116 @@ import (
 
 const ceraItemInfoCategory = 13002
 
+func loadNativeItemInfoRows(paths []string) map[uint32][]byte {
+	donors := make(map[uint32][]byte)
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		scanItemInfoLines(data, func(id uint32, line []byte) bool {
+			if donors[id] != nil || !isNativeItemInfoLine(line) {
+				return false
+			}
+			donors[id] = append([]byte(nil), bytes.TrimRight(line, "\r\n")...)
+			return false
+		})
+	}
+	return donors
+}
+
+func mergeNativeItemInfoRows(data []byte, donors map[uint32][]byte, replace map[uint32]bool) ([]byte, bool) {
+	if len(donors) == 0 {
+		return data, false
+	}
+	current := make(map[uint32][]byte, len(donors))
+	counts := make(map[uint32]int, len(donors))
+	scanItemInfoLines(data, func(id uint32, line []byte) bool {
+		counts[id]++
+		current[id] = bytes.TrimRight(line, "\r\n")
+		return false
+	})
+	changed := false
+	for id, donor := range donors {
+		if replace[id] {
+			if counts[id] != 1 || !bytes.Equal(current[id], donor) {
+				changed = true
+				break
+			}
+			continue
+		}
+		if counts[id] == 0 {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return data, false
+	}
+
+	var out bytes.Buffer
+	out.Grow(len(data) + len(donors)*96)
+	seen := make(map[uint32]bool, len(donors))
+	for len(data) > 0 {
+		lineEnd := bytes.IndexByte(data, '\n')
+		line := data
+		if lineEnd >= 0 {
+			line = data[:lineEnd+1]
+			data = data[lineEnd+1:]
+		} else {
+			data = nil
+		}
+		id, ok := leadingItemInfoID(line)
+		if !ok || donors[id] == nil {
+			out.Write(line)
+			continue
+		}
+		if replace[id] {
+			if !seen[id] {
+				out.Write(donors[id])
+				out.WriteString("\r\n")
+				seen[id] = true
+			}
+			continue
+		}
+		out.Write(line)
+		seen[id] = true
+	}
+	if out.Len() > 0 && out.Bytes()[out.Len()-1] != '\n' {
+		out.WriteString("\r\n")
+	}
+	ids := make([]uint32, 0)
+	for id := range donors {
+		if !seen[id] {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		out.Write(donors[id])
+		out.WriteString("\r\n")
+	}
+	return out.Bytes(), true
+}
+
+func isNativeItemInfoLine(line []byte) bool {
+	fields := bytes.Fields(line)
+	if len(fields) < 17 {
+		return false
+	}
+	category := fields[len(fields)-1]
+	for _, b := range category {
+		if b < '0' || b > '9' {
+			return false
+		}
+	}
+	return !bytes.Contains(line, []byte("`item_")) || !bytes.Contains(line, []byte("`name2_"))
+}
+
 func (a *App) ensureConfiguredCeraItemInfo() ItemInfoSyncStatus {
 	status := a.itemInfoStatus()
 	paths := make([]string, 0, len(status.Targets)+1)
