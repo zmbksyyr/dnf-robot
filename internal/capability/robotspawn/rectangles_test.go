@@ -172,3 +172,17 @@ func TestBalancedLocationChoosesCandidateAwayFromCluster(t *testing.T) {
 		t.Fatalf("target=%+v ok=%t, want farthest random candidate 90/90", target, ok)
 	}
 }
+
+func TestDistributedTargetsReserveHighLevelMapsForEligibleRobots(t *testing.T) {
+	maps := []shared.MapCatalogItem{
+		{Village: 1, Area: 0, Level: 1, Use: true, Rectangles: []shared.MapRectangle{{XMin: 0, XMax: 9, YMin: 0, YMax: 9}}},
+		{Village: 2, Area: 0, Level: 85, Use: true, Rectangles: []shared.MapRectangle{{XMin: 100, XMax: 109, YMin: 0, YMax: 9}}},
+	}
+	targets, ok := DistributedTargets(&sequenceRangeRandom{}, maps, []int{85, 50}, nil)
+	if !ok || len(targets) != 2 {
+		t.Fatalf("targets=%+v ok=%t", targets, ok)
+	}
+	if targets[0].Map.Village != 2 || targets[1].Map.Village != 1 {
+		t.Fatalf("targets=%+v, high-level robot should cover constrained map", targets)
+	}
+}

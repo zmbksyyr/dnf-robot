@@ -1,6 +1,10 @@
 package robotspawn
 
-import "robot/internal/shared"
+import (
+	"sort"
+
+	"robot/internal/shared"
+)
 
 type BalancedTarget struct {
 	Map shared.MapCatalogItem
@@ -52,15 +56,23 @@ func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []
 		}
 	}
 
-	out := make([]BalancedTarget, 0, len(levels))
-	for _, level := range levels {
+	order := make([]int, len(levels))
+	for index := range order {
+		order[index] = index
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		return levels[order[i]] < levels[order[j]]
+	})
+
+	out := make([]BalancedTarget, len(levels))
+	for _, outputIndex := range order {
+		level := levels[outputIndex]
 		emptyAreas := eligibleMapIndexes(candidates, areaCounts, level, true)
 		eligible := emptyAreas
 		if len(emptyAreas) == 0 {
 			eligible = eligibleMapIndexes(candidates, areaCounts, level, false)
 		}
 		if len(eligible) == 0 {
-			out = append(out, BalancedTarget{})
 			continue
 		}
 
@@ -75,13 +87,12 @@ func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []
 		area := mapAreaKey(candidate.mp)
 		x, y, pointOK := bestRandomPoint(env, candidate.rectangles, areaLocations[area])
 		if !pointOK {
-			out = append(out, BalancedTarget{})
 			continue
 		}
 		areaCounts[area]++
 		location := shared.MapLocation{Village: candidate.mp.Village, Area: candidate.mp.Area, X: x, Y: y}
 		areaLocations[area] = append(areaLocations[area], location)
-		out = append(out, BalancedTarget{Map: candidate.mp, X: x, Y: y})
+		out[outputIndex] = BalancedTarget{Map: candidate.mp, X: x, Y: y}
 	}
 	return out, true
 }
