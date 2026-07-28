@@ -76,8 +76,8 @@ func (m Maintenance) randomNormalPosition(info robotcap.Info, rc robotconfig.Run
 		if target, ok := robotspawn.BalancedLocation(env, safeMaps, normal.Level, locations); ok {
 			normal.Village = target.Map.Village
 			normal.Area = target.Map.Area
-			normal.X = env.RandBetween(target.Rectangle.XMin, target.Rectangle.XMax)
-			normal.Y = env.RandBetween(target.Rectangle.YMin, target.Rectangle.YMax)
+			normal.X = target.X
+			normal.Y = target.Y
 			balanced = true
 		}
 	} else {

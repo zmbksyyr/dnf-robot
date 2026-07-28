@@ -181,57 +181,6 @@ func TestDistributedSpawnMapsKeepsSmallAreasPopulatedAfterCoverage(t *testing.T)
 	}
 }
 
-func TestCreatorSpawnRectanglesFillGloballyEmptyRectanglesAcrossBatches(t *testing.T) {
-	env := &testCreateEnv{
-		rc: robotconfig.RuntimeConfig{
-			RobotUIDStart: 17000000,
-			RobotUIDEnd:   17999999,
-			LevelMin:      1,
-			LevelMax:      1,
-			Jobs:          []int{1},
-			GrowTypes:     []int{0},
-			RobotUIDGuard: 18000000,
-		},
-		maps: []shared.MapCatalogItem{{
-			Village: 1, Area: 0, Use: true,
-			Rectangles: []shared.MapRectangle{
-				{XMin: 10, XMax: 20, YMin: 30, YMax: 40},
-				{XMin: 100, XMax: 120, YMin: 130, YMax: 140},
-			},
-		}},
-		locations: []shared.MapLocation{{Village: 1, Area: 0, X: 15, Y: 35}},
-	}
-	robots, err := (Creator{Env: env}).Create(robotcap.CreateRequest{Count: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(robots) != 1 || robots[0].X != 100 || robots[0].Y != 130 {
-		t.Fatalf("robots = %+v, want the globally empty second rectangle", robots)
-	}
-}
-
-func TestDistributedSpawnTargetsKeepsSmallRectanglesPopulatedAfterCoverage(t *testing.T) {
-	env := &testCreateEnv{}
-	maps := []shared.MapCatalogItem{{
-		Village: 1, Area: 0, Use: true,
-		Rectangles: []shared.MapRectangle{
-			{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
-			{XMin: 100, XMax: 139, YMin: 100, YMax: 139},
-		},
-	}}
-	targets, ok := distributedSpawnTargets(env, maps, make([]int, 10), nil)
-	if !ok || len(targets) != 10 {
-		t.Fatalf("targets=%+v ok=%t", targets, ok)
-	}
-	counts := map[int]int{}
-	for _, target := range targets {
-		counts[target.rectangle.XMin]++
-	}
-	if counts[0] != 2 || counts[100] != 8 {
-		t.Fatalf("rectangle counts = %v, want smoothed 1:4 distribution", counts)
-	}
-}
-
 func TestCleanerDryRunAndForce(t *testing.T) {
 	env := &testCleanupEnv{candidates: []robotcap.CleanupCandidate{
 		{UID: 1, CID: 11},

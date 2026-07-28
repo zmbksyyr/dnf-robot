@@ -2,6 +2,7 @@ package robotspawn
 
 import (
 	"math"
+	"sort"
 
 	"robot/internal/shared"
 )
@@ -52,10 +53,67 @@ func SmoothedRectangleWeight(rectangle shared.MapRectangle) int {
 
 func SmoothedRectanglesWeight(rectangles []shared.MapRectangle) int {
 	area := 0
-	for _, rectangle := range rectangles {
+	for _, rectangle := range NormalizeRectangles(rectangles) {
 		area += RectangleArea(rectangle)
 	}
 	return smoothedAreaWeight(area)
+}
+
+// NormalizeRectangles returns a non-overlapping representation of the same
+// integer-coordinate area. PVF movement geometry commonly contains overlaps.
+func NormalizeRectangles(rectangles []shared.MapRectangle) []shared.MapRectangle {
+	valid := make([]shared.MapRectangle, 0, len(rectangles))
+	xEdges := make([]int, 0, len(rectangles)*2)
+	for _, rectangle := range rectangles {
+		if !ValidRectangle(rectangle) {
+			continue
+		}
+		valid = append(valid, rectangle)
+		xEdges = append(xEdges, rectangle.XMin, rectangle.XMax+1)
+	}
+	if len(valid) == 0 {
+		return nil
+	}
+	sort.Ints(xEdges)
+	uniqueX := xEdges[:0]
+	for _, x := range xEdges {
+		if len(uniqueX) == 0 || uniqueX[len(uniqueX)-1] != x {
+			uniqueX = append(uniqueX, x)
+		}
+	}
+
+	out := make([]shared.MapRectangle, 0, len(valid))
+	for index := 0; index+1 < len(uniqueX); index++ {
+		xMin, xMax := uniqueX[index], uniqueX[index+1]-1
+		if xMin > xMax {
+			continue
+		}
+		yRanges := make([]shared.MapRectangle, 0, len(valid))
+		for _, rectangle := range valid {
+			if rectangle.XMin <= xMin && rectangle.XMax >= xMax {
+				yRanges = append(yRanges, rectangle)
+			}
+		}
+		sort.Slice(yRanges, func(i, j int) bool {
+			if yRanges[i].YMin == yRanges[j].YMin {
+				return yRanges[i].YMax < yRanges[j].YMax
+			}
+			return yRanges[i].YMin < yRanges[j].YMin
+		})
+		for _, rectangle := range yRanges {
+			if len(out) > 0 {
+				last := &out[len(out)-1]
+				if last.XMin == xMin && last.XMax == xMax && rectangle.YMin <= last.YMax+1 {
+					if rectangle.YMax > last.YMax {
+						last.YMax = rectangle.YMax
+					}
+					continue
+				}
+			}
+			out = append(out, shared.MapRectangle{XMin: xMin, XMax: xMax, YMin: rectangle.YMin, YMax: rectangle.YMax})
+		}
+	}
+	return out
 }
 
 func smoothedAreaWeight(area int) int {
@@ -89,12 +147,16 @@ func IntersectRectangles(rectangles []shared.MapRectangle, bounds shared.MapRect
 }
 
 func RandomPoint(env RangeRandom, rectangles []shared.MapRectangle) (x, y int, ok bool) {
+	return randomPointFromNormalized(env, NormalizeRectangles(rectangles))
+}
+
+func randomPointFromNormalized(env RangeRandom, rectangles []shared.MapRectangle) (x, y int, ok bool) {
 	if env == nil || len(rectangles) == 0 {
 		return 0, 0, false
 	}
 	totalWeight := 0
 	for _, rectangle := range rectangles {
-		totalWeight += SmoothedRectangleWeight(rectangle)
+		totalWeight += RectangleArea(rectangle)
 	}
 	choice := env.RandBetween(1, totalWeight)
 	if choice < 1 || choice > totalWeight {
@@ -102,7 +164,7 @@ func RandomPoint(env RangeRandom, rectangles []shared.MapRectangle) (x, y int, o
 	}
 	selected := rectangles[0]
 	for _, rectangle := range rectangles {
-		choice -= SmoothedRectangleWeight(rectangle)
+		choice -= RectangleArea(rectangle)
 		if choice <= 0 {
 			selected = rectangle
 			break

@@ -106,8 +106,8 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 			mp := target.mp
 			info.Village = mp.Village
 			info.Area = mp.Area
-			info.X = env.RandBetween(target.rectangle.XMin, target.rectangle.XMax)
-			info.Y = env.RandBetween(target.rectangle.YMin, target.rectangle.YMax)
+			info.X = target.x
+			info.Y = target.y
 		} else if mp, ok := env.RandomMap(maps, info.Level); ok {
 			info.Village = mp.Village
 			info.Area = mp.Area
@@ -125,8 +125,9 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 }
 
 type spawnTarget struct {
-	mp        shared.MapCatalogItem
-	rectangle shared.MapRectangle
+	mp shared.MapCatalogItem
+	x  int
+	y  int
 }
 
 func distributedSpawnTargets(env CreateEnv, maps []shared.MapCatalogItem, levels []int, locations []shared.MapLocation) ([]spawnTarget, bool) {
@@ -136,7 +137,7 @@ func distributedSpawnTargets(env CreateEnv, maps []shared.MapCatalogItem, levels
 	}
 	out := make([]spawnTarget, len(targets))
 	for index, target := range targets {
-		out[index] = spawnTarget{mp: target.Map, rectangle: target.Rectangle}
+		out[index] = spawnTarget{mp: target.Map, x: target.X, y: target.Y}
 	}
 	return out, true
 }

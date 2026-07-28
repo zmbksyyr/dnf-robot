@@ -3,24 +3,15 @@ package robotspawn
 import "robot/internal/shared"
 
 type BalancedTarget struct {
-	Map       shared.MapCatalogItem
-	Rectangle shared.MapRectangle
+	Map shared.MapCatalogItem
+	X   int
+	Y   int
 }
 
 type mapCandidate struct {
 	mp         shared.MapCatalogItem
 	rectangles []shared.MapRectangle
 	weight     int
-}
-
-type rectangleKey struct {
-	area  shared.MapAreaKey
-	index int
-}
-
-type rectangleTargetIndex struct {
-	mapIndex       int
-	rectangleIndex int
 }
 
 func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []int, locations []shared.MapLocation) ([]BalancedTarget, bool) {
@@ -32,7 +23,7 @@ func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []
 		if !mp.Use || mp.Village < 0 || mp.Area < 0 {
 			continue
 		}
-		rectangles := MapRectangles(mp)
+		rectangles := NormalizeRectangles(MapRectangles(mp))
 		if len(rectangles) == 0 {
 			continue
 		}
@@ -43,17 +34,17 @@ func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []
 	}
 
 	areaCounts := make(map[shared.MapAreaKey]int, len(candidates))
-	rectangleCounts := make(map[rectangleKey]int)
+	areaLocations := make(map[shared.MapAreaKey][]shared.MapLocation, len(candidates))
 	for _, location := range locations {
 		area := shared.MapAreaKey{Village: location.Village, Area: location.Area}
 		for _, candidate := range candidates {
 			if mapAreaKey(candidate.mp) != area {
 				continue
 			}
-			for rectangleIndex, rectangle := range candidate.rectangles {
+			for _, rectangle := range candidate.rectangles {
 				if RectangleContains(rectangle, location.X, location.Y) {
 					areaCounts[area]++
-					rectangleCounts[rectangleKey{area: area, index: rectangleIndex}]++
+					areaLocations[area] = append(areaLocations[area], location)
 					break
 				}
 			}
@@ -74,25 +65,23 @@ func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []
 		}
 
 		chosen := 0
-		rectangleIndex := 0
 		if len(emptyAreas) > 0 {
 			chosen = randomIndex(env, emptyAreas)
-			candidate := candidates[chosen]
-			rectangleIndex = leastLoadedRectangleIndex(env, candidate.rectangles, mapAreaKey(candidate.mp), rectangleCounts)
-		} else if target, ok := randomEmptyRectangleTarget(env, candidates, eligible, rectangleCounts); ok {
-			chosen = target.mapIndex
-			rectangleIndex = target.rectangleIndex
 		} else {
 			chosen = leastLoadedMapIndex(env, candidates, eligible, areaCounts)
-			candidate := candidates[chosen]
-			rectangleIndex = leastLoadedRectangleIndex(env, candidate.rectangles, mapAreaKey(candidate.mp), rectangleCounts)
 		}
 
 		candidate := candidates[chosen]
 		area := mapAreaKey(candidate.mp)
+		x, y, pointOK := bestRandomPoint(env, candidate.rectangles, areaLocations[area])
+		if !pointOK {
+			out = append(out, BalancedTarget{})
+			continue
+		}
 		areaCounts[area]++
-		rectangleCounts[rectangleKey{area: area, index: rectangleIndex}]++
-		out = append(out, BalancedTarget{Map: candidate.mp, Rectangle: candidate.rectangles[rectangleIndex]})
+		location := shared.MapLocation{Village: candidate.mp.Village, Area: candidate.mp.Area, X: x, Y: y}
+		areaLocations[area] = append(areaLocations[area], location)
+		out = append(out, BalancedTarget{Map: candidate.mp, X: x, Y: y})
 	}
 	return out, true
 }
@@ -119,23 +108,6 @@ func eligibleMapIndexes(candidates []mapCandidate, counts map[shared.MapAreaKey]
 	return eligible
 }
 
-func randomEmptyRectangleTarget(env RangeRandom, candidates []mapCandidate, mapIndexes []int, counts map[rectangleKey]int) (rectangleTargetIndex, bool) {
-	targets := make([]rectangleTargetIndex, 0)
-	for _, mapIndex := range mapIndexes {
-		candidate := candidates[mapIndex]
-		area := mapAreaKey(candidate.mp)
-		for rectangleIndex := range candidate.rectangles {
-			if counts[rectangleKey{area: area, index: rectangleIndex}] == 0 {
-				targets = append(targets, rectangleTargetIndex{mapIndex: mapIndex, rectangleIndex: rectangleIndex})
-			}
-		}
-	}
-	if len(targets) == 0 {
-		return rectangleTargetIndex{}, false
-	}
-	return targets[randomIndex(env, indexes(len(targets)))], true
-}
-
 func leastLoadedMapIndex(env RangeRandom, candidates []mapCandidate, indexes []int, counts map[shared.MapAreaKey]int) int {
 	best := []int{indexes[0]}
 	for _, index := range indexes[1:] {
@@ -152,30 +124,40 @@ func leastLoadedMapIndex(env RangeRandom, candidates []mapCandidate, indexes []i
 	return randomIndex(env, best)
 }
 
-func leastLoadedRectangleIndex(env RangeRandom, rectangles []shared.MapRectangle, area shared.MapAreaKey, counts map[rectangleKey]int) int {
-	all := indexes(len(rectangles))
-	empty := make([]int, 0, len(rectangles))
-	for _, index := range all {
-		if counts[rectangleKey{area: area, index: index}] == 0 {
-			empty = append(empty, index)
+func bestRandomPoint(env RangeRandom, rectangles []shared.MapRectangle, occupied []shared.MapLocation) (int, int, bool) {
+	candidateCount := 1
+	if len(occupied) > 0 {
+		candidateCount = 8
+	}
+	bestX, bestY := 0, 0
+	bestDistance := int64(-1)
+	for index := 0; index < candidateCount; index++ {
+		x, y, ok := randomPointFromNormalized(env, rectangles)
+		if !ok {
+			return 0, 0, false
+		}
+		distance := nearestDistanceSquared(x, y, occupied)
+		if distance > bestDistance {
+			bestX, bestY, bestDistance = x, y, distance
 		}
 	}
-	if len(empty) > 0 {
-		return randomIndex(env, empty)
+	return bestX, bestY, true
+}
+
+func nearestDistanceSquared(x, y int, occupied []shared.MapLocation) int64 {
+	if len(occupied) == 0 {
+		return 0
 	}
-	best := []int{all[0]}
-	for _, index := range all[1:] {
-		bestIndex := best[0]
-		left := counts[rectangleKey{area: area, index: index}] * SmoothedRectangleWeight(rectangles[bestIndex])
-		right := counts[rectangleKey{area: area, index: bestIndex}] * SmoothedRectangleWeight(rectangles[index])
-		switch {
-		case left < right:
-			best = []int{index}
-		case left == right:
-			best = append(best, index)
+	best := int64(^uint64(0) >> 1)
+	for _, location := range occupied {
+		dx := int64(x - location.X)
+		dy := int64(y - location.Y)
+		distance := dx*dx + dy*dy
+		if distance < best {
+			best = distance
 		}
 	}
-	return randomIndex(env, best)
+	return best
 }
 
 func randomIndex(env RangeRandom, values []int) int {
@@ -184,14 +166,6 @@ func randomIndex(env RangeRandom, values []int) int {
 		choice = 0
 	}
 	return values[choice]
-}
-
-func indexes(count int) []int {
-	out := make([]int, count)
-	for index := range out {
-		out[index] = index
-	}
-	return out
 }
 
 func mapAreaKey(mp shared.MapCatalogItem) shared.MapAreaKey {

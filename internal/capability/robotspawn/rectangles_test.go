@@ -31,7 +31,7 @@ func TestRandomPointUsesMovableRectanglesInsteadOfOuterBounds(t *testing.T) {
 			{XMin: 100, XMax: 109, YMin: 0, YMax: 9},
 		},
 	}
-	rng := &sequenceRangeRandom{values: []int{15, 105, 5}}
+	rng := &sequenceRangeRandom{values: []int{115, 105, 5}}
 	x, y, ok := RandomPointInMap(rng, mp)
 	if !ok || x != 105 || y != 5 {
 		t.Fatalf("point=%d/%d ok=%t, want second rectangle", x, y, ok)
@@ -61,6 +61,32 @@ func TestIntersectRectanglesKeepsDisconnectedGeometry(t *testing.T) {
 	}
 }
 
+func TestNormalizeRectanglesRemovesOverlappingArea(t *testing.T) {
+	rectangles := NormalizeRectangles([]shared.MapRectangle{
+		{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
+		{XMin: 5, XMax: 14, YMin: 0, YMax: 9},
+	})
+	area := 0
+	for _, rectangle := range rectangles {
+		area += RectangleArea(rectangle)
+	}
+	if area != 150 {
+		t.Fatalf("normalized rectangles=%+v area=%d, want 150", rectangles, area)
+	}
+}
+
+func TestRandomPointUsesAreaWeightAndKeepsRandomCoordinates(t *testing.T) {
+	rectangles := []shared.MapRectangle{
+		{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
+		{XMin: 20, XMax: 39, YMin: 0, YMax: 9},
+	}
+	rng := &sequenceRangeRandom{values: []int{101, 27, 6}}
+	x, y, ok := RandomPoint(rng, rectangles)
+	if !ok || x != 27 || y != 6 {
+		t.Fatalf("point=%d/%d ok=%t, want random point 27/6 in area-weighted second rectangle", x, y, ok)
+	}
+}
+
 func TestBalancedLocationIgnoresOccupancyOutsideMovableRectangles(t *testing.T) {
 	maps := []shared.MapCatalogItem{
 		{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 0, XMax: 9, YMin: 0, YMax: 9}}},
@@ -76,7 +102,7 @@ func TestBalancedLocationIgnoresOccupancyOutsideMovableRectangles(t *testing.T) 
 	}
 }
 
-func TestBalancedLocationCoversEmptyAreaBeforeEmptyRectangle(t *testing.T) {
+func TestBalancedLocationCoversEmptyAreaFirst(t *testing.T) {
 	maps := []shared.MapCatalogItem{
 		{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{
 			{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
@@ -91,44 +117,21 @@ func TestBalancedLocationCoversEmptyAreaBeforeEmptyRectangle(t *testing.T) {
 	}
 }
 
-func TestBalancedLocationCoversGlobalEmptyRectangleAfterAreas(t *testing.T) {
+func TestBalancedLocationDoesNotForceNarrowEmptySlice(t *testing.T) {
 	maps := []shared.MapCatalogItem{
 		{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{
-			{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
-			{XMin: 20, XMax: 29, YMin: 0, YMax: 9},
-		}},
-		{Village: 2, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 100, XMax: 109, YMin: 0, YMax: 9}}},
-	}
-	locations := []shared.MapLocation{
-		{Village: 1, Area: 0, X: 5, Y: 5},
-		{Village: 2, Area: 0, X: 105, Y: 5},
-	}
-	target, ok := BalancedLocation(&sequenceRangeRandom{}, maps, 85, locations)
-	want := maps[0].Rectangles[1]
-	if !ok || target.Map.Village != 1 || target.Rectangle != want {
-		t.Fatalf("target=%+v ok=%t, want global empty rectangle %+v", target, ok, want)
-	}
-}
-
-func TestBalancedLocationEmptyRectangleRespectsLevel(t *testing.T) {
-	maps := []shared.MapCatalogItem{
-		{Village: 1, Area: 0, Level: 1, Use: true, Rectangles: []shared.MapRectangle{
-			{XMin: 0, XMax: 9, YMin: 0, YMax: 9},
-			{XMin: 20, XMax: 29, YMin: 0, YMax: 9},
-		}},
-		{Village: 2, Area: 0, Level: 85, Use: true, Rectangles: []shared.MapRectangle{
-			{XMin: 100, XMax: 109, YMin: 0, YMax: 9},
-			{XMin: 120, XMax: 129, YMin: 0, YMax: 9},
+			{XMin: 0, XMax: 99, YMin: 0, YMax: 99},
+			{XMin: 200, XMax: 200, YMin: 0, YMax: 0},
 		}},
 	}
-	locations := []shared.MapLocation{
-		{Village: 1, Area: 0, X: 5, Y: 5},
-		{Village: 2, Area: 0, X: 105, Y: 5},
+	locations := []shared.MapLocation{{Village: 1, Area: 0, X: 5, Y: 5}}
+	values := make([]int, 0, 24)
+	for index := 0; index < 8; index++ {
+		values = append(values, 1+index, 10+index*10, 10+index*10)
 	}
-	target, ok := BalancedLocation(&sequenceRangeRandom{}, maps, 50, locations)
-	want := maps[0].Rectangles[1]
-	if !ok || target.Map.Village != 1 || target.Rectangle != want {
-		t.Fatalf("target=%+v ok=%t, low-level role must use eligible empty rectangle %+v", target, ok, want)
+	target, ok := BalancedLocation(&sequenceRangeRandom{values: values}, maps, 85, locations)
+	if !ok || target.X >= 100 {
+		t.Fatalf("target=%+v ok=%t, narrow empty geometry slice was forced", target, ok)
 	}
 }
 
@@ -144,5 +147,28 @@ func TestBalancedLocationUsesAreaWeightAfterRectangleCoverage(t *testing.T) {
 	target, ok := BalancedLocation(&sequenceRangeRandom{}, maps, 85, locations)
 	if !ok || target.Map.Village != 2 {
 		t.Fatalf("target=%+v ok=%t, want larger village after full coverage", target, ok)
+	}
+}
+
+func TestBalancedLocationChoosesCandidateAwayFromCluster(t *testing.T) {
+	maps := []shared.MapCatalogItem{{
+		Village: 1, Area: 0, Use: true,
+		Rectangles: []shared.MapRectangle{{XMin: 0, XMax: 99, YMin: 0, YMax: 99}},
+	}}
+	locations := []shared.MapLocation{{Village: 1, Area: 0, X: 10, Y: 10}}
+	rng := &sequenceRangeRandom{values: []int{
+		0,
+		1, 11, 11,
+		1, 90, 90,
+		1, 12, 12,
+		1, 13, 13,
+		1, 14, 14,
+		1, 15, 15,
+		1, 16, 16,
+		1, 17, 17,
+	}}
+	target, ok := BalancedLocation(rng, maps, 85, locations)
+	if !ok || target.X != 90 || target.Y != 90 {
+		t.Fatalf("target=%+v ok=%t, want farthest random candidate 90/90", target, ok)
 	}
 }
