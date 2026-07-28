@@ -13,14 +13,16 @@ import (
 )
 
 type App struct {
-	repository Repository
-	cfg        Config
-	configPath string
-	configDir  string
-	pvfPath    string
-	dfGameR    string
-	executors  ActionExecutorFactory
-	restarter  func(name, reason string)
+	repository       Repository
+	cfg              Config
+	configPath       string
+	configDir        string
+	pvfPath          string
+	dfGameR          string
+	serviceRunScript string
+	serviceHomeRoot  string
+	executors        ActionExecutorFactory
+	restarter        func(name, reason string)
 
 	stateMu   lockhub.Locker
 	jobMu     lockhub.Locker

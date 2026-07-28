@@ -17,11 +17,13 @@ import (
 const marketServiceRestartCooldown = 10 * time.Minute
 
 type marketServiceSpec struct {
-	name string
-	addr string
-	dir  string
-	bin  string
-	args []string
+	name      string
+	addr      string
+	dir       string
+	bin       string
+	args      []string
+	source    string
+	launchErr error
 }
 
 func (a *App) ensureMarketServices(markets []string) map[string]bool {
@@ -114,6 +116,13 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 			return true
 		}
 	}
+	if service.launchErr != nil {
+		status.Status = MarketServiceStatusPrepareFailed
+		status.Message = service.launchErr.Error()
+		a.setMarketServiceStatus(status)
+		a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
+		return false
+	}
 	if err := validateMarketServiceItemInfo(a.itemInfoTargetForService(service.name)); err != nil {
 		status.Status = MarketServiceStatusPrepareFailed
 		status.Message = err.Error()
@@ -140,7 +149,7 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 		a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 		return false
 	}
-	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: marketLogStatusStart, Message: fmt.Sprintf("addr=%s output=%s", service.addr, strings.TrimSpace(string(out)))})
+	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: marketLogStatusStart, Message: fmt.Sprintf("addr=%s source=%s output=%s", service.addr, service.source, strings.TrimSpace(string(out)))})
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if tcpReady(service.addr, 500*time.Millisecond) {
@@ -277,9 +286,11 @@ func (a *App) marketServiceSpecs() []marketServiceSpec {
 		pointPort = 30603
 	}
 	root := config.DNFServiceRoot(a.dfGameR)
+	auctionLaunch, auctionErr := a.discoverMarketServiceLaunch(marketServiceNameAuction, root)
+	pointLaunch, pointErr := a.discoverMarketServiceLaunch(marketServiceNamePoint, root)
 	return []marketServiceSpec{
-		{name: marketServiceNameAuction, addr: fmt.Sprintf("127.0.0.1:%d", auctionPort), dir: filepath.Join(root, "auction"), bin: "./df_auction_r", args: []string{"./cfg/auction_cain.cfg", "start", "./df_auction_r"}},
-		{name: marketServiceNamePoint, addr: fmt.Sprintf("127.0.0.1:%d", pointPort), dir: filepath.Join(root, "point"), bin: "./df_point_r", args: []string{"./cfg/point_cain.cfg", "start", "df_point_r"}},
+		{name: marketServiceNameAuction, addr: fmt.Sprintf("127.0.0.1:%d", auctionPort), dir: auctionLaunch.dir, bin: auctionLaunch.bin, args: auctionLaunch.args, source: auctionLaunch.source, launchErr: auctionErr},
+		{name: marketServiceNamePoint, addr: fmt.Sprintf("127.0.0.1:%d", pointPort), dir: pointLaunch.dir, bin: pointLaunch.bin, args: pointLaunch.args, source: pointLaunch.source, launchErr: pointErr},
 	}
 }
 
