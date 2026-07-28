@@ -52,7 +52,7 @@ func (m *RobotManager) RobotsStatus(req robotcap.CommandRequest) (RobotStatusRes
 	actors := m.actorStatusMap()
 	cleanupPending := m.cleanupPendingSet()
 	villageNames := mapCatalogVillageNames(m.loadMapCatalog())
-	items, err := m.schemaRepo().RobotStatusRows(req)
+	items, total, err := m.schemaRepo().RobotStatusRows(req)
 	if err != nil {
 		return RobotStatusResult{}, err
 	}
@@ -107,7 +107,7 @@ func (m *RobotManager) RobotsStatus(req robotcap.CommandRequest) (RobotStatusRes
 		}
 		out.Robots = append(out.Robots, item)
 	}
-	out.Total = len(out.Robots)
+	out.Total = total
 	return out, nil
 }
 

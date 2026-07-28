@@ -86,21 +86,28 @@ func (r *SQLRepository) AliveRobotUIDs(uids []int) (map[int]bool, error) {
 	return alive, rows.Err()
 }
 
-func (r *SQLRepository) RobotStatusRows(req robotcap.CommandRequest) ([]robotcap.StatusItem, error) {
-	args := make([]interface{}, 0)
+func (r *SQLRepository) RobotStatusRows(req robotcap.CommandRequest) ([]robotcap.StatusItem, int, error) {
+	filterArgs := make([]interface{}, 0)
 	where := ""
 	limit := ""
 	if len(req.UIDs) > 0 {
 		holders := foundsql.Placeholders(len(req.UIDs))
 		where = "WHERE r.uid IN (" + holders + ")"
 		for _, uid := range req.UIDs {
-			args = append(args, uid)
+			filterArgs = append(filterArgs, uid)
 		}
 	} else {
 		if req.Count <= 0 {
 			req.Count = 500
 		}
 		limit = " LIMIT ?"
+	}
+	var total int
+	if err := r.QueryRow("SELECT COUNT(*) FROM d_starsky.robot_registry r "+where, filterArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	args := append([]interface{}(nil), filterArgs...)
+	if limit != "" {
 		args = append(args, req.Count)
 	}
 	query := `
@@ -114,7 +121,7 @@ LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid
 ORDER BY r.uid` + limit
 	rows, err := r.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var out []robotcap.StatusItem
@@ -122,14 +129,14 @@ ORDER BY r.uid` + limit
 		var item robotcap.StatusItem
 		var coreAlive int
 		if err := rows.Scan(&item.UID, &item.CID, &item.Name, &item.Account, &item.Level, &item.Job, &item.Grow, &coreAlive, &item.Village, &item.Area, &item.X, &item.Y); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if coreAlive == 0 {
 			item.MissingCore = true
 		}
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 func (r *SQLRepository) RobotLocations() ([]shared.MapLocation, error) {
