@@ -337,7 +337,7 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 			xMin, xMax, yMin, yMax, coordinateReady := townMapMovableBounds(mapBody)
 			out = append(out, shared.MapCatalogItem{
 				Village: entry.ID, VillageName: villageName, Area: area.ID, Level: level,
-				XMin: xMin, XMax: xMax, YMin: yMin, YMax: yMax, Rectangles: rectangles, Use: coordinateReady,
+				XMin: xMin, XMax: xMax, YMin: yMin, YMax: yMax, Rectangles: rectangles, Use: coordinateReady, Gate: area.Gate,
 			})
 		}
 	}

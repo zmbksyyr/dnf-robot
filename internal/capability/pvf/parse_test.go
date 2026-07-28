@@ -124,19 +124,22 @@ func TestAppendItemInfoCreatureArtifacts(t *testing.T) {
 	}
 }
 
-func TestParseTownAreasKeepsMapPathAndSkipsGate(t *testing.T) {
+func TestParseTownAreasKeepsMapPathAndGateMetadata(t *testing.T) {
 	body := "[area]\n0 `HendonMyre/Hendon.map`\n`[normal]`\n[/area]\n" +
 		"[area]\n1 `HendonMyre/Gate.map`\n`[gate]`\n474 234\n[/area]\n" +
 		"[area]\n2 `HendonMyre/Hendon_Auction.map`\n`[normal]`\n[/area]\n"
 	got := parseTownAreas(body)
-	if len(got) != 2 {
+	if len(got) != 3 {
 		t.Fatalf("areas=%+v", got)
 	}
-	if got[0].ID != 0 || got[0].MapPath != "hendonmyre/hendon.map" {
+	if got[0].ID != 0 || got[0].MapPath != "hendonmyre/hendon.map" || got[0].Gate {
 		t.Fatalf("first area=%+v", got[0])
 	}
-	if got[1].ID != 2 || got[1].MapPath != "hendonmyre/hendon_auction.map" {
+	if got[1].ID != 1 || got[1].MapPath != "hendonmyre/gate.map" || !got[1].Gate {
 		t.Fatalf("second area=%+v", got[1])
+	}
+	if got[2].ID != 2 || got[2].MapPath != "hendonmyre/hendon_auction.map" || got[2].Gate {
+		t.Fatalf("third area=%+v", got[2])
 	}
 }
 
@@ -191,12 +194,14 @@ func TestExtractMapListNeverFabricatesAreasOrCoordinates(t *testing.T) {
 			"[area]\n0 `Example/Ready.map`\n`[normal]`\n[/area]\n" +
 			"[area]\n1 `Example/Virtual.map`\n`[normal]`\n[/area]\n" +
 			"[area]\n2 `Example/Missing.map`\n`[normal]`\n[/area]\n" +
-			"[area]\n3 `Example/Gate.map`\n`[gate]`\n474 234\n[/area]\n")},
+			"[area]\n3 `Example/Gate.map`\n`[gate]`\n474 234\n[/area]\n" +
+			"[area]\n4 `Example/MissingGate.map`\n`[gate]`\n474 234\n[/area]\n[end]\n")},
 		"map/example/ready.map":   {Data: []byte("[town movable area]\n10 20 30 100 1 0\n[/town movable area]\n[virtual movable area]\n10 20 300 100\n[/virtual movable area]\n")},
 		"map/example/virtual.map": {Data: []byte("[virtual movable area]\n10 20 300 100\n[/virtual movable area]\n")},
+		"map/example/gate.map":    {Data: []byte("[virtual movable area]\n50 60 400 200\n[/virtual movable area]\n")},
 	}}
 	maps := extractMapList(a, "town/town.lst", "town/")
-	if len(maps) != 3 {
+	if len(maps) != 5 {
 		t.Fatalf("maps=%+v", maps)
 	}
 	if !maps[0].Use || maps[0].XMin != 10 || maps[0].XMax != 310 || maps[0].YMin != 20 || maps[0].YMax != 120 || len(maps[0].Rectangles) != 1 {
@@ -207,6 +212,12 @@ func TestExtractMapListNeverFabricatesAreasOrCoordinates(t *testing.T) {
 	}
 	if maps[2].Use || maps[2].XMin != 0 || maps[2].XMax != 0 || maps[2].YMin != 0 || maps[2].YMax != 0 {
 		t.Fatalf("missing map fabricated coordinates: %+v", maps[2])
+	}
+	if !maps[3].Gate || !maps[3].Use || maps[3].XMin != 50 || maps[3].XMax != 450 {
+		t.Fatalf("gate map with virtual geometry was not exported: %+v", maps[3])
+	}
+	if !maps[4].Gate || maps[4].Use {
+		t.Fatalf("gate map without virtual geometry became usable: %+v", maps[4])
 	}
 
 	if areas := parseTownAreas("[name]\n`No Areas`"); len(areas) != 0 {

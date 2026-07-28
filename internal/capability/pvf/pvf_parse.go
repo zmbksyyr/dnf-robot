@@ -557,6 +557,7 @@ func parsePVFList(text string) []pvfListEntry {
 type townArea struct {
 	ID      int
 	MapPath string
+	Gate    bool
 }
 
 func parseTownAreas(body string) []townArea {
@@ -574,14 +575,12 @@ func parseTownAreas(body string) []townArea {
 		}
 		j += i
 		block := body[i+len("[area]") : j]
-		if !strings.Contains(block, "[gate]") {
-			fields := strings.Fields(strings.ReplaceAll(block, "`", ""))
-			if len(fields) >= 2 {
-				id := atoi(fields[0])
-				mapPath := normalizePVFPath(fields[1])
-				if id >= 0 && mapPath != "" {
-					out = append(out, townArea{ID: id, MapPath: mapPath})
-				}
+		fields := strings.Fields(strings.ReplaceAll(block, "`", ""))
+		if len(fields) >= 2 {
+			id := atoi(fields[0])
+			mapPath := normalizePVFPath(fields[1])
+			if id >= 0 && mapPath != "" {
+				out = append(out, townArea{ID: id, MapPath: mapPath, Gate: strings.Contains(strings.ToLower(block), "[gate]")})
 			}
 		}
 		start = j + len("[/area]")

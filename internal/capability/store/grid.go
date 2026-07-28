@@ -51,7 +51,7 @@ func BuildGridPoints(maps []shared.MapCatalogItem) []GridPoint {
 		if !mp.Use {
 			continue
 		}
-		if !IsAreaEligible(mp.Village, mp.Area) {
+		if mp.Gate || !IsStoreAreaEligible(mp.Village, mp.Area) {
 			continue
 		}
 		for _, rectangle := range robotspawn.MapRectangles(mp) {
@@ -110,6 +110,15 @@ func PointYStart(rectangle shared.MapRectangle) int {
 }
 
 func IsAreaEligible(village, area int) bool {
+	return IsStoreAreaEligible(village, area)
+}
+
+func IsNormalAreaEligible(village, area int) bool {
+	key := areaKey{village, area}
+	return GateArea[key] || AreaEligible[key]
+}
+
+func IsStoreAreaEligible(village, area int) bool {
 	key := areaKey{village, area}
 	if GateArea[key] {
 		return false

@@ -45,6 +45,7 @@ type MapCatalogItem struct {
 	YMax        int            `json:"y_max"`
 	Rectangles  []MapRectangle `json:"rectangles,omitempty"`
 	Use         bool           `json:"use"`
+	Gate        bool           `json:"gate,omitempty"`
 }
 
 type MapRectangle struct {
