@@ -4,6 +4,7 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	lifecyclecap "robot/internal/capability/robotlifecycle"
+	storecap "robot/internal/capability/store"
 	"robot/internal/shared"
 	"time"
 )
@@ -63,7 +64,7 @@ func (e lifecycleCreateEnv) LoadCreateCatalogs() lifecyclecap.CreateCatalogs {
 }
 
 func (e lifecycleCreateEnv) LoadMapCatalog() []shared.MapCatalogItem {
-	return e.manager.loadMapCatalog()
+	return storecap.FilterNormalMaps(e.manager.loadMapCatalog())
 }
 
 func (e lifecycleCreateEnv) RobotLocations() ([]shared.MapLocation, error) {

@@ -34,3 +34,16 @@ func TestBuildGridPointsRejectsCatalogGateMetadata(t *testing.T) {
 		t.Fatalf("gate points=%+v, want none", points)
 	}
 }
+
+func TestFilterNormalMapsKeepsSafeAreasAndGatesOnly(t *testing.T) {
+	maps := []shared.MapCatalogItem{
+		{Village: 1, Area: 0, Use: true},
+		{Village: 1, Area: 1, Use: true, Gate: true},
+		{Village: 3, Area: 1, Use: true},
+		{Village: 2, Area: 0, Use: false},
+	}
+	got := FilterNormalMaps(maps)
+	if len(got) != 2 || got[0].Area != 0 || !got[1].Gate {
+		t.Fatalf("normal maps=%+v, want safe area and usable gate only", got)
+	}
+}
