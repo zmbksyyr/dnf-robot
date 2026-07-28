@@ -65,6 +65,7 @@ const (
 	diagError = "error"
 
 	diagnosticsDFGameRJSPath     = "/dp2/df_game_r.js"
+	diagnosticsServerRunPath     = "/root/run"
 	diagnosticsAuctionGuardBegin = "// DP2_AUCTION_SEARCH_HOOK_GUARD_BEGIN"
 	diagnosticsAuctionGuardEnd   = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
 )
@@ -254,7 +255,7 @@ func (b *diagnosticsBuilder) addMarketSection() {
 	} else {
 		checks = append(checks, diagnosticsCheck{Name: "marketStatus", Status: diagWarn, Message: err.Error()})
 	}
-	checks = append(checks, auctionGuardCheck(diagnosticsDFGameRJSPath))
+	checks = append(checks, auctionGuardCheck(diagnosticsDFGameRJSPath, diagnosticsServerRunPath))
 	checks = append(checks, auctionMemoryPatchReadOnlyCheck())
 	b.addSection("Market", checks...)
 }
@@ -550,9 +551,20 @@ func marketStatusChecks(status interface{}) []diagnosticsCheck {
 	return checks
 }
 
-func auctionGuardCheck(path string) diagnosticsCheck {
+func auctionGuardCheck(path, launcherPath string) diagnosticsCheck {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			launcher, launcherErr := os.ReadFile(launcherPath)
+			if launcherErr == nil && !bytes.Contains(launcher, []byte("libdp2pre.so")) && !bytes.Contains(launcher, []byte(path)) {
+				return diagnosticsCheck{
+					Name:     "auction guard",
+					Status:   diagOK,
+					Message:  "auction guard is not applicable to this launcher",
+					Observed: map[string]interface{}{"path": path, "launcher": launcherPath},
+				}
+			}
+		}
 		return diagnosticsCheck{Name: "auction guard", Status: diagWarn, Message: err.Error(), Expected: path}
 	}
 	status := diagWarn
