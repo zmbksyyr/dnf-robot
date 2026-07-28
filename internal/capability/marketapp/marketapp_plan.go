@@ -91,7 +91,7 @@ func (a *App) planCeraMarket(haveCera map[uint32]int, occ map[uint32]int, decisi
 		decision.ItemInfoError = err
 		for _, row := range a.cfg.Cera.Items {
 			if row.ItemID > 0 && row.RestockQty > 0 && row.Enabled {
-				result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameCera, ItemID: row.ItemID, Name: row.Label, Reason: "missing_native_iteminfo"})
+				result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameCera, ItemID: row.ItemID, Name: row.Label, Reason: "missing_iteminfo"})
 			}
 		}
 		return

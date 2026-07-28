@@ -27,26 +27,19 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
 		return status
 	}
-	donors, err := loadNativeCeraItemInfoRows(status.Targets, a.cfg.Cera.Items)
-	if err != nil {
-		status.Error = fmt.Sprintf("prepare cera iteminfo %s: %v", status.SourcePath, err)
-		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusFailed, Message: status.Error})
-		return status
-	}
 	source, err := os.ReadFile(status.SourcePath)
 	if err != nil {
 		status.Error = fmt.Sprintf("read source %s: %v", status.SourcePath, err)
 		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
 		return status
 	}
-	nativeRows := loadNativeItemInfoRows(status.Targets)
-	replaceRows := make(map[uint32]bool)
-	for _, row := range a.cfg.Cera.Items {
-		if row.ItemID > 0 {
-			replaceRows[row.ItemID] = true
-		}
+	nativeRows := loadItemInfoRows(status.Targets)
+	merged, changed := mergeItemInfoOverlay(source, nativeRows)
+	if err := validateConfiguredCeraItemInfo(merged, a.cfg.Cera.Items); err != nil {
+		status.Error = err.Error()
+		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusFailed, Message: status.Error})
+		return status
 	}
-	merged, changed := mergeNativeItemInfoRows(source, nativeRows, replaceRows)
 	if changed {
 		info, statErr := os.Stat(status.SourcePath)
 		if statErr != nil {
@@ -60,13 +53,6 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 			return status
 		}
 		a.appendLog(LogEvent{Type: "iteminfo_native_merge", Status: marketLogStatusSuccess, Message: fmt.Sprintf("rows=%d", len(nativeRows))})
-	}
-	if changed, err := a.ensureCeraItemInfoFile(status.SourcePath, donors); err != nil {
-		status.Error = fmt.Sprintf("prepare cera iteminfo %s: %v", status.SourcePath, err)
-		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusFailed, Message: status.Error})
-		return status
-	} else if changed {
-		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusSynced, Message: status.SourcePath})
 	}
 	source, err = os.ReadFile(status.SourcePath)
 	if err != nil {

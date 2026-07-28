@@ -9,10 +9,8 @@ import (
 	"strings"
 )
 
-const ceraItemInfoCategory = 13002
-
-func loadNativeItemInfoRows(paths []string) map[uint32][]byte {
-	donors := make(map[uint32][]byte)
+func loadItemInfoRows(paths []string) map[uint32][]byte {
+	rows := make(map[uint32][]byte)
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		if path == "" {
@@ -23,117 +21,80 @@ func loadNativeItemInfoRows(paths []string) map[uint32][]byte {
 			continue
 		}
 		scanItemInfoLines(data, func(id uint32, line []byte) bool {
-			if donors[id] != nil || !isNativeItemInfoLine(line) {
-				return false
+			if rows[id] == nil {
+				rows[id] = append([]byte(nil), bytes.TrimRight(line, "\r\n")...)
 			}
-			donors[id] = append([]byte(nil), bytes.TrimRight(line, "\r\n")...)
 			return false
 		})
 	}
-	return donors
+	return rows
 }
 
-func mergeNativeItemInfoRows(data []byte, donors map[uint32][]byte, replace map[uint32]bool) ([]byte, bool) {
-	if len(donors) == 0 {
-		return data, false
+// mergeItemInfoOverlay keeps the PVF row for duplicate IDs and restores only
+// service-native IDs that are absent from the PVF export.
+func mergeItemInfoOverlay(pvfData []byte, originalRows map[uint32][]byte) ([]byte, bool) {
+	if len(originalRows) == 0 {
+		return pvfData, false
 	}
-	current := make(map[uint32][]byte, len(donors))
-	counts := make(map[uint32]int, len(donors))
-	scanItemInfoLines(data, func(id uint32, line []byte) bool {
-		counts[id]++
-		current[id] = bytes.TrimRight(line, "\r\n")
+	present := make(map[uint32]bool)
+	scanItemInfoIDs(pvfData, func(id uint32) bool {
+		present[id] = true
 		return false
 	})
-	changed := false
-	for id, donor := range donors {
-		if replace[id] {
-			if counts[id] != 1 || !bytes.Equal(current[id], donor) {
-				changed = true
-				break
-			}
-			continue
-		}
-		if counts[id] == 0 {
-			changed = true
-			break
+	missing := make([]uint32, 0)
+	for id := range originalRows {
+		if !present[id] {
+			missing = append(missing, id)
 		}
 	}
-	if !changed {
-		return data, false
+	if len(missing) == 0 {
+		return pvfData, false
 	}
+	sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
 
 	var out bytes.Buffer
-	out.Grow(len(data) + len(donors)*96)
-	seen := make(map[uint32]bool, len(donors))
-	for len(data) > 0 {
-		lineEnd := bytes.IndexByte(data, '\n')
-		line := data
-		if lineEnd >= 0 {
-			line = data[:lineEnd+1]
-			data = data[lineEnd+1:]
-		} else {
-			data = nil
-		}
-		id, ok := leadingItemInfoID(line)
-		if !ok || donors[id] == nil {
-			out.Write(line)
-			continue
-		}
-		if replace[id] {
-			if !seen[id] {
-				out.Write(donors[id])
-				out.WriteString("\r\n")
-				seen[id] = true
-			}
-			continue
-		}
-		out.Write(line)
-		seen[id] = true
-	}
+	out.Grow(len(pvfData) + len(missing)*96)
+	out.Write(pvfData)
 	if out.Len() > 0 && out.Bytes()[out.Len()-1] != '\n' {
 		out.WriteString("\r\n")
 	}
-	ids := make([]uint32, 0)
-	for id := range donors {
-		if !seen[id] {
-			ids = append(ids, id)
-		}
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	for _, id := range ids {
-		out.Write(donors[id])
+	for _, id := range missing {
+		out.Write(originalRows[id])
 		out.WriteString("\r\n")
 	}
 	return out.Bytes(), true
 }
 
-func isNativeItemInfoLine(line []byte) bool {
-	fields := bytes.Fields(line)
-	if len(fields) < 17 {
-		return false
+func validateConfiguredCeraItemInfo(data []byte, rows []ceraRow) error {
+	required := configuredCeraItemIDs(rows)
+	if len(required) == 0 {
+		return nil
 	}
-	category := fields[len(fields)-1]
-	for _, b := range category {
-		if b < '0' || b > '9' {
-			return false
+	present := make(map[uint32]bool, len(required))
+	scanItemInfoIDs(data, func(id uint32) bool {
+		present[id] = true
+		return false
+	})
+	missing := make([]uint32, 0)
+	for _, id := range required {
+		if !present[id] {
+			missing = append(missing, id)
 		}
 	}
-	return !bytes.Contains(line, []byte("`item_")) || !bytes.Contains(line, []byte("`name2_"))
+	if len(missing) > 0 {
+		return fmt.Errorf("configured cera iteminfo ids missing: %v", missing)
+	}
+	return nil
 }
 
 func (a *App) ensureConfiguredCeraItemInfo() ItemInfoSyncStatus {
 	status := a.itemInfoStatus()
-	paths := make([]string, 0, len(status.Targets)+1)
-	paths = append(paths, status.SourcePath)
-	paths = append(paths, status.Targets...)
-	donors, err := loadNativeCeraItemInfoRows(append(append([]string(nil), status.Targets...), status.SourcePath), a.cfg.Cera.Items)
-	if err != nil {
-		status.Error = err.Error()
-		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusFailed, Message: status.Error})
+	if len(configuredCeraItemIDs(a.cfg.Cera.Items)) == 0 {
 		return status
 	}
-
+	paths := append([]string(nil), status.Targets...)
 	seen := make(map[string]bool, len(paths))
+	validated := 0
 	var failures []string
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
@@ -142,7 +103,7 @@ func (a *App) ensureConfiguredCeraItemInfo() ItemInfoSyncStatus {
 			continue
 		}
 		seen[path] = true
-		changed, err := a.ensureCeraItemInfoFile(path, donors)
+		data, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
 			status.Skipped++
 			continue
@@ -151,150 +112,30 @@ func (a *App) ensureConfiguredCeraItemInfo() ItemInfoSyncStatus {
 			failures = append(failures, fmt.Sprintf("%s: %v", path, err))
 			continue
 		}
-		if !changed {
-			status.Skipped++
-			continue
+		validated++
+		if err := validateConfiguredCeraItemInfo(data, a.cfg.Cera.Items); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", path, err))
 		}
-		status.Synced++
-		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusSynced, Message: path})
+	}
+	if validated == 0 && len(failures) == 0 && strings.TrimSpace(status.SourcePath) != "" {
+		data, err := os.ReadFile(status.SourcePath)
+		if err == nil {
+			validated++
+			if err := validateConfiguredCeraItemInfo(data, a.cfg.Cera.Items); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", status.SourcePath, err))
+			}
+		} else if !os.IsNotExist(err) {
+			failures = append(failures, fmt.Sprintf("%s: %v", status.SourcePath, err))
+		}
+	}
+	if validated == 0 && len(failures) == 0 {
+		failures = append(failures, "no readable iteminfo file")
 	}
 	if len(failures) > 0 {
 		status.Error = strings.Join(failures, "; ")
 		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusFailed, Message: status.Error})
-	} else if status.Synced > 0 {
-		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusSuccess, Message: fmt.Sprintf("synced=%d skipped=%d", status.Synced, status.Skipped)})
 	}
 	return status
-}
-
-func (a *App) ensureCeraItemInfoFile(path string, donors map[uint32][]byte) (bool, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
-	}
-	updated, changed, err := mergeNativeCeraItemInfoRows(data, a.cfg.Cera.Items, donors)
-	if err != nil {
-		return false, err
-	}
-	if !changed {
-		return false, nil
-	}
-	if err := replaceItemInfoFile(path, updated, info.Mode().Perm()); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func loadNativeCeraItemInfoRows(paths []string, rows []ceraRow) (map[uint32][]byte, error) {
-	ids := configuredCeraItemIDs(rows)
-	wanted := make(map[uint32]bool, len(ids))
-	for _, id := range ids {
-		wanted[id] = true
-	}
-	donors := make(map[uint32][]byte, len(ids))
-	for _, path := range paths {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		scanItemInfoLines(data, func(id uint32, line []byte) bool {
-			if !wanted[id] || donors[id] != nil || !isNativeCeraItemInfoLine(id, line) {
-				return false
-			}
-			donors[id] = append([]byte(nil), bytes.TrimRight(line, "\r\n")...)
-			return len(donors) == len(ids)
-		})
-	}
-	missing := make([]uint32, 0)
-	for _, id := range ids {
-		if donors[id] == nil {
-			missing = append(missing, id)
-		}
-	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("native cera iteminfo rows missing: %v", missing)
-	}
-	return donors, nil
-}
-
-func mergeNativeCeraItemInfoRows(data []byte, rows []ceraRow, donors map[uint32][]byte) ([]byte, bool, error) {
-	ids := configuredCeraItemIDs(rows)
-	if len(ids) == 0 {
-		return data, false, nil
-	}
-	configured := make(map[uint32]bool, len(ids))
-	current := make(map[uint32][]byte, len(ids))
-	counts := make(map[uint32]int, len(ids))
-	for _, id := range ids {
-		configured[id] = true
-		if donors[id] == nil {
-			return nil, false, fmt.Errorf("native cera iteminfo row missing: %d", id)
-		}
-	}
-	hasValidID := scanItemInfoLines(data, func(id uint32, line []byte) bool {
-		if configured[id] {
-			counts[id]++
-			current[id] = bytes.TrimRight(line, "\r\n")
-		}
-		return false
-	})
-	if !hasValidID {
-		return nil, false, fmt.Errorf("iteminfo has no valid item ids")
-	}
-	matched := true
-	for _, id := range ids {
-		if counts[id] != 1 || !bytes.Equal(current[id], donors[id]) {
-			matched = false
-			break
-		}
-	}
-	if matched {
-		return data, false, nil
-	}
-
-	var out bytes.Buffer
-	out.Grow(len(data) + len(ids)*96)
-	for len(data) > 0 {
-		lineEnd := bytes.IndexByte(data, '\n')
-		line := data
-		if lineEnd >= 0 {
-			line = data[:lineEnd+1]
-			data = data[lineEnd+1:]
-		} else {
-			data = nil
-		}
-		id, ok := leadingItemInfoID(line)
-		if ok && configured[id] {
-			continue
-		}
-		out.Write(line)
-	}
-	if out.Len() > 0 && out.Bytes()[out.Len()-1] != '\n' {
-		out.WriteString("\r\n")
-	}
-	for _, id := range ids {
-		out.Write(donors[id])
-		out.WriteString("\r\n")
-	}
-	return out.Bytes(), true, nil
-}
-
-func isNativeCeraItemInfoLine(id uint32, line []byte) bool {
-	fields := bytes.Fields(line)
-	if len(fields) < 17 || !bytes.Equal(fields[len(fields)-1], []byte(fmt.Sprint(ceraItemInfoCategory))) {
-		return false
-	}
-	itemID := fmt.Sprint(id)
-	return !bytes.Contains(line, []byte("`item_"+itemID+"`")) &&
-		!bytes.Contains(line, []byte("`name2_"+itemID+"`"))
 }
 
 func scanItemInfoIDs(data []byte, visit func(uint32) bool) bool {
@@ -350,7 +191,7 @@ func leadingItemInfoID(line []byte) (uint32, bool) {
 func configuredCeraItemIDs(rows []ceraRow) []uint32 {
 	unique := make(map[uint32]bool, len(rows))
 	for _, row := range rows {
-		if row.ItemID > 0 {
+		if row.ItemID > 0 && row.Enabled && row.RestockQty > 0 {
 			unique[row.ItemID] = true
 		}
 	}

@@ -56,16 +56,16 @@ func TestPlanCeraOnlyDoesNotRequirePVFCatalog(t *testing.T) {
 	}
 }
 
-func TestPlanCeraDoesNotCreateActionsWhenNativeItemInfoIsMissing(t *testing.T) {
+func TestPlanCeraDoesNotCreateActionsWhenItemInfoIsMissing(t *testing.T) {
 	app := testApp(t)
-	app.itemInfo.Error = "native cera iteminfo rows missing"
+	app.itemInfo.Error = "configured cera iteminfo ids missing"
 	app.cfg.Cera.Items = []ceraRow{{ItemID: 2675336, Label: "100w_gold", RestockPrice: 200, RestockQty: 1, Enabled: true}}
 	result := &PlanResult{}
 	app.planCeraMarket(map[uint32]int{}, map[uint32]int{}, &marketDecisionSnapshot{}, result)
 	if len(result.Actions) != 0 || len(result.Skipped) != 1 {
 		t.Fatalf("actions=%#v skipped=%#v", result.Actions, result.Skipped)
 	}
-	if result.Skipped[0].Reason != "missing_native_iteminfo" {
+	if result.Skipped[0].Reason != "missing_iteminfo" {
 		t.Fatalf("skip reason = %q", result.Skipped[0].Reason)
 	}
 }
