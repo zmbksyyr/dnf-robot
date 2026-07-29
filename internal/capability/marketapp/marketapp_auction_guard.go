@@ -17,15 +17,14 @@ const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
 const auctionSearchGuardSource = auctionSearchGuardBegin + `
 (function () {
     var root = (typeof globalThis !== 'undefined') ? globalThis : this;
-    var key = '__dp2_auction_search_hook_guard_v2__';
+    var key = '__dp2_auction_search_hook_guard_v3__';
     if (root[key]) {
         return;
     }
     root[key] = true;
 
     var targetKey = ptr('0x084D75BC').toString().toLowerCase();
-    var rawReplace = Interceptor.replace.bind(Interceptor);
-    var rawAttach = Interceptor.attach.bind(Interceptor);
+    var rawReplace = Interceptor.replace;
 
     function addrOf(target) {
         try {
@@ -39,82 +38,19 @@ const auctionSearchGuardSource = auctionSearchGuardBegin + `
         }
     }
 
-    function installSafeSearch(target) {
-        rawAttach(target, {
-            onEnter: function (args) {
-                try {
-                    if (typeof G_CDataManager !== 'function' ||
-                        typeof CDataManager_find_item !== 'function' ||
-                        typeof CItem_getItemGroupName !== 'function' ||
-                        typeof api_get_jewel_socket_data !== 'function') {
-                        return;
-                    }
-                    var src = args[2];
-                    if (src.isNull()) {
-                        return;
-                    }
-                    var count = src.add(5).readU8();
-                    if (count === 0 || count > 100) {
-                        return;
-                    }
-
-                    // Validate the whole 137-byte layout before writing anything.
-                    // Unknown packet layouts fall back to the native search path.
-                    var records = [];
-                    for (var i = 0; i < count; i++) {
-                        var itemId = src.add(54 + 137 * i).readU32();
-                        if (itemId === 0) {
-                            return;
-                        }
-                        var item = CDataManager_find_item(G_CDataManager(), itemId);
-                        if (item.isNull()) {
-                            return;
-                        }
-                        records.push({
-                            index: i,
-                            group: CItem_getItemGroupName(item)
-                        });
-                    }
-
-                    for (var n = 0; n < records.length; n++) {
-                        var record = records[n];
-                        if (record.group <= 0 || record.group >= 59) {
-                            continue;
-                        }
-                        var socketData = api_get_jewel_socket_data(
-                            mysql_frida,
-                            src.add(76 + 137 * record.index).readU32()
-                        );
-                        if (socketData.isNull()) {
-                            continue;
-                        }
-                        Memory.copy(src.add(106 + 137 * record.index), socketData, 30);
-                    }
-                } catch (e) {
-                    console.log('[dp2 guard] safe auction search skipped: ' + e);
-                }
-            }
-        });
-        console.log('[dp2 guard] safe auction search hook installed at ' + addrOf(target));
-    }
-
     Interceptor.replace = function (target, replacement) {
         if (addrOf(target) !== targetKey) {
-            return rawReplace(target, replacement);
+            return rawReplace.call(Interceptor, target, replacement);
         }
 
-        // The dp2 helpers are initialized by the time its search replacement is
-        // requested. Keep the native dispatcher and attach only preprocessing.
+        // Skip only DP2's auction-result replacement, then restore Frida's API
+        // unchanged so every later equipment/socket hook is installed normally.
         Interceptor.replace = rawReplace;
-        try {
-            installSafeSearch(target);
-        } catch (e) {
-            console.log('[dp2 guard] safe auction search install failed: ' + e);
-        }
+        console.log('[dp2 guard] skipped auction search replacement at ' + addrOf(target));
         return;
     };
 
-    console.log('[dp2 guard] waiting for auction search hook');
+    console.log('[dp2 guard] waiting for auction search replacement');
 })();
 ` + auctionSearchGuardEnd + `
 
@@ -141,7 +77,7 @@ func (a *App) InstallAuctionSearchGuard(req AuctionSearchGuardRequest) (AuctionS
 	}
 	if !changed {
 		result.Installed = true
-		result.Message = "safe auction search hook already installed"
+		result.Message = "auction search guard already installed"
 		a.appendLog(LogEvent{Type: "auction_guard", Status: marketLogStatusExists, Message: path})
 		return result, nil
 	}
@@ -158,7 +94,7 @@ func (a *App) InstallAuctionSearchGuard(req AuctionSearchGuardRequest) (AuctionS
 	result.Backup = backup
 	result.Installed = true
 	result.Changed = true
-	result.Message = "safe auction search hook installed; restart df_game_r to apply"
+	result.Message = "auction search guard installed; restart df_game_r to apply"
 	a.appendLog(LogEvent{Type: "auction_guard", Status: marketLogStatusInstalled, Message: fmt.Sprintf("%s backup=%s", path, backup)})
 	return result, nil
 }

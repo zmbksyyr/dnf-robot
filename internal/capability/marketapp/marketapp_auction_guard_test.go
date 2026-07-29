@@ -40,8 +40,28 @@ func TestUpsertAuctionSearchGuardUpgradesLegacyBlock(t *testing.T) {
 	if bytes.Count(next, []byte(auctionSearchGuardBegin)) != 1 || strings.Contains(string(next), "legacy guard") {
 		t.Fatalf("legacy block was not replaced:\n%s", next)
 	}
-	if !strings.Contains(string(next), "safe auction search hook") {
-		t.Fatal("safe hook source is missing")
+	if !strings.Contains(string(next), "skipped auction search replacement") {
+		t.Fatal("replacement guard source is missing")
+	}
+}
+
+func TestAuctionSearchGuardDoesNotTouchSocketData(t *testing.T) {
+	source := auctionSearchGuardSource
+	for _, forbidden := range []string{
+		"Interceptor.attach",
+		"Interceptor.revert",
+		"Memory.copy",
+		"api_get_jewel_socket_data",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("guard must not contain %q", forbidden)
+		}
+	}
+	if !strings.Contains(source, "Interceptor.replace = rawReplace;") {
+		t.Fatal("guard must restore Interceptor.replace after the blocked call")
+	}
+	if !strings.Contains(source, "rawReplace.call(Interceptor, target, replacement)") {
+		t.Fatal("guard must forward unrelated replacements unchanged")
 	}
 }
 
