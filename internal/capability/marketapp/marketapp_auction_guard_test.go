@@ -6,8 +6,14 @@ import (
 	"testing"
 )
 
+const auctionGuardFixture = `
+var nativeSearch = new NativeFunction(ptr(0x084D75BC), 'int', ['pointer']);
+Interceptor.replace(ptr(0x084D75BC), new NativeCallback(function () { return 0; }, 'int', []));
+var original = true;
+`
+
 func TestUpsertAuctionSearchGuardIsIdempotent(t *testing.T) {
-	original := []byte("var original = true;\n")
+	original := []byte(auctionGuardFixture)
 	installed, changed, err := upsertAuctionSearchGuard(original)
 	if err != nil {
 		t.Fatal(err)
@@ -15,7 +21,8 @@ func TestUpsertAuctionSearchGuardIsIdempotent(t *testing.T) {
 	if !changed {
 		t.Fatal("first install must change the file")
 	}
-	if bytes.Count(installed, []byte(auctionSearchGuardBegin)) != 1 || !bytes.HasSuffix(installed, original) {
+	if bytes.Count(installed, []byte(auctionSearchGuardBegin)) != 1 ||
+		bytes.Count(installed, []byte(auctionSearchGuardReplace+"(ptr(0x084D75BC)")) != 1 {
 		t.Fatalf("unexpected installed source:\n%s", installed)
 	}
 
@@ -29,7 +36,7 @@ func TestUpsertAuctionSearchGuardIsIdempotent(t *testing.T) {
 }
 
 func TestUpsertAuctionSearchGuardUpgradesLegacyBlock(t *testing.T) {
-	legacy := []byte(auctionSearchGuardBegin + "\nlegacy guard\n" + auctionSearchGuardEnd + "\n\nvar original = true;\n")
+	legacy := []byte(auctionSearchGuardBegin + "\nlegacy guard\n" + auctionSearchGuardEnd + "\n" + auctionGuardFixture)
 	next, changed, err := upsertAuctionSearchGuard(legacy)
 	if err != nil {
 		t.Fatal(err)
@@ -50,16 +57,14 @@ func TestAuctionSearchGuardOnlyOverlaysTrackedSocketData(t *testing.T) {
 	for _, forbidden := range []string{
 		"Interceptor.attach",
 		"Interceptor.revert",
+		"Interceptor.replace =",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("guard must not contain %q", forbidden)
 		}
 	}
-	if !strings.Contains(source, "Interceptor.replace = rawReplace;") {
-		t.Fatal("guard must restore Interceptor.replace after the blocked call")
-	}
-	if !strings.Contains(source, "rawReplace.call(Interceptor, target, replacement)") {
-		t.Fatal("guard must forward unrelated replacements unchanged")
+	if !strings.Contains(source, "Interceptor.replace(target, replacement)") {
+		t.Fatal("guard must install only its explicit replacement")
 	}
 	check := strings.Index(source, "socketData.add(0).readU8() === 0")
 	copy := strings.Index(source, "Memory.copy(src.add(106 + 137 * i), socketData, 30)")
@@ -73,12 +78,29 @@ func TestAuctionSearchGuardOnlyOverlaysTrackedSocketData(t *testing.T) {
 
 func TestUpsertAuctionSearchGuardCollapsesDuplicateBlocks(t *testing.T) {
 	block := auctionSearchGuardBegin + "\nold\n" + auctionSearchGuardEnd + "\n\n"
-	next, changed, err := upsertAuctionSearchGuard([]byte(block + block + "var original = true;\n"))
+	next, changed, err := upsertAuctionSearchGuard([]byte(block + block + auctionGuardFixture))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed || bytes.Count(next, []byte(auctionSearchGuardBegin)) != 1 {
 		t.Fatalf("duplicate guards were not collapsed:\n%s", next)
+	}
+}
+
+func TestRewriteAuctionSearchReplacementAcceptsFormatting(t *testing.T) {
+	source := []byte("Interceptor.replace (\n ptr ( '0x084D75BC' ), callback);\n")
+	next, err := rewriteAuctionSearchReplacement(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(next, []byte(auctionSearchGuardReplace+" (\n ptr")) {
+		t.Fatalf("target call was not rewritten:\n%s", next)
+	}
+}
+
+func TestRewriteAuctionSearchReplacementRejectsMissingTarget(t *testing.T) {
+	if _, err := rewriteAuctionSearchReplacement([]byte("var original = true;\n")); err == nil {
+		t.Fatal("missing target must be rejected")
 	}
 }
 

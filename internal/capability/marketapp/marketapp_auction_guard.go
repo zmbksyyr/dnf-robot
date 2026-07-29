@@ -13,17 +13,17 @@ const defaultDFGameRJSPath = "/dp2/df_game_r.js"
 
 const auctionSearchGuardBegin = "// DP2_AUCTION_SEARCH_HOOK_GUARD_BEGIN"
 const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
+const auctionSearchGuardReplace = "DP2_AUCTION_SEARCH_HOOK_GUARD_REPLACE"
 
 const auctionSearchGuardSource = auctionSearchGuardBegin + `
-(function () {
+function DP2_AUCTION_SEARCH_HOOK_GUARD_REPLACE(target, ignoredReplacement) {
     var root = (typeof globalThis !== 'undefined') ? globalThis : this;
-    var key = '__dp2_auction_search_hook_guard_v4__';
+    var key = '__dp2_auction_search_hook_guard_v5__';
     if (root[key]) {
         return;
     }
     root[key] = true;
 
-    var target = ptr('0x084D75BC');
     var targetKey = target.toString().toLowerCase();
     var nativeSearch = new NativeFunction(
         target,
@@ -31,80 +31,50 @@ const auctionSearchGuardSource = auctionSearchGuardBegin + `
         ['pointer', 'pointer', 'pointer', 'int'],
         { abi: 'sysv' }
     );
-    var rawReplace = Interceptor.replace;
-
-    function addrOf(target) {
+    var replacement = new NativeCallback(function (dispatcher, user, src, a4) {
         try {
-            return ptr(target).toString().toLowerCase();
-        } catch (e) {
-            try {
-                return target.toString().toLowerCase();
-            } catch (_) {
-                return '';
-            }
-        }
-    }
-
-    function installCompatibleSearch() {
-        var replacement = new NativeCallback(function (dispatcher, user, src, a4) {
-            try {
-                if (!src.isNull() &&
-                    typeof G_CDataManager === 'function' &&
-                    typeof CDataManager_find_item === 'function' &&
-                    typeof CItem_getItemGroupName === 'function' &&
-                    typeof api_get_jewel_socket_data === 'function') {
-                    var count = src.add(5).readU8();
-                    if (count <= 100) {
-                        for (var i = 0; i < count; i++) {
-                            var itemId = src.add(54 + 137 * i).readU32();
-                            if (itemId === 0) {
-                                continue;
-                            }
-                            var item = CDataManager_find_item(G_CDataManager(), itemId);
-                            if (item.isNull()) {
-                                continue;
-                            }
-                            var group = CItem_getItemGroupName(item);
-                            if (group <= 0 || group >= 59) {
-                                continue;
-                            }
-                            var equipmentId = src.add(76 + 137 * i).readU32();
-                            var socketData = api_get_jewel_socket_data(mysql_frida, equipmentId);
-
-                            // api_get_jewel_socket_data always allocates a buffer.
-                            // Byte zero is its actual "record exists" indicator.
-                            // Preserve native bytes for normal/untracked equipment.
-                            if (socketData.isNull() || socketData.add(0).readU8() === 0) {
-                                continue;
-                            }
-                            Memory.copy(src.add(106 + 137 * i), socketData, 30);
+            if (!src.isNull() &&
+                typeof G_CDataManager === 'function' &&
+                typeof CDataManager_find_item === 'function' &&
+                typeof CItem_getItemGroupName === 'function' &&
+                typeof api_get_jewel_socket_data === 'function') {
+                var count = src.add(5).readU8();
+                if (count <= 100) {
+                    for (var i = 0; i < count; i++) {
+                        var itemId = src.add(54 + 137 * i).readU32();
+                        if (itemId === 0) {
+                            continue;
                         }
+                        var item = CDataManager_find_item(G_CDataManager(), itemId);
+                        if (item.isNull()) {
+                            continue;
+                        }
+                        var group = CItem_getItemGroupName(item);
+                        if (group <= 0 || group >= 59) {
+                            continue;
+                        }
+                        var equipmentId = src.add(76 + 137 * i).readU32();
+                        var socketData = api_get_jewel_socket_data(mysql_frida, equipmentId);
+
+                        // api_get_jewel_socket_data always allocates a buffer.
+                        // Byte zero is its actual "record exists" indicator.
+                        // Preserve native bytes for normal/untracked equipment.
+                        if (socketData.isNull() || socketData.add(0).readU8() === 0) {
+                            continue;
+                        }
+                        Memory.copy(src.add(106 + 137 * i), socketData, 30);
                     }
                 }
-            } catch (e) {
-                console.log('[dp2 guard] socket overlay skipped: ' + e);
             }
-            return nativeSearch(dispatcher, user, src, a4);
-        }, 'int', ['pointer', 'pointer', 'pointer', 'int']);
-
-        rawReplace.call(Interceptor, target, replacement);
-        console.log('[dp2 guard] compatible auction search installed at ' + targetKey);
-    }
-
-    Interceptor.replace = function (target, replacement) {
-        if (addrOf(target) !== targetKey) {
-            return rawReplace.call(Interceptor, target, replacement);
+        } catch (e) {
+            console.log('[dp2 guard] socket overlay skipped: ' + e);
         }
+        return nativeSearch(dispatcher, user, src, a4);
+    }, 'int', ['pointer', 'pointer', 'pointer', 'int']);
 
-        // Replace only DP2's incompatible auction-result hook, then restore
-        // Frida's API unchanged for every later equipment/socket hook.
-        Interceptor.replace = rawReplace;
-        installCompatibleSearch();
-        return;
-    };
-
-    console.log('[dp2 guard] waiting for auction search replacement');
-})();
+    Interceptor.replace(target, replacement);
+    console.log('[dp2 guard] compatible auction search installed at ' + targetKey);
+}
 ` + auctionSearchGuardEnd + `
 
 `
@@ -172,10 +142,78 @@ func upsertAuctionSearchGuard(data []byte) ([]byte, bool, error) {
 		finish = consumeLineEndings(clean, finish, 2)
 		clean = append(clean[:start], clean[finish:]...)
 	}
+	var err error
+	clean, err = rewriteAuctionSearchReplacement(clean)
+	if err != nil {
+		return nil, false, err
+	}
 	next := make([]byte, 0, len(auctionSearchGuardSource)+len(clean))
 	next = append(next, auctionSearchGuardSource...)
 	next = append(next, clean...)
 	return next, !bytes.Equal(next, data), nil
+}
+
+func rewriteAuctionSearchReplacement(data []byte) ([]byte, error) {
+	lower := bytes.ToLower(data)
+	target := []byte("0x084d75bc")
+	original := []byte("interceptor.replace")
+	replacement := []byte(strings.ToLower(auctionSearchGuardReplace))
+	originalAt := -1
+	replacementAt := -1
+
+	for offset := 0; offset < len(lower); {
+		rel := bytes.Index(lower[offset:], target)
+		if rel < 0 {
+			break
+		}
+		targetAt := offset + rel
+		start := targetAt - 128
+		if start < 0 {
+			start = 0
+		}
+		prefix := lower[start:targetAt]
+		if at := bytes.LastIndex(prefix, original); at >= 0 && directAuctionTargetCall(prefix[at+len(original):]) {
+			if originalAt >= 0 {
+				return nil, fmt.Errorf("multiple auction search replacements found")
+			}
+			originalAt = start + at
+		}
+		if at := bytes.LastIndex(prefix, replacement); at >= 0 && directAuctionTargetCall(prefix[at+len(replacement):]) {
+			if replacementAt >= 0 {
+				return nil, fmt.Errorf("multiple guarded auction search replacements found")
+			}
+			replacementAt = start + at
+		}
+		offset = targetAt + len(target)
+	}
+
+	if originalAt >= 0 && replacementAt >= 0 {
+		return nil, fmt.Errorf("mixed original and guarded auction search replacements found")
+	}
+	if replacementAt >= 0 {
+		return data, nil
+	}
+	if originalAt < 0 {
+		return nil, fmt.Errorf("auction search replacement at 0x084D75BC not found")
+	}
+
+	next := make([]byte, 0, len(data)-len(original)+len(auctionSearchGuardReplace))
+	next = append(next, data[:originalAt]...)
+	next = append(next, auctionSearchGuardReplace...)
+	next = append(next, data[originalAt+len(original):]...)
+	return next, nil
+}
+
+func directAuctionTargetCall(between []byte) bool {
+	compact := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\r', '\n':
+			return -1
+		default:
+			return r
+		}
+	}, string(between))
+	return compact == "(ptr(" || compact == "(ptr('" || compact == "(ptr(\""
 }
 
 func consumeLineEndings(data []byte, offset, max int) int {
