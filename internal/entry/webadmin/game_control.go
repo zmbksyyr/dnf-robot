@@ -74,6 +74,10 @@ func (s *Server) handleMaxUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, s.serverScriptSnapshot())
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -104,20 +108,83 @@ func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "script": script, "error": "script path is a directory"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	status, started := s.startServerScript(strings.TrimSpace(req.Action), script)
+	if !started {
+		status.OK = false
+		status.Error = "another server script is already running"
+		writeJSON(w, status)
+		return
+	}
+	writeJSON(w, status)
+}
+
+const serverScriptTimeout = 10 * time.Minute
+
+type serverScriptStatus struct {
+	OK         bool   `json:"ok"`
+	Running    bool   `json:"running"`
+	Action     string `json:"action,omitempty"`
+	Script     string `json:"script,omitempty"`
+	StartedAt  string `json:"started_at,omitempty"`
+	FinishedAt string `json:"finished_at,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Output     string `json:"output,omitempty"`
+}
+
+func (s *Server) serverScriptSnapshot() serverScriptStatus {
+	s.serverScriptMu.Lock()
+	defer s.serverScriptMu.Unlock()
+	status := s.serverScript
+	status.OK = true
+	return status
+}
+
+func (s *Server) startServerScript(action, script string) (serverScriptStatus, bool) {
+	s.serverScriptMu.Lock()
+	if s.serverScript.Running {
+		status := s.serverScript
+		s.serverScriptMu.Unlock()
+		return status, false
+	}
+	status := serverScriptStatus{
+		OK:        true,
+		Running:   true,
+		Action:    action,
+		Script:    script,
+		StartedAt: time.Now().Format(time.RFC3339),
+	}
+	s.serverScript = status
+	s.serverScriptMu.Unlock()
+
+	go s.runServerScript(script)
+	return status, true
+}
+
+func (s *Server) runServerScript(script string) {
+	ctx, cancel := context.WithTimeout(context.Background(), serverScriptTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", script)
 	cmd.Dir = "/root"
 	out, err := cmd.CombinedOutput()
+	message := ""
 	if ctx.Err() == context.DeadlineExceeded {
-		writeJSON(w, map[string]interface{}{"ok": false, "script": script, "output": string(out), "error": "script timed out"})
-		return
+		message = "script timed out after 10 minutes"
+	} else if err != nil {
+		message = err.Error()
 	}
-	if err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "script": script, "output": string(out), "error": err.Error()})
-		return
+	s.serverScriptMu.Lock()
+	s.serverScript.Running = false
+	s.serverScript.FinishedAt = time.Now().Format(time.RFC3339)
+	s.serverScript.Error = message
+	s.serverScript.Output = truncateServerScriptOutput(string(out), 64*1024)
+	s.serverScriptMu.Unlock()
+}
+
+func truncateServerScriptOutput(output string, limit int) string {
+	if limit <= 0 || len(output) <= limit {
+		return output
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "script": script, "output": string(out)})
+	return output[len(output)-limit:]
 }
 
 func (s *Server) handleMonitorService(w http.ResponseWriter, _ *http.Request) {

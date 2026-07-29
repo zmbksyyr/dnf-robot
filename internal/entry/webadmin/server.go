@@ -22,6 +22,8 @@ type Server struct {
 	partyCompatFirstFailure time.Time
 	partyCompatNextRetry    time.Time
 	partyCompatLastError    string
+	serverScriptMu          lockhub.Locker
+	serverScript            serverScriptStatus
 }
 
 func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
