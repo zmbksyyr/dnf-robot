@@ -95,6 +95,18 @@ func AvatarUsableByJob(item shared.EquipmentCatalogItem, job int) bool {
 	return false
 }
 
+// AvatarRenderable filters PVF records explicitly marked as broken. Do not
+// infer validity from outfit style: tattoos, swimwear and beach pieces are
+// legitimate avatars.
+func AvatarRenderable(item shared.EquipmentCatalogItem) bool {
+	if item.ID == 0 {
+		return false
+	}
+	meta := strings.ToLower(strings.TrimSpace(item.Name + " " + item.Path + " " + item.Icon))
+	name := strings.ToLower(strings.TrimSpace(item.Name))
+	return name != "" && name != "errorstring" && !strings.HasPrefix(name, "name_") && !strings.Contains(meta, "errorstring")
+}
+
 // FilterAvatarSupportedJobs intersects the configured creation jobs with the
 // jobs that can fill the configured minimum number of avatar slots from PVF.
 // A missing avatar catalog keeps the configured jobs so environments without
@@ -115,7 +127,7 @@ func FilterAvatarSupportedJobs(jobs []int, items []shared.EquipmentCatalogItem, 
 	}
 	eligible := make([]shared.EquipmentCatalogItem, 0)
 	for _, item := range items {
-		if item.ID == 0 || item.Expire {
+		if item.ID == 0 || item.Expire || !AvatarRenderable(item) {
 			continue
 		}
 		if _, ok := wantedTypes[item.ItemType]; ok {
@@ -222,7 +234,7 @@ func SelectAvatar(items []shared.EquipmentCatalogItem, job int, rc robotconfig.R
 	}
 	for _, item := range items {
 		slot, wanted := slotByItemType[item.ItemType]
-		if !wanted || item.ID == 0 || item.Expire || !AvatarUsableByJob(item, job) {
+		if !wanted || item.ID == 0 || item.Expire || !AvatarRenderable(item) || !AvatarUsableByJob(item, job) {
 			continue
 		}
 		candidatesBySlot[slot] = append(candidatesBySlot[slot], item)

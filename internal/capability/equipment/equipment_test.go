@@ -86,10 +86,10 @@ func TestSelectEquipmentScansCatalogAcrossConfiguredSlots(t *testing.T) {
 
 func TestSelectAvatarScansCatalogAcrossConfiguredSlots(t *testing.T) {
 	items := []shared.EquipmentCatalogItem{
-		{ID: 100, ItemType: 20, UseJob: []int{1}},
-		{ID: 101, ItemType: 20, UseJob: []int{2}},
-		{ID: 200, ItemType: 21, UseJob: []int{2}},
-		{ID: 900, ItemType: 29},
+		{ID: 100, ItemType: 20, Name: "hat", UseJob: []int{1}},
+		{ID: 101, ItemType: 20, Name: "other hat", UseJob: []int{2}},
+		{ID: 200, ItemType: 21, Name: "hair", UseJob: []int{2}},
+		{ID: 900, ItemType: 29, Name: "aura"},
 	}
 
 	selected := SelectAvatar(items, 1, robotconfig.RuntimeConfig{AvatarSlots: []int{0, 1, 9}}, func(int) int { return 0 })
@@ -99,13 +99,39 @@ func TestSelectAvatarScansCatalogAcrossConfiguredSlots(t *testing.T) {
 	}
 }
 
+func TestSelectAvatarFiltersPVFErrorStringItemsOnly(t *testing.T) {
+	items := []shared.EquipmentCatalogItem{
+		{ID: 100, ItemType: 20, Name: "ErrorString", Path: "avatar/cap/broken.equ", UseJob: []int{7}},
+		{ID: 101, ItemType: 20, Name: "safe hat", Path: "avatar/cap/safe.equ", UseJob: []int{7}},
+		{ID: 200, ItemType: 23, Name: "party tank top", Path: "avatar/coat/tank.equ", UseJob: []int{7}},
+		{ID: 300, ItemType: 24, Name: "beach pants", Path: "avatar/pants/beach.equ", UseJob: []int{7}},
+	}
+
+	selected := SelectAvatar(items, 7, robotconfig.RuntimeConfig{AvatarSlots: []int{0, 3, 4}}, func(int) int { return 0 })
+
+	if len(selected) != 3 || selected[0].ID != 101 || selected[3].ID != 200 || selected[4].ID != 300 {
+		t.Fatalf("selected safe avatar = %+v", selected)
+	}
+}
+
+func TestAvatarRenderableRejectsMissingAndPlaceholderNames(t *testing.T) {
+	for _, item := range []shared.EquipmentCatalogItem{
+		{ID: 100, ItemType: 26},
+		{ID: 101, ItemType: 26, Name: "name_101"},
+	} {
+		if AvatarRenderable(item) {
+			t.Fatalf("invalid avatar remained available: %+v", item)
+		}
+	}
+}
+
 func TestFilterAvatarSupportedJobsIntersectsConfiguredJobsWithPVFSlots(t *testing.T) {
 	items := make([]shared.EquipmentCatalogItem, 0)
 	for slot := 0; slot < 8; slot++ {
-		items = append(items, shared.EquipmentCatalogItem{ID: 1000 + slot, ItemType: 20 + slot, UseJob: []int{1}})
+		items = append(items, shared.EquipmentCatalogItem{ID: 1000 + slot, ItemType: 20 + slot, Name: "job one avatar", UseJob: []int{1}})
 	}
 	for slot := 0; slot < 7; slot++ {
-		items = append(items, shared.EquipmentCatalogItem{ID: 2000 + slot, ItemType: 20 + slot, UseJob: []int{8}})
+		items = append(items, shared.EquipmentCatalogItem{ID: 2000 + slot, ItemType: 20 + slot, Name: "job eight avatar", UseJob: []int{8}})
 	}
 
 	got := FilterAvatarSupportedJobs([]int{1, 8, 10}, items, robotconfig.RuntimeConfig{MinAvatarSlots: 8})
