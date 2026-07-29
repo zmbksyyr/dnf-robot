@@ -17,6 +17,11 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 		return nil, err
 	}
 	candidates = append(candidates, legacy...)
+	viewOrphans, err := r.orphanCharacViewCandidates(req, seen)
+	if err != nil {
+		return nil, err
+	}
+	candidates = append(candidates, viewOrphans...)
 	if req.InternalConfirmedBroken && len(req.UIDs) > 0 {
 		for _, uid := range req.UIDs {
 			if uid <= 0 || seen[uid] {
@@ -47,6 +52,60 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 		candidates = append(candidates, orphans...)
 	}
 	return candidates, nil
+}
+
+// orphanCharacViewCandidates finds charac_view rows left behind after a
+// creation/cleanup failure. They are safe to remove only when no account,
+// character, or robot registry row still owns the UID.
+func (r *SQLRepository) orphanCharacViewCandidates(req robotcap.CleanupRequest, seen map[int]bool) ([]robotcap.CleanupCandidate, error) {
+	query := `SELECT CAST(v.m_id AS UNSIGNED)
+FROM taiwan_cain.charac_view v
+LEFT JOIN d_starsky.robot_registry r ON r.uid=CAST(v.m_id AS UNSIGNED)
+LEFT JOIN d_taiwan.accounts a ON a.UID=CAST(v.m_id AS UNSIGNED)
+LEFT JOIN taiwan_cain.charac_info c ON c.m_id=CAST(v.m_id AS UNSIGNED)
+WHERE r.uid IS NULL AND a.UID IS NULL AND c.m_id IS NULL
+AND CAST(v.m_id AS UNSIGNED)>0`
+	args := make([]interface{}, 0, len(req.UIDs)+2)
+	if len(req.UIDs) > 0 {
+		query += " AND CAST(v.m_id AS UNSIGNED) IN (" + foundsql.Placeholders(len(req.UIDs)) + ")"
+		for _, uid := range req.UIDs {
+			args = append(args, uid)
+		}
+	} else if req.MinUID > 0 || req.MaxUID > 0 {
+		minUID, maxUID := req.MinUID, req.MaxUID
+		if maxUID <= 0 {
+			maxUID = minUID
+		}
+		if minUID <= 0 {
+			minUID = maxUID
+		}
+		if minUID > maxUID {
+			minUID, maxUID = maxUID, minUID
+		}
+		query += " AND CAST(v.m_id AS UNSIGNED) BETWEEN ? AND ?"
+		args = append(args, minUID, maxUID)
+	}
+	rows, err := r.Query(query+" ORDER BY CAST(v.m_id AS UNSIGNED)", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []robotcap.CleanupCandidate
+	for rows.Next() {
+		var uid int
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		if uid <= 0 || seen[uid] {
+			continue
+		}
+		seen[uid] = true
+		out = append(out, robotcap.CleanupCandidate{
+			UID: uid, Name: "orphan-charac-view", Account: fmt.Sprintf("%d", uid),
+			Reason: "orphan charac_view metadata without account or character",
+		})
+	}
+	return out, rows.Err()
 }
 
 func (r *SQLRepository) cleanupLegacyDummyCandidates(req robotcap.CleanupRequest, seen map[int]bool) ([]robotcap.CleanupCandidate, error) {
