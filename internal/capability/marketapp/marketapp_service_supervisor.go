@@ -16,6 +16,12 @@ import (
 
 const marketServiceRestartCooldown = 10 * time.Minute
 
+const (
+	marketServiceStabilitySamples  = 3
+	marketServiceStabilityInterval = 500 * time.Millisecond
+	marketServiceStabilityTimeout  = 4 * time.Second
+)
+
 type marketServiceSpec struct {
 	name      string
 	addr      string
@@ -155,10 +161,23 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 		if tcpReady(service.addr, 500*time.Millisecond) {
 			status.Listening = true
 			status.PID = marketServicePID(service.bin)
-			time.Sleep(8 * time.Second)
+			var stable bool
+			status.PID, status.Listening, stable = waitForMarketServiceStability(
+				marketServiceStabilitySamples,
+				marketServiceStabilityInterval,
+				marketServiceStabilityTimeout,
+				func() (int, bool) {
+					return marketServicePID(service.bin), tcpReady(service.addr, 500*time.Millisecond)
+				},
+			)
 			status.CheckedAt = time.Now()
-			status.Listening = tcpReady(service.addr, 500*time.Millisecond)
-			status.PID = marketServicePID(service.bin)
+			if stable {
+				status.Status = MarketServiceStatusReady
+				status.Message = service.addr
+				a.setMarketServiceStatus(status)
+				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
+				return true
+			}
 			if status.PID <= 0 {
 				status.Status = MarketServiceStatusProcessExited
 				status.Message = "process exited during startup stability window"
@@ -173,11 +192,11 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 				a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 				return false
 			}
-			status.Status = MarketServiceStatusReady
-			status.Message = service.addr
+			status.Status = MarketServiceStatusPortReadyButUnstable
+			status.Message = "service did not remain stable during startup window"
 			a.setMarketServiceStatus(status)
 			a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
-			return true
+			return false
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -186,6 +205,33 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 	a.setMarketServiceStatus(status)
 	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: status.Status, Message: status.Message})
 	return false
+}
+
+func waitForMarketServiceStability(samples int, interval, timeout time.Duration, probe func() (int, bool)) (int, bool, bool) {
+	if samples < 1 {
+		samples = 1
+	}
+	deadline := time.Now().Add(timeout)
+	stable := 0
+	lastPID := 0
+	lastListening := false
+	for {
+		lastPID, lastListening = probe()
+		if lastPID > 0 && lastListening {
+			stable++
+			if stable >= samples {
+				return lastPID, lastListening, true
+			}
+		} else {
+			stable = 0
+		}
+		if !time.Now().Before(deadline) {
+			return lastPID, lastListening, false
+		}
+		if interval > 0 {
+			time.Sleep(interval)
+		}
+	}
 }
 
 func validateMarketServiceItemInfo(path string) error {

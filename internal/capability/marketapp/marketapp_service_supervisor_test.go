@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMarketServiceSpecsFollowDFGameRoot(t *testing.T) {
@@ -64,6 +65,19 @@ func TestMarketServicesToRestoreKeepsStoppedServicesDown(t *testing.T) {
 	got := marketServicesToRestore(services, map[string]bool{marketServiceNameAuction: true})
 	if len(got) != 1 || got[0].name != marketServiceNameAuction {
 		t.Fatalf("services=%+v", got)
+	}
+}
+
+func TestWaitForMarketServiceStabilityRequiresConsecutiveSamples(t *testing.T) {
+	probes := []bool{true, false, true, true, true}
+	calls := 0
+	pid, listening, stable := waitForMarketServiceStability(3, 0, time.Second, func() (int, bool) {
+		value := probes[calls]
+		calls++
+		return 123, value
+	})
+	if !stable || pid != 123 || !listening || calls != len(probes) {
+		t.Fatalf("pid=%d listening=%t stable=%t calls=%d", pid, listening, stable, calls)
 	}
 }
 
