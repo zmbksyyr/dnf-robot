@@ -17,13 +17,20 @@ const auctionSearchGuardEnd = "// DP2_AUCTION_SEARCH_HOOK_GUARD_END"
 const auctionSearchGuardSource = auctionSearchGuardBegin + `
 (function () {
     var root = (typeof globalThis !== 'undefined') ? globalThis : this;
-    var key = '__dp2_auction_search_hook_guard_v3__';
+    var key = '__dp2_auction_search_hook_guard_v4__';
     if (root[key]) {
         return;
     }
     root[key] = true;
 
-    var targetKey = ptr('0x084D75BC').toString().toLowerCase();
+    var target = ptr('0x084D75BC');
+    var targetKey = target.toString().toLowerCase();
+    var nativeSearch = new NativeFunction(
+        target,
+        'int',
+        ['pointer', 'pointer', 'pointer', 'int'],
+        { abi: 'sysv' }
+    );
     var rawReplace = Interceptor.replace;
 
     function addrOf(target) {
@@ -38,15 +45,61 @@ const auctionSearchGuardSource = auctionSearchGuardBegin + `
         }
     }
 
+    function installCompatibleSearch() {
+        var replacement = new NativeCallback(function (dispatcher, user, src, a4) {
+            try {
+                if (!src.isNull() &&
+                    typeof G_CDataManager === 'function' &&
+                    typeof CDataManager_find_item === 'function' &&
+                    typeof CItem_getItemGroupName === 'function' &&
+                    typeof api_get_jewel_socket_data === 'function') {
+                    var count = src.add(5).readU8();
+                    if (count <= 100) {
+                        for (var i = 0; i < count; i++) {
+                            var itemId = src.add(54 + 137 * i).readU32();
+                            if (itemId === 0) {
+                                continue;
+                            }
+                            var item = CDataManager_find_item(G_CDataManager(), itemId);
+                            if (item.isNull()) {
+                                continue;
+                            }
+                            var group = CItem_getItemGroupName(item);
+                            if (group <= 0 || group >= 59) {
+                                continue;
+                            }
+                            var equipmentId = src.add(76 + 137 * i).readU32();
+                            var socketData = api_get_jewel_socket_data(mysql_frida, equipmentId);
+
+                            // api_get_jewel_socket_data always allocates a buffer.
+                            // Byte zero is its actual "record exists" indicator.
+                            // Preserve native bytes for normal/untracked equipment.
+                            if (socketData.isNull() || socketData.add(0).readU8() === 0) {
+                                continue;
+                            }
+                            Memory.copy(src.add(106 + 137 * i), socketData, 30);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log('[dp2 guard] socket overlay skipped: ' + e);
+            }
+            return nativeSearch(dispatcher, user, src, a4);
+        }, 'int', ['pointer', 'pointer', 'pointer', 'int']);
+
+        rawReplace.call(Interceptor, target, replacement);
+        console.log('[dp2 guard] compatible auction search installed at ' + targetKey);
+    }
+
     Interceptor.replace = function (target, replacement) {
         if (addrOf(target) !== targetKey) {
             return rawReplace.call(Interceptor, target, replacement);
         }
 
-        // Skip only DP2's auction-result replacement, then restore Frida's API
-        // unchanged so every later equipment/socket hook is installed normally.
+        // Replace only DP2's incompatible auction-result hook, then restore
+        // Frida's API unchanged for every later equipment/socket hook.
         Interceptor.replace = rawReplace;
-        console.log('[dp2 guard] skipped auction search replacement at ' + addrOf(target));
+        installCompatibleSearch();
         return;
     };
 

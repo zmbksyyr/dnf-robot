@@ -40,18 +40,16 @@ func TestUpsertAuctionSearchGuardUpgradesLegacyBlock(t *testing.T) {
 	if bytes.Count(next, []byte(auctionSearchGuardBegin)) != 1 || strings.Contains(string(next), "legacy guard") {
 		t.Fatalf("legacy block was not replaced:\n%s", next)
 	}
-	if !strings.Contains(string(next), "skipped auction search replacement") {
+	if !strings.Contains(string(next), "compatible auction search installed") {
 		t.Fatal("replacement guard source is missing")
 	}
 }
 
-func TestAuctionSearchGuardDoesNotTouchSocketData(t *testing.T) {
+func TestAuctionSearchGuardOnlyOverlaysTrackedSocketData(t *testing.T) {
 	source := auctionSearchGuardSource
 	for _, forbidden := range []string{
 		"Interceptor.attach",
 		"Interceptor.revert",
-		"Memory.copy",
-		"api_get_jewel_socket_data",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("guard must not contain %q", forbidden)
@@ -62,6 +60,14 @@ func TestAuctionSearchGuardDoesNotTouchSocketData(t *testing.T) {
 	}
 	if !strings.Contains(source, "rawReplace.call(Interceptor, target, replacement)") {
 		t.Fatal("guard must forward unrelated replacements unchanged")
+	}
+	check := strings.Index(source, "socketData.add(0).readU8() === 0")
+	copy := strings.Index(source, "Memory.copy(src.add(106 + 137 * i), socketData, 30)")
+	if check < 0 || copy < 0 || check > copy {
+		t.Fatal("guard must verify a DP2 socket record before overlaying native bytes")
+	}
+	if !strings.Contains(source, "return nativeSearch(dispatcher, user, src, a4)") {
+		t.Fatal("guard must finish through the native auction search function")
 	}
 }
 
