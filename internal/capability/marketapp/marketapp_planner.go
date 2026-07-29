@@ -111,7 +111,7 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 		hasEndurance := false
 		itemType := plan.Item.ItemType
 		if plan.IsEquipment {
-			addInfo = 0
+			addInfo = 1
 			itemType = auctionEquipmentProtocolItemType(plan.Item)
 			if auctionEquipmentHasDurability(plan.Item) {
 				hasEndurance = true

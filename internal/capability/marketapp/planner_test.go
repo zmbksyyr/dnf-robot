@@ -269,7 +269,7 @@ func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 		t.Fatalf("actions = %d, want 2", len(result.Actions))
 	}
 	for _, action := range result.Actions {
-		if action.Count != 1 || action.InstantPrice <= 88888 || action.CountAddInfo != 0 {
+		if action.Count != 1 || action.InstantPrice <= 88888 || action.CountAddInfo != 1 {
 			t.Fatalf("unexpected equipment action: %#v", action)
 		}
 		if action.Upgrade < 7 || action.Upgrade > 13 {
