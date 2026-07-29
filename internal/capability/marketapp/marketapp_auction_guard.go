@@ -128,6 +128,11 @@ func (a *App) InstallAuctionSearchGuard(req AuctionSearchGuardRequest) (AuctionS
 	result := AuctionSearchGuardResult{Path: path}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			result.Message = "dp2 script not found; auction guard is not applicable"
+			a.appendLog(LogEvent{Type: "auction_guard", Status: marketLogStatusSkipped, Message: path})
+			return result, nil
+		}
 		return result, fmt.Errorf("read %s: %w", path, err)
 	}
 	next, changed, err := upsertAuctionSearchGuard(data)
