@@ -43,6 +43,8 @@ func TestRequiresValidKeypair(t *testing.T) {
 		"robotConfigUpdate",
 		"cleanupRobots",
 		"cleanupRobotsAsync",
+		"dangerousDeleteUnlock",
+		"dangerousDeleteAsync",
 	}
 	for _, cmd := range allowed {
 		if tcpapi.RequiresValidKeypair(cmd) {

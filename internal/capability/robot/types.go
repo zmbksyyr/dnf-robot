@@ -193,6 +193,47 @@ type CleanupResult struct {
 	Skipped    int                `json:"skipped"`
 }
 
+const (
+	DangerousDeleteModeCID   = "cid"
+	DangerousDeleteModeUID   = "uid"
+	DangerousDeleteModeRange = "range"
+)
+
+type DangerousDeleteRequest struct {
+	Mode   string `json:"mode"`
+	CID    int    `json:"cid"`
+	UID    int    `json:"uid"`
+	MinUID int    `json:"uid_min"`
+	MaxUID int    `json:"uid_max"`
+}
+
+type DangerousDeletePlan struct {
+	Mode           string `json:"mode"`
+	UID            int    `json:"uid,omitempty"`
+	CID            int    `json:"cid,omitempty"`
+	MinUID         int    `json:"uid_min,omitempty"`
+	MaxUID         int    `json:"uid_max,omitempty"`
+	CharacterName  string `json:"character_name,omitempty"`
+	AccountCount   int    `json:"account_count"`
+	CharacterCount int    `json:"character_count"`
+	RegistryCount  int    `json:"registry_count"`
+	UIDs           []int  `json:"-"`
+	CIDs           []int  `json:"-"`
+	RegistryUIDs   []int  `json:"-"`
+}
+
+type DangerousDeleteResult struct {
+	Mode           string `json:"mode"`
+	UID            int    `json:"uid,omitempty"`
+	CID            int    `json:"cid,omitempty"`
+	MinUID         int    `json:"uid_min,omitempty"`
+	MaxUID         int    `json:"uid_max,omitempty"`
+	AccountCount   int    `json:"account_count"`
+	CharacterCount int    `json:"character_count"`
+	RegistryCount  int    `json:"registry_count"`
+	Deleted        bool   `json:"deleted"`
+}
+
 func CleanupOperationSummary(res CleanupResult, err error) string {
 	if err != nil {
 		return err.Error()
@@ -202,7 +243,7 @@ func CleanupOperationSummary(res CleanupResult, err error) string {
 
 func IsStructuralOperation(typ string) bool {
 	switch strings.TrimSpace(typ) {
-	case "create", "cleanup":
+	case "create", "cleanup", "dangerous_delete":
 		return true
 	default:
 		return false

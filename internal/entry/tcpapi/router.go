@@ -23,6 +23,9 @@ func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) string 
 	if response, handled := handleRobotCommand(cmd, pkt, manager); handled {
 		return response
 	}
+	if response, handled := handleDangerousDeleteCommand(clientID, cmd, pkt, manager); handled {
+		return response
+	}
 	if response, handled := handleSystemCommand(cmd, pkt, manager); handled {
 		return response
 	}
