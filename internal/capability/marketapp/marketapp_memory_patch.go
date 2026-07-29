@@ -17,6 +17,7 @@ type auctionMemoryPatchSpec struct {
 	fallbackAddr int64
 	expect       byte
 	alternates   []byte
+	levelRange   bool
 	value        byte
 	pattern      []byte
 	targetOffset int
@@ -24,11 +25,18 @@ type auctionMemoryPatchSpec struct {
 
 var auctionMemoryPatchSpecs = []auctionMemoryPatchSpec{
 	{name: "refine_average_price_valid", fallbackAddr: 0x0806523f, expect: 0x07, value: 0x7f, targetOffset: 8, pattern: []byte{0x45, 0x0c, 0x88, 0x45, 0xfc, 0x80, 0x7d, 0xfc, 0x00, 0x76, 0x07, 0xb8, 0x00, 0x00, 0x00, 0x00}},
-	{name: "level_operate_parameter", fallbackAddr: 0x080811d7, expect: 0x46, alternates: []byte{0x55}, value: 0x7f, targetOffset: 8, pattern: []byte{0x8b, 0x45, 0x20, 0x8b, 0x40, 0x14, 0x83, 0xf8, 0x00, 0x7e, 0x0a, 0xb8, 0x1b, 0x00, 0x00, 0x00}},
+	{name: "level_operate_parameter", fallbackAddr: 0x080811d7, expect: 0x46, alternates: []byte{0x55}, levelRange: true, value: 0x7f, targetOffset: 8, pattern: []byte{0x8b, 0x45, 0x20, 0x8b, 0x40, 0x14, 0x83, 0xf8, 0x00, 0x7e, 0x0a, 0xb8, 0x1b, 0x00, 0x00, 0x00}},
 	{name: "refine_search_valid", fallbackAddr: 0x0808281f, expect: 0x07, value: 0x7f, targetOffset: 8, pattern: []byte{0x45, 0x0c, 0x88, 0x45, 0xfc, 0x80, 0x7d, 0xfc, 0x00, 0x0f, 0x96, 0xc0, 0xc9, 0xc3, 0x90, 0x55}},
-	{name: "level_specific", fallbackAddr: 0x0808292d, expect: 0x46, alternates: []byte{0x55}, value: 0x7f, targetOffset: 8, pattern: []byte{0x8b, 0x45, 0x0c, 0x8b, 0x40, 0x0c, 0x83, 0xf8, 0x00, 0x7f, 0x07, 0xb8, 0x01, 0x00, 0x00, 0x00}},
-	{name: "level_category_min", fallbackAddr: 0x08083472, expect: 0x46, alternates: []byte{0x55}, value: 0x7f, targetOffset: 8, pattern: []byte{0x8b, 0x45, 0x0c, 0x0f, 0xb6, 0x40, 0x09, 0x3c, 0x00, 0x77, 0x0b, 0x8b, 0x45, 0x0c, 0x0f, 0xb6}},
-	{name: "level_category_max", fallbackAddr: 0x0808347d, expect: 0x46, alternates: []byte{0x55}, value: 0x7f, targetOffset: 8, pattern: []byte{0x8b, 0x45, 0x0c, 0x0f, 0xb6, 0x40, 0x0a, 0x3c, 0x00, 0x76, 0x0a, 0xb8, 0x1b, 0x00, 0x00, 0x00}},
+	{name: "level_specific", fallbackAddr: 0x0808292d, expect: 0x46, alternates: []byte{0x55}, levelRange: true, value: 0x7f, targetOffset: 8, pattern: []byte{0x8b, 0x45, 0x0c, 0x8b, 0x40, 0x0c, 0x83, 0xf8, 0x00, 0x7f, 0x07, 0xb8, 0x01, 0x00, 0x00, 0x00}},
+	{name: "level_category_min", fallbackAddr: 0x08083472, expect: 0x46, alternates: []byte{0x55}, levelRange: true, value: 0x7f, targetOffset: 8, pattern: []byte{0x8b, 0x45, 0x0c, 0x0f, 0xb6, 0x40, 0x09, 0x3c, 0x00, 0x77, 0x0b, 0x8b, 0x45, 0x0c, 0x0f, 0xb6}},
+	{name: "level_category_max", fallbackAddr: 0x0808347d, expect: 0x46, alternates: []byte{0x55}, levelRange: true, value: 0x7f, targetOffset: 8, pattern: []byte{0x8b, 0x45, 0x0c, 0x0f, 0xb6, 0x40, 0x0a, 0x3c, 0x00, 0x76, 0x0a, 0xb8, 0x1b, 0x00, 0x00, 0x00}},
+}
+
+type locatedAuctionMemoryPatch struct {
+	spec       auctionMemoryPatchSpec
+	entryIndex int
+	address    int64
+	before     byte
 }
 
 // InspectAuctionMemoryPatch reads the running auction process without changing it.
@@ -100,6 +108,8 @@ func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
 		return result, err
 	}
 	err = processfoundation.WithMemoryFile(pid, true, segments[0].start, func(mem processfoundation.MemoryFile, _ bool) error {
+		plans := make([]locatedAuctionMemoryPatch, 0, len(auctionMemoryPatchSpecs))
+		preflightOK := true
 		for _, spec := range auctionMemoryPatchSpecs {
 			entry := AuctionMemoryPatchEntry{
 				Name:   spec.name,
@@ -111,6 +121,7 @@ func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
 				entry.Address = fmt.Sprintf("0x%08x", spec.fallbackAddr)
 				entry.Message = err.Error()
 				result.Entries = append(result.Entries, entry)
+				preflightOK = false
 				continue
 			}
 			entry.Address = fmt.Sprintf("0x%08x", address)
@@ -118,42 +129,110 @@ func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
 			if _, err := mem.ReadAt(buf[:], address); err != nil {
 				entry.Message = err.Error()
 				result.Entries = append(result.Entries, entry)
+				preflightOK = false
 				continue
 			}
 			entry.Before = buf[0]
-			switch {
-			case buf[0] == spec.value:
-			case isSupportedAuctionPatchOriginal(spec, buf[0]):
-				if _, err := mem.WriteAt([]byte{spec.value}, address); err != nil {
-					entry.Message = err.Error()
-					result.Entries = append(result.Entries, entry)
-					continue
-				}
-				entry.Changed = true
-				result.Patched++
-			default:
+			entry.After = buf[0]
+			if buf[0] != spec.value && !isSupportedAuctionPatchOriginal(spec, buf[0]) {
 				entry.Message = fmt.Sprintf("unexpected byte 0x%02x at %s", buf[0], entry.Address)
 				result.Entries = append(result.Entries, entry)
+				preflightOK = false
 				continue
 			}
-			if _, err := mem.ReadAt(buf[:], address); err != nil {
-				entry.Message = err.Error()
-				result.Entries = append(result.Entries, entry)
-				continue
-			}
-			entry.After = buf[0]
-			entry.OK = entry.After == spec.value
-			if !entry.OK {
-				entry.Message = "patch value not applied"
-			}
+			entry.OK = buf[0] == spec.value
 			result.Entries = append(result.Entries, entry)
+			plans = append(plans, locatedAuctionMemoryPatch{spec: spec, entryIndex: len(result.Entries) - 1, address: address, before: buf[0]})
 		}
-		return nil
+		if !preflightOK {
+			for _, plan := range plans {
+				entry := &result.Entries[plan.entryIndex]
+				if !entry.OK && entry.Message == "" {
+					entry.Message = "not applied because patch preflight failed"
+				}
+			}
+			return nil
+		}
+		patched, err := applyAuctionMemoryPatches(mem, plans, result.Entries)
+		result.Patched = patched
+		return err
 	})
 	if err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+func applyAuctionMemoryPatches(mem processfoundation.MemoryFile, plans []locatedAuctionMemoryPatch, entries []AuctionMemoryPatchEntry) (int, error) {
+	written := make([]locatedAuctionMemoryPatch, 0, len(plans))
+	patched := 0
+	for _, plan := range plans {
+		entry := &entries[plan.entryIndex]
+		if plan.before == plan.spec.value {
+			entry.OK = true
+			continue
+		}
+		written = append(written, plan)
+		if err := writeAuctionPatchByte(mem, plan.address, plan.spec.value); err != nil {
+			entry.Message = err.Error()
+			rollbackErr := rollbackAuctionMemoryPatches(mem, written, entries)
+			return 0, combineAuctionPatchErrors(err, rollbackErr)
+		}
+		var verify [1]byte
+		if _, err := mem.ReadAt(verify[:], plan.address); err != nil || verify[0] != plan.spec.value {
+			if err == nil {
+				err = fmt.Errorf("patch value not applied at 0x%08x", plan.address)
+			}
+			entry.Message = err.Error()
+			rollbackErr := rollbackAuctionMemoryPatches(mem, written, entries)
+			return 0, combineAuctionPatchErrors(err, rollbackErr)
+		}
+		entry.After = verify[0]
+		entry.Changed = true
+		entry.OK = true
+		patched++
+	}
+	return patched, nil
+}
+
+func rollbackAuctionMemoryPatches(mem processfoundation.MemoryFile, written []locatedAuctionMemoryPatch, entries []AuctionMemoryPatchEntry) error {
+	var failures []string
+	for i := len(written) - 1; i >= 0; i-- {
+		plan := written[i]
+		if err := writeAuctionPatchByte(mem, plan.address, plan.before); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", plan.spec.name, err))
+			continue
+		}
+		entry := &entries[plan.entryIndex]
+		entry.After = plan.before
+		entry.Changed = false
+		entry.OK = plan.before == plan.spec.value
+		if !entry.OK {
+			entry.Message = "rolled back after patch failure"
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("rollback failed: %s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func writeAuctionPatchByte(mem io.WriterAt, address int64, value byte) error {
+	n, err := mem.WriteAt([]byte{value}, address)
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+func combineAuctionPatchErrors(patchErr, rollbackErr error) error {
+	if rollbackErr == nil {
+		return patchErr
+	}
+	return fmt.Errorf("%v; %v", patchErr, rollbackErr)
 }
 
 func (a *App) logAuctionMemoryPatchResult(result AuctionMemoryPatchResult, manual bool) {
@@ -251,6 +330,9 @@ func patchPatternMatch(window []byte, spec auctionMemoryPatchSpec) bool {
 }
 
 func isSupportedAuctionPatchOriginal(spec auctionMemoryPatchSpec, value byte) bool {
+	if spec.levelRange && value > 0 && value < spec.value {
+		return true
+	}
 	if value == spec.expect {
 		return true
 	}
