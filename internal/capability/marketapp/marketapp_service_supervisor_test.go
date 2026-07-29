@@ -59,6 +59,14 @@ func TestValidateMarketServiceItemInfo(t *testing.T) {
 	}
 }
 
+func TestMarketServicesToRestoreKeepsStoppedServicesDown(t *testing.T) {
+	services := []marketServiceSpec{{name: marketServiceNameAuction}, {name: marketServiceNamePoint}}
+	got := marketServicesToRestore(services, map[string]bool{marketServiceNameAuction: true})
+	if len(got) != 1 || got[0].name != marketServiceNameAuction {
+		t.Fatalf("services=%+v", got)
+	}
+}
+
 func TestMarketServiceLaunchUsesRunScriptArguments(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "home", "neople")
 	auctionDir := filepath.Join(root, "auction")

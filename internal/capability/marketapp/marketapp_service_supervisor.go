@@ -303,14 +303,38 @@ func (a *App) marketServiceSpecByName(name string) (marketServiceSpec, bool) {
 	return marketServiceSpec{}, false
 }
 
-func (a *App) restartMarketServicesAfterItemInfo() error {
+func (a *App) marketServiceRunningStates() map[string]bool {
+	states := make(map[string]bool)
+	for _, service := range a.marketServiceSpecs() {
+		states[service.name] = marketServicePID(service.bin) > 0 || tcpReady(service.addr, 200*time.Millisecond)
+	}
+	return states
+}
+
+func marketServicesToRestore(services []marketServiceSpec, running map[string]bool) []marketServiceSpec {
+	active := make([]marketServiceSpec, 0, len(services))
+	for _, service := range services {
+		if running[service.name] {
+			active = append(active, service)
+		}
+	}
+	return active
+}
+
+func (a *App) restartMarketServicesAfterItemInfo(running map[string]bool) error {
 	if runtime.GOOS != "linux" {
 		a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusSkipped, Message: "market service restart is linux only"})
 		return nil
 	}
 	a.serviceMu.Lock()
 	defer a.serviceMu.Unlock()
-	services := a.marketServiceSpecs()
+	allServices := a.marketServiceSpecs()
+	services := marketServicesToRestore(allServices, running)
+	for _, service := range allServices {
+		if !running[service.name] {
+			a.appendLog(LogEvent{Type: "iteminfo_restart", Market: service.name, Status: marketLogStatusSkipped, Message: "service was already stopped"})
+		}
+	}
 	errorsByName := make(chan string, len(services))
 	var wg sync.WaitGroup
 	for _, service := range services {
@@ -333,7 +357,7 @@ func (a *App) restartMarketServicesAfterItemInfo() error {
 		sort.Strings(failures)
 		return fmt.Errorf("market service restart failed: %s", strings.Join(failures, "; "))
 	}
-	a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusSuccess, Message: "auction and point services restarted"})
+	a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusSuccess, Message: fmt.Sprintf("market service state restored: restarted=%d kept_stopped=%d", len(services), len(allServices)-len(services))})
 	return nil
 }
 

@@ -140,6 +140,32 @@ func TestPVFExportsCurrentAcceptsMetadataMatchWithStoredMD5(t *testing.T) {
 	}
 }
 
+func TestEnsurePVFItemInfoDATReusesCurrentExport(t *testing.T) {
+	dir := t.TempDir()
+	pvfPath := filepath.Join(dir, "Script.pvf")
+	if err := os.WriteFile(pvfPath, []byte("not a real pvf"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeCurrentPVFExportFiles(t, dir)
+	stat, err := os.Stat(pvfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildPVFManifestMetadata(pvfPath, stat)
+	manifest.MD5 = "cached"
+	if err := WriteJSON(filepath.Join(dir, "pvf_manifest.json"), manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := EnsurePVFItemInfoDAT(pvfPath, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(dir, pvfItemInfoExportName) {
+		t.Fatalf("path=%q", path)
+	}
+}
+
 func TestPVFExportsCurrentInvalidatesOldMapEligibilitySchema(t *testing.T) {
 	dir := t.TempDir()
 	writeCurrentPVFExportFiles(t, dir)

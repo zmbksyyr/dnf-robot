@@ -222,6 +222,25 @@ func ExportPVFItemInfoDAT(pvfPath, configDir string) (string, error) {
 	return filepath.Join(configDir, pvfItemInfoExportName), nil
 }
 
+func EnsurePVFItemInfoDAT(pvfPath, configDir string) (string, error) {
+	if strings.TrimSpace(pvfPath) == "" {
+		return "", fmt.Errorf("pvf path is empty")
+	}
+	if strings.TrimSpace(configDir) == "" {
+		return "", fmt.Errorf("config dir is empty")
+	}
+	stat, err := os.Stat(pvfPath)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(configDir, pvfItemInfoExportName)
+	manifestPath := filepath.Join(configDir, "pvf_manifest.json")
+	if pvfExportsCurrent(manifestPath, buildPVFManifestMetadata(pvfPath, stat), configDir) {
+		return path, nil
+	}
+	return ExportPVFItemInfoDAT(pvfPath, configDir)
+}
+
 func formatPVFItemInfoDAT(text string) string {
 	tokens := tokenizePVFItemInfo(text)
 	rows := make([]string, 0, len(tokens)/17)

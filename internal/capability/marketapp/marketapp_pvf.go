@@ -92,7 +92,7 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 
 func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	defer a.startAutoIfEnabled()
-	sourcePath, err := pvf.ExportPVFItemInfoDAT(a.pvfPath, a.configDir)
+	sourcePath, err := pvf.EnsurePVFItemInfoDAT(a.pvfPath, a.configDir)
 	if err != nil {
 		status := a.itemInfoStatus()
 		status.Error = fmt.Sprintf("export source %s: %v", a.pvfPath, err)
@@ -112,9 +112,10 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 		a.stateMu.Unlock()
 		return status
 	}
+	serviceStates := a.marketServiceRunningStates()
 	status = a.syncItemInfoDAT()
 	if status.Error == "" {
-		if err := a.restartMarketServicesAfterItemInfo(); err != nil {
+		if err := a.restartMarketServicesAfterItemInfo(serviceStates); err != nil {
 			status.Error = err.Error()
 			a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusFailed, Message: status.Error})
 		}
