@@ -38,17 +38,11 @@ func (a *App) stopMarketServiceForItemInfo(name, addr, bin string) error {
 		a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusStopSkipped, Message: "process and port are already down"})
 		return nil
 	}
-	_ = exec.Command("pkill", "-TERM", "-x", process).Run()
-	deadline := time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
-		if marketServicePID(bin) <= 0 && !tcpReady(addr, 200*time.Millisecond) {
-			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusStopped, Message: process})
-			return nil
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
+	// The server's /root/stop script uses SIGKILL for these legacy services.
+	// They do not reliably handle SIGTERM, so waiting for graceful shutdown adds
+	// a fixed delay before reaching the same result.
 	_ = exec.Command("pkill", "-KILL", "-x", process).Run()
-	deadline = time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if marketServicePID(bin) <= 0 && !tcpReady(addr, 200*time.Millisecond) {
 			a.appendLog(LogEvent{Type: "market_service", Market: name, Status: marketLogStatusKilled, Message: process})
