@@ -195,11 +195,10 @@ func classifyLegacyDummyCleanupCandidate(
 
 func (r *SQLRepository) cleanupRegisteredCandidates(req robotcap.CleanupRequest) ([]robotcap.CleanupCandidate, map[int]bool, error) {
 	query := `SELECT r.uid,r.cid,r.charac_name,r.account,IF(a.UID IS NULL,0,1),a.accountname,
-IFNULL(d.UID,''),IF(rc.charac_no IS NULL,0,1),IFNULL(rc.m_id,0),
+IF(rc.charac_no IS NULL,0,1),IFNULL(rc.m_id,0),
 (SELECT COUNT(*) FROM taiwan_cain.charac_info owned WHERE owned.m_id=r.uid)
 FROM d_starsky.robot_registry r
 LEFT JOIN d_taiwan.accounts a ON a.UID=r.uid
-LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid
 LEFT JOIN taiwan_cain.charac_info rc ON rc.charac_no=r.cid`
 	var rows *sql.Rows
 	var err error
@@ -232,19 +231,18 @@ LEFT JOIN taiwan_cain.charac_info rc ON rc.charac_no=r.cid`
 	seen := make(map[int]bool)
 	for rows.Next() {
 		var c robotcap.CleanupCandidate
-		var accountName, dummyUID sql.NullString
+		var accountName sql.NullString
 		var accountExists, registeredCharacterExists, registeredCharacterOwner, ownerCharacterCount int
 		if err := rows.Scan(
-			&c.UID, &c.CID, &c.Name, &c.Account, &accountExists, &accountName, &dummyUID,
+			&c.UID, &c.CID, &c.Name, &c.Account, &accountExists, &accountName,
 			&registeredCharacterExists, &registeredCharacterOwner, &ownerCharacterCount,
 		); err != nil {
 			return nil, nil, err
 		}
 		seen[c.UID] = true
 		classifyRegisteredCleanupCandidate(
-			&c, accountExists != 0, accountName, dummyUID.String != "",
+			&c, accountExists != 0, accountName,
 			registeredCharacterExists != 0, registeredCharacterOwner, ownerCharacterCount,
-			req.InternalConfirmedBroken,
 		)
 		out = append(out, c)
 	}
@@ -255,11 +253,9 @@ func classifyRegisteredCleanupCandidate(
 	c *robotcap.CleanupCandidate,
 	accountExists bool,
 	accountName sql.NullString,
-	dummyExists bool,
 	registeredCharacterExists bool,
 	registeredCharacterOwner int,
 	ownerCharacterCount int,
-	confirmedBroken bool,
 ) {
 	expected := fmt.Sprintf("%d", c.UID)
 	registryMatches := c.Account == expected
@@ -273,9 +269,6 @@ func classifyRegisteredCleanupCandidate(
 	} else if !accountExists && (registeredCharacterExists || ownerCharacterCount > 0) {
 		c.Protected = true
 		c.Reason = "account missing but character data exists"
-	} else if !dummyExists && !confirmedBroken {
-		c.Protected = true
-		c.Reason = "missing Dummylist row"
 	} else if !registryMatches || !accountMatches {
 		c.Protected = true
 		c.Reason = "registry account does not equal uid"
@@ -369,32 +362,40 @@ func (r *SQLRepository) BatchDeleteRobotData(uids, cids []int) error {
 	}
 	defer tx.Rollback()
 	uidTables := map[string]string{
-		"d_starsky.Dummylist":                 "UID",
-		"d_starsky.v4_ai_user":                "uid",
-		"d_starsky.robot_registry":            "uid",
-		"d_starsky.Robot_stall":               "UID",
-		"d_starsky.Robot_stall_config":        "UID",
-		"d_taiwan.accounts":                   "UID",
-		"d_taiwan.limit_create_character":     "m_id",
-		"d_taiwan.member_info":                "m_id",
-		"d_taiwan.member_info_bot_backup":     "m_id",
-		"d_taiwan.member_miles":               "m_id",
-		"d_taiwan.member_punish_info":         "m_id",
-		"d_taiwan.member_white_account":       "m_id",
-		"taiwan_login.allow_proxy_user":       "m_id",
-		"taiwan_login.churn_member_info":      "m_id",
-		"taiwan_login.login_account_3":        "m_id",
-		"taiwan_login.member_play_info":       "m_id",
-		"taiwan_login.member_login":           "m_id",
-		"taiwan_login.member_game_option":     "m_id",
-		"taiwan_login.member_premium":         "m_id",
-		"taiwan_login.dnf_event_entry":        "m_id",
-		"taiwan_prod.prod_buy_user":           "m_id",
-		"taiwan_prod.pu_user_list":            "m_id",
-		"taiwan_login_play.member_key_option": "m_id",
-		"taiwan_cain.charac_view":             "m_id",
-		"taiwan_cain.charac_link_message":     "m_id",
-		"taiwan_cain.member_dungeon":          "m_id",
+		"d_starsky.Dummylist":                     "UID",
+		"d_starsky.v4_ai_user":                    "uid",
+		"d_starsky.robot_registry":                "uid",
+		"d_starsky.Robot_stall":                   "UID",
+		"d_starsky.Robot_stall_config":            "UID",
+		"d_taiwan.accounts":                       "UID",
+		"d_taiwan.limit_create_character":         "m_id",
+		"d_taiwan.member_info":                    "m_id",
+		"d_taiwan.member_info_bot_backup":         "m_id",
+		"d_taiwan.member_join_info":               "m_id",
+		"d_taiwan.member_miles":                   "m_id",
+		"d_taiwan.member_punish_info":             "m_id",
+		"d_taiwan.member_security_grade":          "m_id",
+		"d_taiwan.member_white_account":           "m_id",
+		"taiwan_login.allow_proxy_user":           "m_id",
+		"taiwan_login.churn_member_info":          "m_id",
+		"taiwan_login.login_account_3":            "m_id",
+		"taiwan_login.member_play_info":           "m_id",
+		"taiwan_login.member_login":               "m_id",
+		"taiwan_login.member_game_option":         "m_id",
+		"taiwan_login.member_join_info":           "m_id",
+		"taiwan_login.member_premium":             "m_id",
+		"taiwan_login.dnf_event_entry":            "m_id",
+		"taiwan_prod.prod_buy_user":               "m_id",
+		"taiwan_prod.pu_user_list":                "m_id",
+		"taiwan_login_play.member_key_option":     "m_id",
+		"taiwan_cain.charac_view":                 "m_id",
+		"taiwan_cain.charac_link_message":         "m_id",
+		"taiwan_cain.account_cargo":               "m_id",
+		"taiwan_cain.member_booster_gage":         "m_id",
+		"taiwan_cain.member_dungeon":              "m_id",
+		"taiwan_cain_2nd.member_avatar_coin":      "m_id",
+		"taiwan_game_event.login_common":          "m_id",
+		"taiwan_game_event.mobile_auth_reward_tw": "m_id",
 	}
 	for table, col := range uidTables {
 		if err := r.batchDeleteByInts(tx, table, col, uids); err != nil {
@@ -412,8 +413,9 @@ func (r *SQLRepository) BatchDeleteRobotData(uids, cids []int) error {
 		return err
 	}
 	cidTables := []string{
-		"taiwan_cain.charac_info", "taiwan_cain.charac_stat", "taiwan_cain.charac_expert_job", "taiwan_cain.charac_kill_monster_info", "taiwan_cain.charac_npc", "taiwan_cain.new_charac_quest", "taiwan_cain.pvp_result",
-		"taiwan_cain_2nd.charac_inven_expand", "taiwan_cain_2nd.inventory", "taiwan_cain_2nd.skill", "taiwan_cain_2nd.user_items",
+		"taiwan_cain.charac_info", "taiwan_cain.charac_stat", "taiwan_cain.charac_achievement", "taiwan_cain.charac_blood_dungeon_reward", "taiwan_cain.charac_blood_inout", "taiwan_cain.charac_dimension_inout", "taiwan_cain.charac_equipment_emblem", "taiwan_cain.charac_expert_job", "taiwan_cain.charac_kill_monster_info", "taiwan_cain.charac_link_bonus", "taiwan_cain.charac_npc", "taiwan_cain.charac_option", "taiwan_cain.charac_quest_shop", "taiwan_cain.charac_titlebook", "taiwan_cain.event_dungeon_clear", "taiwan_cain.new_charac_quest", "taiwan_cain.pvp_result",
+		"taiwan_cain_2nd.charac_inven_expand", "taiwan_cain_2nd.creature_items", "taiwan_cain_2nd.fair_pvp_score", "taiwan_cain_2nd.inventory", "taiwan_cain_2nd.skill", "taiwan_cain_2nd.store", "taiwan_cain_2nd.user_items",
+		"taiwan_prod.prod_sale_entry_073", "taiwan_prod.prod_sale_entry_162",
 	}
 	for _, table := range cidTables {
 		if err := r.batchDeleteByInts(tx, table, "charac_no", cids); err != nil {

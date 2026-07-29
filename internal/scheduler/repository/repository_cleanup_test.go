@@ -34,7 +34,7 @@ func TestCleanupTableReadyReturnsExistingTableErrors(t *testing.T) {
 
 func TestClassifyRegisteredCleanupCandidateUsesMetadataOnlyForMissingCoreIdentity(t *testing.T) {
 	candidate := robotcap.CleanupCandidate{UID: 17000001, CID: 900001, Account: "17000001"}
-	classifyRegisteredCleanupCandidate(&candidate, false, sql.NullString{}, true, false, 0, 0, false)
+	classifyRegisteredCleanupCandidate(&candidate, false, sql.NullString{}, false, 0, 0)
 	if !candidate.MetadataOnly || candidate.Protected {
 		t.Fatalf("candidate = %+v, want metadata-only cleanup", candidate)
 	}
@@ -46,7 +46,6 @@ func TestClassifyRegisteredCleanupCandidateProtectsIdentityConflicts(t *testing.
 		candidate   robotcap.CleanupCandidate
 		account     bool
 		accountName sql.NullString
-		dummy       bool
 		registered  bool
 		owner       int
 		ownerCount  int
@@ -56,25 +55,22 @@ func TestClassifyRegisteredCleanupCandidateProtectsIdentityConflicts(t *testing.
 			candidate:   robotcap.CleanupCandidate{UID: 17000001, CID: 900001, Account: "17000001"},
 			account:     true,
 			accountName: sql.NullString{String: "real-player", Valid: true},
-			dummy:       true,
 		},
 		{
 			name:       "character remains without account",
 			candidate:  robotcap.CleanupCandidate{UID: 17000001, CID: 900001, Account: "17000001"},
-			dummy:      true,
 			ownerCount: 1,
 		},
 		{
 			name:      "registry account mismatch",
 			candidate: robotcap.CleanupCandidate{UID: 17000001, CID: 900001, Account: "other"},
-			dummy:     true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			classifyRegisteredCleanupCandidate(
-				&tt.candidate, tt.account, tt.accountName, tt.dummy,
-				tt.registered, tt.owner, tt.ownerCount, false,
+				&tt.candidate, tt.account, tt.accountName,
+				tt.registered, tt.owner, tt.ownerCount,
 			)
 			if !tt.candidate.Protected || tt.candidate.MetadataOnly {
 				t.Fatalf("candidate = %+v, want protected conflict", tt.candidate)
@@ -99,8 +95,8 @@ func TestClassifyRegisteredCleanupCandidateRequiresExactCharacterOwnership(t *te
 		t.Run(tt.name, func(t *testing.T) {
 			candidate := robotcap.CleanupCandidate{UID: 17000001, CID: 900001, Account: "17000001"}
 			classifyRegisteredCleanupCandidate(
-				&candidate, true, sql.NullString{String: "17000001", Valid: true}, true,
-				tt.registered, tt.owner, tt.count, false,
+				&candidate, true, sql.NullString{String: "17000001", Valid: true},
+				tt.registered, tt.owner, tt.count,
 			)
 			if !candidate.Protected || candidate.Reason != tt.reason {
 				t.Fatalf("candidate=%+v want protected reason %q", candidate, tt.reason)
@@ -109,11 +105,11 @@ func TestClassifyRegisteredCleanupCandidateRequiresExactCharacterOwnership(t *te
 	}
 }
 
-func TestClassifyRegisteredCleanupCandidateAllowsExactCharacterOwnership(t *testing.T) {
+func TestClassifyRegisteredCleanupCandidateAllowsExactOwnershipWithoutRuntimeMetadata(t *testing.T) {
 	candidate := robotcap.CleanupCandidate{UID: 17000001, CID: 900001, Account: "17000001"}
 	classifyRegisteredCleanupCandidate(
-		&candidate, true, sql.NullString{String: "17000001", Valid: true}, true,
-		true, 17000001, 1, false,
+		&candidate, true, sql.NullString{String: "17000001", Valid: true},
+		true, 17000001, 1,
 	)
 	if candidate.Protected || candidate.MetadataOnly {
 		t.Fatalf("candidate=%+v want deletable exact ownership", candidate)
