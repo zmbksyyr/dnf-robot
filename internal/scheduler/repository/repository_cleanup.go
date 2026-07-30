@@ -55,6 +55,11 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 		return nil, err
 	}
 	candidates = append(candidates, legacy...)
+	v4Orphans, err := r.cleanupLegacyV4Candidates(req, seen)
+	if err != nil {
+		return nil, err
+	}
+	candidates = append(candidates, v4Orphans...)
 	viewOrphans, err := r.orphanCharacViewCandidates(req, seen)
 	if err != nil {
 		return nil, err
@@ -90,6 +95,80 @@ func (r *SQLRepository) CleanupCandidates(req robotcap.CleanupRequest) ([]robotc
 		candidates = append(candidates, orphans...)
 	}
 	return candidates, nil
+}
+
+// cleanupLegacyV4Candidates covers interrupted creation or old cleanup runs
+// that left a numeric robot account and v4_ai_user row without Dummylist or
+// robot_registry ownership. Character-bearing or mismatched accounts remain
+// protected.
+func (r *SQLRepository) cleanupLegacyV4Candidates(req robotcap.CleanupRequest, seen map[int]bool) ([]robotcap.CleanupCandidate, error) {
+	query := `SELECT CAST(v.uid AS UNSIGNED),a.accountname,
+(SELECT COUNT(*) FROM taiwan_cain.charac_info c WHERE c.m_id=CAST(v.uid AS UNSIGNED))
+FROM d_starsky.v4_ai_user v
+LEFT JOIN d_starsky.robot_registry r ON r.uid=CAST(v.uid AS UNSIGNED)
+LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=CAST(v.uid AS UNSIGNED)
+LEFT JOIN d_taiwan.accounts a ON a.UID=CAST(v.uid AS UNSIGNED)
+WHERE r.uid IS NULL AND d.UID IS NULL
+AND v.uid REGEXP '^[0-9]+$' AND CAST(v.uid AS UNSIGNED)>0`
+	args := make([]interface{}, 0, len(req.UIDs)+2)
+	if len(req.UIDs) > 0 {
+		query += " AND CAST(v.uid AS UNSIGNED) IN (" + foundsql.Placeholders(len(req.UIDs)) + ")"
+		for _, uid := range req.UIDs {
+			args = append(args, uid)
+		}
+	} else if req.MinUID > 0 || req.MaxUID > 0 {
+		minUID, maxUID := req.MinUID, req.MaxUID
+		if maxUID <= 0 {
+			maxUID = minUID
+		}
+		if minUID <= 0 {
+			minUID = maxUID
+		}
+		if minUID > maxUID {
+			minUID, maxUID = maxUID, minUID
+		}
+		query += " AND CAST(v.uid AS UNSIGNED) BETWEEN ? AND ?"
+		args = append(args, minUID, maxUID)
+	}
+	rows, err := r.Query(query+" ORDER BY CAST(v.uid AS UNSIGNED)", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []robotcap.CleanupCandidate
+	for rows.Next() {
+		var c robotcap.CleanupCandidate
+		var accountName sql.NullString
+		var characterCount int
+		if err := rows.Scan(&c.UID, &accountName, &characterCount); err != nil {
+			return nil, err
+		}
+		if c.UID <= 0 || seen[c.UID] {
+			continue
+		}
+		seen[c.UID] = true
+		c.Name = "legacy-v4-orphan"
+		c.Account = fmt.Sprintf("%d", c.UID)
+		classifyLegacyV4CleanupCandidate(&c, accountName, characterCount)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func classifyLegacyV4CleanupCandidate(c *robotcap.CleanupCandidate, accountName sql.NullString, characterCount int) {
+	expected := fmt.Sprintf("%d", c.UID)
+	if characterCount > 0 {
+		c.Protected = true
+		c.Reason = "legacy v4 uid still owns character data"
+	} else if accountName.Valid && accountName.String != expected {
+		c.Protected = true
+		c.Reason = "accountname does not equal uid"
+	} else if !accountName.Valid {
+		c.MetadataOnly = true
+		c.Reason = "legacy v4 metadata only"
+	} else {
+		c.Reason = "numeric robot account without character or registry"
+	}
 }
 
 // orphanCharacViewCandidates finds charac_view rows left behind after a

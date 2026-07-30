@@ -37,6 +37,13 @@ func (r *SQLRepository) EnsureAccount(uid int, innerIP string) error {
 	}); err != nil {
 		return err
 	}
+	var existingAccount string
+	if err := r.QueryRow("SELECT accountname FROM d_taiwan.accounts WHERE UID=? LIMIT 1", uid).Scan(&existingAccount); err != nil {
+		return err
+	}
+	if existingAccount != account {
+		return fmt.Errorf("robot uid %d is occupied by account %q", uid, existingAccount)
+	}
 	upserts := []struct {
 		table string
 		vals  map[string]interface{}

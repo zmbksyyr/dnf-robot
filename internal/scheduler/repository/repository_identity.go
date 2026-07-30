@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	lifecyclecap "robot/internal/capability/robotlifecycle"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -67,41 +66,6 @@ func (r *SQLRepository) PrepareRobotUIDRange(start, end, guard int) error {
 	if start <= 0 || end < start {
 		return fmt.Errorf("invalid robot uid segment %d-%d", start, end)
 	}
-	used := make(map[int]bool)
-	for _, src := range robotUIDSources {
-		if err := r.addUsedUIDs(used, src.table, src.column, start, end); err != nil {
-			return err
-		}
-	}
-	owned := make(map[int]bool)
-	rows, err := r.Query("SELECT uid FROM d_starsky.robot_registry WHERE uid BETWEEN ? AND ?", start, end)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var uid int
-		if err := rows.Scan(&uid); err != nil {
-			rows.Close()
-			return err
-		}
-		owned[uid] = true
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	conflicts := make([]int, 0)
-	for uid := range used {
-		if !owned[uid] {
-			conflicts = append(conflicts, uid)
-		}
-	}
-	if len(conflicts) > 0 {
-		sort.Ints(conflicts)
-		if len(conflicts) > 10 {
-			conflicts = conflicts[:10]
-		}
-		return fmt.Errorf("robot uid segment %d-%d contains non-robot uid(s) %v; choose another segment before creating robots", start, end, conflicts)
-	}
 	if guard == 0 {
 		return nil
 	}
@@ -110,7 +74,7 @@ func (r *SQLRepository) PrepareRobotUIDRange(start, end, guard int) error {
 	}
 	guardAccount := fmt.Sprintf("robotguard%d", guard)
 	var existing string
-	err = r.QueryRow("SELECT accountname FROM d_taiwan.accounts WHERE UID=? LIMIT 1", guard).Scan(&existing)
+	err := r.QueryRow("SELECT accountname FROM d_taiwan.accounts WHERE UID=? LIMIT 1", guard).Scan(&existing)
 	if err == nil {
 		if existing != guardAccount {
 			return fmt.Errorf("robot uid guard %d is occupied by account %q", guard, existing)

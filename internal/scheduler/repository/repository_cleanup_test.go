@@ -171,3 +171,44 @@ func TestClassifyLegacyDummyCleanupCandidateProtectsIdentityConflicts(t *testing
 		})
 	}
 }
+
+func TestClassifyLegacyV4CleanupCandidateAllowsNumericRobotOrphan(t *testing.T) {
+	candidate := robotcap.CleanupCandidate{UID: 17000155, Account: "17000155"}
+	classifyLegacyV4CleanupCandidate(
+		&candidate,
+		sql.NullString{String: "17000155", Valid: true},
+		0,
+	)
+	if candidate.Protected || candidate.MetadataOnly || candidate.Reason != "numeric robot account without character or registry" {
+		t.Fatalf("candidate=%+v", candidate)
+	}
+}
+
+func TestClassifyLegacyV4CleanupCandidateProtectsPlayersAndCharacters(t *testing.T) {
+	tests := []struct {
+		name       string
+		account    sql.NullString
+		characters int
+		reason     string
+	}{
+		{name: "real account", account: sql.NullString{String: "player", Valid: true}, reason: "accountname does not equal uid"},
+		{name: "character remains", account: sql.NullString{String: "17000155", Valid: true}, characters: 1, reason: "legacy v4 uid still owns character data"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate := robotcap.CleanupCandidate{UID: 17000155, Account: "17000155"}
+			classifyLegacyV4CleanupCandidate(&candidate, tt.account, tt.characters)
+			if !candidate.Protected || candidate.MetadataOnly || candidate.Reason != tt.reason {
+				t.Fatalf("candidate=%+v", candidate)
+			}
+		})
+	}
+}
+
+func TestClassifyLegacyV4CleanupCandidateAllowsMetadataOnly(t *testing.T) {
+	candidate := robotcap.CleanupCandidate{UID: 17000155, Account: "17000155"}
+	classifyLegacyV4CleanupCandidate(&candidate, sql.NullString{}, 0)
+	if candidate.Protected || !candidate.MetadataOnly || candidate.Reason != "legacy v4 metadata only" {
+		t.Fatalf("candidate=%+v", candidate)
+	}
+}
