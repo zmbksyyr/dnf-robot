@@ -5,6 +5,9 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
+	"strings"
+	"time"
+
 	catalogcap "robot/internal/capability/catalog"
 	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
@@ -12,7 +15,6 @@ import (
 	robottemplate "robot/internal/capability/robottemplate"
 	"robot/internal/foundation/charset"
 	"robot/internal/shared"
-	"time"
 )
 
 func (r *SQLRepository) EnsureAccount(uid int, innerIP string) error {
@@ -110,10 +112,12 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 		return fmt.Errorf("PVF level experience unavailable for level %d", info.Level)
 	}
 	dbName := robottemplate.NameForEncoding(info.Name, "utf8_cp1252")
-	if _, err := r.Exec(
-		"INSERT INTO taiwan_cain.charac_info (m_id,charac_no,charac_name,village,maxHP,maxMP,phy_attack,phy_defense,mag_attack,mag_defense,inven_weight,hp_regen,mp_regen,move_speed,attack_speed,cast_speed,hit_recovery,jump,charac_weight,max_fatigue,lev,exp,job,grow_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		info.UID, info.CID, dbName, info.Village, "1800", "1400", "75", "75", "45", "45", "480000", "0", "500", "8500", "8500", "7000", "6000", "4300", "680000", "156", info.Level, exp, info.Job, info.Grow,
-	); err != nil {
+	columns, err := r.TableColumns("taiwan_cain.charac_info")
+	if err != nil {
+		return fmt.Errorf("read charac_info columns: %w", err)
+	}
+	infoQuery, infoArgs := createCharacterInfoInsert(info, exp, dbName, columns)
+	if _, err := r.Exec(infoQuery, infoArgs...); err != nil {
 		return fmt.Errorf("insert charac_info uid=%d cid=%d: %w", info.UID, info.CID, err)
 	}
 	statQuery, statArgs := createCharacterStatInsert(info.CID, exp, info.Village)
@@ -139,6 +143,38 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 		_, _ = r.Exec(q.query, q.args...)
 	}
 	return nil
+}
+
+func createCharacterInfoInsert(info robotcap.Info, exp int, dbName interface{}, columns map[string]bool) (string, []interface{}) {
+	names := []string{
+		"m_id", "charac_no", "charac_name", "village", "maxHP", "maxMP", "phy_attack", "phy_defense",
+		"mag_attack", "mag_defense", "inven_weight", "hp_regen", "mp_regen", "move_speed", "attack_speed",
+		"cast_speed", "hit_recovery", "jump", "charac_weight", "max_fatigue", "lev", "exp", "job", "grow_type",
+	}
+	args := []interface{}{
+		info.UID, info.CID, dbName, info.Village, "1800", "1400", "75", "75", "45", "45", "480000", "0",
+		"500", "8500", "8500", "7000", "6000", "4300", "680000", "156", info.Level, exp, info.Job, info.Grow,
+	}
+	optional := []struct {
+		name  string
+		value interface{}
+	}{
+		{"element_resist", make([]byte, 8)},
+		{"spec_property", make([]byte, 34)},
+		{"VIP", ""},
+		{"create_time", time.Now()},
+	}
+	for _, field := range optional {
+		if columns[field.name] {
+			names = append(names, field.name)
+			args = append(args, field.value)
+		}
+	}
+	holders := make([]string, len(names))
+	for i := range holders {
+		holders[i] = "?"
+	}
+	return "INSERT INTO taiwan_cain.charac_info (`" + strings.Join(names, "`,`") + "`) VALUES (" + strings.Join(holders, ",") + ")", args
 }
 
 func createCharacterStatInsert(cid, exp, village int) (string, []interface{}) {
