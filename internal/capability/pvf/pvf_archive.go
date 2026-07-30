@@ -332,7 +332,7 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 			}
 		}
 		for _, area := range parseTownAreas(body) {
-			mapBody := a.text(townMapArchivePath(area.MapPath))
+			mapBody := a.townMapText(townMapArchivePath(area.MapPath))
 			rectangles := townMapMovableRectangles(mapBody)
 			xMin, xMax, yMin, yMax, coordinateReady := townMapMovableBounds(mapBody)
 			normalEligible := coordinateReady && area.Kind != "pvp"
@@ -366,6 +366,16 @@ func (a *pvfArchive) text(path string) string {
 		return a.decodeScript(f.Data)
 	}
 	return cleanPVFString(charset.DecodePVFBytes(f.Data))
+}
+
+func (a *pvfArchive) townMapText(path string) string {
+	path = normalizePVFPath(path)
+	if _, ok := a.files[path]; ok {
+		return a.text(path)
+	}
+	slash := strings.LastIndex(path, "/")
+	regionalPath := path[:slash+1] + "(r)" + path[slash+1:]
+	return a.text(regionalPath)
 }
 
 func (a *pvfArchive) textWithExt(path string, exts ...string) (string, string) {

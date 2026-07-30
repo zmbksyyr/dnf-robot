@@ -238,6 +238,29 @@ func TestExtractMapListNeverFabricatesAreasOrCoordinates(t *testing.T) {
 	}
 }
 
+func TestExtractMapListUsesRegionalMapReplacementOnlyWhenOriginalIsMissing(t *testing.T) {
+	a := &pvfArchive{files: map[string]*pvfFile{
+		"town/town.lst": {Data: []byte("1 `Example.twn`")},
+		"town/example.twn": {Data: []byte(
+			"[name]\n`Example`\n" +
+				"[area]\n0 `Example/Original.map`\n`[normal]`\n[/area]\n" +
+				"[area]\n1 `Example/Regional.map`\n`[normal]`\n[/area]\n[end]\n")},
+		"map/example/original.map":    {Data: []byte("[virtual movable area]\n10 20 30 40\n[/virtual movable area]\n")},
+		"map/example/(r)original.map": {Data: []byte("[virtual movable area]\n110 120 30 40\n[/virtual movable area]\n")},
+		"map/example/(r)regional.map": {Data: []byte("[virtual movable area]\n210 220 30 40\n[/virtual movable area]\n")},
+	}}
+	maps := extractMapList(a, "town/town.lst", "town/")
+	if len(maps) != 2 {
+		t.Fatalf("maps=%+v", maps)
+	}
+	if !maps[0].Use || maps[0].XMin != 10 || maps[0].YMin != 20 {
+		t.Fatalf("original map was not preferred: %+v", maps[0])
+	}
+	if !maps[1].Use || maps[1].XMin != 210 || maps[1].YMin != 220 {
+		t.Fatalf("regional replacement was not used: %+v", maps[1])
+	}
+}
+
 func TestExtractMapListDerivesEligibilityFromPVFAreaKind(t *testing.T) {
 	geometry := []byte("[virtual movable area]\n10 20 300 100\n[/virtual movable area]\n")
 	a := &pvfArchive{files: map[string]*pvfFile{
