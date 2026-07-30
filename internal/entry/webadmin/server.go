@@ -24,6 +24,7 @@ type Server struct {
 	partyCompatLastError    string
 	serverScriptMu          lockhub.Locker
 	serverScript            serverScriptStatus
+	serverRunCancel         func()
 }
 
 func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {

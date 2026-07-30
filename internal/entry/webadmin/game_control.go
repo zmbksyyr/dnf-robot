@@ -108,17 +108,8 @@ func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "script": script, "error": "script path is a directory"})
 		return
 	}
-	status, started := s.startServerScript(strings.TrimSpace(req.Action), script)
-	if !started {
-		status.OK = false
-		status.Error = "another server script is already running"
-		writeJSON(w, status)
-		return
-	}
-	writeJSON(w, status)
+	writeJSON(w, s.startServerScript(strings.TrimSpace(req.Action), script))
 }
-
-const serverScriptTimeout = 10 * time.Minute
 
 type serverScriptStatus struct {
 	OK         bool   `json:"ok"`
@@ -139,52 +130,65 @@ func (s *Server) serverScriptSnapshot() serverScriptStatus {
 	return status
 }
 
-func (s *Server) startServerScript(action, script string) (serverScriptStatus, bool) {
+func (s *Server) startServerScript(action, script string) serverScriptStatus {
 	s.serverScriptMu.Lock()
-	if s.serverScript.Running {
-		status := s.serverScript
-		s.serverScriptMu.Unlock()
-		return status, false
+	defer s.serverScriptMu.Unlock()
+
+	// Server scripts are command dispatchers, not long-running service jobs.
+	// Cancel an older startup dispatcher before submitting another run or stop,
+	// so a delayed /root/run cannot relaunch services after a stop request.
+	if s.serverRunCancel != nil {
+		s.serverRunCancel()
+		s.serverRunCancel = nil
 	}
 	status := serverScriptStatus{
-		OK:        true,
-		Running:   true,
+		OK:        false,
+		Running:   false,
 		Action:    action,
 		Script:    script,
 		StartedAt: time.Now().Format(time.RFC3339),
 	}
+	cancel, err := launchDetachedServerScript(script)
+	if err != nil {
+		status.Error = err.Error()
+		s.serverScript = status
+		return status
+	}
+	if action == "run" {
+		s.serverRunCancel = cancel
+	}
+	status.OK = true
 	s.serverScript = status
-	s.serverScriptMu.Unlock()
-
-	go s.runServerScript(script)
-	return status, true
+	return status
 }
 
-func (s *Server) runServerScript(script string) {
-	ctx, cancel := context.WithTimeout(context.Background(), serverScriptTimeout)
-	defer cancel()
+var launchDetachedServerScript = func(script string) (func(), error) {
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "/bin/sh", script)
 	cmd.Dir = "/root"
-	out, err := cmd.CombinedOutput()
-	message := ""
-	if ctx.Err() == context.DeadlineExceeded {
-		message = "script timed out after 10 minutes"
-	} else if err != nil {
-		message = err.Error()
+	cmd.Stdin = devNull
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	if err := cmd.Start(); err != nil {
+		cancel()
+		_ = devNull.Close()
+		return nil, err
 	}
-	s.serverScriptMu.Lock()
-	s.serverScript.Running = false
-	s.serverScript.FinishedAt = time.Now().Format(time.RFC3339)
-	s.serverScript.Error = message
-	s.serverScript.Output = truncateServerScriptOutput(string(out), 64*1024)
-	s.serverScriptMu.Unlock()
-}
-
-func truncateServerScriptOutput(output string, limit int) string {
-	if limit <= 0 || len(output) <= limit {
-		return output
-	}
-	return output[len(output)-limit:]
+	go func() {
+		_ = cmd.Wait()
+		cancel()
+		_ = devNull.Close()
+	}()
+	return func() {
+		cancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}, nil
 }
 
 func (s *Server) handleMonitorService(w http.ResponseWriter, _ *http.Request) {
