@@ -165,6 +165,59 @@ func (m *RobotManager) cleanupPendingSet() map[int]bool {
 	return out
 }
 
+func (m *RobotManager) isCleanupPending(uid int) bool {
+	if m == nil || uid <= 0 {
+		return false
+	}
+	pending := false
+	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerCleanup, "is_cleanup_pending", func() error {
+		_, pending = m.cleanupPendingUIDs[uid]
+		return nil
+	})
+	return pending
+}
+
+// waitCleanupQuiescence closes the gap between requesting actor drains and
+// deleting their database rows. A store workflow can finish its cancellation
+// path after StopUIDs returns; deleting while it is still restoring normal
+// position/cache data recreates orphan rows immediately after cleanup.
+func (m *RobotManager) waitCleanupQuiescence(uids []int, timeout time.Duration) {
+	if len(uids) == 0 {
+		return
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		active := make(map[int]bool, len(uids))
+		for _, uid := range uids {
+			if uid > 0 {
+				active[uid] = true
+			}
+		}
+		busy := false
+		for _, snap := range m.actorStatusMap() {
+			if active[snap.UID] {
+				busy = true
+				break
+			}
+		}
+		if !busy {
+			m.autoMu.Lock()
+			for uid := range active {
+				if m.autoStoreBusy[uid] {
+					busy = true
+					break
+				}
+			}
+			m.autoMu.Unlock()
+		}
+		if !busy {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	robotLogf("[RobotLifecycle] cleanup_quiescence_timeout uids=%d timeout_ms=%d\n", len(uids), timeout.Milliseconds())
+}
+
 func (m *RobotManager) loadMapCatalog() []shared.MapCatalogItem {
 	if m.cfg == nil {
 		return nil

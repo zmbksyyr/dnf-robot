@@ -3,6 +3,7 @@ package scheduler
 import (
 	"testing"
 
+	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 )
 
@@ -66,4 +67,19 @@ func TestAutoStoreSlotLimitIncreaseAddsOnlyAvailableCapacity(t *testing.T) {
 	releaseFirst()
 	releaseSecond()
 	releaseThird()
+}
+
+func TestRestoreAutoNormalOnlineSkipsCleanupPendingUID(t *testing.T) {
+	manager := testRobotManagerWithConfig(t, "")
+	info := robotcap.Info{UID: 17000260, CID: 852, Village: 7, X: 712, Y: 239}
+	manager.markCleanupPending([]int{info.UID})
+	defer manager.clearCleanupPending([]int{info.UID})
+
+	normal, recovered := manager.restoreAutoNormalOnline(info, robotconfig.RuntimeConfig{}, "cancelled")
+	if !recovered {
+		t.Fatal("cleanup-pending store cancellation should finish without restoring the deleted robot")
+	}
+	if normal != info {
+		t.Fatalf("normal=%+v want unchanged %+v", normal, info)
+	}
 }

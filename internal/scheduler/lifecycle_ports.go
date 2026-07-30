@@ -157,17 +157,13 @@ func (e lifecycleCleanupEnv) PrepareDelete(uids []int) func() {
 	e.manager.markCleanupPending(uids)
 	if registry := e.manager.currentActorRegistry(); registry != nil {
 		registry.StopUIDs(uids, true)
+		e.manager.waitCleanupQuiescence(uids, 30*time.Second)
 	} else {
 		_, _ = e.manager.sessionService().Logout(robotcap.CommandRequest{UIDs: uids})
+		if !e.request.InternalConfirmedBroken {
+			time.Sleep(5 * time.Second)
+		}
 	}
-	if !e.request.InternalConfirmedBroken {
-		time.Sleep(5 * time.Second)
-	}
-	e.manager.autoMu.Lock()
-	for _, uid := range uids {
-		delete(e.manager.autoStoreBusy, uid)
-	}
-	e.manager.autoMu.Unlock()
 	return func() {
 		e.manager.clearCleanupPending(uids)
 	}

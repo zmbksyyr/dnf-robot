@@ -149,6 +149,10 @@ func (m *RobotManager) restoreAutoNormalPosition(info robotcap.Info, rc robotcon
 
 func (m *RobotManager) restoreAutoNormalOnline(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) (robotcap.Info, bool) {
 	started := time.Now()
+	if m.isCleanupPending(info.UID) {
+		robotLogf("[AutoStore] uid=%d restore_normal_skipped reason=%s cleanup_pending=1\n", info.UID, reason)
+		return info, true
+	}
 	normal, err := m.restoreAutoNormalPosition(info, rc, reason)
 	if err != nil {
 		robotLogf("[AutoStore] uid=%d restore_normal_failed reason=%s elapsed_ms=%d err=%v\n",
