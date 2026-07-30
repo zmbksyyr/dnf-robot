@@ -15,7 +15,7 @@ func TestEmbeddedWebAssetsContainRequiredContent(t *testing.T) {
 		{name: "login", content: loginHTML, required: []string{"Robot Login", `action="/login"`, "{{if .Error}}"}},
 		{name: "index", content: indexHTML, required: []string{"TW Robot Web", appCSSPlaceholder, appJSPlaceholder, `id="partyCompatButton"`, `id="compatButton"`}},
 		{name: "css", content: appCSS, required: []string{":root{", ".service-lights", ".diagrow"}},
-		{name: "javascript", content: appJS, required: []string{"async function api(", "openPartyCompatDialog", "openCompatDialog", "openDiagnosticsDialog", "restartRobot"}},
+		{name: "javascript", content: appJS, required: []string{"async function api(", "openPartyCompatDialog", "openCompatDialog", "openDiagnosticsDialog", "restartRobot", "autoMailNotify"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

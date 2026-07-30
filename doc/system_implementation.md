@@ -410,6 +410,7 @@ Web 只作为 Robot TCP API 的受控代理，不维护第二套机器人业务�
 - `log_robot`：Robot 主日志，按大小轮转。
 - `robot_stdout.log`：主进程和 Web 子进程 stdout，经 bounded sink 轮转。
 - `market_log.jsonl`：Market 结构化事件日志。
+- `mail_notify_cursor.json`：Robot 内置邮件通知轮询的 letter/postal 游标和待发送角色。
 - `pvf_manifest.json`：PVF 和运行文件自检。
 - `store_points_cache.json`：点位历史。
 - `store_points_active.json`：活跃点位租约。
@@ -425,6 +426,7 @@ Web 只作为 Robot TCP API 的受控代理，不维护第二套机器人业务�
 - PVF 导出新鲜度。
 - 数据库连通性、连接池和核心表。
 - Auction/Point 服务、策略、iteminfo、文件补丁和内存补丁。
+- Auto 中的 `Mail / Refresh` 默认开启。Auto 调度轮询时同步检查 `taiwan_cain_2nd.letter` 和 `postal` 的新增系统/GM 邮件（`send_charac_no=0`），并通过 Monitor 的原生 `0x0514` 新邮件通知包提醒在线角色；首次运行只建立当前游标，不重放历史邮件。关闭 Auto 或取消该勾选后不再轮询，不依赖 Market 或 DP2。
 - 近期 panic、fatal、超时、连接和市场错误关键字。
 - 日志是否超过配置上限。
 

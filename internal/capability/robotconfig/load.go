@@ -88,6 +88,7 @@ func LoadFile(path string) (RuntimeConfig, error) {
 	rc.ShoutSendEnabled = iniBool(ini, "shout", "shout_send_enabled", rc.ShoutSendEnabled)
 
 	rc.AutoActions = iniBool(ini, "auto", "auto_actions", rc.AutoActions)
+	rc.AutoMailNotify = iniBool(ini, "auto", "auto_mail_notify", rc.AutoMailNotify)
 	rc.AutoTargetOnlineCount = ini.GetInt("auto", "auto_target_online_count", rc.AutoTargetOnlineCount)
 	rc.AutoMoveIntervalMinSec = ini.GetInt("auto", "auto_move_interval_min_sec", rc.AutoMoveIntervalMinSec)
 	rc.AutoMoveIntervalMaxSec = ini.GetInt("auto", "auto_move_interval_max_sec", rc.AutoMoveIntervalMaxSec)

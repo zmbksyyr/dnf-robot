@@ -66,6 +66,7 @@ type RuntimeConfig struct {
 	ShoutDelayMS                  int    `json:"shout_delay_ms"`
 	ShoutSendEnabled              bool   `json:"shout_send_enabled"`
 	AutoActions                   bool   `json:"auto_actions"`
+	AutoMailNotify                bool   `json:"auto_mail_notify"`
 	AutoTargetOnlineCount         int    `json:"auto_target_online_count"`
 	AutoMoveIntervalMinSec        int    `json:"auto_move_interval_min_sec"`
 	AutoMoveIntervalMaxSec        int    `json:"auto_move_interval_max_sec"`

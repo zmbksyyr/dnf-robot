@@ -85,6 +85,7 @@ func (s *RobotSupervisor) tick(now time.Time) {
 	rc, decision := s.manager.refreshAdaptiveRobotConfig(signals)
 	s.manager.updateSchedulerStatus(rc, signals, decision)
 	s.sendSystemAnnouncementIfDue(now)
+	s.manager.pollMailNotifications(now, rc)
 	if s.handleAutoGuards(now, rc, signals) {
 		return
 	}

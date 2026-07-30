@@ -74,6 +74,11 @@ type RobotManager struct {
 	storeItemPool                   *storecap.ItemPool
 	positionWrites                  *positionBatcher
 	characterCacheInvalidate        func(uid int) error
+	mailNotifier                    MailNotifier
+	mailNotifyNext                  time.Time
+	mailNotifyRunning               bool
+	mailNotifyDone                  chan struct{}
+	mailNotifyLastErrorLog          time.Time
 }
 
 func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Runtime) *RobotManager {

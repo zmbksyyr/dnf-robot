@@ -17,6 +17,7 @@ const (
 	KindWebNoticeSingle = "web_notice_single"
 
 	opMegaphone       = 0x0546
+	opNotifyNewMail   = 0x0514
 	opWebNoticeSingle = 0x09e0
 )
 
@@ -37,6 +38,13 @@ const (
 
 func (c *Client) SendWorldShout(msg, name string, senderID uint16) error {
 	return c.SendMonitorAnnouncement(KindMegaphone, msg, name, senderID)
+}
+
+func (c *Client) NotifyNewMail(characNo uint32) error {
+	if characNo == 0 {
+		return fmt.Errorf("invalid mail character number 0")
+	}
+	return c.send(BuildNotifyNewMailPacket(characNo), "new mail")
 }
 
 func (c *Client) SendMonitorAnnouncement(kind, msg, name string, senderID uint16) error {
@@ -106,6 +114,17 @@ func BuildAnnouncementPacket(kind, msg, name string, senderID uint16) ([]byte, e
 	default:
 		return nil, fmt.Errorf("unknown monitor announcement kind %q", kind)
 	}
+}
+
+// BuildNotifyNewMailPacket matches Packet_Monitor_Notify_New_Mail. Monitor
+// resolves the online character, fills the channel id at +0x0e, and forwards
+// the packet to df_game_r. The game then raises its native mailbox alarm.
+func BuildNotifyNewMailPacket(characNo uint32) []byte {
+	const size = 0x12
+	packet := make([]byte, size)
+	putHeader(packet, opNotifyNewMail, size)
+	binary.LittleEndian.PutUint32(packet[0x0a:0x0e], characNo)
+	return packet
 }
 
 // buildMegaphoneLikePacket builds the verified monitor packet that the game

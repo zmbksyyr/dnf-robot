@@ -103,8 +103,8 @@ func TestLoadRobotConfigSchedulerOnlineDefaults(t *testing.T) {
 	if rc.EquipIntensifyMin != 7 || rc.EquipIntensifyMax != 10 {
 		t.Fatalf("EquipIntensify got %d..%d want 7..10", rc.EquipIntensifyMin, rc.EquipIntensifyMax)
 	}
-	if !rc.AutoActions || rc.AutoTargetOnlineCount != 20 || rc.AutoStoreProbabilityPercent != 35 {
-		t.Fatalf("auto defaults got enabled=%v target=%d store_probability=%d, want true/20/35", rc.AutoActions, rc.AutoTargetOnlineCount, rc.AutoStoreProbabilityPercent)
+	if !rc.AutoActions || !rc.AutoMailNotify || rc.AutoTargetOnlineCount != 20 || rc.AutoStoreProbabilityPercent != 35 {
+		t.Fatalf("auto defaults got enabled=%v mail=%v target=%d store_probability=%d, want true/true/20/35", rc.AutoActions, rc.AutoMailNotify, rc.AutoTargetOnlineCount, rc.AutoStoreProbabilityPercent)
 	}
 	if rc.AutoMoveIntervalMinSec != 6 || rc.AutoMoveIntervalMaxSec != 18 {
 		t.Fatalf("AutoMoveInterval got %d..%d want 6..18", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)

@@ -12,6 +12,7 @@ import (
 
 	runtimeinit "robot/internal/bootstrap/runtime"
 	"robot/internal/capability/keypair"
+	"robot/internal/capability/mailnotify"
 	"robot/internal/capability/marketapp"
 	"robot/internal/capability/robotconfig"
 	"robot/internal/composition/auctionapp"
@@ -124,7 +125,10 @@ func main() {
 		os.Exit(1)
 	}
 	manager.SetCharacterCacheInvalidator(cacheInvalidator)
-	manager.SetWorldShout(&monitor.Client{Address: fmt.Sprintf("127.0.0.1:%d", cfg.MonitorPort)})
+	monitorClient := &monitor.Client{Address: fmt.Sprintf("127.0.0.1:%d", cfg.MonitorPort)}
+	manager.SetWorldShout(monitorClient)
+	mailNotifier := mailnotify.New(db, monitorClient, cfg.ConfigDir)
+	manager.SetMailNotifier(mailNotifier)
 	marketApp, err = marketapp.New(db, cfg, auctionapp.NewFactory())
 	if err != nil {
 		dnf.LogString(fmt.Sprintf("MARKET_INIT_FAILED err=%v\n", err))

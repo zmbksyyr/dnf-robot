@@ -58,6 +58,7 @@ func (m *RobotManager) stopAutoActions() error {
 
 func (m *RobotManager) Shutdown() error {
 	autoErr := m.stopAutoActions()
+	m.waitMailNotifications()
 	m.flushStorePointCache()
 	if m.positionWrites == nil {
 		return autoErr

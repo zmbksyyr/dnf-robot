@@ -32,6 +32,7 @@ var sqlImportAllowedDirs = []string{
 	"internal/foundation/sql",
 	"internal/foundation/dbstatus",
 	"internal/scheduler/repository",
+	"internal/capability/mailnotify",
 	"internal/capability/marketapp",
 	"internal/protocol/dnf",
 }
