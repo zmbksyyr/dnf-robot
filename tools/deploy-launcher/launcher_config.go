@@ -11,16 +11,18 @@ import (
 const launcherConfigName = "deploy-launcher.ini"
 
 type launcherConfig struct {
-	Host     string
-	User     string
-	Password string
+	Host         string
+	User         string
+	Password     string
+	FreshInstall bool
 }
 
 func defaultLauncherConfig() launcherConfig {
 	return launcherConfig{
-		Host:     "192.168.200.131",
-		User:     "root",
-		Password: "123456",
+		Host:         "192.168.200.131",
+		User:         "root",
+		Password:     "123456",
+		FreshInstall: true,
 	}
 }
 
@@ -50,25 +52,29 @@ func loadLauncherConfig(path string) (launcherConfig, error) {
 			}
 			continue
 		}
-		if !strings.EqualFold(section, "ssh") {
-			continue
-		}
 		separator := strings.IndexByte(line, '=')
 		if separator < 0 {
 			continue
 		}
 		key := strings.ToLower(strings.TrimSpace(line[:separator]))
 		value := strings.TrimSpace(line[separator+1:])
-		if value == "" {
-			continue
-		}
-		switch key {
-		case "host":
-			config.Host = value
-		case "user":
-			config.User = value
-		case "password":
-			config.Password = value
+		switch {
+		case strings.EqualFold(section, "ssh"):
+			if value == "" {
+				continue
+			}
+			switch key {
+			case "host":
+				config.Host = value
+			case "user":
+				config.User = value
+			case "password":
+				config.Password = value
+			}
+		case strings.EqualFold(section, "deploy") && key == "fresh_install":
+			// Invalid explicit values preserve the remote configuration. This is
+			// safer than turning a typo into a destructive fresh deployment.
+			config.FreshInstall = value == "1"
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -78,5 +84,9 @@ func loadLauncherConfig(path string) (launcherConfig, error) {
 }
 
 func formatLauncherConfig(config launcherConfig) []byte {
-	return []byte(fmt.Sprintf("[ssh]\nhost = %s\nuser = %s\npassword = %s\n", config.Host, config.User, config.Password))
+	freshInstall := 0
+	if config.FreshInstall {
+		freshInstall = 1
+	}
+	return []byte(fmt.Sprintf("[ssh]\nhost = %s\nuser = %s\npassword = %s\n\n[deploy]\n# 1 = fresh config, 0 = keep existing config\nfresh_install = %d\n", config.Host, config.User, config.Password, freshInstall))
 }

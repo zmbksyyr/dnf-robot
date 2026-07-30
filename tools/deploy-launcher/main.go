@@ -18,12 +18,13 @@ const robotStartCommand = "mkdir -p /root/config; nohup sh -c '/root/robot 2>&1 
 
 type DeployWindow struct {
 	*walk.MainWindow
-	deployBtn  *walk.PushButton
-	restartBtn *walk.PushButton
-	hostEdit   *walk.LineEdit
-	userEdit   *walk.LineEdit
-	passEdit   *walk.LineEdit
-	logEdit    *walk.TextEdit
+	deployBtn    *walk.PushButton
+	restartBtn   *walk.PushButton
+	hostEdit     *walk.LineEdit
+	userEdit     *walk.LineEdit
+	passEdit     *walk.LineEdit
+	logEdit      *walk.TextEdit
+	freshInstall bool
 }
 
 func (dw *DeployWindow) safeSync(fn func()) {
@@ -235,6 +236,17 @@ func (dw *DeployWindow) doDeploy() error {
 	}
 	dw.appendLog("替换 robot 完成")
 
+	if dw.freshInstall {
+		configBackup := fmt.Sprintf("/root/config.bak.%s", time.Now().Format("20060102_150405.000"))
+		dw.appendLog(fmt.Sprintf("全新部署: 备份旧 config 到 %s", configBackup))
+		if err := runCmd(client, freshInstallConfigCommand(configBackup)); err != nil {
+			return fmt.Errorf("重建 /root/config 失败: %v", err)
+		}
+		dw.appendLog("全新部署: /root/config 已清空")
+	} else {
+		dw.appendLog("兼容部署: 保留 /root/config")
+	}
+
 	if err := runCmdBg(client, robotStartCommand); err != nil {
 		return fmt.Errorf("启动 robot 失败: %v", err)
 	}
@@ -249,6 +261,10 @@ func (dw *DeployWindow) doDeploy() error {
 	dw.appendLog(fmt.Sprintf("新 robot 已启动 (pid: %s)", robotPid))
 
 	return nil
+}
+
+func freshInstallConfigCommand(backupPath string) string {
+	return fmt.Sprintf("current_config=0; backup_keep=3; if [ -e /root/config ] || [ -L /root/config ]; then current_config=1; backup_keep=2; if [ -e %[1]s ] || [ -L %[1]s ]; then echo 'config backup already exists: %[1]s' >&2; exit 1; fi; fi; backup_count=0; for old_backup in $(ls -1dt -- /root/config.bak.* 2>/dev/null); do backup_count=$((backup_count + 1)); if [ \"$backup_count\" -gt \"$backup_keep\" ]; then case \"$old_backup\" in /root/config.bak.*) rm -rf -- \"$old_backup\" || exit $? ;; *) echo \"unsafe config backup path: $old_backup\" >&2; exit 1 ;; esac; fi; done; if [ \"$current_config\" -eq 1 ]; then mv -- /root/config %[1]s || exit $?; fi; mkdir -m 755 /root/config", backupPath)
 }
 
 func verifyRemoteRobot(client *ssh.Client, report func(string)) (string, error) {
@@ -416,6 +432,7 @@ func main() {
 			launcherCfg = loaded
 		}
 	}
+	dw.freshInstall = launcherCfg.FreshInstall
 
 	if _, err := (MainWindow{
 		AssignTo: &dw.MainWindow,

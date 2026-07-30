@@ -41,9 +41,65 @@ password = secret=value
 	if err != nil {
 		t.Fatalf("loadLauncherConfig: %v", err)
 	}
-	want := launcherConfig{Host: "10.0.0.8", User: "deploy", Password: "secret=value"}
+	want := launcherConfig{Host: "10.0.0.8", User: "deploy", Password: "secret=value", FreshInstall: true}
 	if config != want {
 		t.Fatalf("config = %+v, want %+v", config, want)
+	}
+}
+
+func TestLoadLauncherConfigDisablesFreshInstallWithZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), launcherConfigName)
+	raw := `[ssh]
+host = 10.0.0.8
+
+[deploy]
+fresh_install = 0
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := loadLauncherConfig(path)
+	if err != nil {
+		t.Fatalf("loadLauncherConfig: %v", err)
+	}
+	if config.FreshInstall {
+		t.Fatal("fresh_install=0 was not applied")
+	}
+}
+
+func TestLoadLauncherConfigInvalidFreshInstallPreservesRemoteConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), launcherConfigName)
+	if err := os.WriteFile(path, []byte("[deploy]\nfresh_install = yes\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := loadLauncherConfig(path)
+	if err != nil {
+		t.Fatalf("loadLauncherConfig: %v", err)
+	}
+	if config.FreshInstall {
+		t.Fatal("invalid fresh_install value enabled destructive deployment")
+	}
+}
+
+func TestFreshInstallConfigCommandBacksUpBeforeCreatingEmptyConfig(t *testing.T) {
+	command := freshInstallConfigCommand("/root/config.bak.test")
+	for _, want := range []string{
+		"ls -1dt -- /root/config.bak.*",
+		"backup_keep=3",
+		"backup_keep=2",
+		`if [ "$backup_count" -gt "$backup_keep" ]`,
+		`case "$old_backup" in /root/config.bak.*)`,
+		"mv -- /root/config /root/config.bak.test",
+		"mkdir -m 755 /root/config",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("command %q does not contain %q", command, want)
+		}
+	}
+	if strings.Index(command, "rm -rf") > strings.Index(command, "mv -- /root/config") {
+		t.Fatalf("old backups are not pruned before moving current config: %q", command)
 	}
 }
 
