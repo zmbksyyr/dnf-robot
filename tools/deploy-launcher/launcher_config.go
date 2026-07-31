@@ -12,6 +12,7 @@ const launcherConfigName = "deploy-launcher.ini"
 
 type launcherConfig struct {
 	Host         string
+	Port         string
 	User         string
 	Password     string
 	FreshInstall bool
@@ -20,6 +21,7 @@ type launcherConfig struct {
 func defaultLauncherConfig() launcherConfig {
 	return launcherConfig{
 		Host:         "192.168.200.131",
+		Port:         "22",
 		User:         "root",
 		Password:     "123456",
 		FreshInstall: true,
@@ -66,6 +68,8 @@ func loadLauncherConfig(path string) (launcherConfig, error) {
 			switch key {
 			case "host":
 				config.Host = value
+			case "port":
+				config.Port = value
 			case "user":
 				config.User = value
 			case "password":
@@ -88,5 +92,5 @@ func formatLauncherConfig(config launcherConfig) []byte {
 	if config.FreshInstall {
 		freshInstall = 1
 	}
-	return []byte(fmt.Sprintf("[ssh]\nhost = %s\nuser = %s\npassword = %s\n\n[deploy]\n# 1 = fresh config, 0 = keep existing config\nfresh_install = %d\n", config.Host, config.User, config.Password, freshInstall))
+	return []byte(fmt.Sprintf("[ssh]\nhost = %s\nport = %s\nuser = %s\npassword = %s\n\n[deploy]\n# 1 = fresh config, 0 = keep existing config\nfresh_install = %d\n", config.Host, config.Port, config.User, config.Password, freshInstall))
 }

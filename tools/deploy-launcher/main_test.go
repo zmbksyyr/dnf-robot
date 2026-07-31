@@ -30,6 +30,7 @@ func TestLoadLauncherConfigUsesConfiguredSSHValues(t *testing.T) {
 	path := filepath.Join(t.TempDir(), launcherConfigName)
 	raw := `[ssh]
 host = 10.0.0.8
+port = 2222
 user = deploy
 password = secret=value
 `
@@ -41,7 +42,7 @@ password = secret=value
 	if err != nil {
 		t.Fatalf("loadLauncherConfig: %v", err)
 	}
-	want := launcherConfig{Host: "10.0.0.8", User: "deploy", Password: "secret=value", FreshInstall: true}
+	want := launcherConfig{Host: "10.0.0.8", Port: "2222", User: "deploy", Password: "secret=value", FreshInstall: true}
 	if config != want {
 		t.Fatalf("config = %+v, want %+v", config, want)
 	}
@@ -121,6 +122,60 @@ user =
 	want.Host = "10.0.0.9"
 	if config != want {
 		t.Fatalf("config = %+v, want %+v", config, want)
+	}
+}
+
+func TestLoadLauncherConfigKeepsDefaultPortWhenMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), launcherConfigName)
+	raw := `[ssh]
+host = 10.0.0.8
+user = deploy
+password = secret
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := loadLauncherConfig(path)
+	if err != nil {
+		t.Fatalf("loadLauncherConfig: %v", err)
+	}
+	if config.Port != "22" {
+		t.Fatalf("Port = %q, want 22", config.Port)
+	}
+}
+
+func TestValidSSHPort(t *testing.T) {
+	for _, raw := range []string{"", "abc", "0", "-1", "65536"} {
+		if _, err := validSSHPort(raw); err == nil {
+			t.Fatalf("validSSHPort(%q) returned nil error", raw)
+		}
+	}
+	for _, raw := range []string{"1", "22", " 2222 ", "65535"} {
+		if _, err := validSSHPort(raw); err != nil {
+			t.Fatalf("validSSHPort(%q): %v", raw, err)
+		}
+	}
+}
+
+func TestSSHAddress(t *testing.T) {
+	tests := []struct {
+		host string
+		port string
+		want string
+	}{
+		{host: "192.168.200.131", port: "22", want: "192.168.200.131:22"},
+		{host: "server.example.com", port: "2222", want: "server.example.com:2222"},
+		{host: "2001:db8::1", port: "2200", want: "[2001:db8::1]:2200"},
+	}
+	for _, tt := range tests {
+		got, err := sshAddress(tt.host, tt.port)
+		if err != nil {
+			t.Fatalf("sshAddress(%q, %q): %v", tt.host, tt.port, err)
+		}
+		if got != tt.want {
+			t.Fatalf("sshAddress(%q, %q) = %q, want %q", tt.host, tt.port, got, tt.want)
+		}
 	}
 }
 

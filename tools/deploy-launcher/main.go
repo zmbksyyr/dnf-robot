@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,6 +22,7 @@ type DeployWindow struct {
 	deployBtn    *walk.PushButton
 	restartBtn   *walk.PushButton
 	hostEdit     *walk.LineEdit
+	portEdit     *walk.LineEdit
 	userEdit     *walk.LineEdit
 	passEdit     *walk.LineEdit
 	logEdit      *walk.TextEdit
@@ -52,6 +54,9 @@ func (dw *DeployWindow) appendLog(line string) {
 func (dw *DeployWindow) validateInput() error {
 	if strings.TrimSpace(dw.hostEdit.Text()) == "" {
 		return fmt.Errorf("主机地址不能为空")
+	}
+	if _, err := validSSHPort(dw.portEdit.Text()); err != nil {
+		return err
 	}
 	if strings.TrimSpace(dw.userEdit.Text()) == "" {
 		return fmt.Errorf("用户名不能为空")
@@ -135,12 +140,16 @@ func (dw *DeployWindow) restart() {
 }
 
 func (dw *DeployWindow) doRestart() error {
-	client, err := sshConnectWithRetry(dw.hostEdit.Text(), dw.userEdit.Text(), dw.passEdit.Text(), 3)
+	endpoint, err := sshAddress(dw.hostEdit.Text(), dw.portEdit.Text())
 	if err != nil {
-		return fmt.Errorf("SSH 连接 %s 失败(已重试): %v", dw.hostEdit.Text(), err)
+		return err
+	}
+	client, err := sshConnectWithRetry(dw.hostEdit.Text(), dw.portEdit.Text(), dw.userEdit.Text(), dw.passEdit.Text(), 3)
+	if err != nil {
+		return fmt.Errorf("SSH 连接 %s 失败(已重试): %v", endpoint, err)
 	}
 	defer client.Close()
-	dw.appendLog(fmt.Sprintf("SSH %s 连接成功", dw.hostEdit.Text()))
+	dw.appendLog(fmt.Sprintf("SSH %s 连接成功", endpoint))
 
 	dw.killRemoteRobot(client)
 
@@ -193,12 +202,16 @@ func (dw *DeployWindow) doDeploy() error {
 	localSize := localInfo.Size()
 	dw.appendLog(fmt.Sprintf("本地 robot: %s (%d bytes)", robotPath, localSize))
 
-	client, err := sshConnectWithRetry(dw.hostEdit.Text(), dw.userEdit.Text(), dw.passEdit.Text(), 3)
+	endpoint, err := sshAddress(dw.hostEdit.Text(), dw.portEdit.Text())
 	if err != nil {
-		return fmt.Errorf("SSH 连接 %s 失败(已重试): %v", dw.hostEdit.Text(), err)
+		return err
+	}
+	client, err := sshConnectWithRetry(dw.hostEdit.Text(), dw.portEdit.Text(), dw.userEdit.Text(), dw.passEdit.Text(), 3)
+	if err != nil {
+		return fmt.Errorf("SSH 连接 %s 失败(已重试): %v", endpoint, err)
 	}
 	defer client.Close()
-	dw.appendLog(fmt.Sprintf("SSH %s 连接成功", dw.hostEdit.Text()))
+	dw.appendLog(fmt.Sprintf("SSH %s 连接成功", endpoint))
 
 	if err := uploadFile(client, robotPath, "/root/robot.new"); err != nil {
 		return fmt.Errorf("上传 robot 失败: %v", err)
@@ -340,13 +353,33 @@ func (dw *DeployWindow) appendRemoteDiagnostic(client *ssh.Client, label, comman
 	}
 }
 
-func sshConnectWithRetry(host, user, pass string, retries int) (*ssh.Client, error) {
+func validSSHPort(raw string) (string, error) {
+	port := strings.TrimSpace(raw)
+	if port == "" {
+		return "", fmt.Errorf("SSH 端口不能为空")
+	}
+	value, err := strconv.Atoi(port)
+	if err != nil || value < 1 || value > 65535 {
+		return "", fmt.Errorf("SSH 端口必须是 1-65535 之间的数字")
+	}
+	return strconv.Itoa(value), nil
+}
+
+func sshAddress(host, port string) (string, error) {
+	port, err := validSSHPort(port)
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(strings.TrimSpace(host), port), nil
+}
+
+func sshConnectWithRetry(host, port, user, pass string, retries int) (*ssh.Client, error) {
 	var lastErr error
 	for i := 0; i < retries; i++ {
 		if i > 0 {
 			time.Sleep(time.Duration(i*2) * time.Second)
 		}
-		client, err := sshConnect(host, user, pass)
+		client, err := sshConnect(host, port, user, pass)
 		if err == nil {
 			return client, nil
 		}
@@ -355,14 +388,18 @@ func sshConnectWithRetry(host, user, pass string, retries int) (*ssh.Client, err
 	return nil, lastErr
 }
 
-func sshConnect(host, user, pass string) (*ssh.Client, error) {
+func sshConnect(host, port, user, pass string) (*ssh.Client, error) {
+	address, err := sshAddress(host, port)
+	if err != nil {
+		return nil, err
+	}
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.Password(pass)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         15 * time.Second,
 	}
-	return ssh.Dial("tcp", fmt.Sprintf("%s:22", host), config)
+	return ssh.Dial("tcp", address, config)
 }
 
 func runCmdOutput(client *ssh.Client, cmd string) (string, error) {
@@ -447,6 +484,8 @@ func main() {
 				Children: []Widget{
 					Label{Text: "主机:"},
 					LineEdit{AssignTo: &dw.hostEdit, Text: launcherCfg.Host},
+					Label{Text: "端口:"},
+					LineEdit{AssignTo: &dw.portEdit, Text: launcherCfg.Port},
 					Label{Text: "用户:"},
 					LineEdit{AssignTo: &dw.userEdit, Text: launcherCfg.User},
 					Label{Text: "密码:"},
