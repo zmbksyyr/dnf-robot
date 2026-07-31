@@ -94,10 +94,47 @@ jobs:
           $tag = "latest"
           git tag -f $tag
           git push -f origin $tag
-          gh release create $tag `
-            --title "Latest Build" `
-            --notes "Auto-built from main branch" `
-            dist/robot `
-            dist/robot-no-upx `
-            dist/deploy-launcher.exe `
-            "dist/$env:RELEASE_ZIP"
+
+          $releaseReady = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            gh release create $tag `
+              --verify-tag `
+              --title "Latest Build" `
+              --notes "Auto-built from main branch"
+            if ($LASTEXITCODE -eq 0) {
+              $releaseReady = $true
+              break
+            }
+
+            gh release view $tag *> $null
+            if ($LASTEXITCODE -eq 0) {
+              $releaseReady = $true
+              break
+            }
+            if ($attempt -lt 3) {
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+          }
+          if (-not $releaseReady) {
+            throw "Failed to create release $tag after 3 attempts"
+          }
+
+          $assetsUploaded = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            gh release upload $tag `
+              --clobber `
+              dist/robot `
+              dist/robot-no-upx `
+              dist/deploy-launcher.exe `
+              "dist/$env:RELEASE_ZIP"
+            if ($LASTEXITCODE -eq 0) {
+              $assetsUploaded = $true
+              break
+            }
+            if ($attempt -lt 3) {
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+          }
+          if (-not $assetsUploaded) {
+            throw "Failed to upload release assets after 3 attempts"
+          }
