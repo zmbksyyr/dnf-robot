@@ -20,7 +20,7 @@ func TestLoadConfigMigratesLegacyJSONToCommentedINI(t *testing.T) {
 	if path != filepath.Join(dir, "market_config.ini") || status.MigratedFrom != legacy {
 		t.Fatalf("path=%q status=%+v", path, status)
 	}
-	if cfg.ListenAddr != "127.0.0.1:9000" || cfg.Restock.EquipInflateMin != 3 || cfg.Restock.UpgradeMin != 8 || cfg.Restock.RandLow != 0.8 {
+	if cfg.Restock.EquipInflateMin != 3 || cfg.Restock.UpgradeMin != 8 || cfg.Restock.RandLow != 0.8 {
 		t.Fatalf("legacy values were not migrated: %+v", cfg.Restock)
 	}
 	data, err := os.ReadFile(path)
@@ -28,8 +28,16 @@ func TestLoadConfigMigratesLegacyJSONToCommentedINI(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "[auction_price]") || !strings.Contains(text, "# 装备基础价格的随机倍率范围。") {
+	if !strings.Contains(text, "[auction_price]") || !strings.Contains(text, "# 装备基础价格的最小随机倍率。") {
 		t.Fatalf("generated INI lacks documented pricing configuration:\n%s", text)
+	}
+	for _, unused := range []string{"listen_addr", "frida_db", "[service]", "auto_sync", "nexon_base", "recycle_price"} {
+		if strings.Contains(text, unused) {
+			t.Fatalf("generated INI still contains unused setting %q:\n%s", unused, text)
+		}
+	}
+	if strings.Count(text, "max_result_actions =") != 1 || strings.Count(text, "per_item_delay_ms =") != 1 {
+		t.Fatalf("collector duplicated restock-only action detail settings:\n%s", text)
 	}
 }
 
@@ -85,7 +93,15 @@ out_of_range_probability = 0.02
 		t.Fatalf("collector config=%+v", cfg.Collector)
 	}
 	data, _ := os.ReadFile(path)
-	if !strings.Contains(string(data), "# 概率范围为 0.0 到 1.0") {
-		t.Fatalf("normalized INI lacks comments:\n%s", data)
+	text := string(data)
+	for _, comment := range []string{
+		"# 单轮补货最多生成并执行的动作数；0 表示配置层不限制。",
+		"# 补货动作的最大并发工作数。",
+		"# 单个任务结果中最多保留的动作明细数，避免接口和日志数据过大。",
+		"# 同一工作线程连续执行补货或回收动作时的间隔毫秒数；0 表示不主动等待。",
+	} {
+		if !strings.Contains(text, comment) {
+			t.Fatalf("normalized INI lacks action-limit comment %q:\n%s", comment, text)
+		}
 	}
 }

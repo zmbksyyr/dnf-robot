@@ -3,8 +3,6 @@ package marketapp
 import "time"
 
 type Config struct {
-	ListenAddr         string       `json:"listen_addr"`
-	FridaDB            string       `json:"frida_db"`
 	GameDB             string       `json:"game_db"`
 	AuctionDB          string       `json:"auction_db"`
 	CeraDB             string       `json:"cera_db"`
@@ -14,7 +12,6 @@ type Config struct {
 	CeraPort           int          `json:"cera_port"`
 	ItemInfoSourcePath string       `json:"iteminfo_source_path"`
 	ItemInfoTargets    []string     `json:"iteminfo_targets"`
-	AutoSyncItemInfo   bool         `json:"auto_sync_iteminfo"`
 	SystemOwner        SystemOwner  `json:"system_owner"`
 	Collector          CollectorCfg `json:"collector"`
 	Restock            RestockCfg   `json:"restock"`
@@ -25,7 +22,6 @@ type Config struct {
 type SystemOwner struct {
 	IDBase      uint32 `json:"id_base"`
 	BuyerBase   uint32 `json:"buyer_base"`
-	NexonBase   uint32 `json:"nexon_base"`
 	OwnerName   string `json:"owner_name"`
 	CeraName    string `json:"cera_name"`
 	RotateEvery int    `json:"rotate_every"`
@@ -61,8 +57,6 @@ type CollectorCfg struct {
 	Enabled             bool    `json:"enabled"`
 	MaxActions          int     `json:"max_actions"`
 	MaxConcurrent       int     `json:"max_concurrent"`
-	MaxResultActions    int     `json:"max_result_actions"`
-	PerItemDelayMS      int     `json:"per_item_delay_ms"`
 	IncludeSystemOwners bool    `json:"include_system_owners"`
 	PriceRangeEnabled   bool    `json:"price_range_enabled"`
 	InRangeProbability  float64 `json:"in_range_probability"`
@@ -175,7 +169,6 @@ type ConfigUpdateRequest struct {
 type Status struct {
 	ConfigPath  string                         `json:"config_path"`
 	LogPath     string                         `json:"log_path"`
-	ListenAddr  string                         `json:"listen_addr"`
 	Auto        AutoCfg                        `json:"auto"`
 	Collector   CollectorCfg                   `json:"collector"`
 	Restock     RestockCfg                     `json:"restock"`
@@ -468,7 +461,6 @@ type ceraRow struct {
 	Label        string `json:"name"`
 	RestockPrice int32  `json:"restock_price"`
 	RestockQty   int    `json:"restock_qty"`
-	RecyclePrice int32  `json:"recycle_price"`
 	Enabled      bool   `json:"enabled"`
 }
 

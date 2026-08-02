@@ -15,13 +15,13 @@ const defaultMarketMaxActions = 10000
 
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr: "0.0.0.0:8121", FridaDB: "frida", GameDB: "taiwan_cain_2nd",
+		GameDB:    "taiwan_cain_2nd",
 		AuctionDB: "taiwan_cain_auction_gold", CeraDB: "taiwan_cain_auction_cera",
 		AuctionHost: "127.0.0.1", AuctionPort: 30803, CeraHost: "127.0.0.1", CeraPort: 30603,
 		ItemInfoSourcePath: "pvf_iteminfo.dat",
 		ItemInfoTargets:    []string{"/home/neople/auction/iteminfo.dat", "/home/neople/point/iteminfo.dat", "/home/dxf/auction/iteminfo.dat", "/home/dxf/point/iteminfo.dat"},
-		SystemOwner:        SystemOwner{IDBase: 90000001, BuyerBase: 90100001, NexonBase: 18000000, OwnerName: "market", CeraName: "gold", RotateEvery: 10},
-		Collector:          CollectorCfg{Enabled: true, MaxConcurrent: 8, MaxResultActions: 200, InRangeProbability: 0.8, OutRangeProbability: 0.05},
+		SystemOwner:        SystemOwner{IDBase: 90000001, BuyerBase: 90100001, OwnerName: "market", CeraName: "gold", RotateEvery: 10},
+		Collector:          CollectorCfg{Enabled: true, MaxConcurrent: 8, InRangeProbability: 0.8, OutRangeProbability: 0.05},
 		Restock: RestockCfg{
 			Comments: defaultRestockComments(), QualityFilter: boolPtr(true), StackSizes: []int{500, 1000, 2000},
 			EquipmentQtyMin: 2, EquipmentQtyMax: 5, EquipInflateMin: 5, EquipInflateMax: 8,
@@ -98,21 +98,13 @@ func loadLegacyMarketJSON(path string) (Config, configLoadStatus, error) {
 func decodeMarketINI(ini *foundationconfig.INIConfig) Config {
 	d := DefaultConfig()
 	c := d
-	c.ListenAddr = ini.GetString("market", "listen_addr", d.ListenAddr)
-	c.FridaDB = ini.GetString("database", "frida_db", d.FridaDB)
 	c.GameDB = ini.GetString("database", "game_db", d.GameDB)
 	c.AuctionDB = ini.GetString("database", "auction_db", d.AuctionDB)
 	c.CeraDB = ini.GetString("database", "cera_db", d.CeraDB)
-	c.AuctionHost = ini.GetString("service", "auction_host", d.AuctionHost)
-	c.AuctionPort = ini.GetInt("service", "auction_port", d.AuctionPort)
-	c.CeraHost = ini.GetString("service", "cera_host", d.CeraHost)
-	c.CeraPort = ini.GetInt("service", "cera_port", d.CeraPort)
 	c.ItemInfoSourcePath = ini.GetString("iteminfo", "source_path", d.ItemInfoSourcePath)
 	c.ItemInfoTargets = splitStrings(ini.GetString("iteminfo", "targets", strings.Join(d.ItemInfoTargets, ",")))
-	c.AutoSyncItemInfo = iniBool(ini, "iteminfo", "auto_sync", d.AutoSyncItemInfo)
 	c.SystemOwner.IDBase = uint32(ini.GetInt("system_owner", "id_base", int(d.SystemOwner.IDBase)))
 	c.SystemOwner.BuyerBase = uint32(ini.GetInt("system_owner", "buyer_base", int(d.SystemOwner.BuyerBase)))
-	c.SystemOwner.NexonBase = uint32(ini.GetInt("system_owner", "nexon_base", int(d.SystemOwner.NexonBase)))
 	c.SystemOwner.OwnerName = ini.GetString("system_owner", "owner_name", d.SystemOwner.OwnerName)
 	c.SystemOwner.CeraName = ini.GetString("system_owner", "cera_name", d.SystemOwner.CeraName)
 	c.SystemOwner.RotateEvery = ini.GetInt("system_owner", "rotate_every", d.SystemOwner.RotateEvery)
@@ -123,8 +115,6 @@ func decodeMarketINI(ini *foundationconfig.INIConfig) Config {
 	c.Collector.OutRangeProbability = iniFloat(ini, "auction_collect", "out_of_range_probability", d.Collector.OutRangeProbability)
 	c.Collector.MaxActions = ini.GetInt("auction_collect", "max_actions", d.Collector.MaxActions)
 	c.Collector.MaxConcurrent = ini.GetInt("auction_collect", "max_concurrent", d.Collector.MaxConcurrent)
-	c.Collector.MaxResultActions = ini.GetInt("auction_collect", "max_result_actions", d.Collector.MaxResultActions)
-	c.Collector.PerItemDelayMS = ini.GetInt("auction_collect", "per_item_delay_ms", d.Collector.PerItemDelayMS)
 	c.Restock.QualityFilter = boolPtr(iniBool(ini, "auction_price", "quality_filter", true))
 	c.Restock.StackSizes = splitInts(ini.GetString("auction_price", "stack_sizes", joinInts(d.Restock.StackSizes)))
 	c.Restock.EquipmentQtyMin = ini.GetInt("auction_price", "equipment_qty_min", d.Restock.EquipmentQtyMin)
@@ -155,12 +145,6 @@ func decodeMarketINI(ini *foundationconfig.INIConfig) Config {
 
 func (c *Config) applyDefaults() {
 	d := DefaultConfig()
-	if c.ListenAddr == "" {
-		c.ListenAddr = d.ListenAddr
-	}
-	if c.FridaDB == "" {
-		c.FridaDB = d.FridaDB
-	}
 	if c.GameDB == "" {
 		c.GameDB = d.GameDB
 	}
@@ -194,9 +178,6 @@ func (c *Config) applyDefaults() {
 	if c.SystemOwner.BuyerBase == 0 {
 		c.SystemOwner.BuyerBase = d.SystemOwner.BuyerBase
 	}
-	if c.SystemOwner.NexonBase == 0 {
-		c.SystemOwner.NexonBase = d.SystemOwner.NexonBase
-	}
 	if c.SystemOwner.OwnerName == "" {
 		c.SystemOwner.OwnerName = d.SystemOwner.OwnerName
 	}
@@ -208,12 +189,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Collector.MaxConcurrent <= 0 {
 		c.Collector.MaxConcurrent = d.Collector.MaxConcurrent
-	}
-	if c.Collector.MaxResultActions <= 0 {
-		c.Collector.MaxResultActions = d.Collector.MaxResultActions
-	}
-	if c.Collector.PerItemDelayMS < 0 {
-		c.Collector.PerItemDelayMS = 0
 	}
 	c.Collector.InRangeProbability = clampProbability(c.Collector.InRangeProbability, d.Collector.InRangeProbability)
 	c.Collector.OutRangeProbability = clampProbability(c.Collector.OutRangeProbability, d.Collector.OutRangeProbability)
@@ -293,29 +268,57 @@ func writeMarketConfig(path string, c Config) error {
 	c.applyDefaults()
 	qf := c.Restock.QualityFilter == nil || *c.Restock.QualityFilter
 	lines := []string{
-		"# Market configuration. The program rewrites this file with normalized values and comments.",
-		"[market]", "# Market TCP listen address.", "listen_addr = " + c.ListenAddr, "",
-		"[database]", "# Database names used by Market.", "frida_db = " + c.FridaDB, "game_db = " + c.GameDB, "auction_db = " + c.AuctionDB, "cera_db = " + c.CeraDB, "",
-		"[service]", "# Native Auction and Point service endpoints.", fmt.Sprintf("auction_host = %s", c.AuctionHost), fmt.Sprintf("auction_port = %d", c.AuctionPort), fmt.Sprintf("cera_host = %s", c.CeraHost), fmt.Sprintf("cera_port = %d", c.CeraPort), "",
-		"[iteminfo]", "# Source and comma-separated release targets for iteminfo.dat.", "source_path = " + c.ItemInfoSourcePath, "targets = " + strings.Join(c.ItemInfoTargets, ","), "auto_sync = " + strconv.FormatBool(c.AutoSyncItemInfo), "",
-		"[system_owner]", "# Virtual seller and buyer ID ranges. rotate_every controls how many records use one ID.", fmt.Sprintf("id_base = %d", c.SystemOwner.IDBase), fmt.Sprintf("buyer_base = %d", c.SystemOwner.BuyerBase), fmt.Sprintf("nexon_base = %d", c.SystemOwner.NexonBase), "owner_name = " + c.SystemOwner.OwnerName, "cera_name = " + c.SystemOwner.CeraName, fmt.Sprintf("rotate_every = %d", c.SystemOwner.RotateEvery), "",
+		"# Market 配置。程序加载后会规范化数值并重新写入本文件。",
+		"[database]",
+		"# 普通拍卖行数据库。", "auction_db = " + c.AuctionDB,
+		"# 金币寄售数据库。", "cera_db = " + c.CeraDB,
+		"# 游戏数据库，用于宠物实例和系统特殊物品清理。", "game_db = " + c.GameDB, "",
+		"[iteminfo]",
+		"# iteminfo.dat 源文件；相对路径以配置目录为基准。", "source_path = " + c.ItemInfoSourcePath,
+		"# iteminfo.dat 发布目标，多个路径使用逗号分隔。", "targets = " + strings.Join(c.ItemInfoTargets, ","), "",
+		"[system_owner]",
+		"# 系统虚拟卖家的起始角色 ID。", fmt.Sprintf("id_base = %d", c.SystemOwner.IDBase),
+		"# 系统虚拟买家的起始角色 ID。", fmt.Sprintf("buyer_base = %d", c.SystemOwner.BuyerBase),
+		"# 普通拍卖行虚拟卖家和买家的名称。", "owner_name = " + c.SystemOwner.OwnerName,
+		"# 金币寄售虚拟卖家的名称。", "cera_name = " + c.SystemOwner.CeraName,
+		"# 每个虚拟角色连续使用多少条订单后切换到下一个 ID。", fmt.Sprintf("rotate_every = %d", c.SystemOwner.RotateEvery), "",
 		"[auction_price]",
 		"# 是否过滤不适合自动补货的高稀有度物品。", "quality_filter = " + strconv.FormatBool(qf),
 		"# 堆叠物品的候选数量，使用逗号分隔；实际数量不会超过 PVF stack_limit。", "stack_sizes = " + joinInts(c.Restock.StackSizes),
-		"# 每种缺货装备生成的拍卖记录数量范围。", fmt.Sprintf("equipment_qty_min = %d", c.Restock.EquipmentQtyMin), fmt.Sprintf("equipment_qty_max = %d", c.Restock.EquipmentQtyMax),
-		"# 装备基础价格的随机倍率范围。", fmt.Sprintf("equip_inflate_min = %d", c.Restock.EquipInflateMin), fmt.Sprintf("equip_inflate_max = %d", c.Restock.EquipInflateMax),
-		"# 装备随机强化范围以及每级强化的价格加成比例；0.08 表示每级增加 8%。", fmt.Sprintf("upgrade_min = %d", c.Restock.UpgradeMin), fmt.Sprintf("upgrade_max = %d", c.Restock.UpgradeMax), "upgrade_price_rate = " + formatFloat(c.Restock.UpgradePriceRate),
-		"# 装备倍率和强化加价计算完成后应用的最终随机价格倍率。", "rand_low = " + formatFloat(c.Restock.RandLow), "rand_high = " + formatFloat(c.Restock.RandHigh),
+		"# 每种缺货装备最少生成的拍卖记录数。", fmt.Sprintf("equipment_qty_min = %d", c.Restock.EquipmentQtyMin),
+		"# 每种缺货装备最多生成的拍卖记录数。", fmt.Sprintf("equipment_qty_max = %d", c.Restock.EquipmentQtyMax),
+		"# 装备基础价格的最小随机倍率。", fmt.Sprintf("equip_inflate_min = %d", c.Restock.EquipInflateMin),
+		"# 装备基础价格的最大随机倍率。", fmt.Sprintf("equip_inflate_max = %d", c.Restock.EquipInflateMax),
+		"# 装备随机强化的最低等级。", fmt.Sprintf("upgrade_min = %d", c.Restock.UpgradeMin),
+		"# 装备随机强化的最高等级。", fmt.Sprintf("upgrade_max = %d", c.Restock.UpgradeMax),
+		"# 每级强化的价格加成比例；0.08 表示每级增加 8%。", "upgrade_price_rate = " + formatFloat(c.Restock.UpgradePriceRate),
+		"# 最终价格的最小随机倍率。", "rand_low = " + formatFloat(c.Restock.RandLow),
+		"# 最终价格的最大随机倍率。", "rand_high = " + formatFloat(c.Restock.RandHigh),
 		"# 是否启用物品独立最终价格范围；有效的单品配置优先于上面的通用公式。", "custom_price_enabled = " + strconv.FormatBool(c.Restock.CustomPriceEnabled),
 		"# 单品价格 JSON 文件；相对路径以配置目录为基准，也可以填写绝对路径。", "custom_price_file = " + c.Restock.CustomPriceFile,
-		"# 补货执行限制；max_actions=0 表示配置层不限制本轮动作数。", fmt.Sprintf("max_actions = %d", c.Restock.MaxActions), fmt.Sprintf("max_concurrent = %d", c.Restock.MaxConcurrent), fmt.Sprintf("max_result_actions = %d", c.Restock.MaxResultActions), fmt.Sprintf("per_item_delay_ms = %d", c.Restock.PerItemDelayMS), "",
-		"[auction_collect]", "# 虚拟买家自动回收总开关。", "enabled = " + strconv.FormatBool(c.Collector.Enabled),
+		"# 单轮补货最多生成并执行的动作数；0 表示配置层不限制。", fmt.Sprintf("max_actions = %d", c.Restock.MaxActions),
+		"# 补货动作的最大并发工作数。", fmt.Sprintf("max_concurrent = %d", c.Restock.MaxConcurrent),
+		"# 单个任务结果中最多保留的动作明细数，避免接口和日志数据过大。", fmt.Sprintf("max_result_actions = %d", c.Restock.MaxResultActions),
+		"# 同一工作线程连续执行补货或回收动作时的间隔毫秒数；0 表示不主动等待。", fmt.Sprintf("per_item_delay_ms = %d", c.Restock.PerItemDelayMS), "",
+		"[auction_collect]",
+		"# 虚拟买家自动回收总开关。", "enabled = " + strconv.FormatBool(c.Collector.Enabled),
 		"# 手动回收时是否包含系统虚拟卖家的订单，通常保持 false。", "include_system_owners = " + strconv.FormatBool(c.Collector.IncludeSystemOwners),
 		"# 开启后，价格符合最终范围的订单使用高概率，超出范围的订单使用低概率。", "price_range_enabled = " + strconv.FormatBool(c.Collector.PriceRangeEnabled),
-		"# 概率范围为 0.0 到 1.0；0.8 表示约 80%。", "in_range_probability = " + formatFloat(c.Collector.InRangeProbability), "out_of_range_probability = " + formatFloat(c.Collector.OutRangeProbability),
-		"# 回收执行限制；max_actions=0 表示配置层不限制本轮动作数。", fmt.Sprintf("max_actions = %d", c.Collector.MaxActions), fmt.Sprintf("max_concurrent = %d", c.Collector.MaxConcurrent), fmt.Sprintf("max_result_actions = %d", c.Collector.MaxResultActions), fmt.Sprintf("per_item_delay_ms = %d", c.Collector.PerItemDelayMS), "",
-		"[cera]", "# Gold-consignment rows: item_id|name|restock_price|target_records|recycle_price|enabled, separated by commas.", "items = " + encodeCeraItems(c.Cera.Items), "",
-		"[auto]", "# Periodic Market automation. interval_ms has a minimum of 60000.", "enabled = " + strconv.FormatBool(c.Auto.Enabled), "markets = " + strings.Join(c.Auto.Markets, ","), fmt.Sprintf("initial_delay_ms = %d", c.Auto.InitialDelayMS), fmt.Sprintf("interval_ms = %d", c.Auto.IntervalMS), fmt.Sprintf("max_actions = %d", c.Auto.MaxActions), fmt.Sprintf("max_concurrent = %d", c.Auto.MaxConcurrent), "continue_on_error = " + strconv.FormatBool(c.Auto.ContinueOnError), "",
+		"# 价格在最终范围内时的回收概率，范围为 0.0 到 1.0。", "in_range_probability = " + formatFloat(c.Collector.InRangeProbability),
+		"# 价格超出最终范围时的回收概率，范围为 0.0 到 1.0。", "out_of_range_probability = " + formatFloat(c.Collector.OutRangeProbability),
+		"# 单轮回收最多生成并执行的动作数；0 表示配置层不限制。", fmt.Sprintf("max_actions = %d", c.Collector.MaxActions),
+		"# 回收动作的最大并发工作数。", fmt.Sprintf("max_concurrent = %d", c.Collector.MaxConcurrent), "",
+		"[cera]",
+		"# 金币寄售条目，多个条目使用逗号分隔。",
+		"# 单条格式：物品ID|备注名称|寄售价格|目标记录数|是否启用。", "items = " + encodeCeraItems(c.Cera.Items), "",
+		"[auto]",
+		"# 是否启用周期性 Market 自动任务。", "enabled = " + strconv.FormatBool(c.Auto.Enabled),
+		"# 自动处理的市场，支持 auction 和 cera，多个值使用逗号分隔。", "markets = " + strings.Join(c.Auto.Markets, ","),
+		"# 程序启动后首次执行自动任务前的等待毫秒数。", fmt.Sprintf("initial_delay_ms = %d", c.Auto.InitialDelayMS),
+		"# 自动任务执行间隔毫秒数，最小为 60000。", fmt.Sprintf("interval_ms = %d", c.Auto.IntervalMS),
+		"# 自动任务每个市场单轮允许的最大动作数；0 表示不限制。", fmt.Sprintf("max_actions = %d", c.Auto.MaxActions),
+		"# 自动任务每个市场允许的最大并发工作数。", fmt.Sprintf("max_concurrent = %d", c.Auto.MaxConcurrent),
+		"# 单个动作失败后是否继续执行本轮剩余动作。", "continue_on_error = " + strconv.FormatBool(c.Auto.ContinueOnError), "",
 	}
 	return writeAtomicFile(path, []byte(strings.Join(lines, "\n")))
 }
@@ -404,7 +407,7 @@ func mergeStringMap(dst *map[string]string, defaults map[string]string) {
 func encodeCeraItems(items []ceraRow) string {
 	out := make([]string, 0, len(items))
 	for _, row := range items {
-		out = append(out, fmt.Sprintf("%d|%s|%d|%d|%d|%t", row.ItemID, strings.ReplaceAll(row.Label, "|", " "), row.RestockPrice, row.RestockQty, row.RecyclePrice, row.Enabled))
+		out = append(out, fmt.Sprintf("%d|%s|%d|%d|%t", row.ItemID, strings.ReplaceAll(row.Label, "|", " "), row.RestockPrice, row.RestockQty, row.Enabled))
 	}
 	return strings.Join(out, ",")
 }
@@ -413,18 +416,21 @@ func decodeCeraItems(raw string, fallback []ceraRow) []ceraRow {
 	var out []ceraRow
 	for _, entry := range strings.Split(raw, ",") {
 		parts := strings.Split(strings.TrimSpace(entry), "|")
-		if len(parts) != 6 {
+		if len(parts) != 5 && len(parts) != 6 {
 			continue
 		}
 		id, e1 := strconv.ParseUint(parts[0], 10, 32)
 		restock, e2 := strconv.ParseInt(parts[2], 10, 32)
 		qty, e3 := strconv.Atoi(parts[3])
-		recycle, e4 := strconv.ParseInt(parts[4], 10, 32)
-		enabled, e5 := strconv.ParseBool(parts[5])
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil || id == 0 {
+		enabledIndex := 4
+		if len(parts) == 6 {
+			enabledIndex = 5 // Legacy INI included an unused recycle_price column.
+		}
+		enabled, e4 := strconv.ParseBool(parts[enabledIndex])
+		if e1 != nil || e2 != nil || e3 != nil || e4 != nil || id == 0 {
 			continue
 		}
-		out = append(out, ceraRow{ItemID: uint32(id), Label: parts[1], RestockPrice: int32(restock), RestockQty: qty, RecyclePrice: int32(recycle), Enabled: enabled})
+		out = append(out, ceraRow{ItemID: uint32(id), Label: parts[1], RestockPrice: int32(restock), RestockQty: qty, Enabled: enabled})
 	}
 	if len(out) == 0 {
 		return fallback

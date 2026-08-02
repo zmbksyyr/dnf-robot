@@ -204,7 +204,6 @@ func (a *App) Status() Status {
 	return Status{
 		ConfigPath:  a.configPath,
 		LogPath:     marketLogPath(a.configDir),
-		ListenAddr:  a.cfg.ListenAddr,
 		Auto:        a.cfg.Auto,
 		Collector:   a.cfg.Collector,
 		Restock:     a.cfg.Restock,

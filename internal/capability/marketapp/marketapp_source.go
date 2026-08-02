@@ -248,24 +248,23 @@ func defaultCeraComments() map[string]string {
 		"name":          "Display label used only for identification in config and logs.",
 		"restock_price": "Consignment listing price.",
 		"restock_qty":   "Target record count. Restock fills the gap when current DB stock is lower than this value.",
-		"recycle_price": "Reserved reference price for future collect policy.",
 		"enabled":       "Whether this gold package is enabled.",
 	}
 }
 
 func defaultCeraRows() []ceraRow {
 	return []ceraRow{
-		{ItemID: 2675336, Label: "100w_gold", RestockPrice: 200, RestockQty: 20, RecyclePrice: 200, Enabled: true},
-		{ItemID: 2675337, Label: "200w_gold", RestockPrice: 400, RestockQty: 20, RecyclePrice: 400, Enabled: true},
-		{ItemID: 2675338, Label: "300w_gold", RestockPrice: 600, RestockQty: 20, RecyclePrice: 600, Enabled: true},
-		{ItemID: 2675339, Label: "400w_gold", RestockPrice: 800, RestockQty: 20, RecyclePrice: 800, Enabled: true},
-		{ItemID: 2675340, Label: "500w_gold", RestockPrice: 1000, RestockQty: 20, RecyclePrice: 1000, Enabled: true},
-		{ItemID: 2675341, Label: "600w_gold", RestockPrice: 1200, RestockQty: 20, RecyclePrice: 1200, Enabled: true},
-		{ItemID: 2675342, Label: "700w_gold", RestockPrice: 1400, RestockQty: 20, RecyclePrice: 1400, Enabled: true},
-		{ItemID: 2675343, Label: "800w_gold", RestockPrice: 1600, RestockQty: 20, RecyclePrice: 1600, Enabled: true},
-		{ItemID: 2675344, Label: "900w_gold", RestockPrice: 1800, RestockQty: 20, RecyclePrice: 1800, Enabled: true},
-		{ItemID: 2675345, Label: "1000w_gold", RestockPrice: 2000, RestockQty: 20, RecyclePrice: 2000, Enabled: true},
-		{ItemID: 2675346, Label: "2000w_gold", RestockPrice: 4000, RestockQty: 20, RecyclePrice: 4000, Enabled: true},
-		{ItemID: 2675347, Label: "3000w_gold", RestockPrice: 6000, RestockQty: 20, RecyclePrice: 6000, Enabled: true},
+		{ItemID: 2675336, Label: "100w_gold", RestockPrice: 200, RestockQty: 20, Enabled: true},
+		{ItemID: 2675337, Label: "200w_gold", RestockPrice: 400, RestockQty: 20, Enabled: true},
+		{ItemID: 2675338, Label: "300w_gold", RestockPrice: 600, RestockQty: 20, Enabled: true},
+		{ItemID: 2675339, Label: "400w_gold", RestockPrice: 800, RestockQty: 20, Enabled: true},
+		{ItemID: 2675340, Label: "500w_gold", RestockPrice: 1000, RestockQty: 20, Enabled: true},
+		{ItemID: 2675341, Label: "600w_gold", RestockPrice: 1200, RestockQty: 20, Enabled: true},
+		{ItemID: 2675342, Label: "700w_gold", RestockPrice: 1400, RestockQty: 20, Enabled: true},
+		{ItemID: 2675343, Label: "800w_gold", RestockPrice: 1600, RestockQty: 20, Enabled: true},
+		{ItemID: 2675344, Label: "900w_gold", RestockPrice: 1800, RestockQty: 20, Enabled: true},
+		{ItemID: 2675345, Label: "1000w_gold", RestockPrice: 2000, RestockQty: 20, Enabled: true},
+		{ItemID: 2675346, Label: "2000w_gold", RestockPrice: 4000, RestockQty: 20, Enabled: true},
+		{ItemID: 2675347, Label: "3000w_gold", RestockPrice: 6000, RestockQty: 20, Enabled: true},
 	}
 }
