@@ -79,6 +79,7 @@ func LoadFile(path string) (RuntimeConfig, error) {
 	rc.StoreMaterialStartBox = ini.GetInt("store", "store_material_start_box_index", rc.StoreMaterialStartBox)
 	rc.StoreEquipmentIntensifyMin = ini.GetInt("store", "store_equipment_intensify_min", rc.StoreEquipmentIntensifyMin)
 	rc.StoreEquipmentIntensifyMax = ini.GetInt("store", "store_equipment_intensify_max", rc.StoreEquipmentIntensifyMax)
+	rc.StoreTitleFile = strings.TrimSpace(ini.GetString("store", "store_title_file", rc.StoreTitleFile))
 	rc.StoreConfirmTimeoutSec = ini.GetInt("store", "store_confirm_timeout_sec", rc.StoreConfirmTimeoutSec)
 
 	rc.FollowAccount = ini.GetString("follow", "follow_account", rc.FollowAccount)

@@ -72,6 +72,10 @@ type RobotManager struct {
 	worldHornCache                  *storecap.WorldHornCache
 	storePoolLock                   lockhub.Locker
 	storeItemPool                   *storecap.ItemPool
+	storeTitleLock                  lockhub.Locker
+	storeTitles                     *storecap.TitleCatalog
+	storeTitlePath                  string
+	storeTitlesLoaded               bool
 	positionWrites                  *positionBatcher
 	characterCacheInvalidate        func(uid int) error
 	mailNotifier                    MailNotifier

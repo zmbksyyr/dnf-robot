@@ -34,6 +34,7 @@ type WorkflowEnv interface {
 	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
 	SetAreaFrom(uid int, village, area int, x, y int, fromVillage, fromArea int) bool
 	StartPrivateStore(uid int, title string) bool
+	StoreTitle(uid int, rc robotconfig.RuntimeConfig) string
 	StorePoints() *PointCoordinator
 	SyncRobotCharacterVillage(cid int, village int) error
 	WaitAccountOffline(uid int, shouldStop func() bool) (bool, error)
@@ -125,7 +126,7 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 				env.EndStoreBusy(r.UID)
 				continue
 			}
-			title := fmt.Sprintf("tw-%d", r.UID%100000)
+			title := env.StoreTitle(r.UID, rc)
 			if env.StartPrivateStore(r.UID, title) {
 				_ = env.MarkStoreStarted(r.UID)
 				result.Accepted++
@@ -376,7 +377,7 @@ func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 
 func (w Workflow) startAndWaitDisplay(info robotcap.Info, rc robotconfig.RuntimeConfig, try int, shouldStop func() bool) (bool, string) {
 	env := w.Env
-	title := fmt.Sprintf("tw-%d", info.UID%100000)
+	title := env.StoreTitle(info.UID, rc)
 	for inventoryAttempt := 0; inventoryAttempt < 2; inventoryAttempt++ {
 		if !env.StartPrivateStore(info.UID, title) {
 			env.Logf("[AutoStore] uid=%d store_start_failed try=%d inventory_attempt=%d\n", info.UID, try, inventoryAttempt+1)

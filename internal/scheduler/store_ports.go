@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"path/filepath"
+
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	storecap "robot/internal/capability/store"
@@ -107,6 +109,10 @@ func (e storeWorkflowEnv) StartPrivateStore(uid int, title string) bool {
 	return e.manager.doll.StartPrivateStore(uid, title)
 }
 
+func (e storeWorkflowEnv) StoreTitle(uid int, rc robotconfig.RuntimeConfig) string {
+	return e.manager.storeTitle(uid, rc)
+}
+
 func (e storeWorkflowEnv) StorePoints() *storecap.PointCoordinator {
 	return e.manager.storePoints()
 }
@@ -148,6 +154,31 @@ func (m *RobotManager) storePool(rc robotconfig.RuntimeConfig) *storecap.ItemPoo
 	return m.storeItemPool
 }
 
+func (m *RobotManager) storeTitle(uid int, rc robotconfig.RuntimeConfig) string {
+	path := rc.StoreTitleFile
+	if !filepath.IsAbs(path) {
+		configDir := "."
+		if m.cfg != nil && m.cfg.ConfigDir != "" {
+			configDir = m.cfg.ConfigDir
+		}
+		path = filepath.Join(configDir, path)
+	}
+	m.storeTitleLock.Lock()
+	defer m.storeTitleLock.Unlock()
+	if !m.storeTitlesLoaded || m.storeTitlePath != path {
+		catalog, err := storecap.LoadTitleCatalog(path)
+		if err != nil {
+			robotLogf("[StoreTitle] fallback path=%s err=%v\n", path, err)
+			catalog = storecap.NewTitleCatalog(nil)
+		}
+		m.storeTitles = catalog
+		m.storeTitlePath = path
+		m.storeTitlesLoaded = true
+		robotLogf("[StoreTitle] loaded path=%s titles=%d\n", path, catalog.Len())
+	}
+	return m.storeTitles.TitleForUID(uid)
+}
+
 type storePreparationEnv struct {
 	manager *RobotManager
 }
@@ -170,6 +201,10 @@ func (e storePreparationEnv) RandBetween(min, max int) int {
 
 func (e storePreparationEnv) ReplaceStoreStall(uid int, title string, items []storecap.StallItem) (storecap.StallResult, error) {
 	return e.manager.schemaRepo().ReplaceStoreStall(uid, title, items)
+}
+
+func (e storePreparationEnv) StoreTitle(uid int, rc robotconfig.RuntimeConfig) string {
+	return e.manager.storeTitle(uid, rc)
 }
 
 func (e storePreparationEnv) SaveInventory(cid int, capacity int, raw []byte) error {

@@ -77,6 +77,7 @@ store_equipment_start_box_index = 9
 store_material_start_box_index = 107
 store_equipment_intensify_min = 8
 store_equipment_intensify_max = 12
+store_title_file = custom_store_titles.json
 store_confirm_timeout_sec = 31
 
 [follow]
@@ -141,7 +142,7 @@ packet_rate_per_sec = 30
 	if !reflect.DeepEqual(rc.StoreItemAllowIDs, []int{11, 12}) || !reflect.DeepEqual(rc.StoreItemDenyIDs, []int{21, 22}) {
 		t.Fatalf("store lists not loaded: allow=%v deny=%v", rc.StoreItemAllowIDs, rc.StoreItemDenyIDs)
 	}
-	if rc.StoreEquipmentStartBox != 9 || rc.StoreMaterialStartBox != 107 || rc.StoreEquipmentIntensifyMin != 8 || rc.StoreEquipmentIntensifyMax != 12 {
+	if rc.StoreEquipmentStartBox != 9 || rc.StoreMaterialStartBox != 107 || rc.StoreEquipmentIntensifyMin != 8 || rc.StoreEquipmentIntensifyMax != 12 || rc.StoreTitleFile != "custom_store_titles.json" {
 		t.Fatalf("store pool config not loaded: %+v", rc)
 	}
 	if rc.StoreEquipmentPriceMin != 1000 || rc.StoreEquipmentPriceMax != 2000 || rc.StoreMaterialPriceMin != 30 || rc.StoreMaterialPriceMax != 40 {
@@ -163,7 +164,7 @@ func TestLoadFileKeepsDefaultsForMissingValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Default()
-	if rc.LevelMin != 60 || rc.LevelMax != want.LevelMax || rc.RobotUIDStart != want.RobotUIDStart || rc.RobotUIDEnd != 17000999 || rc.RobotUIDGuard != 17999999 || rc.MinAvatarSlots != 8 || rc.StoreEquipmentIntensifyMin != 7 || rc.StoreEquipmentIntensifyMax != 13 {
+	if rc.LevelMin != 60 || rc.LevelMax != want.LevelMax || rc.RobotUIDStart != want.RobotUIDStart || rc.RobotUIDEnd != 17000999 || rc.RobotUIDGuard != 17999999 || rc.MinAvatarSlots != 8 || rc.StoreEquipmentIntensifyMin != 7 || rc.StoreEquipmentIntensifyMax != 13 || rc.StoreTitleFile != "robot_store_titles.json" {
 		t.Fatalf("defaults not preserved: %+v", rc)
 	}
 }

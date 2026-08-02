@@ -267,6 +267,10 @@ func (e testPreparationEnv) StackableCatalog() []shared.EquipmentCatalogItem {
 	return e.catalog
 }
 
+func (e testPreparationEnv) StoreTitle(uid int, rc robotconfig.RuntimeConfig) string {
+	return fallbackStoreTitle(uid)
+}
+
 func storeItemIDSet(items []shared.EquipmentCatalogItem) map[int]bool {
 	out := make(map[int]bool, len(items))
 	for _, item := range items {

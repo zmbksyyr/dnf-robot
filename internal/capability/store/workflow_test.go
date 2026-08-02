@@ -17,6 +17,10 @@ type cancellingWorkflowEnv struct {
 	started  int
 }
 
+func (e *cancellingWorkflowEnv) StoreTitle(uid int, rc robotconfig.RuntimeConfig) string {
+	return fallbackStoreTitle(uid)
+}
+
 func (e *cancellingWorkflowEnv) SelectRobots(robotcap.CommandRequest) ([]robotcap.Info, error) {
 	return nil, nil
 }
@@ -85,6 +89,10 @@ func TestAutoStoreCancellationRestoresAfterOfflineBarrier(t *testing.T) {
 type delayedLogoutWorkflowEnv struct {
 	WorkflowEnv
 	waited bool
+}
+
+func (e *delayedLogoutWorkflowEnv) StoreTitle(uid int, rc robotconfig.RuntimeConfig) string {
+	return fallbackStoreTitle(uid)
 }
 
 func (*delayedLogoutWorkflowEnv) SelectRobots(robotcap.CommandRequest) ([]robotcap.Info, error) {
@@ -177,6 +185,10 @@ type inventoryRetryWorkflowEnv struct {
 	prepareErr    error
 	invalidateErr error
 	events        []string
+}
+
+func (e *inventoryRetryWorkflowEnv) StoreTitle(uid int, rc robotconfig.RuntimeConfig) string {
+	return fallbackStoreTitle(uid)
 }
 
 func (e *inventoryRetryWorkflowEnv) StartPrivateStore(int, string) bool {

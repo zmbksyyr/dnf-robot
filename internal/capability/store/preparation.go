@@ -25,6 +25,7 @@ type PreparationEnv interface {
 	SaveInventory(cid int, capacity int, raw []byte) error
 	SaveInventoryRaw(cid int, raw []byte) error
 	StackableCatalog() []shared.EquipmentCatalogItem
+	StoreTitle(uid int, rc robotconfig.RuntimeConfig) string
 }
 
 func (p Preparer) PopulateInventory(info robotcap.Info, rc robotconfig.RuntimeConfig) error {
@@ -111,7 +112,7 @@ func (p Preparer) EnsureInventoryAndStall(info robotcap.Info, rc robotconfig.Run
 		return nil
 	}
 	assignStorePoolPrices(env, rc, stallItems, nil)
-	title := fmt.Sprintf("tw-%d", info.UID%100000)
+	title := env.StoreTitle(info.UID, rc)
 	stallResult, err := env.ReplaceStoreStall(info.UID, title, stallItems)
 	if err != nil {
 		return err
@@ -165,7 +166,7 @@ func (p Preparer) preparePoolInventoryAndStall(info robotcap.Info, rc robotconfi
 		return err
 	}
 	p.WorldHorns.Invalidate(info.CID)
-	title := fmt.Sprintf("tw-%d", info.UID%100000)
+	title := env.StoreTitle(info.UID, rc)
 	result, err := env.ReplaceStoreStall(info.UID, title, stallItems)
 	if err != nil {
 		return err
