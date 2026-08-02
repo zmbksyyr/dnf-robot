@@ -78,7 +78,7 @@
 
 负责 Market 实际可调的数据库名、系统卖家/买家 UID、补货、回收、金币寄售、并发、自动周期和 `iteminfo.dat` 同步目标。Auction/Point 地址和端口沿用主 `config.ini`，不在 Market 配置中重复。文件按 INI 分节保存，每个价格与动作限制参数都有独立注释；旧版 `market_config.json` 会在首次启动时自动读取并迁移为 INI。
 
-拍卖价格包含装备基础倍率、随机强化区间、每级强化加价率和最终随机倍率。开启 `custom_price_enabled` 后，`market_item_price_ranges.json` 中有效的物品最终价格范围优先于通用公式；未命中的物品继续使用公式。补货与虚拟买家概率回收共用同一价格范围，范围内使用高回收概率，范围外使用低回收概率。
+拍卖价格包含装备基础倍率、随机强化区间、每级强化加价率和最终随机倍率。`equipment_level_min/max` 在生成上架动作前按 PVF 装备等级过滤，任一边界为 `0` 表示不限制对应方向。开启 `custom_price_enabled` 后，`market_item_price_ranges.json` 中有效的物品最终价格范围优先于通用公式；未命中的物品继续使用公式。补货与虚拟买家概率回收共用同一价格范围，范围内使用高回收概率，范围外使用低回收概率。
 
 配置使用临时文件原子替换。单品价格 JSON 不存在时自动生成带字段说明的空模板；文件整体损坏或单条数据无效时记录状态并回退通用公式，不中断 Market。旧版 Market JSON 损坏时保存为 `market_config.json.invalid` 并使用安全默认值生成 INI。
 

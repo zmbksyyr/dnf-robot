@@ -226,6 +226,8 @@ func defaultRestockComments() map[string]string {
 		"stack_sizes":           "Stackable listing count candidates, such as material bundles. The selected count is clamped by PVF stack_limit when available.",
 		"equipment_qty_min":     "Minimum duplicate records generated for each missing equipment item after the DB shows no system stock for that item.",
 		"equipment_qty_max":     "Maximum duplicate records generated for each missing equipment item after the DB shows no system stock for that item.",
+		"equipment_level_min":   "Minimum PVF equipment level allowed for auction restock. 0 disables the lower bound.",
+		"equipment_level_max":   "Maximum PVF equipment level allowed for auction restock. 0 disables the upper bound.",
 		"equipment_inflate_min": "Lower equipment base price multiplier. PVF price/value remains the base.",
 		"equipment_inflate_max": "Upper equipment base price multiplier. PVF price/value remains the base.",
 		"upgrade_min":           "Minimum random equipment upgrade value written to the auction packet.",

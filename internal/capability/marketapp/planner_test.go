@@ -373,6 +373,34 @@ func TestAuctionPlanHelpersKeepFilteringAndBatchRules(t *testing.T) {
 	}
 }
 
+func TestPlanAuctionFiltersEquipmentOutsideConfiguredLevelRange(t *testing.T) {
+	app := testApp(t)
+	app.cfg.Restock.EquipmentLevelMin = 40
+	app.cfg.Restock.EquipmentLevelMax = 70
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		1001: {ItemID: 1001, Name: "low", Kind: "equipment", Level: 39, Attach: "trade", Slot: "coat"},
+		1002: {ItemID: 1002, Name: "allowed", Kind: "equipment", Level: 55, Attach: "trade", Slot: "coat"},
+		1003: {ItemID: 1003, Name: "high", Kind: "equipment", Level: 71, Attach: "trade", Slot: "coat"},
+		1004: {ItemID: 1004, Name: "material", Kind: "stackable", Level: 1},
+	}
+	rows := []restockRow{
+		{ItemID: 1001, SystemPrice: 1000, Quantity: 1, StackSize: 1, Enabled: true},
+		{ItemID: 1002, SystemPrice: 1000, Quantity: 1, StackSize: 1, Enabled: true},
+		{ItemID: 1003, SystemPrice: 1000, Quantity: 1, StackSize: 1, Enabled: true},
+		{ItemID: 1004, SystemPrice: 1000, Quantity: 1, StackSize: 1, Enabled: true},
+	}
+
+	app.planAuction(rows, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 2 || result.Actions[0].ItemID != 1002 || result.Actions[1].ItemID != 1004 {
+		t.Fatalf("actions=%#v want allowed equipment and unaffected stackable", result.Actions)
+	}
+	if len(result.Skipped) != 2 || result.Skipped[0].Reason != "equipment_level_below_min" || result.Skipped[1].Reason != "equipment_level_above_max" {
+		t.Fatalf("skipped=%#v", result.Skipped)
+	}
+}
+
 func TestPlanAuctionKeepsMissingItemBatchTogether(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}

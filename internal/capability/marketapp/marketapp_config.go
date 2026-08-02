@@ -119,6 +119,8 @@ func decodeMarketINI(ini *foundationconfig.INIConfig) Config {
 	c.Restock.StackSizes = splitInts(ini.GetString("auction_price", "stack_sizes", joinInts(d.Restock.StackSizes)))
 	c.Restock.EquipmentQtyMin = ini.GetInt("auction_price", "equipment_qty_min", d.Restock.EquipmentQtyMin)
 	c.Restock.EquipmentQtyMax = ini.GetInt("auction_price", "equipment_qty_max", d.Restock.EquipmentQtyMax)
+	c.Restock.EquipmentLevelMin = ini.GetInt("auction_price", "equipment_level_min", d.Restock.EquipmentLevelMin)
+	c.Restock.EquipmentLevelMax = ini.GetInt("auction_price", "equipment_level_max", d.Restock.EquipmentLevelMax)
 	c.Restock.EquipInflateMin = ini.GetInt("auction_price", "equip_inflate_min", d.Restock.EquipInflateMin)
 	c.Restock.EquipInflateMax = ini.GetInt("auction_price", "equip_inflate_max", d.Restock.EquipInflateMax)
 	c.Restock.UpgradeMin = ini.GetInt("auction_price", "upgrade_min", d.Restock.UpgradeMin)
@@ -205,6 +207,15 @@ func (c *Config) applyDefaults() {
 	if c.Restock.EquipmentQtyMax < c.Restock.EquipmentQtyMin {
 		c.Restock.EquipmentQtyMax = c.Restock.EquipmentQtyMin
 	}
+	if c.Restock.EquipmentLevelMin < 0 {
+		c.Restock.EquipmentLevelMin = 0
+	}
+	if c.Restock.EquipmentLevelMax < 0 {
+		c.Restock.EquipmentLevelMax = 0
+	}
+	if c.Restock.EquipmentLevelMax > 0 && c.Restock.EquipmentLevelMax < c.Restock.EquipmentLevelMin {
+		c.Restock.EquipmentLevelMax = c.Restock.EquipmentLevelMin
+	}
 	if c.Restock.EquipInflateMin <= 0 {
 		c.Restock.EquipInflateMin = d.Restock.EquipInflateMin
 	}
@@ -287,6 +298,8 @@ func writeMarketConfig(path string, c Config) error {
 		"# 堆叠物品的候选数量，使用逗号分隔；实际数量不会超过 PVF stack_limit。", "stack_sizes = " + joinInts(c.Restock.StackSizes),
 		"# 每种缺货装备最少生成的拍卖记录数。", fmt.Sprintf("equipment_qty_min = %d", c.Restock.EquipmentQtyMin),
 		"# 每种缺货装备最多生成的拍卖记录数。", fmt.Sprintf("equipment_qty_max = %d", c.Restock.EquipmentQtyMax),
+		"# 允许上架的最低装备等级；0 表示不限制最低等级。", fmt.Sprintf("equipment_level_min = %d", c.Restock.EquipmentLevelMin),
+		"# 允许上架的最高装备等级；0 表示不限制最高等级。", fmt.Sprintf("equipment_level_max = %d", c.Restock.EquipmentLevelMax),
 		"# 装备基础价格的最小随机倍率。", fmt.Sprintf("equip_inflate_min = %d", c.Restock.EquipInflateMin),
 		"# 装备基础价格的最大随机倍率。", fmt.Sprintf("equip_inflate_max = %d", c.Restock.EquipInflateMax),
 		"# 装备随机强化的最低等级。", fmt.Sprintf("upgrade_min = %d", c.Restock.UpgradeMin),

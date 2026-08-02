@@ -63,6 +63,8 @@ func TestLoadConfigNormalizesINIAndKeepsExplicitSwitches(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "market_config.ini")
 	raw := `[auction_price]
+equipment_level_min = 40
+equipment_level_max = 70
 equip_inflate_min = 4
 equip_inflate_max = 7
 upgrade_min = 6
@@ -86,7 +88,7 @@ out_of_range_probability = 0.02
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Restock.EquipInflateMin != 4 || cfg.Restock.UpgradePriceRate != 0.12 || !cfg.Restock.CustomPriceEnabled {
+	if cfg.Restock.EquipmentLevelMin != 40 || cfg.Restock.EquipmentLevelMax != 70 || cfg.Restock.EquipInflateMin != 4 || cfg.Restock.UpgradePriceRate != 0.12 || !cfg.Restock.CustomPriceEnabled {
 		t.Fatalf("pricing config=%+v", cfg.Restock)
 	}
 	if cfg.Collector.Enabled || !cfg.Collector.PriceRangeEnabled || cfg.Collector.InRangeProbability != 0.9 || cfg.Collector.OutRangeProbability != 0.02 {
@@ -99,6 +101,8 @@ out_of_range_probability = 0.02
 		"# 补货动作的最大并发工作数。",
 		"# 单个任务结果中最多保留的动作明细数，避免接口和日志数据过大。",
 		"# 同一工作线程连续执行补货或回收动作时的间隔毫秒数；0 表示不主动等待。",
+		"# 允许上架的最低装备等级；0 表示不限制最低等级。",
+		"# 允许上架的最高装备等级；0 表示不限制最高等级。",
 	} {
 		if !strings.Contains(text, comment) {
 			t.Fatalf("normalized INI lacks action-limit comment %q:\n%s", comment, text)

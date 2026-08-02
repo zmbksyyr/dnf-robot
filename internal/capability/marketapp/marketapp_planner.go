@@ -22,6 +22,10 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			continue
 		}
 		row, item := auctionPlanRow(row, catalog)
+		if reason := a.equipmentLevelSkipReason(item); reason != "" {
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: reason})
+			continue
+		}
 		if !row.ExplicitTarget && a.qualityFilterEnabled() && !marketRarityAllowed(item) {
 			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "rarity_filtered"})
 			continue
@@ -41,6 +45,19 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 		a.appendNormalAuctionActions(plan, occ, result)
 		have[row.ItemID] = plan.TargetRecord
 	}
+}
+
+func (a *App) equipmentLevelSkipReason(item catalogItem) string {
+	if item.Kind != "equipment" {
+		return ""
+	}
+	if minLevel := a.cfg.Restock.EquipmentLevelMin; minLevel > 0 && item.Level < minLevel {
+		return "equipment_level_below_min"
+	}
+	if maxLevel := a.cfg.Restock.EquipmentLevelMax; maxLevel > 0 && item.Level > maxLevel {
+		return "equipment_level_above_max"
+	}
+	return ""
 }
 
 func auctionPlanRow(row restockRow, catalog map[uint32]catalogItem) (restockRow, catalogItem) {

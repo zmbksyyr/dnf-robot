@@ -33,6 +33,8 @@ type RestockCfg struct {
 	StackSizes         []int             `json:"stack_sizes"`
 	EquipmentQtyMin    int               `json:"equipment_qty_min"`
 	EquipmentQtyMax    int               `json:"equipment_qty_max"`
+	EquipmentLevelMin  int               `json:"equipment_level_min"`
+	EquipmentLevelMax  int               `json:"equipment_level_max"`
 	EquipInflateMin    int               `json:"equipment_inflate_min"`
 	EquipInflateMax    int               `json:"equipment_inflate_max"`
 	UpgradeMin         int               `json:"upgrade_min"`
@@ -154,6 +156,8 @@ type ConfigUpdateRequest struct {
 	Markets             []string `json:"markets,omitempty"`
 	EquipInflateMin     *int     `json:"equip_inflate_min,omitempty"`
 	EquipInflateMax     *int     `json:"equip_inflate_max,omitempty"`
+	EquipmentLevelMin   *int     `json:"equipment_level_min,omitempty"`
+	EquipmentLevelMax   *int     `json:"equipment_level_max,omitempty"`
 	UpgradeMin          *int     `json:"upgrade_min,omitempty"`
 	UpgradeMax          *int     `json:"upgrade_max,omitempty"`
 	UpgradePriceRate    *float64 `json:"upgrade_price_rate,omitempty"`

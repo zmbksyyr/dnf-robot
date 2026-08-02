@@ -283,6 +283,12 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if req.EquipInflateMax != nil {
 		a.cfg.Restock.EquipInflateMax = *req.EquipInflateMax
 	}
+	if req.EquipmentLevelMin != nil {
+		a.cfg.Restock.EquipmentLevelMin = *req.EquipmentLevelMin
+	}
+	if req.EquipmentLevelMax != nil {
+		a.cfg.Restock.EquipmentLevelMax = *req.EquipmentLevelMax
+	}
 	if req.UpgradeMin != nil {
 		a.cfg.Restock.UpgradeMin = *req.UpgradeMin
 	}
