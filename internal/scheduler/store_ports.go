@@ -142,8 +142,8 @@ func (m *RobotManager) storePool(rc robotconfig.RuntimeConfig) *storecap.ItemPoo
 	defer m.storePoolLock.Unlock()
 	if m.storeItemPool == nil {
 		catalogs := m.loadItemCatalogs()
-		m.storeItemPool = storecap.BuildItemPool(catalogs.Equipment, catalogs.Stackable, rc.StoreEquipmentIntensify)
-		robotLogf("[StorePool] generated material=%d equipment=%d intensify=%d\n", len(m.storeItemPool.Materials), len(m.storeItemPool.Equipment), rc.StoreEquipmentIntensify)
+		m.storeItemPool = storecap.BuildItemPool(catalogs.Equipment, catalogs.Stackable, rc.StoreEquipmentIntensifyMin, rc.StoreEquipmentIntensifyMax)
+		robotLogf("[StorePool] generated material=%d equipment=%d intensify=%d..%d\n", len(m.storeItemPool.Materials), len(m.storeItemPool.Equipment), rc.StoreEquipmentIntensifyMin, rc.StoreEquipmentIntensifyMax)
 	}
 	return m.storeItemPool
 }

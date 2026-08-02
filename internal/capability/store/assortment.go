@@ -28,12 +28,18 @@ type ItemPool struct {
 	Equipment []PoolEntry
 }
 
-func BuildItemPool(equipment, stackable []shared.EquipmentCatalogItem, intensify int) *ItemPool {
-	if intensify < 0 {
-		intensify = 0
+func BuildItemPool(equipment, stackable []shared.EquipmentCatalogItem, intensifyMin, intensifyMax int) *ItemPool {
+	if intensifyMin < 0 {
+		intensifyMin = 0
 	}
-	if intensify > 255 {
-		intensify = 255
+	if intensifyMax < intensifyMin {
+		intensifyMax = intensifyMin
+	}
+	if intensifyMin > 255 {
+		intensifyMin = 255
+	}
+	if intensifyMax > 255 {
+		intensifyMax = 255
 	}
 	pool := &ItemPool{}
 	seenStackable := make(map[int]struct{})
@@ -72,6 +78,10 @@ func BuildItemPool(equipment, stackable []shared.EquipmentCatalogItem, intensify
 		seenEquipment[item.ID] = struct{}{}
 		entry := PoolEntry{Item: item}
 		rng := rand.New(rand.NewSource(int64(item.ID)))
+		intensify := intensifyMin
+		if intensifyMax > intensifyMin {
+			intensify += rng.Intn(intensifyMax - intensifyMin + 1)
+		}
 		equipcap.WriteStoreEquipSlot(entry.SlotBytes[:], item, rng, intensify)
 		pool.Equipment = append(pool.Equipment, entry)
 	}

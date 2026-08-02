@@ -10,3 +10,13 @@ func TestNormalizeKeepsPVFDefinedVillageAboveLegacyRange(t *testing.T) {
 		t.Fatalf("spawn village=%d, want 26", rc.SpawnVillage)
 	}
 }
+
+func TestNormalizeStoreEquipmentIntensifyRange(t *testing.T) {
+	rc := Default()
+	rc.StoreEquipmentIntensifyMin = 40
+	rc.StoreEquipmentIntensifyMax = 6
+	Normalize(&rc)
+	if rc.StoreEquipmentIntensifyMin != 6 || rc.StoreEquipmentIntensifyMax != 31 {
+		t.Fatalf("store equipment intensify=%d..%d, want 6..31", rc.StoreEquipmentIntensifyMin, rc.StoreEquipmentIntensifyMax)
+	}
+}

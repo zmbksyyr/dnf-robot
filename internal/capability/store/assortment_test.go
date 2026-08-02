@@ -24,12 +24,12 @@ func TestBuildItemPoolClassifiesTradeablePVFItems(t *testing.T) {
 		{ID: 205, Slot: "material", Icon: "Item/IconMaterial.img", Attach: "free"},
 		{ID: 206, Slot: "material", Icon: "Item/stackable/material.img", Attach: "trade", Trade: true, BasicMaterial: true},
 		{ID: 207, Slot: "material expert job", Icon: "Item/stackable/MonsterCard_icon.img", Attach: "free"},
-	}, 13)
+	}, 7, 13)
 
 	if len(pool.Equipment) != 1 || pool.Equipment[0].Item.ID != 100 {
 		t.Fatalf("equipment pool = %+v", pool.Equipment)
 	}
-	if pool.Equipment[0].SlotBytes[1] != 1 || pool.Equipment[0].SlotBytes[6] != 13 {
+	if pool.Equipment[0].SlotBytes[1] != 1 || pool.Equipment[0].SlotBytes[6] < 7 || pool.Equipment[0].SlotBytes[6] > 13 {
 		t.Fatalf("equipment template type=%d intensify=%d", pool.Equipment[0].SlotBytes[1], pool.Equipment[0].SlotBytes[6])
 	}
 	if pool.Equipment[0].SlotBytes[0] != 1 {
@@ -49,6 +49,25 @@ func TestBuildItemPoolClassifiesTradeablePVFItems(t *testing.T) {
 	}
 	if pool.Materials[0].Item.ID != 200 {
 		t.Fatalf("material entry = %+v", pool.Materials[0])
+	}
+}
+
+func TestBuildItemPoolRandomizesEquipmentIntensifyWithinRange(t *testing.T) {
+	equipment := make([]shared.EquipmentCatalogItem, 0, 40)
+	for id := 1000; id < 1040; id++ {
+		equipment = append(equipment, shared.EquipmentCatalogItem{ID: id, ItemType: 1, Attach: "sealing", Durability: 10})
+	}
+	pool := BuildItemPool(equipment, nil, 7, 13)
+	seen := make(map[byte]bool)
+	for _, entry := range pool.Equipment {
+		value := entry.SlotBytes[6]
+		if value < 7 || value > 13 {
+			t.Fatalf("equipment %d intensify=%d, want 7..13", entry.Item.ID, value)
+		}
+		seen[value] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("equipment intensify values were not varied: %v", seen)
 	}
 }
 
