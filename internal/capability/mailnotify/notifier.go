@@ -8,15 +8,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"time"
 
+	"robot/internal/foundation/atomicfile"
+	foundationconfig "robot/internal/foundation/config"
 	foundationlog "robot/internal/foundation/log"
 )
 
 const (
 	defaultQueryLimit = 1000
 	stateFileName     = "mail_notify_cursor.json"
+	maxPendingMails   = 4096
+	maxMailsPerPoll   = 64
+	maxStateFileBytes = 1 << 20
+	pendingMailTTL    = 24 * time.Hour
 )
 
 type Sender interface {
@@ -53,9 +60,12 @@ func New(db *sql.DB, sender Sender, configDir string) *Notifier {
 	}
 }
 
-func (n *Notifier) PollOnce(now time.Time) error {
+func (n *Notifier) PollOnce(ctx context.Context, now time.Time) error {
 	if n == nil {
 		return errors.New("mail notifier is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	state, initialized, err := n.loadState()
 	if err != nil {
@@ -63,7 +73,7 @@ func (n *Notifier) PollOnce(now time.Time) error {
 		initialized = false
 	}
 	if !initialized {
-		state, err = n.currentCursor()
+		state, err = n.currentCursor(ctx)
 		if err != nil {
 			return fmt.Errorf("establish mail notification baseline: %w", err)
 		}
@@ -76,17 +86,22 @@ func (n *Notifier) PollOnce(now time.Time) error {
 	if state.Pending == nil {
 		state.Pending = make(map[string]int64)
 	}
-	return n.poll(&state, now)
+	return n.poll(ctx, &state, now)
 }
 
-func (n *Notifier) poll(state *cursorState, now time.Time) error {
+func (n *Notifier) poll(ctx context.Context, state *cursorState, now time.Time) error {
 	if n.source == nil || n.sender == nil {
 		return errors.New("mail notifier is not configured")
 	}
-	changed, err := n.collect(state, now)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	changed := prunePendingMails(state.Pending, now)
+	collected, err := n.collect(ctx, state, now)
 	if err != nil {
 		return err
 	}
+	changed = changed || collected
 	if changed {
 		if err := n.saveState(*state); err != nil {
 			return err
@@ -94,10 +109,20 @@ func (n *Notifier) poll(state *cursorState, now time.Time) error {
 	}
 
 	delivered := 0
+	attempted := 0
+	var pollErr error
 	for key, readyAt := range state.Pending {
+		if err := ctx.Err(); err != nil {
+			pollErr = err
+			break
+		}
 		if now.UnixMilli() < readyAt {
 			continue
 		}
+		if attempted >= maxMailsPerPoll {
+			break
+		}
+		attempted++
 		value, err := strconv.ParseUint(key, 10, 32)
 		if err != nil || value == 0 {
 			delete(state.Pending, key)
@@ -120,11 +145,11 @@ func (n *Notifier) poll(state *cursorState, now time.Time) error {
 	if delivered > 0 {
 		foundationlog.Robotf("[MAIL_NOTIFY] delivered=%d pending=%d letter_id=%d postal_id=%d\n", delivered, len(state.Pending), state.LetterID, state.PostalID)
 	}
-	return nil
+	return pollErr
 }
 
-func (n *Notifier) collect(state *cursorState, now time.Time) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func (n *Notifier) collect(ctx context.Context, state *cursorState, now time.Time) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	letterID, postalID, characNos, err := n.source.eventsAfter(ctx, state.LetterID, state.PostalID, defaultQueryLimit)
 	if err != nil {
@@ -134,15 +159,23 @@ func (n *Notifier) collect(state *cursorState, now time.Time) (bool, error) {
 	state.LetterID = letterID
 	state.PostalID = postalID
 	readyAt := now.Add(n.settleDelay).UnixMilli()
+	dropped := 0
 	for _, characNo := range characNos {
 		if characNo == 0 {
 			continue
 		}
 		key := strconv.FormatUint(uint64(characNo), 10)
 		if _, exists := state.Pending[key]; !exists {
+			if len(state.Pending) >= maxPendingMails {
+				dropped++
+				continue
+			}
 			state.Pending[key] = readyAt
 			changed = true
 		}
+	}
+	if dropped > 0 {
+		foundationlog.Robotf("[MAIL_NOTIFY] pending_full dropped=%d limit=%d\n", dropped, maxPendingMails)
 	}
 	return changed, nil
 }
@@ -168,8 +201,11 @@ func queryEvents(ctx context.Context, db *sql.DB, query string, cursor uint64, l
 	return cursor, chars, rows.Err()
 }
 
-func (n *Notifier) currentCursor() (cursorState, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func (n *Notifier) currentCursor(ctx context.Context) (cursorState, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	state := cursorState{Pending: make(map[string]int64)}
 	var err error
@@ -215,19 +251,21 @@ func (s sqlEventSource) eventsAfter(ctx context.Context, letterID, postalID uint
 
 func (n *Notifier) loadState() (cursorState, bool, error) {
 	state := cursorState{Pending: make(map[string]int64)}
-	data, err := os.ReadFile(n.statePath)
+	file, err := os.Open(n.statePath)
 	if os.IsNotExist(err) {
 		return state, false, nil
 	}
 	if err != nil {
 		return state, false, err
 	}
-	if err := json.Unmarshal(data, &state); err != nil {
+	defer file.Close()
+	if err := foundationconfig.DecodeJSONLimit(file, maxStateFileBytes, &state); err != nil {
 		return cursorState{Pending: make(map[string]int64)}, false, err
 	}
 	if state.Pending == nil {
 		state.Pending = make(map[string]int64)
 	}
+	trimPendingMails(state.Pending, maxPendingMails)
 	return state, true, nil
 }
 
@@ -236,12 +274,43 @@ func (n *Notifier) saveState(state cursorState) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(n.statePath), 0755); err != nil {
-		return err
+	return atomicfile.WriteFile(n.statePath, append(data, '\n'), 0644)
+}
+
+func prunePendingMails(pending map[string]int64, now time.Time) bool {
+	if len(pending) == 0 {
+		return false
 	}
-	tmp := n.statePath + ".new"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0644); err != nil {
-		return err
+	cutoff := now.Add(-pendingMailTTL).UnixMilli()
+	changed := false
+	for key, readyAt := range pending {
+		if readyAt <= 0 || readyAt < cutoff {
+			delete(pending, key)
+			changed = true
+		}
 	}
-	return os.Rename(tmp, n.statePath)
+	return changed
+}
+
+func trimPendingMails(pending map[string]int64, limit int) {
+	if len(pending) <= limit || limit <= 0 {
+		return
+	}
+	type pendingMail struct {
+		key     string
+		readyAt int64
+	}
+	entries := make([]pendingMail, 0, len(pending))
+	for key, readyAt := range pending {
+		entries = append(entries, pendingMail{key: key, readyAt: readyAt})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].readyAt != entries[j].readyAt {
+			return entries[i].readyAt < entries[j].readyAt
+		}
+		return entries[i].key < entries[j].key
+	})
+	for _, entry := range entries[limit:] {
+		delete(pending, entry.key)
+	}
 }

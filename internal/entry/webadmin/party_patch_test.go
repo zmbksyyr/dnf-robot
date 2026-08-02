@@ -3,78 +3,94 @@ package webadmin
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
 func testPartyCompatLayout() partyCompatLayout {
 	return partyCompatLayout{site: 64, cave: 128, rewardTimerSite: 384, rawSend: 320, resumeSite: 74, getPacket: 256}
 }
 
-func TestPartyCompatDefaultRangeCoversFirstThousandRobotAccounts(t *testing.T) {
-	if defaultPartyCompatAccountStart != 17000000 || defaultPartyCompatAccountEnd != 17001000 {
-		t.Fatalf("default range = %d..%d", defaultPartyCompatAccountStart, defaultPartyCompatAccountEnd)
-	}
-}
-
-func TestPartyCompatConfigDefaultsDesiredOn(t *testing.T) {
+func TestPartyCompatConfigRequiresCompleteReleasedFile(t *testing.T) {
 	dir := t.TempDir()
-	s := New(&config.SysConfig{ConfigDir: dir}, "", "")
-	cfg, err := s.loadPartyCompatConfig()
-	if err != nil {
+	paths := layout.New(dir)
+	if err := paths.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Enabled || cfg.AccountStart != defaultPartyCompatAccountStart || cfg.AccountEnd != defaultPartyCompatAccountEnd {
-		t.Fatalf("default config = %+v", cfg)
+	s := New(&config.SysConfig{ConfigDir: dir}, "", "")
+	if _, err := s.loadPartyCompatConfig(); err == nil {
+		t.Fatal("missing party compatibility config unexpectedly accepted")
 	}
 
 	if err := os.WriteFile(s.partyCompatConfigPath(), []byte(`{"account_start":17000000,"account_end":17001000}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = s.loadPartyCompatConfig()
-	if err != nil {
+	if _, err := s.loadPartyCompatConfig(); err == nil {
+		t.Fatal("party compatibility config without enabled unexpectedly accepted")
+	}
+	if err := os.WriteFile(s.partyCompatConfigPath(), []byte(`{"enabled":true,"account_start":17000000,"account_end":17001000,"legacy":true}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Enabled {
-		t.Fatalf("legacy config without enabled should default on: %+v", cfg)
+	if _, err := s.loadPartyCompatConfig(); err == nil {
+		t.Fatal("party compatibility config with unknown field unexpectedly accepted")
 	}
 }
 
-func TestPartyCompatConfigDefaultsToConfiguredRobotRange(t *testing.T) {
+func TestPartyCompatHandlerRejectsMissingUnknownAndTrailingJSON(t *testing.T) {
 	dir := t.TempDir()
-	robotConfig := []byte("[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18000999\n")
-	if err := os.WriteFile(filepath.Join(dir, "robot_config.ini"), robotConfig, 0644); err != nil {
+	paths := layout.New(dir)
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.PartyCompatibility(), []byte(`{"enabled":true,"account_start":17000000,"account_end":17001000}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	s := New(&config.SysConfig{ConfigDir: dir}, "", "")
-	cfg, err := s.loadPartyCompatConfig()
-	if err != nil {
-		t.Fatal(err)
+	for _, body := range []string{
+		`{}`,
+		`{"action":"ON","account_start":17000000,"account_end":17001000,"skill_enabled":false}`,
+		`{"action":"off","account_start":17000000,"account_end":17001000,"skill_enabled":false,"legacy":true}`,
+		`{"action":"off","account_start":17000000,"account_end":17001000,"skill_enabled":false}{}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/party-compat", strings.NewReader(body))
+		recorder := httptest.NewRecorder()
+		s.handlePartyCompat(recorder, req)
+		var response struct {
+			OK bool `json:"ok"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.OK {
+			t.Fatalf("invalid request unexpectedly accepted: body=%s response=%s", body, recorder.Body.String())
+		}
 	}
-	if !cfg.Enabled || cfg.AccountStart != 18000000 || cfg.AccountEnd != 18001000 {
-		t.Fatalf("default config = %+v", cfg)
+	cfg, err := s.loadPartyCompatConfig()
+	if err != nil || !cfg.Enabled || cfg.AccountStart != 17000000 || cfg.AccountEnd != 17001000 {
+		t.Fatalf("invalid request changed config=%+v err=%v", cfg, err)
 	}
 }
 
-func TestPartyCompatConfigCapsConfiguredRobotRangeAtOneThousand(t *testing.T) {
-	dir := t.TempDir()
-	robotConfig := []byte("[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18001999\n")
-	if err := os.WriteFile(filepath.Join(dir, "robot_config.ini"), robotConfig, 0644); err != nil {
-		t.Fatal(err)
+func TestPartyCompatConfiguredWindowUsesRobotRange(t *testing.T) {
+	start, end, ok := partyCompatConfiguredWindow(18000000, 18000999)
+	if !ok || start != 18000000 || end != 18001000 {
+		t.Fatalf("configured window = %d..%d ok=%t", start, end, ok)
 	}
-	s := New(&config.SysConfig{ConfigDir: dir}, "", "")
-	cfg, err := s.loadPartyCompatConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.AccountStart != 18000000 || cfg.AccountEnd != 18001000 {
-		t.Fatalf("capped default config = %+v", cfg)
+}
+
+func TestPartyCompatConfiguredWindowCapsAtOneThousand(t *testing.T) {
+	start, end, ok := partyCompatConfiguredWindow(18000000, 18001999)
+	if !ok || start != 18000000 || end != 18001000 {
+		t.Fatalf("capped configured window = %d..%d ok=%t", start, end, ok)
 	}
 }
 

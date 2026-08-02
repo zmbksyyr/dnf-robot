@@ -25,5 +25,20 @@ Fast VM card:
 - game: `10011`
 - auction: `30803`
 - point: `30603`
+- deployment root: `/root` only
 - robot: `/root/robot`
 - config: `/root/config`
+- main config: `/root/config/conf/config.ini`
+- runtime logs: `/root/config/logs/`
+- templates, keys, PVF, state, and temporary files: `/root/config/templates/`, `/root/config/keys/`, `/root/config/pvf/`, `/root/config/state/`, `/root/config/tmp/`
+
+Every deployment moves the complete `/root/config` to `/root/config.bak.<timestamp>`, keeps only the newest three config backups, creates a fresh `/root/config`, and lets robot regenerate all files. Do not migrate individual files automatically; users recover anything needed from the backup.
+
+All Robot-owned generated files stay below `/root/config/{conf,templates,keys,pvf,state,logs,tmp}`. Game RSA files and Auction/Point `iteminfo.dat` are external integration files/copies, not alternate deployment roots. A normal Restart only restarts `/root/robot` and must not move, delete, or recreate `/root/config`.
+
+Start robot with the bounded stdout sink:
+
+```sh
+mkdir -p /root/config/logs
+nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/config/logs/stdout.log' >/dev/null 2>/root/config/logs/start_error.log &
+```

@@ -3,16 +3,40 @@ package scheduler
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	"reflect"
+	"strings"
+	"time"
+
 	"robot/internal/capability/catalog"
 	"robot/internal/capability/keypair"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	robottemplate "robot/internal/capability/robottemplate"
-	"robot/internal/foundation/config"
-	"strings"
-	"time"
+	storecap "robot/internal/capability/store"
+	"robot/internal/foundation/atomicfile"
+	"robot/internal/foundation/filewatch"
+	"robot/internal/foundation/layout"
+	"robot/internal/foundation/process"
+	"robot/internal/shared"
 )
+
+func (m *RobotManager) RuntimeFileEntries() []filewatch.Entry {
+	if m == nil || m.cfg == nil {
+		return nil
+	}
+	paths := layout.New(m.cfg.ConfigDir)
+	m.runtimeFilesWatched.Store(true)
+	return []filewatch.Entry{
+		{Name: "robot_config", Path: paths.RobotConfig(), Apply: m.reloadRobotConfigFile},
+		{Name: "name_templates", Path: paths.NameTemplates(), Apply: m.reloadNameTemplates},
+		{Name: "shout_templates", Path: paths.ShoutTemplates(), Apply: m.reloadShoutTemplates},
+		{Name: "store_titles", Path: paths.StoreTitles(), Apply: m.reloadStoreTitles},
+		{Name: "party_skills", Path: paths.PartySkills(), Apply: func(string) error {
+			_, err := m.ReloadPartySkills()
+			return err
+		}},
+	}
+}
 
 func (m *RobotManager) invalidateRobotConfigCache() {
 	m.withCache("invalidate_robot_config", func() {
@@ -29,7 +53,7 @@ func (m *RobotManager) KeypairStatus() keypair.KeypairStatus {
 }
 
 func (m *RobotManager) RobotConfig() (robotcap.ConfigResult, error) {
-	path := filepath.Join(m.cfg.ConfigDir, "robot_config.ini")
+	path := layout.New(m.cfg.ConfigDir).RobotConfig()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return robotcap.ConfigResult{}, err
@@ -38,15 +62,17 @@ func (m *RobotManager) RobotConfig() (robotcap.ConfigResult, error) {
 }
 
 func (m *RobotManager) UpdateRobotConfig(req robotcap.ConfigUpdateRequest) (robotcap.ConfigResult, error) {
-	path := filepath.Join(m.cfg.ConfigDir, "robot_config.ini")
+	path := layout.New(m.cfg.ConfigDir).RobotConfig()
 	if strings.TrimSpace(req.Text) != "" {
-		if _, err := config.LoadFromString(req.Text); err != nil {
+		if _, err := robotconfig.Parse(req.Text); err != nil {
 			return robotcap.ConfigResult{}, err
 		}
-		if err := os.WriteFile(path, []byte(req.Text), 0644); err != nil {
+		if err := atomicfile.WriteFile(path, []byte(req.Text), 0644); err != nil {
 			return robotcap.ConfigResult{}, err
 		}
-		m.invalidateRobotConfigCache()
+		if err := m.reloadRobotConfigFile(path); err != nil {
+			return robotcap.ConfigResult{}, err
+		}
 	} else if len(req.Updates) > 0 {
 		values := make(map[string]string, len(req.Updates))
 		for key, value := range req.Updates {
@@ -63,34 +89,40 @@ func (m *RobotManager) ReloadPartySkills() (catalog.PartySkillCatalogReport, err
 	if m == nil || m.cfg == nil {
 		return catalog.PartySkillCatalogReport{}, fmt.Errorf("missing config")
 	}
-	if err := catalog.LoadPartySkills(m.cfg.ConfigDir); err != nil {
-		report, readErr := catalog.ReadPartySkillCatalog(filepath.Join(m.cfg.ConfigDir, "party_skill_catalog.json"))
-		if readErr == nil {
-			return report, err
-		}
+	path := layout.New(m.cfg.ConfigDir).PartySkills()
+	report, err := catalog.ReadPartySkillCatalog(path)
+	if err != nil {
 		return catalog.PartySkillCatalogReport{}, err
 	}
-	return catalog.ReadPartySkillCatalog(filepath.Join(m.cfg.ConfigDir, "party_skill_catalog.json"))
+	if len(report.Issues) > 0 {
+		return report, &catalog.PartySkillCatalogValidationError{Issues: report.Issues}
+	}
+	if report.Enabled {
+		shared.SetPartySkillStates(report.Entries)
+	} else {
+		shared.SetPartySkillStates(nil)
+	}
+	robotLogf("[RuntimeFile] applied party_skills path=%s enabled=%t entries=%d\n", path, report.Enabled, len(report.Entries))
+	return report, nil
 }
 
 func (m *RobotManager) writeRobotConfigValues(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
-	path := filepath.Join(m.cfg.ConfigDir, "robot_config.ini")
+	path := layout.New(m.cfg.ConfigDir).RobotConfig()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	text := robotconfig.UpdateINIText(string(data), values)
-	if _, err := config.LoadFromString(text); err != nil {
+	if _, err := robotconfig.Parse(text); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(text), 0644); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(text), 0644); err != nil {
 		return err
 	}
-	m.invalidateRobotConfigCache()
-	return nil
+	return m.reloadRobotConfigFile(path)
 }
 
 func fileModTime(path string) time.Time {
@@ -113,6 +145,11 @@ type robotConfigSnapshot struct {
 // loadRobotConfig returns an immutable configuration view. Callers may modify
 // scalar fields on the returned value, but must not mutate its slice fields.
 func (m *RobotManager) loadRobotConfig() robotconfig.RuntimeConfig {
+	if m.runtimeFilesWatched.Load() {
+		if snapshot := m.configSnapshot.Load(); snapshot != nil {
+			return snapshot.effective
+		}
+	}
 	now := time.Now()
 	if snapshot := m.configSnapshot.Load(); robotConfigSnapshotFresh(snapshot, now) {
 		return snapshot.effective
@@ -132,7 +169,7 @@ func (m *RobotManager) refreshRobotConfig(now time.Time) robotconfig.RuntimeConf
 			return
 		}
 
-		configPath := filepath.Join(m.cfg.ConfigDir, "robot_config.ini")
+		configPath := layout.New(m.cfg.ConfigDir).RobotConfig()
 		configMod := fileModTime(configPath)
 		if snapshot := m.configSnapshot.Load(); snapshot != nil && snapshot.modTime.Equal(configMod) {
 			refreshed := &robotConfigSnapshot{
@@ -146,6 +183,15 @@ func (m *RobotManager) refreshRobotConfig(now time.Time) robotconfig.RuntimeConf
 
 		rc, err := robotconfig.LoadFile(configPath)
 		if err != nil {
+			if snapshot := m.configSnapshot.Load(); snapshot != nil {
+				refreshed := &robotConfigSnapshot{
+					base: snapshot.base, effective: snapshot.effective,
+					modTime: configMod, checkedAt: now,
+				}
+				m.configSnapshot.Store(refreshed)
+				out = refreshed.effective
+				return
+			}
 			rc = robotconfig.Default()
 		}
 		robotconfig.Normalize(&rc)
@@ -157,6 +203,78 @@ func (m *RobotManager) refreshRobotConfig(now time.Time) robotconfig.RuntimeConf
 		out = snapshot.effective
 	})
 	return out
+}
+
+func (m *RobotManager) reloadRobotConfigFile(path string) error {
+	rc, err := robotconfig.LoadFile(path)
+	if err != nil {
+		return err
+	}
+	robotconfig.Normalize(&rc)
+	base := robotconfig.Clone(rc)
+	previous := m.configSnapshot.Load()
+	if previous != nil && reflect.DeepEqual(previous.base, base) {
+		return nil
+	}
+	if previous == nil || previous.base.MaxOnlineRobots != base.MaxOnlineRobots {
+		dbMaxConnections := 64
+		if m.cfg != nil && m.cfg.DBMaxSize > 0 {
+			dbMaxConnections = m.cfg.DBMaxSize
+		}
+		if err := process.EnsureOpenFileLimit(base.MaxOnlineRobots, dbMaxConnections); err != nil {
+			return fmt.Errorf("apply max_online_robots=%d: %w", base.MaxOnlineRobots, err)
+		}
+	}
+	effective := robotconfig.Clone(base)
+	applyAdaptiveSchedulerConfig(&effective, m.adaptiveSchedulerSignals())
+	now := time.Now()
+	m.withCache("apply_robot_config", func() {
+		m.configSnapshot.Store(&robotConfigSnapshot{
+			base: base, effective: effective, modTime: fileModTime(path), checkedAt: now,
+		})
+	})
+	if m.partyAccountRangeSink != nil {
+		m.partyAccountRangeSink(base.RobotUIDStart, base.RobotUIDEnd)
+	}
+	if previous == nil || storePoolConfigChanged(previous.base, base) {
+		m.storePoolLock.Lock()
+		m.storeItemPool = nil
+		m.storePoolLock.Unlock()
+	}
+	if previous != nil && previous.base.AutoActions && !base.AutoActions {
+		m.autoMu.Lock()
+		supervisor := m.supervisor
+		m.autoMu.Unlock()
+		m.stopAutoActorsForDisabledConfig(supervisor, base)
+	}
+	robotLogf("[RuntimeFile] applied robot_config path=%s\n", path)
+	return nil
+}
+
+func (m *RobotManager) SetPartyAccountRangeSink(sink func(start, end int)) {
+	if m == nil {
+		return
+	}
+	m.partyAccountRangeSink = sink
+}
+
+func storePoolConfigChanged(old, current robotconfig.RuntimeConfig) bool {
+	return old.StoreEquipmentIntensifyMin != current.StoreEquipmentIntensifyMin ||
+		old.StoreEquipmentIntensifyMax != current.StoreEquipmentIntensifyMax ||
+		!equalInts(old.StoreItemAllowIDs, current.StoreItemAllowIDs) ||
+		!equalInts(old.StoreItemDenyIDs, current.StoreItemDenyIDs)
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *RobotManager) refreshAdaptiveRobotConfig(signals adaptiveSchedulerSignals) (robotconfig.RuntimeConfig, schedulerPolicyDecision) {
@@ -184,12 +302,54 @@ func (m *RobotManager) loadShoutTemplates() robottemplate.ShoutTemplates {
 	if m.cfg == nil {
 		return catalog.ShoutTemplates("")
 	}
-	return catalog.ShoutTemplates(m.cfg.ConfigDir)
+	if snapshot := m.shoutTemplateSnapshot.Load(); snapshot != nil {
+		return robottemplate.CloneShoutTemplates(*snapshot)
+	}
+	return catalog.ShoutTemplates(layout.New(m.cfg.ConfigDir).Templates)
 }
 
 func (m *RobotManager) loadNameTemplates() robottemplate.NameTemplates {
 	if m.cfg == nil {
 		return catalog.NameTemplates("")
 	}
-	return catalog.NameTemplates(m.cfg.ConfigDir)
+	if snapshot := m.nameTemplateSnapshot.Load(); snapshot != nil {
+		return robottemplate.CloneNameTemplates(*snapshot)
+	}
+	return catalog.NameTemplates(layout.New(m.cfg.ConfigDir).Templates)
+}
+
+func (m *RobotManager) reloadShoutTemplates(path string) error {
+	tpl, err := catalog.ReadShoutTemplates(path)
+	if err != nil {
+		return err
+	}
+	m.shoutTemplateSnapshot.Store(&tpl)
+	robotLogf("[RuntimeFile] applied shout_templates path=%s messages=%d\n", path, len(tpl.Messages))
+	return nil
+}
+
+func (m *RobotManager) reloadNameTemplates(path string) error {
+	tpl, err := catalog.ReadNameTemplates(path)
+	if err != nil {
+		return err
+	}
+	m.nameTemplateSnapshot.Store(&tpl)
+	robotLogf("[RuntimeFile] applied name_templates path=%s names=%d\n", path, len(tpl.Names))
+	return nil
+}
+
+func (m *RobotManager) reloadStoreTitles(path string) error {
+	titles, err := storecap.LoadTitleCatalog(path)
+	if err != nil {
+		return err
+	}
+	m.storeTitleLock.Lock()
+	m.storeTitles = titles
+	m.storeTitlePath = path
+	m.storeTitlesLoaded = true
+	m.storeTitleSnapshot.Store(titles)
+	m.storeTitlePathSnapshot.Store(&storeTitlePathValue{path: path})
+	m.storeTitleLock.Unlock()
+	robotLogf("[RuntimeFile] applied store_titles path=%s titles=%d\n", path, titles.Len())
+	return nil
 }

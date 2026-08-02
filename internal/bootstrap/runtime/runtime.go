@@ -1,12 +1,12 @@
 package runtime
 
 import (
-	"bytes"
 	"crypto/md5"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -16,7 +16,9 @@ import (
 	"robot/internal/capability/catalog"
 	"robot/internal/capability/keypair"
 	"robot/internal/capability/pvf"
+	"robot/internal/foundation/atomicfile"
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
 //go:embed defaults/*
@@ -27,19 +29,20 @@ func Init(cfg *config.SysConfig) error {
 		return fmt.Errorf("nil config")
 	}
 	if cfg.ConfigDir == "" {
-		cfg.ConfigDir = "./config"
+		return fmt.Errorf("empty runtime config directory")
 	}
-	if err := os.MkdirAll(cfg.ConfigDir, 0755); err != nil {
+	paths := layout.New(cfg.ConfigDir)
+	if err := paths.Ensure(); err != nil {
 		return err
 	}
-	if err := ensureConfigRuntimeFiles(cfg.ConfigDir); err != nil {
+	if err := ensureConfigRuntimeFiles(paths); err != nil {
 		return err
 	}
-	if err := catalog.LoadPartySkills(cfg.ConfigDir); err != nil {
+	if err := catalog.LoadPartySkills(paths.Templates); err != nil {
 		fmt.Printf("[Runtime] party skill catalog unavailable: %v\n", err)
 	}
 	keypair.EnsureRuntimeKeypair(cfg)
-	if err := pvf.EnsureExports(cfg.DFGameR, cfg.ConfigDir); err != nil {
+	if err := pvf.EnsureExports(cfg.DFGameR, paths.PVF, paths.Temp); err != nil {
 		return err
 	}
 	if err := updateRuntimeManifest(cfg); err != nil {
@@ -51,7 +54,6 @@ func Init(cfg *config.SysConfig) error {
 type runtimeManifest struct {
 	CheckedAt         string                       `json:"checked_at"`
 	DFGameR           runtimeFileStatus            `json:"df_game_r"`
-	DFGameRBackup     runtimeFileStatus            `json:"df_game_r_backup"`
 	ConfigFiles       map[string]runtimeFileStatus `json:"config_files"`
 	GameFiles         map[string]runtimeFileStatus `json:"game_files"`
 	AllRuntimeFilesOK bool                         `json:"all_runtime_files_ok"`
@@ -67,15 +69,15 @@ type runtimeFileStatus struct {
 	SameAsConfig bool   `json:"same_as_config,omitempty"`
 }
 
-func ensureConfigRuntimeFiles(configDir string) error {
-	if err := releaseDefaults(configDir); err != nil {
+func ensureConfigRuntimeFiles(paths layout.Paths) error {
+	if err := releaseDefaults(paths); err != nil {
 		return err
 	}
-	normalizeConfigFileModes(configDir)
+	normalizeConfigFileModes(paths)
 	return nil
 }
 
-func releaseDefaults(configDir string) error {
+func releaseDefaults(paths layout.Paths) error {
 	return fs.WalkDir(defaultFiles, "defaults", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -88,30 +90,56 @@ func releaseDefaults(configDir string) error {
 			return err
 		}
 		name := strings.TrimPrefix(path, "defaults/")
-		dst := filepath.Join(configDir, name)
-		if _, err := os.Stat(dst); err == nil {
-			if name == "robot_shout_templates.json" {
-				current, readErr := os.ReadFile(dst)
-				if readErr == nil && bytes.Contains(current, []byte(`"hello"`)) && bytes.Contains(current, []byte(`"team up"`)) {
-					return os.WriteFile(dst, data, 0644)
-				}
-			}
-			return nil
+		dst, err := defaultReleasePath(paths, name)
+		if err != nil {
+			return err
 		}
-		return os.WriteFile(dst, data, 0644)
+		mode := fs.FileMode(0644)
+		if name == "privatekey.pem" {
+			mode = 0600
+		}
+		_, err = atomicfile.WriteFileIfMissing(dst, data, mode)
+		return err
 	})
 }
 
-func normalizeConfigFileModes(configDir string) {
-	_ = os.Chmod(filepath.Join(configDir, "privatekey.pem"), 0600)
-	_ = os.Chmod(filepath.Join(configDir, "publickey.pem"), 0644)
+func defaultReleasePath(paths layout.Paths, name string) (string, error) {
+	switch name {
+	case "robot_config.ini":
+		return paths.RobotConfig(), nil
+	case "privatekey.pem":
+		return paths.PrivateKey(), nil
+	case "publickey.pem":
+		return paths.PublicKey(), nil
+	case "party_skill_catalog.json":
+		return paths.PartySkills(), nil
+	case "compat.json":
+		return paths.MailboxGuard(), nil
+	case "party_compat.json":
+		return paths.PartyCompatibility(), nil
+	case "robot_name_templates.json":
+		return paths.NameTemplates(), nil
+	case "robot_shout_templates.json":
+		return paths.ShoutTemplates(), nil
+	case "robot_store_titles.json":
+		return paths.StoreTitles(), nil
+	default:
+		return "", fmt.Errorf("runtime default %q has no categorized destination", name)
+	}
+}
+
+func normalizeConfigFileModes(paths layout.Paths) {
+	_ = os.Chmod(paths.MainConfig(), 0600)
+	_ = os.Chmod(paths.PrivateKey(), 0600)
+	_ = os.Chmod(paths.PublicKey(), 0644)
 }
 
 func updateRuntimeManifest(cfg *config.SysConfig) error {
 	if cfg == nil || cfg.ConfigDir == "" || cfg.DFGameR == "" {
 		return nil
 	}
-	manifestPath := filepath.Join(cfg.ConfigDir, "pvf_manifest.json")
+	paths := layout.New(cfg.ConfigDir)
+	manifestPath := filepath.Join(paths.PVF, "pvf_manifest.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -132,10 +160,11 @@ func updateRuntimeManifest(cfg *config.SysConfig) error {
 
 func buildRuntimeManifest(cfg *config.SysConfig) runtimeManifest {
 	gameDir := filepath.Dir(cfg.DFGameR)
+	paths := layout.New(cfg.ConfigDir)
 	configFiles := map[string]runtimeFileStatus{}
 	gameFiles := map[string]runtimeFileStatus{}
 	for _, name := range []string{"privatekey.pem", "publickey.pem"} {
-		cfgPath := filepath.Join(cfg.ConfigDir, name)
+		cfgPath := filepath.Join(paths.Keys, name)
 		gamePath := filepath.Join(gameDir, name)
 		cfgStatus := fileStatus(cfgPath)
 		gameStatus := fileStatus(gamePath)
@@ -148,7 +177,6 @@ func buildRuntimeManifest(cfg *config.SysConfig) runtimeManifest {
 	out := runtimeManifest{
 		CheckedAt:         time.Now().Format(time.RFC3339),
 		DFGameR:           fileStatus(cfg.DFGameR),
-		DFGameRBackup:     fileStatus(cfg.DFGameR + ".tw_bak"),
 		ConfigFiles:       configFiles,
 		GameFiles:         gameFiles,
 		ExpectedGameDir:   gameDir,
@@ -178,10 +206,14 @@ func fileStatus(path string) runtimeFileStatus {
 }
 
 func fileMD5(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	sum := md5.Sum(data)
-	return hex.EncodeToString(sum[:]), nil
+	defer file.Close()
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

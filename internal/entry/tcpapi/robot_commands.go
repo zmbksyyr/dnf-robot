@@ -101,9 +101,11 @@ func handleRobotCommand(cmd, pkt string, manager *scheduler.RobotManager) (strin
 			return robotcap.CommandOperationSummary(res, err), err
 		}), true
 	case "autoStart":
-		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SetAutoEnabled(true)}), true
+		res, err := manager.SetAutoEnabled(true)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
 	case "autoStop":
-		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SetAutoEnabled(false)}), true
+		res, err := manager.SetAutoEnabled(false)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
 	case "robotConfigGet":
 		res, err := manager.RobotConfig()
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
@@ -132,7 +134,7 @@ func handleRobotCommand(cmd, pkt string, manager *scheduler.RobotManager) (strin
 		if err := decodePayload(pkt, &req); err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()}), true
 		}
-		return queueExclusiveAction("cleanupRobotsAsync", func() {
+		return queueExclusiveAction(manager, "cleanupRobotsAsync", func() {
 			res, err := manager.CleanupRobots(req)
 			if err != nil {
 				logRobotActionf("[WebAction] cleanupRobotsAsync failed err=%v\n", err)

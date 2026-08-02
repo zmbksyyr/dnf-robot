@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 	"strings"
 	"testing"
 )
@@ -13,7 +14,7 @@ func TestBuildRobotRestartScriptKeepsOtherBoundedLogSinks(t *testing.T) {
 	for _, want := range []string{
 		`[ "$mode" = "--web-admin" ]`,
 		`[ "$mode" = "--bounded-log-sink" ] && [ "$sink" = "$log_path" ]`,
-		"log_path=" + shellQuote(filepath.Join("/root/config", "robot_stdout.log")),
+		"log_path=" + shellQuote(filepath.Join("/root/config", "logs", "stdout.log")),
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("restart script missing %q:\n%s", want, script)
@@ -21,9 +22,19 @@ func TestBuildRobotRestartScriptKeepsOtherBoundedLogSinks(t *testing.T) {
 	}
 }
 
+func TestConfigPathRejectsMissingRuntimeRoot(t *testing.T) {
+	if got := (&Server{}).configPath(); got != "" {
+		t.Fatalf("config path = %q, want empty path without configured runtime root", got)
+	}
+}
+
 func TestWriteGamePortUpdatesMainConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.ini")
+	paths := layout.New(dir)
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	path := paths.MainConfig()
 	text := strings.Join([]string{
 		"[Ports]",
 		"RobotAPI = 8111",
@@ -54,8 +65,8 @@ func TestWriteGamePortUpdatesMainConfig(t *testing.T) {
 	if cfg.RobotGamePort != 20011 || cfg.MonitorPort != 31303 || cfg.AuctionPort != 31803 || cfg.PointPort != 31603 || cfg.RelayPort != 17200 {
 		t.Fatalf("ports were not updated: cfg=%+v", cfg)
 	}
-	if s.cfg.RobotGamePort != 20011 || s.cfg.MonitorPort != 31303 || s.cfg.AuctionPort != 31803 || s.cfg.PointPort != 31603 || s.cfg.RelayPort != 17200 {
-		t.Fatalf("server ports were not updated: cfg=%+v", s.cfg)
+	if s.cfg.RobotGamePort != 10011 || s.cfg.MonitorPort != 30303 || s.cfg.AuctionPort != 30803 || s.cfg.PointPort != 30603 || s.cfg.RelayPort != 7200 {
+		t.Fatalf("running server ports changed before restart: cfg=%+v", s.cfg)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

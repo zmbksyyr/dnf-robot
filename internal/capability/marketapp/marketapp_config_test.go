@@ -1,27 +1,30 @@
 package marketapp
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
-func TestLoadConfigMigratesLegacyJSONToCommentedINI(t *testing.T) {
-	dir := t.TempDir()
-	legacy := filepath.Join(dir, "market_config.json")
-	if err := os.WriteFile(legacy, []byte(`{"listen_addr":"127.0.0.1:9000","restock":{"equipment_inflate_min":3,"equipment_inflate_max":9,"upgrade_min":8,"upgrade_max":12,"upgrade_price_rate":0.1,"rand_low":0.8,"rand_high":1.2}}`), 0644); err != nil {
-		t.Fatal(err)
+func TestNewRejectsEmptyConfigDir(t *testing.T) {
+	if _, err := New(&sql.DB{}, &config.SysConfig{}, nil); err == nil || !strings.Contains(err.Error(), "config dir") {
+		t.Fatalf("New error = %v, want empty config dir", err)
 	}
-	cfg, path, status, err := loadConfig(dir)
+}
+
+func TestLoadConfigCreatesCommentedINIInConfDirectory(t *testing.T) {
+	dir := t.TempDir()
+	_, path, err := loadConfig(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != filepath.Join(dir, "market_config.ini") || status.MigratedFrom != legacy {
-		t.Fatalf("path=%q status=%+v", path, status)
-	}
-	if cfg.Restock.EquipInflateMin != 3 || cfg.Restock.UpgradeMin != 8 || cfg.Restock.RandLow != 0.8 {
-		t.Fatalf("legacy values were not migrated: %+v", cfg.Restock)
+	if path != layout.New(dir).MarketConfig() {
+		t.Fatalf("path=%q", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -31,7 +34,7 @@ func TestLoadConfigMigratesLegacyJSONToCommentedINI(t *testing.T) {
 	if !strings.Contains(text, "[auction_price]") || !strings.Contains(text, "# 装备基础价格的最小随机倍率。") {
 		t.Fatalf("generated INI lacks documented pricing configuration:\n%s", text)
 	}
-	for _, unused := range []string{"listen_addr", "frida_db", "[service]", "auto_sync", "nexon_base", "recycle_price"} {
+	for _, unused := range []string{"listen_addr", "frida_db", "[service]", "auto_sync", "nexon_base", "recycle_price", "market_config.json", "custom_price_file", "source_path"} {
 		if strings.Contains(text, unused) {
 			t.Fatalf("generated INI still contains unused setting %q:\n%s", unused, text)
 		}
@@ -41,27 +44,23 @@ func TestLoadConfigMigratesLegacyJSONToCommentedINI(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRecoversInvalidLegacyJSON(t *testing.T) {
+func TestLoadConfigRejectsInvalidCurrentINI(t *testing.T) {
 	dir := t.TempDir()
-	legacy := filepath.Join(dir, "market_config.json")
-	if err := os.WriteFile(legacy, []byte("{broken config"), 0644); err != nil {
+	path := layout.New(dir).MarketConfig()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cfg, path, status, err := loadConfig(dir)
-	if err != nil {
+	if err := os.WriteFile(path, []byte("broken line without section"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if !status.Recovered || status.BackupPath != legacy+".invalid" || cfg.Restock.RandLow != DefaultConfig().Restock.RandLow {
-		t.Fatalf("status=%+v cfg=%+v", status, cfg)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatal(err)
+	if _, _, err := loadConfig(dir); err == nil {
+		t.Fatal("invalid market INI unexpectedly loaded")
 	}
 }
 
 func TestLoadConfigNormalizesINIAndKeepsExplicitSwitches(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "market_config.ini")
+	path := layout.New(dir).MarketConfig()
 	raw := `[auction_price]
 equipment_level_min = 40
 equipment_level_max = 70
@@ -73,7 +72,6 @@ upgrade_price_rate = 0.12
 rand_low = 0.75
 rand_high = 1.25
 custom_price_enabled = true
-custom_price_file = prices.json
 
 [auction_collect]
 enabled = false
@@ -81,10 +79,13 @@ price_range_enabled = true
 in_range_probability = 0.9
 out_of_range_probability = 0.02
 `
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _, _, err := loadConfig(dir)
+	cfg, _, err := loadConfig(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +107,64 @@ out_of_range_probability = 0.02
 	} {
 		if !strings.Contains(text, comment) {
 			t.Fatalf("normalized INI lacks action-limit comment %q:\n%s", comment, text)
+		}
+	}
+}
+
+func TestLoadConfigRejectsRemovedDynamicPaths(t *testing.T) {
+	dir := t.TempDir()
+	path := layout.New(dir).MarketConfig()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, setting := range []string{
+		"[iteminfo]\nsource_path = ../pvf/iteminfo.dat\n",
+		"[auction_price]\ncustom_price_file = prices.json\n",
+	} {
+		if err := os.WriteFile(path, []byte(setting), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := loadConfig(dir); err == nil {
+			t.Fatalf("removed dynamic path unexpectedly accepted: %s", setting)
+		}
+	}
+}
+
+func TestLoadConfigRejectsUnknownAndDuplicateSettings(t *testing.T) {
+	dir := t.TempDir()
+	path := layout.New(dir).MarketConfig()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		"[unknown]\nvalue = 1\n",
+		"[auto]\nenabeld = true\n",
+		"[auto]\nenabled = true\nenabled = false\n",
+	} {
+		if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := loadConfig(dir); err == nil {
+			t.Fatalf("invalid market setting unexpectedly accepted: %s", raw)
+		}
+	}
+}
+
+func TestLoadConfigRejectsNonCanonicalCase(t *testing.T) {
+	dir := t.TempDir()
+	path := layout.New(dir).MarketConfig()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		"[DATABASE]\ngame_db = custom_game\n",
+		"[database]\nGAME_DB = custom_game\n",
+	} {
+		if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := loadConfig(dir); err == nil || !strings.Contains(err.Error(), "canonical lowercase") {
+			t.Fatalf("non-canonical market setting error = %v, raw=%q", err, raw)
 		}
 	}
 }

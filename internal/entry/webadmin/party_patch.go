@@ -3,20 +3,18 @@ package webadmin
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"robot/internal/capability/catalog"
-	"robot/internal/capability/robotconfig"
+	"robot/internal/foundation/atomicfile"
+	foundationconfig "robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
+	foundationlog "robot/internal/foundation/log"
 )
 
 const (
-	defaultPartyCompatAccountStart uint32 = 17000000
-	defaultPartyCompatAccountEnd   uint32 = 17001000
 	partyCompatDefaultAccountLimit uint64 = 1000
 )
 
@@ -43,10 +41,10 @@ type partyCompatStatus struct {
 }
 
 type partyCompatRequest struct {
-	Action       string `json:"action"`
-	AccountStart uint32 `json:"account_start"`
-	AccountEnd   uint32 `json:"account_end"`
-	SkillEnabled bool   `json:"skill_enabled"`
+	Action       *string `json:"action"`
+	AccountStart *uint32 `json:"account_start"`
+	AccountEnd   *uint32 `json:"account_end"`
+	SkillEnabled *bool   `json:"skill_enabled"`
 }
 
 func (s *Server) handlePartyCompat(w http.ResponseWriter, r *http.Request) {
@@ -65,16 +63,20 @@ func (s *Server) handlePartyCompat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": true, "result": status})
 	case http.MethodPost:
 		var req partyCompatRequest
-		if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		if err := foundationconfig.DecodeJSONLimit(r.Body, 64*1024, &req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		if err := validatePartyCompatRange(req.AccountStart, req.AccountEnd); err != nil {
+		if req.Action == nil || req.AccountStart == nil || req.AccountEnd == nil || req.SkillEnabled == nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "action, account_start, account_end, and skill_enabled are required"})
+			return
+		}
+		if err := validatePartyCompatRange(*req.AccountStart, *req.AccountEnd); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
 		enable := false
-		switch strings.ToLower(strings.TrimSpace(req.Action)) {
+		switch *req.Action {
 		case "on":
 			enable = true
 		case "off":
@@ -82,23 +84,23 @@ func (s *Server) handlePartyCompat(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "action must be on or off"})
 			return
 		}
-		cfg = partyCompatConfig{Enabled: enable, AccountStart: req.AccountStart, AccountEnd: req.AccountEnd}
+		cfg = partyCompatConfig{Enabled: enable, AccountStart: *req.AccountStart, AccountEnd: *req.AccountEnd}
 		if err := s.savePartyCompatConfig(cfg); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
 		skillMessage := ""
-		if err := s.savePartySkillEnabled(req.SkillEnabled); err != nil {
+		if err := s.savePartySkillEnabled(*req.SkillEnabled); err != nil {
 			skillMessage = "; skill reload pending: " + err.Error()
 		}
 		s.resetPartyCompatFailuresLocked()
 		s.wakePartyCompatSupervisor()
 		status, applyErr := setPartyCompat(s.cfg.RobotGamePort, cfg, enable)
 		status.DesiredEnabled = cfg.Enabled
-		status.SkillEnabled = req.SkillEnabled
+		status.SkillEnabled = *req.SkillEnabled
 		if applyErr != nil {
 			status = s.inspectPartyCompatLocked(cfg)
-			status.SkillEnabled = req.SkillEnabled
+			status.SkillEnabled = *req.SkillEnabled
 			status.Message = "desired state saved; apply pending: " + applyErr.Error() + skillMessage
 		} else {
 			status.Message = "desired state saved and applied" + skillMessage
@@ -110,69 +112,68 @@ func (s *Server) handlePartyCompat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) partySkillCatalogPath() string {
-	return filepath.Join(s.cfg.ConfigDir, "party_skill_catalog.json")
+	return layout.New(s.cfg.ConfigDir).PartySkills()
 }
 
 func (s *Server) savePartySkillEnabled(enabled bool) error {
 	if err := catalog.SetPartySkillCatalogEnabled(s.partySkillCatalogPath(), enabled); err != nil {
 		return err
 	}
+	s.partySkillSnapshot.Store(&partySkillFileState{enabled: enabled})
 	_, err := callRobot(s.robotAddr, "partySkillReload", nil, robotCallTimeout("partySkillReload"), s.cfg.MaxResponseBytes)
 	return err
 }
 
+func (s *Server) reloadPartySkillFile(path string) error {
+	report, err := catalog.ReadPartySkillCatalog(path)
+	if err != nil {
+		return err
+	}
+	if len(report.Issues) > 0 {
+		return &catalog.PartySkillCatalogValidationError{Issues: report.Issues}
+	}
+	s.partySkillSnapshot.Store(&partySkillFileState{enabled: report.Enabled})
+	foundationlog.Robotf("[WEB_RUNTIME_FILE] applied name=party_skills path=%s enabled=%t entries=%d\n", path, report.Enabled, len(report.Entries))
+	return nil
+}
+
 func (s *Server) partyCompatConfigPath() string {
-	return filepath.Join(s.cfg.ConfigDir, "party_compat.json")
+	return layout.New(s.cfg.ConfigDir).PartyCompatibility()
 }
 
 func (s *Server) loadPartyCompatConfig() (partyCompatConfig, error) {
-	cfg := s.defaultPartyCompatConfig()
-	data, err := os.ReadFile(s.partyCompatConfigPath())
-	if os.IsNotExist(err) {
-		return cfg, nil
+	if current := s.partyCompatSnapshot.Load(); current != nil {
+		return *current, nil
 	}
+	cfg, err := s.readPartyCompatConfig(s.partyCompatConfigPath())
 	if err != nil {
-		return cfg, err
+		return partyCompatConfig{}, err
+	}
+	s.partyCompatSnapshot.Store(&cfg)
+	return cfg, nil
+}
+
+func (s *Server) readPartyCompatConfig(path string) (partyCompatConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return partyCompatConfig{}, err
 	}
 	var raw struct {
-		Enabled      *bool  `json:"enabled"`
-		AccountStart uint32 `json:"account_start"`
-		AccountEnd   uint32 `json:"account_end"`
+		Enabled      *bool   `json:"enabled"`
+		AccountStart *uint32 `json:"account_start"`
+		AccountEnd   *uint32 `json:"account_end"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return cfg, fmt.Errorf("read party compatibility config: %w", err)
+	if err := foundationconfig.DecodeJSONBytes(data, &raw); err != nil {
+		return partyCompatConfig{}, fmt.Errorf("read party compatibility config: %w", err)
 	}
-	if raw.Enabled != nil {
-		cfg.Enabled = *raw.Enabled
+	if raw.Enabled == nil || raw.AccountStart == nil || raw.AccountEnd == nil {
+		return partyCompatConfig{}, fmt.Errorf("read party compatibility config: enabled, account_start, and account_end are required")
 	}
-	if raw.AccountStart != 0 {
-		cfg.AccountStart = raw.AccountStart
-	}
-	if raw.AccountEnd != 0 {
-		cfg.AccountEnd = raw.AccountEnd
-	}
+	cfg := partyCompatConfig{Enabled: *raw.Enabled, AccountStart: *raw.AccountStart, AccountEnd: *raw.AccountEnd}
 	if err := validatePartyCompatRange(cfg.AccountStart, cfg.AccountEnd); err != nil {
 		return cfg, fmt.Errorf("read party compatibility config: %w", err)
 	}
 	return cfg, nil
-}
-
-func (s *Server) defaultPartyCompatConfig() partyCompatConfig {
-	cfg := partyCompatConfig{Enabled: true, AccountStart: defaultPartyCompatAccountStart, AccountEnd: defaultPartyCompatAccountEnd}
-	if s == nil || s.cfg == nil || s.cfg.ConfigDir == "" {
-		return cfg
-	}
-	runtimeConfig, err := robotconfig.LoadFile(filepath.Join(s.cfg.ConfigDir, "robot_config.ini"))
-	if err != nil || runtimeConfig.RobotUIDStart <= 0 || runtimeConfig.RobotUIDEnd < runtimeConfig.RobotUIDStart || uint64(runtimeConfig.RobotUIDEnd) >= uint64(^uint32(0)) {
-		return cfg
-	}
-	start, end, ok := partyCompatConfiguredWindow(runtimeConfig.RobotUIDStart, runtimeConfig.RobotUIDEnd)
-	if !ok {
-		return cfg
-	}
-	cfg.AccountStart = start
-	cfg.AccountEnd = end
-	return cfg
 }
 
 func partyCompatConfiguredWindow(start, end int) (uint32, uint32, bool) {
@@ -191,23 +192,33 @@ func partyCompatConfiguredWindow(start, end int) (uint32, uint32, bool) {
 }
 
 func (s *Server) savePartyCompatConfig(cfg partyCompatConfig) error {
-	if err := os.MkdirAll(s.cfg.ConfigDir, 0755); err != nil {
-		return err
-	}
+	path := s.partyCompatConfigPath()
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	path := s.partyCompatConfigPath()
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := atomicfile.WriteFile(path, append(data, '\n'), 0644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	s.partyCompatSnapshot.Store(&cfg)
+	s.wakePartyCompatSupervisor()
+	return nil
+}
+
+func (s *Server) reloadPartyCompatFile(path string) error {
+	cfg, err := s.readPartyCompatConfig(path)
+	if err != nil {
 		return err
 	}
+	if current := s.partyCompatSnapshot.Load(); current != nil && *current == cfg {
+		return nil
+	}
+	s.partyCompatSnapshot.Store(&cfg)
+	s.partyCompatMu.Lock()
+	s.resetPartyCompatFailuresLocked()
+	s.partyCompatMu.Unlock()
+	s.wakePartyCompatSupervisor()
+	foundationlog.Robotf("[WEB_RUNTIME_FILE] applied name=party_compatibility path=%s enabled=%t range=%d..%d\n", path, cfg.Enabled, cfg.AccountStart, cfg.AccountEnd)
 	return nil
 }
 
@@ -235,8 +246,15 @@ func (s *Server) loadPartySkillEnabled() bool {
 	if s == nil || s.cfg == nil || s.cfg.ConfigDir == "" {
 		return false
 	}
+	if current := s.partySkillSnapshot.Load(); current != nil {
+		return current.enabled
+	}
 	report, err := catalog.ReadPartySkillCatalog(s.partySkillCatalogPath())
-	return err == nil && report.Enabled
+	if err != nil || len(report.Issues) > 0 {
+		return false
+	}
+	s.partySkillSnapshot.Store(&partySkillFileState{enabled: report.Enabled})
+	return report.Enabled
 }
 
 func validatePartyCompatRange(start, end uint32) error {

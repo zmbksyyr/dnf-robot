@@ -1,12 +1,11 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -19,6 +18,8 @@ import (
 	"robot/internal/entry/tcpapi"
 	"robot/internal/entry/webadmin"
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/filewatch"
+	"robot/internal/foundation/layout"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/foundation/network"
 	"robot/internal/foundation/process"
@@ -30,10 +31,11 @@ import (
 	schedulerrepo "robot/internal/scheduler/repository"
 )
 
-var db *sql.DB
-var marketApp *marketapp.App
-
 func main() {
+	os.Exit(runMain())
+}
+
+func runMain() int {
 	webAdminMode := flag.Bool("web-admin", false, "run web admin child process")
 	robotAddr := flag.String("robot-addr", "", "robot TCP address for web admin")
 	webAddr := flag.String("web-addr", "", "web admin listen address")
@@ -41,14 +43,17 @@ func main() {
 	if boundedLogSinkRequested() {
 		if err := runBoundedLogSink(os.Stdin); err != nil {
 			fmt.Fprintf(os.Stderr, "bounded log sink failed: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 
 	if *webAdminMode {
-		runWebAdmin(*robotAddr, *webAddr)
-		return
+		if err := runWebAdmin(*robotAddr, *webAddr); err != nil {
+			fmt.Printf("web admin failed: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	dnf.PrintfGreen("robot starting...\n")
@@ -56,22 +61,23 @@ func main() {
 	configPath, configDir, err := runtimeConfigPaths()
 	if err != nil {
 		fmt.Printf("resolve config path error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		fmt.Printf("load config error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	cfg.ConfigDir = configDir
-	if err := os.MkdirAll(cfg.ConfigDir, 0755); err != nil {
+	paths := layout.New(configDir)
+	if err := paths.Ensure(); err != nil {
 		fmt.Printf("create config dir error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	dnf.ConfigureLogRotation(cfg.LogMaxSizeMB, cfg.LogMaxBackups)
-	if err := dnf.LogInit(filepath.Join(cfg.ConfigDir, "log_robot")); err != nil {
+	if err := dnf.LogInit(paths.RobotLog()); err != nil {
 		fmt.Printf("init log error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	foundationlog.SetRobotSink(func(msg string) {
 		dnf.LogString(msg)
@@ -82,24 +88,25 @@ func main() {
 	if err := runtimeinit.Init(cfg); err != nil {
 		dnf.LogString(fmt.Sprintf("ROBOT_RUNTIME_INIT_FAILED err=%v\n", err))
 		dnf.PrintfRed("runtime init failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
-	robotRuntimeConfig, err := robotconfig.LoadFile(filepath.Join(cfg.ConfigDir, "robot_config.ini"))
+	robotRuntimeConfig, err := loadRequiredRobotConfig(paths.RobotConfig())
 	if err != nil {
-		dnf.LogString(fmt.Sprintf("PARTY_ACCOUNT_RANGE_DEFAULTED err=%v\n", err))
-		robotRuntimeConfig = robotconfig.Default()
+		dnf.LogString(fmt.Sprintf("ROBOT_RUNTIME_CONFIG_LOAD_FAILED err=%v\n", err))
+		dnf.PrintfRed("load robot runtime config failed: %v\n", err)
+		return 1
 	}
 	if err := process.EnsureOpenFileLimit(robotRuntimeConfig.MaxOnlineRobots, cfg.DBMaxSize); err != nil {
 		dnf.LogString(fmt.Sprintf("OPEN_FILE_CAPACITY_FAILED err=%v\n", err))
 		dnf.PrintfRed("open file capacity check failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	dnf.ConfigurePartyRelayPort(cfg.RelayPort)
 	route0Sink, err := dnf.StartPartyRoute0Sink(cfg.PartyRoute0Port)
 	if err != nil {
 		dnf.LogString(fmt.Sprintf("PARTY_ROUTE0_SINK_FAILED addr=0.0.0.0:%d err=%v\n", cfg.PartyRoute0Port, err))
 		dnf.PrintfRed("party route0 sink failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer route0Sink.Close()
 	dnf.LogString(fmt.Sprintf("PARTY_ROUTE0_SINK_READY addr=0.0.0.0:%d\n", cfg.PartyRoute0Port))
@@ -108,34 +115,56 @@ func main() {
 	keypair.SetRuntimeKeySink(dnf.SetRSAKey)
 
 	initRSA(cfg)
+	defer keypair.ClosePrivateKey()
 
-	db, err = openDatabase(cfg)
+	db, err := openDatabase(cfg)
 	if err != nil {
 		dnf.PrintfRed("database open failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			dnf.LogString(fmt.Sprintf("DATABASE_CLOSE_FAILED err=%v\n", err))
+			dnf.PrintfRed("database close error: %v\n", err)
+		}
+	}()
 	dnf.SetDBPool(db)
+	defer dnf.SetDBPool(nil)
 
 	robotSvc := dnfruntime.NewRobotService()
+	defer robotSvc.Shutdown()
 	manager := scheduler.NewRobotManager(schedulerrepo.NewSQLRepository(db), cfg, robotSvc)
+	defer func() {
+		if err := manager.Shutdown(); err != nil {
+			dnf.LogString(fmt.Sprintf("ROBOT_MANAGER_SHUTDOWN_FAILED err=%v\n", err))
+			dnf.PrintfRed("robot manager shutdown error: %v\n", err)
+		}
+	}()
+	manager.SetPartyAccountRangeSink(dnf.ConfigurePartyRobotAccountRange)
 	cacheInvalidator, err := nocache.NewClient(cfg.RobotConnectIP, cfg.RobotGamePort, cfg.GameServerGroup)
 	if err != nil {
 		dnf.LogString(fmt.Sprintf("CACHE_INVALIDATOR_INIT_FAILED err=%v\n", err))
 		dnf.PrintfRed("cache invalidator init failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	manager.SetCharacterCacheInvalidator(cacheInvalidator)
 	monitorClient := &monitor.Client{Address: fmt.Sprintf("127.0.0.1:%d", cfg.MonitorPort)}
 	manager.SetWorldShout(monitorClient)
-	mailNotifier := mailnotify.New(db, monitorClient, cfg.ConfigDir)
+	mailNotifier := mailnotify.New(db, monitorClient, paths.State)
 	manager.SetMailNotifier(mailNotifier)
-	marketApp, err = marketapp.New(db, cfg, auctionapp.NewFactory())
+	marketApp, err := marketapp.New(db, cfg, auctionapp.NewFactory())
 	if err != nil {
 		dnf.LogString(fmt.Sprintf("MARKET_INIT_FAILED err=%v\n", err))
 		dnf.PrintfRed("market init failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	defer marketApp.Shutdown()
 	tcpapi.SetMarketApp(marketApp)
+	runtimeFiles := filewatch.New(time.Second, append(manager.RuntimeFileEntries(), marketApp.RuntimeFileEntries()...), func(entry filewatch.Entry, err error) {
+		dnf.LogString(fmt.Sprintf("RUNTIME_FILE_REJECTED name=%s path=%s err=%v\n", entry.Name, entry.Path, err))
+	})
+	runtimeFiles.Start()
+	defer runtimeFiles.Close()
 
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.RobotPort)
 	tcpServer := network.NewTCPServer(addr)
@@ -143,16 +172,25 @@ func main() {
 	tcpServer.OnMessage(func(clientID string, raw []byte) {
 		response := tcpapi.HandlePacket(clientID, string(raw), manager)
 		if response != "" {
-			_ = tcpServer.SendTo(clientID, []byte(response))
+			if err := tcpServer.SendTo(clientID, []byte(response)); err != nil {
+				dnf.LogString(fmt.Sprintf("TCP_RESPONSE_WRITE_FAILED client=%s err=%v\n", clientID, err))
+			}
 		}
 	})
 	if err := tcpServer.Start(); err != nil {
 		dnf.LogString(fmt.Sprintf("TCP_SERVER_START_FAILED addr=%s err=%v\n", addr, err))
 		dnf.PrintfRed("TCP server failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	defer func() {
+		if err := tcpServer.Close(); err != nil {
+			dnf.LogString(fmt.Sprintf("TCP_SERVER_CLOSE_FAILED err=%v\n", err))
+			dnf.PrintfRed("tcp server close error: %v\n", err)
+		}
+	}()
 	logRobotActionf("TCP server listening on %s\n", addr)
 	stopWebAdmin := webadmin.StartSupervisor(cfg)
+	defer stopWebAdmin()
 	manager.StartAutoActions()
 	if marketApp.Config().Auto.Enabled {
 		marketApp.StartAuto()
@@ -161,37 +199,21 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	<-sigCh
 
 	logRobotActionf("robot stopping...\n")
-	if err := tcpServer.Close(); err != nil {
-		dnf.LogString(fmt.Sprintf("TCP_SERVER_CLOSE_FAILED err=%v\n", err))
-		dnf.PrintfRed("tcp server close error: %v\n", err)
-	}
-	stopWebAdmin()
-	marketApp.Shutdown()
-	if err := manager.Shutdown(); err != nil {
-		dnf.LogString(fmt.Sprintf("ROBOT_MANAGER_SHUTDOWN_FAILED err=%v\n", err))
-		dnf.PrintfRed("robot manager shutdown error: %v\n", err)
-	}
-	robotSvc.Shutdown()
-	if err := db.Close(); err != nil {
-		dnf.LogString(fmt.Sprintf("DATABASE_CLOSE_FAILED err=%v\n", err))
-		dnf.PrintfRed("database close error: %v\n", err)
-	}
-	keypair.ClosePrivateKey()
+	return 0
 }
 
-func runWebAdmin(robotAddr, webAddr string) {
+func runWebAdmin(robotAddr, webAddr string) error {
 	configPath, configDir, err := runtimeConfigPaths()
 	if err != nil {
-		fmt.Printf("web admin resolve config path error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("resolve config path: %w", err)
 	}
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		fmt.Printf("web admin load config error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
 	cfg.ConfigDir = configDir
 	if robotAddr == "" {
@@ -200,10 +222,12 @@ func runWebAdmin(robotAddr, webAddr string) {
 	if webAddr == "" {
 		webAddr = fmt.Sprintf("0.0.0.0:%d", cfg.WebPort)
 	}
-	if err := webadmin.New(cfg, robotAddr, webAddr).ListenAndServe(); err != nil {
-		fmt.Printf("web admin failed: %v\n", err)
-		os.Exit(1)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := webadmin.New(cfg, robotAddr, webAddr).Serve(ctx); err != nil {
+		return err
 	}
+	return nil
 }
 
 func runtimeConfigPaths() (string, string, error) {
@@ -211,8 +235,19 @@ func runtimeConfigPaths() (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	configDir := filepath.Join(filepath.Dir(exe), "config")
-	return filepath.Join(configDir, "config.ini"), configDir, nil
+	paths, err := layout.FromExecutable(exe)
+	if err != nil {
+		return "", "", err
+	}
+	return paths.MainConfig(), paths.Root, nil
+}
+
+func loadRequiredRobotConfig(path string) (robotconfig.RuntimeConfig, error) {
+	rc, err := robotconfig.LoadFile(path)
+	if err != nil {
+		return robotconfig.RuntimeConfig{}, fmt.Errorf("load %s: %w", path, err)
+	}
+	return rc, nil
 }
 
 func initRSA(cfg *config.SysConfig) {
@@ -222,7 +257,7 @@ func initRSA(cfg *config.SysConfig) {
 		dnf.PrintfBlue("WARNING: game RSA key is not valid. Robot business commands are blocked until a valid key is configured or default key is released.\n")
 		return
 	}
-	path := filepath.Join(cfg.ConfigDir, "privatekey.pem")
+	path := layout.New(cfg.ConfigDir).PrivateKey()
 	if err := keypair.InitPrivateKey(path); err == nil {
 		dnf.SetRSAKey(keypair.GetRSAKey())
 		dnf.LogString(fmt.Sprintf("KEYPAIR_RSA_LOADED source=%s state=%s fingerprint=%s\n", path, st.KeyState, st.Fingerprint))

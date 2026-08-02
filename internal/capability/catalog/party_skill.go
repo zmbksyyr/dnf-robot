@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"robot/internal/foundation/atomicfile"
+	foundationconfig "robot/internal/foundation/config"
 	"robot/internal/shared"
 )
 
@@ -22,6 +24,24 @@ type partySkillCatalogEntry struct {
 	ScriptPath string          `json:"script_path,omitempty"`
 	StateData  json.RawMessage `json:"state_data,omitempty"`
 	Risk       int             `json:"risk,omitempty"`
+}
+
+type partySkillCatalogDocument struct {
+	Enabled       *bool              `json:"enabled"`
+	MaxSkillLevel *int               `json:"max_skill_level"`
+	Skills        *[]json.RawMessage `json:"skills"`
+}
+
+type partySkillCatalogEntryDocument struct {
+	Disabled   bool             `json:"disabled,omitempty"`
+	Job        *int             `json:"job"`
+	SkillIndex *int             `json:"skill_index"`
+	State      *int             `json:"state"`
+	Level      *int             `json:"level"`
+	Name       string           `json:"name,omitempty"`
+	ScriptPath string           `json:"script_path,omitempty"`
+	StateData  *json.RawMessage `json:"state_data,omitempty"`
+	Risk       int              `json:"risk,omitempty"`
 }
 
 type PartySkillCatalogIssue struct {
@@ -64,64 +84,53 @@ func (e *PartySkillCatalogValidationError) Error() string {
 }
 
 func LoadPartySkills(configDir string) error {
+	if strings.TrimSpace(configDir) == "" {
+		return fmt.Errorf("empty party skill catalog directory")
+	}
 	report, err := ReadPartySkillCatalog(filepath.Join(configDir, "party_skill_catalog.json"))
 	if err != nil {
 		return err
+	}
+	if len(report.Issues) > 0 {
+		return &PartySkillCatalogValidationError{Issues: report.Issues}
 	}
 	if !report.Enabled {
 		shared.SetPartySkillStates(nil)
 		return nil
 	}
 	shared.SetPartySkillStates(report.Entries)
-	if len(report.Issues) > 0 {
-		return &PartySkillCatalogValidationError{Issues: report.Issues}
-	}
 	return nil
 }
 
 // ReadPartySkillCatalog parses and validates the whitelist without changing
-// the process-wide runtime snapshot. Invalid entries are isolated in Issues so
-// callers can keep every valid candidate from the same file.
+// the process-wide runtime snapshot. Entries with semantic errors are reported
+// in Issues; a runtime publisher must reject the whole snapshot when Issues is
+// non-empty.
 func ReadPartySkillCatalog(path string) (PartySkillCatalogReport, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return PartySkillCatalogReport{}, err
 	}
-	var raw struct {
-		Enabled       bool              `json:"enabled"`
-		MaxSkillLevel int               `json:"max_skill_level"`
-		Skills        []json.RawMessage `json:"skills"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	return parsePartySkillCatalog(data)
+}
+
+func parsePartySkillCatalog(data []byte) (PartySkillCatalogReport, error) {
+	raw, err := decodePartySkillCatalogDocument(data)
+	if err != nil {
 		return PartySkillCatalogReport{}, err
 	}
 
 	report := PartySkillCatalogReport{
-		Enabled:                 raw.Enabled,
-		SourceCount:             len(raw.Skills),
-		ConfiguredMaxSkillLevel: raw.MaxSkillLevel,
-		EffectiveMaxSkillLevel:  raw.MaxSkillLevel,
-		Entries:                 make([]shared.PartySkillState, 0, len(raw.Skills)),
+		Enabled:                 *raw.Enabled,
+		SourceCount:             len(*raw.Skills),
+		ConfiguredMaxSkillLevel: *raw.MaxSkillLevel,
+		EffectiveMaxSkillLevel:  *raw.MaxSkillLevel,
+		Entries:                 make([]shared.PartySkillState, 0, len(*raw.Skills)),
 	}
-	if report.EffectiveMaxSkillLevel <= 0 || report.EffectiveMaxSkillLevel > maxSafePartySkillLevel {
-		report.EffectiveMaxSkillLevel = maxSafePartySkillLevel
-	}
-	if !report.Enabled {
-		return report, nil
-	}
-	for index, rawEntry := range raw.Skills {
-		var entry partySkillCatalogEntry
-		if err := json.Unmarshal(rawEntry, &entry); err != nil {
-			report.addPartySkillIssue(index, entry, err.Error())
-			continue
-		}
-		if entry.Disabled {
-			report.DisabledCount++
-			continue
-		}
-		if entry.Level > report.EffectiveMaxSkillLevel {
-			report.OverLevelCount++
-			continue
+	for index, rawEntry := range *raw.Skills {
+		entry, err := decodePartySkillCatalogEntry(index, rawEntry)
+		if err != nil {
+			return PartySkillCatalogReport{}, err
 		}
 		if reason := invalidPartySkillEntryReason(entry); reason != "" {
 			report.addPartySkillIssue(index, entry, reason)
@@ -137,48 +146,89 @@ func ReadPartySkillCatalog(path string) (PartySkillCatalogReport, error) {
 			report.addPartySkillIssue(index, entry, err.Error())
 			continue
 		}
+		if entry.Disabled {
+			report.DisabledCount++
+			continue
+		}
+		if entry.Level > report.EffectiveMaxSkillLevel {
+			report.OverLevelCount++
+			continue
+		}
 		report.Entries = append(report.Entries, shared.PartySkillState{
 			Job: entry.Job, SkillIndex: entry.SkillIndex, State: entry.State,
 			Level: entry.Level, Name: entry.Name, ScriptPath: entry.ScriptPath,
 			StateData: stateData, Risk: entry.Risk,
 		})
 	}
+	if !report.Enabled {
+		report.Entries = nil
+	}
 	return report, nil
+}
+
+func decodePartySkillCatalogDocument(data []byte) (partySkillCatalogDocument, error) {
+	var raw partySkillCatalogDocument
+	if err := foundationconfig.DecodeJSONBytes(data, &raw); err != nil {
+		return partySkillCatalogDocument{}, err
+	}
+	if raw.Enabled == nil || raw.MaxSkillLevel == nil || raw.Skills == nil {
+		return partySkillCatalogDocument{}, fmt.Errorf("party skill catalog requires enabled, max_skill_level, and skills")
+	}
+	if *raw.MaxSkillLevel < 1 || *raw.MaxSkillLevel > maxSafePartySkillLevel {
+		return partySkillCatalogDocument{}, fmt.Errorf("party skill catalog max_skill_level must be between 1 and %d", maxSafePartySkillLevel)
+	}
+	return raw, nil
+}
+
+func decodePartySkillCatalogEntry(index int, data []byte) (partySkillCatalogEntry, error) {
+	var raw partySkillCatalogEntryDocument
+	if err := foundationconfig.DecodeJSONBytes(data, &raw); err != nil {
+		return partySkillCatalogEntry{}, fmt.Errorf("party skill catalog entry %d: %w", index, err)
+	}
+	if raw.Job == nil || raw.SkillIndex == nil || raw.State == nil || raw.Level == nil {
+		return partySkillCatalogEntry{}, fmt.Errorf("party skill catalog entry %d requires job, skill_index, state, and level", index)
+	}
+	var stateData json.RawMessage
+	if raw.StateData != nil {
+		stateData = append(json.RawMessage(nil), (*raw.StateData)...)
+	}
+	return partySkillCatalogEntry{
+		Disabled: raw.Disabled, Job: *raw.Job, SkillIndex: *raw.SkillIndex,
+		State: *raw.State, Level: *raw.Level, Name: raw.Name,
+		ScriptPath: raw.ScriptPath, StateData: stateData, Risk: raw.Risk,
+	}, nil
 }
 
 func SetPartySkillCatalogEnabled(path string, enabled bool) error {
 	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		data = []byte(`{"skills":[]}`)
-	} else if err != nil {
-		return err
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	value, err := json.Marshal(enabled)
 	if err != nil {
 		return err
 	}
-	raw["enabled"] = value
+	raw, err := decodePartySkillCatalogDocument(data)
+	if err != nil {
+		return err
+	}
+	report, err := parsePartySkillCatalog(data)
+	if err != nil {
+		return err
+	}
+	if len(report.Issues) > 0 {
+		return &PartySkillCatalogValidationError{Issues: report.Issues}
+	}
+	raw.Enabled = &enabled
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
 	}
 	out = append(out, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	report, err = parsePartySkillCatalog(out)
+	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, out, 0644); err != nil {
-		return err
+	if len(report.Issues) > 0 {
+		return &PartySkillCatalogValidationError{Issues: report.Issues}
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomicfile.WriteFile(path, out, 0644)
 }
 
 func (r *PartySkillCatalogReport) addPartySkillIssue(index int, entry partySkillCatalogEntry, reason string) {
@@ -189,14 +239,16 @@ func (r *PartySkillCatalogReport) addPartySkillIssue(index int, entry partySkill
 
 func invalidPartySkillEntryReason(entry partySkillCatalogEntry) string {
 	switch {
-	case entry.Job < 0:
-		return fmt.Sprintf("job %d is negative", entry.Job)
-	case entry.Level <= 0:
-		return fmt.Sprintf("level %d must be positive", entry.Level)
+	case entry.Job < 0 || entry.Job > 255:
+		return fmt.Sprintf("job %d is outside 0..255", entry.Job)
+	case entry.Level <= 0 || entry.Level > maxSafePartySkillLevel:
+		return fmt.Sprintf("level %d is outside 1..%d", entry.Level, maxSafePartySkillLevel)
 	case entry.SkillIndex <= 0 || entry.SkillIndex > 255:
 		return fmt.Sprintf("skill_index %d is outside 1..255", entry.SkillIndex)
 	case entry.State < 0 || entry.State > 255:
 		return fmt.Sprintf("state %d is outside 0..255", entry.State)
+	case entry.Risk < 0 || entry.Risk > 2:
+		return fmt.Sprintf("risk %d is outside 0..2", entry.Risk)
 	default:
 		return ""
 	}

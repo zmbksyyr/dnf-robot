@@ -23,13 +23,6 @@ func TestPrepareShoutSeparatesLocalAndWorld(t *testing.T) {
 	}
 }
 
-func TestParseStringListJSON(t *testing.T) {
-	got := ParseStringListJSON([]byte(`{"messages":[" a ","a","b"]}`))
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("messages got %#v want [a b]", got)
-	}
-}
-
 func TestRenderName(t *testing.T) {
 	tpl := NameTemplates{
 		Prefixes:  []string{"Bot"},

@@ -52,14 +52,18 @@ func auctionRowIDs(rows []restockRow) []uint32 {
 }
 
 func (a *App) auctionRowForID(pvfReady bool, catalog map[uint32]catalogItem, id uint32) (restockRow, bool) {
+	return a.auctionRowForIDWithConfig(pvfReady, catalog, id, a.configSnapshot())
+}
+
+func (a *App) auctionRowForIDWithConfig(pvfReady bool, catalog map[uint32]catalogItem, id uint32, cfg Config) (restockRow, bool) {
 	if pvfReady {
 		item, ok := catalog[id]
 		if !ok {
 			return restockRow{}, false
 		}
-		return a.catalogAuctionRow(item)
+		return a.catalogAuctionRowWithConfig(item, cfg)
 	}
-	rows, err := a.fallbackAuctionRows()
+	rows, err := a.fallbackAuctionRowsWithConfig(cfg)
 	if err != nil {
 		return restockRow{}, false
 	}
@@ -138,6 +142,10 @@ func sortCatalogSpecialAuctionIDs(ids []uint32, catalog map[uint32]catalogItem) 
 }
 
 func (a *App) fallbackAuctionRows() ([]restockRow, error) {
+	return a.fallbackAuctionRowsWithConfig(a.configSnapshot())
+}
+
+func (a *App) fallbackAuctionRowsWithConfig(cfg Config) ([]restockRow, error) {
 	data, err := seedFiles.ReadFile("seeds/market_fallback_seed.json")
 	if err != nil {
 		return nil, fmt.Errorf("read embedded market fallback: %w", err)
@@ -151,7 +159,7 @@ func (a *App) fallbackAuctionRows() ([]restockRow, error) {
 		if item.ItemID == 0 || item.BasePrice <= 0 {
 			continue
 		}
-		stack := a.randomStackSize(catalogItem{ItemID: item.ItemID, Kind: "stackable"})
+		stack := a.randomStackSizeWithConfig(catalogItem{ItemID: item.ItemID, Kind: "stackable"}, cfg)
 		rows = append(rows, restockRow{
 			ItemID:      item.ItemID,
 			SystemPrice: item.BasePrice,
@@ -166,7 +174,11 @@ func (a *App) fallbackAuctionRows() ([]restockRow, error) {
 }
 
 func (a *App) catalogAuctionRow(item catalogItem) (restockRow, bool) {
-	return a.catalogAuctionRowWithQuality(item, true)
+	return a.catalogAuctionRowWithConfig(item, a.configSnapshot())
+}
+
+func (a *App) catalogAuctionRowWithConfig(item catalogItem, cfg Config) (restockRow, bool) {
+	return a.catalogAuctionRowWithQualityConfig(item, true, cfg)
 }
 
 func (a *App) explicitTargetAuctionRow(item catalogItem) (restockRow, bool) {
@@ -174,10 +186,14 @@ func (a *App) explicitTargetAuctionRow(item catalogItem) (restockRow, bool) {
 }
 
 func (a *App) catalogAuctionRowWithQuality(item catalogItem, applyQualityFilter bool) (restockRow, bool) {
+	return a.catalogAuctionRowWithQualityConfig(item, applyQualityFilter, a.configSnapshot())
+}
+
+func (a *App) catalogAuctionRowWithQualityConfig(item catalogItem, applyQualityFilter bool, cfg Config) (restockRow, bool) {
 	if !marketCandidate(item) {
 		return restockRow{}, false
 	}
-	if applyQualityFilter && a.qualityFilterEnabled() && !marketRarityAllowed(item) {
+	if applyQualityFilter && qualityFilterEnabled(cfg) && !marketRarityAllowed(item) {
 		return restockRow{}, false
 	}
 	row := restockRow{
@@ -195,10 +211,10 @@ func (a *App) catalogAuctionRowWithQuality(item catalogItem, applyQualityFilter 
 		StackLimit:  item.StackLimit,
 	}
 	if item.Kind == "equipment" {
-		row.Quantity = randRange(a.rand, a.cfg.Restock.EquipmentQtyMin, a.cfg.Restock.EquipmentQtyMax)
+		row.Quantity = a.randomRange(cfg.Restock.EquipmentQtyMin, cfg.Restock.EquipmentQtyMax)
 		row.StackSize = 1
 	} else {
-		stack := a.randomStackSize(item)
+		stack := a.randomStackSizeWithConfig(item, cfg)
 		row.Quantity = stack
 		row.StackSize = stack
 	}
@@ -206,11 +222,15 @@ func (a *App) catalogAuctionRowWithQuality(item catalogItem, applyQualityFilter 
 }
 
 func (a *App) randomStackSize(item catalogItem) int {
-	sizes := a.cfg.Restock.StackSizes
+	return a.randomStackSizeWithConfig(item, a.configSnapshot())
+}
+
+func (a *App) randomStackSizeWithConfig(item catalogItem, cfg Config) int {
+	sizes := cfg.Restock.StackSizes
 	if len(sizes) == 0 {
 		sizes = DefaultConfig().Restock.StackSizes
 	}
-	stack := sizes[a.rand.Intn(len(sizes))]
+	stack := sizes[a.randomIntn(len(sizes))]
 	if item.StackLimit > 0 && stack > item.StackLimit {
 		stack = item.StackLimit
 	}

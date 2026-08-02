@@ -38,7 +38,7 @@ func (s *fakeSender) NotifyNewMail(characNo uint32) error {
 
 func TestCurrentCursorEstablishesBaselineWithoutPendingMail(t *testing.T) {
 	n := &Notifier{source: fakeEventSource{letterID: 12, postalID: 34}}
-	state, err := n.currentCursor()
+	state, err := n.currentCursor(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestPollCoalescesLetterAndPostalForOneCharacter(t *testing.T) {
 		settleDelay: 0,
 	}
 	state := cursorState{LetterID: 10, PostalID: 20, Pending: make(map[string]int64)}
-	if err := n.poll(&state, time.Now()); err != nil {
+	if err := n.poll(context.Background(), &state, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if len(sender.chars) != 1 || sender.chars[0] != 100 {
@@ -76,10 +76,65 @@ func TestPollKeepsFailedNotificationPending(t *testing.T) {
 		settleDelay: 0,
 	}
 	state := cursorState{LetterID: 1, PostalID: 2, Pending: make(map[string]int64)}
-	if err := n.poll(&state, time.Now()); err != nil {
+	if err := n.poll(context.Background(), &state, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := state.Pending["200"]; !ok {
 		t.Fatalf("failed notification was not retained: %+v", state)
+	}
+}
+
+func TestPollBoundsPendingAndDeliveryWork(t *testing.T) {
+	chars := make([]uint32, maxPendingMails+100)
+	for index := range chars {
+		chars[index] = uint32(index + 1)
+	}
+	sender := &fakeSender{}
+	n := &Notifier{
+		source:    fakeEventSource{letterID: 2, postalID: 3, characNos: chars},
+		sender:    sender,
+		statePath: filepath.Join(t.TempDir(), stateFileName),
+	}
+	state := cursorState{LetterID: 1, PostalID: 2, Pending: make(map[string]int64)}
+	if err := n.poll(context.Background(), &state, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.chars) != maxMailsPerPoll {
+		t.Fatalf("delivered %d notifications, want per-poll limit %d", len(sender.chars), maxMailsPerPoll)
+	}
+	if len(state.Pending) != maxPendingMails-maxMailsPerPoll {
+		t.Fatalf("pending notifications = %d, want %d", len(state.Pending), maxPendingMails-maxMailsPerPoll)
+	}
+}
+
+func TestPollCancellationPreservesPending(t *testing.T) {
+	sender := &fakeSender{}
+	n := &Notifier{
+		source:    fakeEventSource{},
+		sender:    sender,
+		statePath: filepath.Join(t.TempDir(), stateFileName),
+	}
+	state := cursorState{Pending: map[string]int64{"100": time.Now().Add(-time.Second).UnixMilli()}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := n.poll(ctx, &state, time.Now()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("poll error = %v, want context cancellation", err)
+	}
+	if len(sender.chars) != 0 || len(state.Pending) != 1 {
+		t.Fatalf("cancelled poll changed delivery state: sent=%v pending=%v", sender.chars, state.Pending)
+	}
+}
+
+func TestPrunePendingMailsRemovesExpiredEntries(t *testing.T) {
+	now := time.Now()
+	pending := map[string]int64{
+		"old":   now.Add(-pendingMailTTL - time.Second).UnixMilli(),
+		"fresh": now.UnixMilli(),
+	}
+	if !prunePendingMails(pending, now) {
+		t.Fatal("expired pending mail was not reported as changed")
+	}
+	if len(pending) != 1 || pending["fresh"] == 0 {
+		t.Fatalf("pruned pending mail = %v", pending)
 	}
 }

@@ -2,17 +2,21 @@ package scheduler
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	robotcap "robot/internal/capability/robot"
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
 func TestLoadRobotConfigRefreshesExpiredSnapshot(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "robot_config.ini")
+	paths := layout.New(dir)
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	path := paths.RobotConfig()
 	if err := os.WriteFile(path, []byte("[auto]\nauto_target_online_count = 20\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +80,11 @@ func TestInvalidateRobotConfigCacheRefreshesImmediately(t *testing.T) {
 
 func BenchmarkLoadRobotConfigCached(b *testing.B) {
 	dir := b.TempDir()
-	path := filepath.Join(dir, "robot_config.ini")
+	paths := layout.New(dir)
+	if err := paths.Ensure(); err != nil {
+		b.Fatal(err)
+	}
+	path := paths.RobotConfig()
 	if err := os.WriteFile(path, []byte("[auto]\nauto_target_online_count = 550\n"), 0644); err != nil {
 		b.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"robot/internal/capability/pvf"
+	"robot/internal/foundation/layout"
 	"runtime"
 	"strconv"
 	"strings"
@@ -14,14 +15,19 @@ import (
 )
 
 func (a *App) itemInfoStatus() ItemInfoSyncStatus {
+	cfg := a.configSnapshot()
 	return ItemInfoSyncStatus{
-		SourcePath: a.resolveConfigPath(a.cfg.ItemInfoSourcePath),
-		Targets:    append([]string(nil), a.cfg.ItemInfoTargets...),
+		SourcePath: layout.New(a.configDir).PVFItemInfo(),
+		Targets:    append([]string(nil), cfg.ItemInfoTargets...),
 	}
 }
 
 func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
-	status := a.itemInfoStatus()
+	return a.syncItemInfoDATFrom(a.itemInfoStatus())
+}
+
+func (a *App) syncItemInfoDATFrom(status ItemInfoSyncStatus) ItemInfoSyncStatus {
+	cfg := a.configSnapshot()
 	if status.SourcePath == "" {
 		status.Error = "iteminfo source path is empty"
 		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
@@ -33,9 +39,14 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
 		return status
 	}
-	nativeRows := loadItemInfoRows(status.Targets)
+	nativeRows, err := loadItemInfoRows(status.Targets)
+	if err != nil {
+		status.Error = err.Error()
+		a.appendLog(LogEvent{Type: "iteminfo_native_merge", Status: marketLogStatusFailed, Message: status.Error})
+		return status
+	}
 	merged, changed := mergeItemInfoOverlay(source, nativeRows)
-	if err := validateConfiguredCeraItemInfo(merged, a.cfg.Cera.Items); err != nil {
+	if err := validateConfiguredCeraItemInfo(merged, cfg.Cera.Items); err != nil {
 		status.Error = err.Error()
 		a.appendLog(LogEvent{Type: "iteminfo_cera", Status: marketLogStatusFailed, Message: status.Error})
 		return status
@@ -53,12 +64,7 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 			return status
 		}
 		a.appendLog(LogEvent{Type: "iteminfo_native_merge", Status: marketLogStatusSuccess, Message: fmt.Sprintf("rows=%d", len(nativeRows))})
-	}
-	source, err = os.ReadFile(status.SourcePath)
-	if err != nil {
-		status.Error = fmt.Sprintf("read source %s: %v", status.SourcePath, err)
-		a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusFailed, Message: status.Error})
-		return status
+		source = merged
 	}
 	for _, target := range status.Targets {
 		if target == "" {
@@ -69,8 +75,8 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 			status.Skipped++
 			continue
 		}
-		current, err := os.ReadFile(target)
-		if err == nil && bytes.Equal(current, source) {
+		equal, err := itemInfoFileEquals(target, source)
+		if err == nil && equal {
 			status.Skipped++
 			continue
 		}
@@ -92,7 +98,7 @@ func (a *App) syncItemInfoDAT() ItemInfoSyncStatus {
 
 func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 	defer a.startAutoIfEnabled()
-	sourcePath, err := pvf.EnsurePVFItemInfoDAT(a.pvfPath, a.configDir)
+	sourcePath, err := pvf.EnsurePVFItemInfoDAT(a.pvfPath, layout.New(a.configDir).PVF)
 	if err != nil {
 		status := a.itemInfoStatus()
 		status.Error = fmt.Sprintf("export source %s: %v", a.pvfPath, err)
@@ -102,8 +108,8 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 		a.stateMu.Unlock()
 		return status
 	}
-	a.cfg.ItemInfoSourcePath = sourcePath
 	status := a.itemInfoStatus()
+	status.SourcePath = sourcePath
 	if err := a.prepareItemInfoRelease(); err != nil {
 		status.Error = err.Error()
 		a.appendLog(LogEvent{Type: "iteminfo_prepare", Status: marketLogStatusFailed, Message: status.Error})
@@ -113,7 +119,7 @@ func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
 		return status
 	}
 	serviceStates := a.marketServiceRunningStates()
-	status = a.syncItemInfoDAT()
+	status = a.syncItemInfoDATFrom(status)
 	if status.Error == "" {
 		if err := a.restartMarketServicesAfterItemInfo(serviceStates); err != nil {
 			status.Error = err.Error()
@@ -168,17 +174,20 @@ func (a *App) resetAuctionQueuesLocked() {
 	a.auctionRejectedMeta = nil
 	a.auctionRejectedTick = 0
 	a.auctionQueueSource = ""
+	a.addInfoMu.Lock()
 	a.specialAddInfo = 0
+	a.addInfoMu.Unlock()
 }
 
 func (a *App) clearSystemMarketStockLocked(logType string) (ClearSystemStockResult, error) {
+	cfg := a.configSnapshot()
 	result := ClearSystemStockResult{}
 	markets := []struct {
 		name string
 		db   string
 	}{
-		{name: marketNameAuction, db: a.cfg.AuctionDB},
-		{name: marketNameCera, db: a.cfg.CeraDB},
+		{name: marketNameAuction, db: cfg.AuctionDB},
+		{name: marketNameCera, db: cfg.CeraDB},
 	}
 	for _, market := range markets {
 		item, err := a.deleteSystemMarketStock(logType, market.name, market.db)
@@ -199,8 +208,9 @@ func (a *App) clearSystemMarketStockLocked(logType string) (ClearSystemStockResu
 
 func (a *App) deleteSystemCreatureItems(logType string) (ClearSystemMarketResult, error) {
 	const market = "creature"
-	result := ClearSystemMarketResult{Market: market, DBName: a.cfg.GameDB}
-	count, err := a.repository.CountSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
+	cfg := a.configSnapshot()
+	result := ClearSystemMarketResult{Market: market, DBName: cfg.GameDB}
+	count, err := a.repository.CountSystemCreatureItems(cfg.GameDB, cfg.SystemOwner.IDBase)
 	if err != nil {
 		result.Status = marketLogStatusCountFailed
 		return result, fmt.Errorf("%s count system instances: %w", market, err)
@@ -211,13 +221,13 @@ func (a *App) deleteSystemCreatureItems(logType string) (ClearSystemMarketResult
 		a.appendLog(LogEvent{Type: logType, Market: market, Status: result.Status, Message: "system creature instances already empty"})
 		return result, nil
 	}
-	deleted, err := a.repository.DeleteSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
+	deleted, err := a.repository.DeleteSystemCreatureItems(cfg.GameDB, cfg.SystemOwner.IDBase)
 	if err != nil {
 		result.Status = marketLogStatusDeleteFailed
 		return result, fmt.Errorf("%s delete system instances: %w", market, err)
 	}
 	result.Deleted = deleted
-	after, err := a.repository.CountSystemCreatureItems(a.cfg.GameDB, a.cfg.SystemOwner.IDBase)
+	after, err := a.repository.CountSystemCreatureItems(cfg.GameDB, cfg.SystemOwner.IDBase)
 	if err != nil {
 		result.Status = marketLogStatusCountAfterFailed
 		return result, fmt.Errorf("%s count system instances after delete: %w", market, err)
@@ -229,8 +239,9 @@ func (a *App) deleteSystemCreatureItems(logType string) (ClearSystemMarketResult
 }
 
 func (a *App) deleteSystemMarketStock(logType, market, dbName string) (ClearSystemMarketResult, error) {
+	ownerBase := a.configSnapshot().SystemOwner.IDBase
 	result := ClearSystemMarketResult{Market: market, DBName: dbName}
-	count, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
+	count, err := a.repository.CountSystemStock(dbName, ownerBase)
 	if err != nil {
 		result.Status = marketLogStatusCountFailed
 		return result, fmt.Errorf("%s count system stock: %w", market, err)
@@ -241,7 +252,7 @@ func (a *App) deleteSystemMarketStock(logType, market, dbName string) (ClearSyst
 		a.appendLog(LogEvent{Type: logType, Market: market, Status: result.Status, Message: "system stock already empty"})
 		return result, nil
 	}
-	deleted, err := a.repository.DeleteSystemStock(dbName, a.cfg.SystemOwner.IDBase)
+	deleted, err := a.repository.DeleteSystemStock(dbName, ownerBase)
 	if err != nil {
 		result.Status = marketLogStatusDeleteFailed
 		return result, fmt.Errorf("%s delete system stock: %w", market, err)
@@ -252,7 +263,7 @@ func (a *App) deleteSystemMarketStock(logType, market, dbName string) (ClearSyst
 		result.Status = marketLogStatusWaitFailed
 		return result, err
 	}
-	after, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
+	after, err := a.repository.CountSystemStock(dbName, ownerBase)
 	if err != nil {
 		result.Status = marketLogStatusCountAfterFailed
 		return result, fmt.Errorf("%s count system stock after delete: %w", market, err)
@@ -263,10 +274,11 @@ func (a *App) deleteSystemMarketStock(logType, market, dbName string) (ClearSyst
 }
 
 func (a *App) waitSystemStockEmpty(logType, market, dbName string, timeout time.Duration) error {
+	ownerBase := a.configSnapshot().SystemOwner.IDBase
 	deadline := time.Now().Add(timeout)
 	var last int
 	for {
-		count, err := a.repository.CountSystemStock(dbName, a.cfg.SystemOwner.IDBase)
+		count, err := a.repository.CountSystemStock(dbName, ownerBase)
 		if err != nil {
 			return fmt.Errorf("%s count system stock: %w", market, err)
 		}
@@ -291,7 +303,7 @@ func (a *App) currentItemInfoIDs() (map[uint32]bool, string, error) {
 }
 
 func (a *App) currentItemInfoEntries() (map[uint32]itemInfoEntry, string, error) {
-	for _, target := range a.cfg.ItemInfoTargets {
+	for _, target := range a.configSnapshot().ItemInfoTargets {
 		target = strings.TrimSpace(target)
 		if target == "" {
 			continue
@@ -381,23 +393,15 @@ func linuxClockTicks() int64 {
 }
 
 func readItemInfoEntries(path string) (map[uint32]itemInfoEntry, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
 	entries := make(map[uint32]itemInfoEntry)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
+	_, err := scanItemInfoFile(path, func(id uint32, raw []byte) bool {
+		line := strings.TrimSpace(string(raw))
 		if itemInfoLineHasNullName(line) {
-			continue
+			return false
 		}
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
-			continue
-		}
-		id, err := strconv.ParseUint(fields[0], 10, 32)
-		if err != nil || id == 0 {
-			continue
+			return false
 		}
 		entry := itemInfoEntry{ItemType: -1}
 		if len(fields) > 1 {
@@ -405,7 +409,11 @@ func readItemInfoEntries(path string) (map[uint32]itemInfoEntry, error) {
 				entry.ItemType = itemType
 			}
 		}
-		entries[uint32(id)] = entry
+		entries[id] = entry
+		return false
+	})
+	if err != nil {
+		return nil, err
 	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("iteminfo target has no ids: %s", path)
@@ -425,13 +433,6 @@ func itemInfoLineHasNullName(line string) bool {
 	return strings.Contains(line, "== NULL")
 }
 
-func (a *App) resolveConfigPath(path string) string {
-	if path == "" || filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(a.configDir, path)
-}
-
 func (a *App) PVFUpgradeSeparateStatus(req PVFUpgradeSeparateRequest) (pvf.PVFUpgradeSeparateStatus, error) {
 	path := strings.TrimSpace(req.Path)
 	if path == "" {
@@ -441,20 +442,31 @@ func (a *App) PVFUpgradeSeparateStatus(req PVFUpgradeSeparateRequest) (pvf.PVFUp
 }
 
 func (a *App) PVFPatchUpgradeSeparate(req PVFUpgradeSeparateRequest) (pvf.PVFUpgradeSeparatePatchResult, error) {
+	a.patchMu.Lock()
+	defer a.patchMu.Unlock()
+
 	path := strings.TrimSpace(req.Path)
 	if path == "" {
 		path = a.pvfPath
+	}
+	if strings.TrimSpace(a.configDir) == "" {
+		return pvf.PVFUpgradeSeparatePatchResult{Path: path}, fmt.Errorf("empty config dir")
 	}
 	target := req.Target
 	if target <= 0 {
 		target = 7
 	}
-	return pvf.PatchPVFUpgradeSeparate(path, target)
+	backup, err := layout.New(a.configDir).PVFUpgradeSeparateBackup(path)
+	if err != nil {
+		return pvf.PVFUpgradeSeparatePatchResult{Path: path}, fmt.Errorf("resolve backup for %s: %w", path, err)
+	}
+	return pvf.PatchPVFUpgradeSeparate(path, backup, target)
 }
 
 func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 	out := map[uint32]catalogItem{}
-	stackable, err := readPVFItems(filepath.Join(a.configDir, "pvf_stackable_catalog.json"))
+	paths := layout.New(a.configDir)
+	stackable, err := readPVFItems(paths.PVFStackable())
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +480,7 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 		}
 		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
 	}
-	equipment, err := readPVFItems(filepath.Join(a.configDir, "pvf_equipment_catalog.json"))
+	equipment, err := readPVFItems(paths.PVFEquipment())
 	if err != nil {
 		return nil, err
 	}

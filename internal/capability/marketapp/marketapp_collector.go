@@ -1,7 +1,9 @@
 package marketapp
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -18,17 +20,18 @@ type collectRow struct {
 }
 
 func (a *App) CollectPlan(req CollectRequest) (PlanResult, error) {
+	cfg := a.configSnapshot()
 	result := PlanResult{GeneratedAt: time.Now()}
 	market := strings.ToLower(strings.TrimSpace(req.Market))
 	if market == "" || market == marketNameAuction {
-		rows, err := a.repository.LoadCollectRows(a.cfg.AuctionDB, marketNameAuction, a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
+		rows, err := a.repository.LoadCollectRows(cfg.AuctionDB, marketNameAuction, cfg.SystemOwner.IDBase, cfg.Collector.IncludeSystemOwners)
 		if err != nil {
 			return PlanResult{}, err
 		}
 		a.appendAuctionCollectActions(rows, &result)
 	}
 	if market == "" || market == marketNameCera || market == marketAliasGold {
-		rows, err := a.repository.LoadCollectRows(a.cfg.CeraDB, marketNameCera, a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
+		rows, err := a.repository.LoadCollectRows(cfg.CeraDB, marketNameCera, cfg.SystemOwner.IDBase, cfg.Collector.IncludeSystemOwners)
 		if err != nil {
 			return PlanResult{}, err
 		}
@@ -59,7 +62,8 @@ type collectPriceStats struct {
 }
 
 func (a *App) appendAuctionCollectActions(rows []collectRow, result *PlanResult) {
-	if !a.cfg.Collector.PriceRangeEnabled {
+	cfg := a.configSnapshot()
+	if !cfg.Collector.PriceRangeEnabled {
 		a.appendCollectActions(rows, result)
 		return
 	}
@@ -70,19 +74,19 @@ func (a *App) appendAuctionCollectActions(rows []collectRow, result *PlanResult)
 		a.appendLog(LogEvent{Type: "collect_price_catalog", Market: marketNameAuction, Status: marketLogStatusFallback, Message: err.Error()})
 	}
 	candidates := append([]collectRow(nil), rows...)
-	a.rand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
+	a.randomShuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
 	selected := make([]collectRow, 0, len(candidates))
 	stats := collectPriceStats{Orders: len(candidates)}
 	for _, row := range candidates {
 		inside := a.collectPriceInRange(row, catalog)
-		probability := a.cfg.Collector.OutRangeProbability
+		probability := cfg.Collector.OutRangeProbability
 		if inside {
 			stats.InRange++
-			probability = a.cfg.Collector.InRangeProbability
+			probability = cfg.Collector.InRangeProbability
 		} else {
 			stats.OutOfRange++
 		}
-		if probability <= 0 || (probability < 1 && a.rand.Float64() >= probability) {
+		if probability <= 0 || (probability < 1 && a.randomFloat64() >= probability) {
 			continue
 		}
 		selected = append(selected, row)
@@ -200,8 +204,9 @@ func (r SQLRepository) DeleteSystemStock(dbName string, systemOwnerBase uint32) 
 }
 
 func (a *App) appendCollectActions(rows []collectRow, result *PlanResult) {
+	cfg := a.configSnapshot()
 	for i, row := range rows {
-		buyerID := a.cfg.SystemOwner.BuyerBase + uint32(i%maxInt(a.cfg.SystemOwner.RotateEvery, 1))
+		buyerID := cfg.SystemOwner.BuyerBase + uint32(i%maxInt(cfg.SystemOwner.RotateEvery, 1))
 		result.Actions = append(result.Actions, Action{
 			Market:       row.Market,
 			Kind:         "collect",
@@ -211,7 +216,7 @@ func (a *App) appendCollectActions(rows []collectRow, result *PlanResult) {
 			UnitPrice:    row.InstantPrice,
 			TotalPrice:   row.InstantPrice,
 			OwnerID:      buyerID,
-			OwnerName:    a.cfg.SystemOwner.OwnerName,
+			OwnerName:    cfg.SystemOwner.OwnerName,
 			CountAddInfo: row.Count,
 			StartPrice:   row.StartPrice,
 			InstantPrice: row.InstantPrice,
@@ -225,7 +230,8 @@ func (a *App) appendRarityFilteredCollectActions(catalog map[uint32]catalogItem,
 	if !a.qualityFilterEnabled() || len(catalog) == 0 || a.repository == nil {
 		return nil
 	}
-	rows, err := a.repository.LoadSystemCollectRows(a.cfg.AuctionDB, marketNameAuction, a.cfg.SystemOwner.IDBase)
+	cfg := a.configSnapshot()
+	rows, err := a.repository.LoadSystemCollectRows(cfg.AuctionDB, marketNameAuction, cfg.SystemOwner.IDBase)
 	if err != nil {
 		return err
 	}
@@ -248,11 +254,19 @@ func (a *App) appendRarityFilteredCollectActions(catalog map[uint32]catalogItem,
 }
 
 func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
+	return a.collectOnce(a.lifecycleContext(), req)
+}
+
+func (a *App) collectOnce(ctx context.Context, req CollectRequest) (JobSummary, error) {
+	if err := ctx.Err(); err != nil {
+		return cancelledMarketJob("collect", err), err
+	}
 	if !a.jobMu.TryLock() {
 		job := busyMarketJob("collect")
 		return job, fmt.Errorf(job.Error)
 	}
 	defer a.jobMu.Unlock()
+	cfg := a.configSnapshot()
 	start := time.Now()
 	job := JobSummary{
 		ID:        fmt.Sprintf("collect-%d", start.UnixNano()),
@@ -272,10 +286,13 @@ func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
 		a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Message: job.Error})
 		return job, err
 	}
+	if err := ctx.Err(); err != nil {
+		return a.finishCancelledJob(job, err)
+	}
 	job.Plan = &plan.Summary
 	maxActions := req.MaxActions
 	if maxActions <= 0 {
-		maxActions = a.cfg.Collector.MaxActions
+		maxActions = cfg.Collector.MaxActions
 	}
 	actions := plan.Actions
 	if maxActions > 0 && len(actions) > maxActions {
@@ -289,8 +306,14 @@ func (a *App) CollectOnce(req CollectRequest) (JobSummary, error) {
 		a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Summary: job.Plan})
 		return job, nil
 	}
-	failedActions, entries, firstErr := a.executeActions(job.ID, actions, req.MaxConcurrent, req.ContinueOnError, &job)
-	a.reconcileCeraLanding(entries)
+	failedActions, entries, firstErr := a.executeActions(ctx, job.ID, actions, req.MaxConcurrent, req.ContinueOnError, &job)
+	a.reconcileCeraLanding(ctx, entries)
+	if err := ctx.Err(); err != nil || errors.Is(firstErr, context.Canceled) || errors.Is(firstErr, context.DeadlineExceeded) {
+		if err == nil {
+			err = firstErr
+		}
+		return a.finishCancelledJob(job, err)
+	}
 	if firstErr != nil && !req.ContinueOnError {
 		job.Status = MarketJobStatusPartialFailed
 		job.Error = firstErr.Error()

@@ -51,10 +51,11 @@ func (a *App) equipmentLevelSkipReason(item catalogItem) string {
 	if item.Kind != "equipment" {
 		return ""
 	}
-	if minLevel := a.cfg.Restock.EquipmentLevelMin; minLevel > 0 && item.Level < minLevel {
+	cfg := a.configSnapshot()
+	if minLevel := cfg.Restock.EquipmentLevelMin; minLevel > 0 && item.Level < minLevel {
 		return "equipment_level_below_min"
 	}
-	if maxLevel := a.cfg.Restock.EquipmentLevelMax; maxLevel > 0 && item.Level > maxLevel {
+	if maxLevel := cfg.Restock.EquipmentLevelMax; maxLevel > 0 && item.Level > maxLevel {
 		return "equipment_level_above_max"
 	}
 	return ""
@@ -89,6 +90,7 @@ func auctionPlanSkipReason(row restockRow, item catalogItem) string {
 }
 
 func (a *App) normalAuctionPlan(row restockRow, item catalogItem) normalAuctionPlan {
+	cfg := a.configSnapshot()
 	isEquip := item.Kind == "equipment"
 	stackSize := auctionPlanStackSize(row, item, isEquip)
 	plan := normalAuctionPlan{
@@ -100,7 +102,7 @@ func (a *App) normalAuctionPlan(row restockRow, item catalogItem) normalAuctionP
 		BatchInflate: 1,
 	}
 	if isEquip {
-		plan.BatchInflate = float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
+		plan.BatchInflate = float64(a.randomRange(cfg.Restock.EquipInflateMin, cfg.Restock.EquipInflateMax))
 	}
 	return plan
 }
@@ -120,6 +122,7 @@ func auctionPlanStackSize(row restockRow, item catalogItem, isEquip bool) int {
 }
 
 func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]int, result *PlanResult) {
+	cfg := a.configSnapshot()
 	for i := 0; i < plan.TargetRecord; i++ {
 		count := auctionPlanActionCount(plan, i)
 		addInfo := count
@@ -139,7 +142,7 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			}
 			upgrade = plan.Row.Upgrade
 			if upgrade <= 0 {
-				upgrade = randRange(a.rand, a.cfg.Restock.UpgradeMin, a.cfg.Restock.UpgradeMax)
+				upgrade = a.randomRange(cfg.Restock.UpgradeMin, cfg.Restock.UpgradeMax)
 			}
 		}
 		unit := a.auctionUnitPriceFor(plan.Row.ItemID, plan.Row.SystemPrice, plan.IsEquipment, plan.BatchInflate, upgrade)
@@ -164,7 +167,7 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			UnitPrice:    unit,
 			TotalPrice:   total,
 			OwnerID:      a.pickOwner(occ),
-			OwnerName:    a.cfg.SystemOwner.OwnerName,
+			OwnerName:    cfg.SystemOwner.OwnerName,
 			CountAddInfo: addInfo,
 			StartPrice:   startPrice,
 			InstantPrice: total,
@@ -251,17 +254,18 @@ func auctionActionSource(row restockRow) string {
 }
 
 func (a *App) planSpecialAuction(row restockRow, item catalogItem, special string, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
+	cfg := a.configSnapshot()
 	if have[row.ItemID] > 0 {
 		return
 	}
 	records := row.Quantity
 	if records <= 0 {
-		records = randRange(a.rand, a.cfg.Restock.EquipmentQtyMin, a.cfg.Restock.EquipmentQtyMax)
+		records = a.randomRange(cfg.Restock.EquipmentQtyMin, cfg.Restock.EquipmentQtyMax)
 	}
 	if records <= 0 {
 		records = 1
 	}
-	batchInflate := float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
+	batchInflate := float64(a.randomRange(cfg.Restock.EquipInflateMin, cfg.Restock.EquipInflateMax))
 	planned := 0
 	for i := 0; i < records; i++ {
 		unit := a.auctionUnitPriceFor(row.ItemID, row.SystemPrice, true, batchInflate, 0)
@@ -276,13 +280,13 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 			UnitPrice:    unit,
 			TotalPrice:   unit,
 			OwnerID:      ownerID,
-			OwnerName:    a.cfg.SystemOwner.OwnerName,
+			OwnerName:    cfg.SystemOwner.OwnerName,
 			StartPrice:   unit - 1,
 			InstantPrice: unit,
 			Source:       row.Source,
 		}
 		if special == "creature" {
-			uiID, err := a.repository.CreateCreatureItem(a.cfg.GameDB, ownerID, row.ItemID)
+			uiID, err := a.repository.CreateCreatureItem(cfg.GameDB, ownerID, row.ItemID)
 			if err != nil {
 				result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "creature_instance_failed"})
 				continue

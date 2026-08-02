@@ -3,10 +3,13 @@ package webadmin
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+
+	"robot/internal/foundation/atomicfile"
+	foundationconfig "robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
+	foundationlog "robot/internal/foundation/log"
 )
 
 type mailboxGuardConfig struct {
@@ -14,7 +17,7 @@ type mailboxGuardConfig struct {
 }
 
 type mailboxGuardRequest struct {
-	Enabled bool `json:"mailbox_bad_node_guard"`
+	Enabled *bool `json:"mailbox_bad_node_guard"`
 }
 
 type mailboxGuardStatus struct {
@@ -44,22 +47,34 @@ func (s *Server) handleCompat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": true, "result": status})
 	case http.MethodPost:
 		var req mailboxGuardRequest
-		if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		if err := foundationconfig.DecodeJSONLimit(r.Body, 64*1024, &req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		cfg.Enabled = req.Enabled
+		if req.Enabled == nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "mailbox_bad_node_guard is required"})
+			return
+		}
+		cfg.Enabled = *req.Enabled
 		if err := s.saveMailboxGuardConfig(cfg); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		status := inspectMailboxGuard(s.cfg.RobotGamePort)
+		status, applyErr := setMailboxGuard(s.cfg.RobotGamePort, cfg.Enabled)
 		status.DesiredEnabled = cfg.Enabled
-		status.Message = "saved; restart Robot to apply"
+		message := "desired state saved and applied"
+		if applyErr != nil {
+			status = inspectMailboxGuard(s.cfg.RobotGamePort)
+			status.DesiredEnabled = cfg.Enabled
+			status.Message = "desired state saved; apply pending: " + applyErr.Error()
+			message = status.Message
+		} else {
+			status.Message = message
+		}
 		writeJSON(w, map[string]interface{}{
 			"ok":               true,
-			"restart_required": true,
-			"message":          "Saved; restart Robot to apply",
+			"restart_required": false,
+			"message":          message,
 			"result":           status,
 		})
 	default:
@@ -68,41 +83,62 @@ func (s *Server) handleCompat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mailboxGuardConfigPath() string {
-	return filepath.Join(s.cfg.ConfigDir, "compat.json")
+	return layout.New(s.cfg.ConfigDir).MailboxGuard()
 }
 
 func (s *Server) loadMailboxGuardConfig() (mailboxGuardConfig, error) {
-	cfg := mailboxGuardConfig{}
-	data, err := os.ReadFile(s.mailboxGuardConfigPath())
-	if os.IsNotExist(err) {
-		return cfg, nil
+	if current := s.mailboxGuardSnapshot.Load(); current != nil {
+		return *current, nil
 	}
+	cfg, err := s.readMailboxGuardConfig(s.mailboxGuardConfigPath())
 	if err != nil {
-		return cfg, err
+		return mailboxGuardConfig{}, err
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg, fmt.Errorf("read compatibility config: %w", err)
-	}
+	s.mailboxGuardSnapshot.Store(&cfg)
 	return cfg, nil
 }
 
-func (s *Server) saveMailboxGuardConfig(cfg mailboxGuardConfig) error {
-	if err := os.MkdirAll(s.cfg.ConfigDir, 0755); err != nil {
-		return err
+func (s *Server) readMailboxGuardConfig(path string) (mailboxGuardConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return mailboxGuardConfig{}, err
 	}
+	var raw struct {
+		Enabled *bool `json:"mailbox_bad_node_guard"`
+	}
+	if err := foundationconfig.DecodeJSONBytes(data, &raw); err != nil {
+		return mailboxGuardConfig{}, fmt.Errorf("read compatibility config: %w", err)
+	}
+	if raw.Enabled == nil {
+		return mailboxGuardConfig{}, fmt.Errorf("read compatibility config: missing mailbox_bad_node_guard")
+	}
+	return mailboxGuardConfig{Enabled: *raw.Enabled}, nil
+}
+
+func (s *Server) saveMailboxGuardConfig(cfg mailboxGuardConfig) error {
+	path := s.mailboxGuardConfigPath()
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	path := s.mailboxGuardConfigPath()
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := atomicfile.WriteFile(path, append(data, '\n'), 0644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	s.mailboxGuardSnapshot.Store(&cfg)
+	s.wakeMailboxGuardSupervisor()
+	return nil
+}
+
+func (s *Server) reloadMailboxGuardFile(path string) error {
+	cfg, err := s.readMailboxGuardConfig(path)
+	if err != nil {
 		return err
 	}
+	if current := s.mailboxGuardSnapshot.Load(); current != nil && *current == cfg {
+		return nil
+	}
+	s.mailboxGuardSnapshot.Store(&cfg)
+	s.wakeMailboxGuardSupervisor()
+	foundationlog.Robotf("[WEB_RUNTIME_FILE] applied name=mailbox_guard path=%s enabled=%t\n", path, cfg.Enabled)
 	return nil
 }

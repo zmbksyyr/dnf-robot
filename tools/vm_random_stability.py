@@ -33,6 +33,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 try:
@@ -48,6 +49,48 @@ try:
     text_type = unicode
 except NameError:
     text_type = str
+
+
+CONFIG_ROOT = "/root/config"
+CONFIG_CONF_DIR = CONFIG_ROOT + "/conf"
+CONFIG_TEMPLATES_DIR = CONFIG_ROOT + "/templates"
+CONFIG_KEYS_DIR = CONFIG_ROOT + "/keys"
+CONFIG_PVF_DIR = CONFIG_ROOT + "/pvf"
+CONFIG_STATE_DIR = CONFIG_ROOT + "/state"
+CONFIG_LOG_DIR = CONFIG_ROOT + "/logs"
+CONFIG_TEMP_DIR = CONFIG_ROOT + "/tmp"
+
+MAIN_CONFIG_PATH = CONFIG_CONF_DIR + "/config.ini"
+ROBOT_CONFIG_PATH = CONFIG_CONF_DIR + "/robot_config.ini"
+MARKET_CONFIG_PATH = CONFIG_CONF_DIR + "/market_config.ini"
+MARKET_PRICE_RANGES_PATH = CONFIG_CONF_DIR + "/market_item_price_ranges.json"
+MAILBOX_COMPAT_PATH = CONFIG_CONF_DIR + "/compat.json"
+PARTY_COMPAT_PATH = CONFIG_CONF_DIR + "/party_compat.json"
+
+NAME_TEMPLATES_PATH = CONFIG_TEMPLATES_DIR + "/robot_name_templates.json"
+SHOUT_TEMPLATES_PATH = CONFIG_TEMPLATES_DIR + "/robot_shout_templates.json"
+STORE_TITLES_PATH = CONFIG_TEMPLATES_DIR + "/robot_store_titles.json"
+PARTY_SKILLS_PATH = CONFIG_TEMPLATES_DIR + "/party_skill_catalog.json"
+
+PRIVATE_KEY_PATH = CONFIG_KEYS_DIR + "/privatekey.pem"
+PUBLIC_KEY_PATH = CONFIG_KEYS_DIR + "/publickey.pem"
+
+PVF_MANIFEST_PATH = CONFIG_PVF_DIR + "/pvf_manifest.json"
+PVF_EQUIPMENT_PATH = CONFIG_PVF_DIR + "/equipment_catalog.json"
+PVF_STACKABLE_PATH = CONFIG_PVF_DIR + "/stackable_catalog.json"
+PVF_MAP_PATH = CONFIG_PVF_DIR + "/map_catalog.json"
+PVF_SKILL_STATE_PATH = CONFIG_PVF_DIR + "/skill_state_catalog.json"
+PVF_LEVEL_EXP_PATH = CONFIG_PVF_DIR + "/level_exp_catalog.json"
+PVF_ITEMINFO_PATH = CONFIG_PVF_DIR + "/iteminfo.dat"
+
+STORE_POINTS_CACHE_PATH = CONFIG_STATE_DIR + "/store_points_cache.json"
+STORE_POINTS_ACTIVE_PATH = CONFIG_STATE_DIR + "/store_points_active.json"
+MAIL_NOTIFY_CURSOR_PATH = CONFIG_STATE_DIR + "/mail_notify_cursor.json"
+
+ROBOT_LOG_PATH = CONFIG_LOG_DIR + "/robot.log"
+ROBOT_STDOUT_LOG_PATH = CONFIG_LOG_DIR + "/stdout.log"
+ROBOT_START_ERROR_LOG_PATH = CONFIG_LOG_DIR + "/start_error.log"
+MARKET_LOG_PATH = CONFIG_LOG_DIR + "/market.jsonl"
 
 
 KEYWORDS = [
@@ -229,19 +272,14 @@ SAMPLE_FIELDS = [
     "event",
 ]
 
-CONFIG_BACKUP_EXCLUDES = (
-    "log_robot*",
-    "market_log.jsonl*",
-    "market_*_service.log*",
-    "*.rotate.tmp",
-    "*.trim.tmp",
-)
+CONFIG_BACKUP_EXCLUDES = ("logs", "tmp")
 
-STABILITY_OUTPUT_GLOB = "/root/robot_stability_*"
+STABILITY_OUTPUT_ROOT = CONFIG_LOG_DIR + "/stability"
+STABILITY_OUTPUT_GLOB = STABILITY_OUTPUT_ROOT + "/robot_stability_*"
 STABILITY_OUTPUT_KEEP = 5
 CONFIG_FAULT_BACKUP_GLOBS = (
-    "/root/config.vm_random_backup_*",
-    "/root/config/*.vm_random_backup_*",
+    CONFIG_ROOT + ".vm_random_backup_*",
+    CONFIG_ROOT + "/*/*.vm_random_backup_*",
     "/dp2/Script.pvf.vm_random_backup_*",
     "/home/*/game/Script.pvf.vm_random_backup_*",
     "/home/*/auction/iteminfo.dat.vm_random_backup_*",
@@ -255,7 +293,8 @@ DEFAULT_ARTIFACT_MAX_MB = 512
 DEFAULT_DF_GAME_R = "/home/neople/game/df_game_r"
 DEFAULT_MARKET_ACTION_BUDGET = 512
 MYSQL_CLI = "mysql -ugame -puu5!^%jg"
-CORE_START_LOG = "/root/vm_core_start.log"
+CORE_START_LOG = STABILITY_OUTPUT_ROOT + "/core_start.log"
+SHELL_OUTPUT_MAX_BYTES = 4 * 1024 * 1024
 CORE_FILE_PATTERNS = (
     "/home/neople/*/core.*",
     "/home/dxf/*/core.*",
@@ -339,6 +378,51 @@ def shell_quote(value):
     return "'" + safe_text(value).replace("'", "'\\''") + "'"
 
 
+def subprocess_group_options():
+    if os.name == "posix":
+        return {"preexec_fn": os.setsid}
+    creation_flag = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    return {"creationflags": creation_flag} if creation_flag else {}
+
+
+def kill_subprocess_group(proc):
+    if os.name == "posix":
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+            return
+        except OSError:
+            if proc.poll() is not None:
+                return
+        except Exception:
+            pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
+def read_bounded_shell_output(stream, max_bytes=SHELL_OUTPUT_MAX_BYTES):
+    stream.flush()
+    stream.seek(0, os.SEEK_END)
+    size = stream.tell()
+    start = max(0, size - max(0, max_bytes))
+    stream.seek(start)
+    output = stream.read()
+    text = output if isinstance(output, text_type) else output.decode("utf-8", "replace")
+    if start:
+        return "[shell output truncated to last %s bytes]\n%s" % (max_bytes, text)
+    return text
+
+
+def stability_output_directory(requested, stamp):
+    path = requested or os.path.join(STABILITY_OUTPUT_ROOT, "robot_stability_%s" % stamp)
+    root = os.path.realpath(os.path.abspath(STABILITY_OUTPUT_ROOT))
+    candidate = os.path.realpath(os.path.abspath(path))
+    if candidate != root and not candidate.startswith(root + os.sep):
+        raise ValueError("stability output must stay under %s" % STABILITY_OUTPUT_ROOT)
+    return path
+
+
 def filtered_config_backup_script(source, destination):
     exclude_patterns = []
     for pattern in CONFIG_BACKUP_EXCLUDES:
@@ -363,7 +447,7 @@ if ! (cd "$SOURCE" && tar %(exclude_args)s -cf "$ARCHIVE" .); then
   exit 1
 fi
 mkdir -p "$TMP"
-if ! tar -xf "$ARCHIVE" -C "$TMP" || [ ! -s "$TMP/config.ini" ]; then
+if ! tar -xf "$ARCHIVE" -C "$TMP" || [ ! -s "$TMP/conf/config.ini" ]; then
   rm -rf -- "$TMP"
   rm -f -- "$ARCHIVE"
   echo CONFIG_BACKUP_FAILED verify
@@ -850,7 +934,7 @@ class StabilityRun(object):
     def __init__(self, args):
         self.args = args
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.out_dir = args.out_dir or ("/root/robot_stability_%s" % stamp)
+        self.out_dir = stability_output_directory(args.out_dir, stamp)
         if not os.path.isdir(self.out_dir):
             os.makedirs(self.out_dir)
         self.events = io.open(os.path.join(self.out_dir, "events.log"), "a", encoding="utf-8", buffering=1)
@@ -904,7 +988,7 @@ class StabilityRun(object):
         self.api = RobotAPI(args.robot_host, self.port("RobotAPI"), args.api_timeout)
 
     def read_service_layout(self):
-        path = "/root/config/config.ini"
+        path = MAIN_CONFIG_PATH
         df_game_r = DEFAULT_DF_GAME_R
         try:
             section = ""
@@ -938,7 +1022,7 @@ class StabilityRun(object):
             "Relay": 7200,
             "PartyRoute0": 5063,
         }
-        path = "/root/config/config.ini"
+        path = MAIN_CONFIG_PATH
         try:
             section = ""
             for line in io.open(path, "r", encoding="utf-8"):
@@ -976,7 +1060,7 @@ class StabilityRun(object):
         return "|".join(values)
 
     def read_web_password(self):
-        path = "/root/config/config.ini"
+        path = MAIN_CONFIG_PATH
         password = "twadmin"
         try:
             section = ""
@@ -1460,14 +1544,28 @@ class StabilityRun(object):
             "/root/robot",
             "/root/run",
             "/root/stop",
-            "/root/config/market_config.ini",
-            "/root/config/market_item_price_ranges.json",
-            "/root/config/pvf_equipment_catalog.json",
-            "/root/config/pvf_stackable_catalog.json",
-            "/root/config/pvf_level_exp_catalog.json",
-            "/root/config/pvf_iteminfo.dat",
-            "/root/config/store_points_cache.json",
-            "/root/config/store_points_active.json",
+            MAIN_CONFIG_PATH,
+            ROBOT_CONFIG_PATH,
+            MARKET_CONFIG_PATH,
+            MARKET_PRICE_RANGES_PATH,
+            MAILBOX_COMPAT_PATH,
+            PARTY_COMPAT_PATH,
+            NAME_TEMPLATES_PATH,
+            SHOUT_TEMPLATES_PATH,
+            STORE_TITLES_PATH,
+            PARTY_SKILLS_PATH,
+            PRIVATE_KEY_PATH,
+            PUBLIC_KEY_PATH,
+            PVF_MANIFEST_PATH,
+            PVF_EQUIPMENT_PATH,
+            PVF_STACKABLE_PATH,
+            PVF_MAP_PATH,
+            PVF_SKILL_STATE_PATH,
+            PVF_LEVEL_EXP_PATH,
+            PVF_ITEMINFO_PATH,
+            STORE_POINTS_CACHE_PATH,
+            STORE_POINTS_ACTIVE_PATH,
+            MAIL_NOTIFY_CURSOR_PATH,
             self.auction_iteminfo,
             self.point_iteminfo,
             self.script_pvf,
@@ -1560,7 +1658,7 @@ class StabilityRun(object):
         self.log("prepare_baseline begin dir=%s" % self.baseline_dir)
         self.safe_call("marketStop", {})
         self.wait_market_job_idle("prepare_baseline", 300, 5)
-        backup_output = self.shell(filtered_config_backup_script("/root/config", os.path.join(self.baseline_dir, "root_config")), 120)
+        backup_output = self.shell(filtered_config_backup_script(CONFIG_ROOT, os.path.join(self.baseline_dir, "root_config")), 120)
         if "CONFIG_BACKUP_OK" not in safe_text(backup_output):
             self.log("prepare_baseline config_backup_failed output=%s" % safe_text(backup_output)[:1000])
             return False
@@ -1575,20 +1673,17 @@ class StabilityRun(object):
         restore = """#!/bin/sh
 set -e
 BASE=%s
-mkdir -p /root/config
-find /root/config -mindepth 1 -maxdepth 1 \
-  ! -name 'log_robot*' \
-  ! -name 'market_log.jsonl*' \
-  ! -name 'market_*_service.log*' \
-  ! -name '*.rotate.tmp' \
-  ! -name '*.trim.tmp' \
+CONFIG_ROOT=%s
+mkdir -p "$CONFIG_ROOT/logs"
+find "$CONFIG_ROOT" -mindepth 1 -maxdepth 1 \
+  ! -name 'logs' \
   -exec rm -rf -- {} +
-cp -af "$BASE/root_config/." /root/config/
+cp -af "$BASE/root_config/." "$CONFIG_ROOT/"
 cp -af "$BASE/auction_iteminfo.dat" %s 2>/dev/null || true
 cp -af "$BASE/point_iteminfo.dat" %s 2>/dev/null || true
 if [ -s "$BASE/baseline_market_robot_stock.sql" ]; then mysql -ugame -puu5!^%%jg < "$BASE/baseline_market_robot_stock.sql"; fi
 echo RESTORED
-""" % (shell_quote(self.baseline_dir), shell_quote(self.auction_iteminfo), shell_quote(self.point_iteminfo))
+""" % (shell_quote(self.baseline_dir), shell_quote(CONFIG_ROOT), shell_quote(self.auction_iteminfo), shell_quote(self.point_iteminfo))
         try:
             fh = io.open(restore_path, "w", encoding="utf-8")
             fh.write(restore)
@@ -1752,12 +1847,13 @@ echo RESTORED
             return False
         core_ports = self.port_regex(("Game", "Monitor", "Bridge", "Point", "Auction"))
         command = (
+            "mkdir -p %s; "
             "if ! command -v setsid >/dev/null 2>&1; then echo CORE_START_NO_SETSID; exit 1; fi; "
             "setsid sh -c 'cd /root && ./run' </dev/null >%s 2>&1; "
             "rc=$?; echo CORE_START_RC=$rc; sleep 2; "
             "ss -lntp | grep -E ':(%s)' || true; "
             "pgrep -af 'df_game_r|df_monitor_r|df_bridge_r|df_auction_r|df_point_r' || true"
-        ) % (shell_quote(CORE_START_LOG), core_ports)
+        ) % (shell_quote(STABILITY_OUTPUT_ROOT), shell_quote(CORE_START_LOG), core_ports)
         output = self.shell(command, 240)
         if "CORE_START_RC=0" not in safe_text(output):
             self.log("restart_core_services launch failed event=%s output=%s" % (event, safe_text(output)[:1600]))
@@ -1912,8 +2008,8 @@ echo RESTORED
 
     def begin_shared_runtime_observation(self):
         self._party_observation_cursors = {
-            "log_robot": self.capture_log_cursor("/root/config/log_robot"),
-            "robot_stdout": self.capture_log_cursor("/root/config/robot_stdout.log"),
+            "log_robot": self.capture_log_cursor(ROBOT_LOG_PATH),
+            "robot_stdout": self.capture_log_cursor(ROBOT_STDOUT_LOG_PATH),
         }
         self._store_observation_cursor = self._party_observation_cursors["log_robot"]
         self._natural_store_metrics_start = len(self.sample_metrics)
@@ -2589,7 +2685,7 @@ echo RESTORED
         return dict((name, len(re.findall(pattern, text))) for name, pattern in patterns.items())
 
     def robot_log_tail(self, max_bytes=1024 * 1024):
-        return self.read_log_tail("/root/config/log_robot", max_bytes)
+        return self.read_log_tail(ROBOT_LOG_PATH, max_bytes)
 
     def capture_log_cursor(self, path):
         try:
@@ -2655,8 +2751,8 @@ echo RESTORED
     def party_log_parts(self, max_bytes=2 * 1024 * 1024):
         each = max(1, max_bytes // 2)
         return {
-            "log_robot": self.read_log_tail("/root/config/log_robot", each),
-            "robot_stdout": self.read_log_tail("/root/config/robot_stdout.log", each),
+            "log_robot": self.read_log_tail(ROBOT_LOG_PATH, each),
+            "robot_stdout": self.read_log_tail(ROBOT_STDOUT_LOG_PATH, each),
         }
 
     def join_party_logs(self, parts):
@@ -3144,9 +3240,9 @@ echo RESTORED
         if not self.wait_market_job_idle("market_source_faults_prepare", 300, 5):
             self.record_failure("market_source_faults_busy", "market job did not become idle before source faults")
         paths = [
-            "/root/config/pvf_equipment_catalog.json",
-            "/root/config/pvf_stackable_catalog.json",
-            "/root/config/pvf_iteminfo.dat",
+            PVF_EQUIPMENT_PATH,
+            PVF_STACKABLE_PATH,
+            PVF_ITEMINFO_PATH,
         ]
         backups = [self.backup_file(path) for path in paths]
         pvf_backup = ""
@@ -3160,14 +3256,14 @@ echo RESTORED
             raise RuntimeError("market source fault matrix backup failed")
         try:
             for mode in ("missing", "partial"):
-                log_cursor = self.capture_log_cursor("/root/config/market_log.jsonl")
+                log_cursor = self.capture_log_cursor(MARKET_LOG_PATH)
                 if mode == "missing":
                     self.shell("rm -f %s" % " ".join(shell_quote(path) for path in paths), 20)
                 else:
                     self.shell(
-                        "printf '[{\"id\":1,\"price\":1' > /root/config/pvf_equipment_catalog.json; "
-                        "printf '[{\"id\":2' > /root/config/pvf_stackable_catalog.json; "
-                        "printf '1 broken partial' > /root/config/pvf_iteminfo.dat",
+                        "printf '[{\"id\":1,\"price\":1' > %s; "
+                        "printf '[{\"id\":2' > %s; "
+                        "printf '1 broken partial' > %s" % tuple(shell_quote(path) for path in paths),
                         20,
                     )
                 injected = self.market_source_fault_applied(mode, paths)
@@ -3213,7 +3309,7 @@ echo RESTORED
                 self.record_failure("market_source_faults_recovery", "market services did not recover")
 
     def available_market_targets(self, preferred):
-        catalog_path = "/root/config/pvf_equipment_catalog.json"
+        catalog_path = PVF_EQUIPMENT_PATH
         catalog_ids = set()
         try:
             with io.open(catalog_path, "r", encoding="utf-8") as fh:
@@ -3254,7 +3350,7 @@ echo RESTORED
             except Exception:
                 pass
         result = dict((str(item_id), False) for item_id in wanted)
-        paths = [self.auction_iteminfo, "/root/config/pvf_iteminfo.dat"]
+        paths = [self.auction_iteminfo, PVF_ITEMINFO_PATH]
         for path in paths:
             try:
                 with io.open(path, "r", encoding="utf-8", errors="ignore") as fh:
@@ -3463,15 +3559,13 @@ echo RESTORED
         market_ports = self.port_regex(("Point", "Auction"))
         script = r"""
 for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -TERM $p || true; done
-pkill -TERM -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true
 for i in 1 2 3 4 5 6 7 8; do
-  procs="$(pidof df_auction_r df_point_r 2>/dev/null)$(pgrep -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true)"
+  procs="$(pidof df_auction_r df_point_r 2>/dev/null)"
   listeners=$(ss -lnt 2>/dev/null | grep -E ':(%s)' || true)
   [ -z "$procs$listeners" ] && break
   sleep 1
 done
 for p in $(pidof df_auction_r df_point_r 2>/dev/null); do kill -KILL $p || true; done
-pkill -KILL -f '^/root/robot --bounded-log-sink /root/config/market_(auction|point)_service.log ' 2>/dev/null || true
 ss -lntp | grep -E ':(%s)' || true
 pgrep -af 'df_auction_r|df_point_r' || true
 """ % (market_ports, market_ports)
@@ -3561,7 +3655,7 @@ pgrep -af 'df_auction_r|df_point_r' || true
             )
 
     def robot_main_pids(self):
-        output = self.shell("pgrep -f '^/root/robot$|^./robot$' || true", 10, log_output=False)
+        output = self.shell("pgrep -f '^/root/robot$' || true", 10, log_output=False)
         return sorted(set(to_int(line.strip()) for line in safe_text(output).splitlines() if to_int(line.strip()) > 0))
 
     def process_socket_inodes(self, pids):
@@ -3676,8 +3770,8 @@ pgrep -af 'df_auction_r|df_point_r' || true
 
     def config_dir_fault(self):
         self.log("config_dir_fault begin")
-        backup = "/root/config.vm_random_backup_%s" % int(time.time() * 1000)
-        backup_output = self.shell(filtered_config_backup_script("/root/config", backup), 120)
+        backup = "%s.vm_random_backup_%s" % (CONFIG_ROOT, int(time.time() * 1000))
+        backup_output = self.shell(filtered_config_backup_script(CONFIG_ROOT, backup), 120)
         if "CONFIG_BACKUP_OK" not in safe_text(backup_output):
             raise RuntimeError("config directory backup failed: %s" % safe_text(backup_output)[:1000])
         backup_ready = True
@@ -3686,31 +3780,29 @@ pgrep -af 'df_auction_r|df_point_r' || true
             self.wait_market_job_idle("config_fault_prepare", 300, 5)
             self.stop_market_services()
             script = """
-pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+pids=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -TERM -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true
 for i in 1 2 3 4 5; do
-  left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+  left=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
   web=$(pgrep -f '^/root/robot --web-admin' 2>/dev/null || true)
-  sink=$(pgrep -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true)
+  sink=$(pgrep -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true)
   [ -z "$left$web$sink" ] && break
   sleep 1
 done
-left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+left=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -KILL -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
-mkdir -p /root/config
-find /root/config -mindepth 1 -maxdepth 1 \
-  ! -name 'log_robot*' \
-  ! -name 'market_log.jsonl*' \
-  ! -name 'market_*_service.log*' \
-  ! -name '*.rotate.tmp' \
-  ! -name '*.trim.tmp' \
+pkill -KILL -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true
+CONFIG_ROOT=%s
+mkdir -p "$CONFIG_ROOT/logs"
+find "$CONFIG_ROOT" -mindepth 1 -maxdepth 1 \
+  ! -name 'logs' \
   -exec rm -rf -- {} + 2>/dev/null || true
-printf '[auction_price\nequip_inflate_min = broken\n' > /root/config/market_config.ini
-"""
+mkdir -p "$CONFIG_ROOT/conf"
+printf '[auction_price\nequip_inflate_min = broken\n' > %s
+""" % (shell_quote(CONFIG_ROOT), shell_quote(MARKET_CONFIG_PATH))
             self.shell(script, 120)
             self.sample_with_event("config_dir_fault_broken")
             api_ready = self.robot_restart_without_target("config_dir_fault_restart")
@@ -3725,31 +3817,28 @@ printf '[auction_price\nequip_inflate_min = broken\n' > /root/config/market_conf
         finally:
             if backup_ready:
                 script = """
-pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+pids=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -TERM -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true
 for i in 1 2 3 4 5; do
-  left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+  left=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
   web=$(pgrep -f '^/root/robot --web-admin' 2>/dev/null || true)
-  sink=$(pgrep -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true)
+  sink=$(pgrep -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true)
   [ -z "$left$web$sink" ] && break
   sleep 1
 done
-left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+left=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -KILL -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
-mkdir -p /root/config
-find /root/config -mindepth 1 -maxdepth 1 \
-  ! -name 'log_robot*' \
-  ! -name 'market_log.jsonl*' \
-  ! -name 'market_*_service.log*' \
-  ! -name '*.rotate.tmp' \
-  ! -name '*.trim.tmp' \
+pkill -KILL -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true
+CONFIG_ROOT=%s
+mkdir -p "$CONFIG_ROOT/logs"
+find "$CONFIG_ROOT" -mindepth 1 -maxdepth 1 \
+  ! -name 'logs' \
   -exec rm -rf -- {} + 2>/dev/null || true
 if [ -d %s ]; then
-  if cp -af %s/. /root/config/; then
+  if cp -af %s/. "$CONFIG_ROOT/"; then
     rm -rf %s
     echo CONFIG_RESTORE_OK
   else
@@ -3760,7 +3849,7 @@ else
   echo CONFIG_RESTORE_FAILED
   exit 1
 fi
-""" % (shell_quote(backup), shell_quote(backup), shell_quote(backup))
+""" % (shell_quote(CONFIG_ROOT), shell_quote(backup), shell_quote(backup), shell_quote(backup))
                 restore_output = self.shell(script, 120)
                 if "CONFIG_RESTORE_OK" in safe_text(restore_output):
                     restore_api_ready = self.robot_restart_without_target("config_dir_fault_restore")
@@ -3823,10 +3912,11 @@ fi
                 self.log("cleanup_stale_artifacts backup_remove_failed path=%s err=%r" % (path, exc))
 
         current = os.path.realpath(os.path.abspath(self.out_dir))
+        output_root = os.path.abspath(STABILITY_OUTPUT_ROOT)
         candidates = []
         for path in glob.glob(STABILITY_OUTPUT_GLOB):
             absolute = os.path.abspath(path)
-            if os.path.dirname(absolute) != "/root":
+            if os.path.dirname(absolute) != output_root:
                 continue
             if not STABILITY_OUTPUT_NAME_RE.match(os.path.basename(absolute)):
                 continue
@@ -4146,12 +4236,14 @@ fi
         self.mark_coverage("party_compat_desired", party_desired, json_text(on_result, 1000))
         if not party_desired:
             self.record_failure("party_compat_on_desired", "party compatibility desired state did not turn on")
-        baseline_config = os.path.join(self.baseline_dir, "root_config")
+        baseline_config = os.path.join(self.baseline_dir, "root_config", "conf")
         self.shell(
-            "mkdir -p %s; cp -af /root/config/compat.json %s/compat.json 2>/dev/null || true; "
-            "cp -af /root/config/party_compat.json %s/party_compat.json 2>/dev/null || true" % (
+            "mkdir -p %s; cp -af %s %s/compat.json 2>/dev/null || true; "
+            "cp -af %s %s/party_compat.json 2>/dev/null || true" % (
                 shell_quote(baseline_config),
+                shell_quote(MAILBOX_COMPAT_PATH),
                 shell_quote(baseline_config),
+                shell_quote(PARTY_COMPAT_PATH),
                 shell_quote(baseline_config),
             ),
             20,
@@ -4382,23 +4474,23 @@ ls -l "$OUT" %s
         self.sample_with_event(label + "_stop")
         hot_ports = self.port_regex(("RobotAPI", "Web", "Game", "Monitor", "Bridge", "Point", "Auction", "Relay", "PartyRoute0"))
         script = r"""
-pids=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+pids=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
 [ -z "$pids" ] || kill -TERM $pids || true
 pkill -TERM -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -TERM -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
+pkill -TERM -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true
 for i in 1 2 3 4 5 6 7 8; do
-  left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+  left=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
   web=$(pgrep -f '^/root/robot --web-admin' 2>/dev/null || true)
-  sink=$(pgrep -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true)
+  sink=$(pgrep -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true)
   [ -z "$left$web$sink" ] && break
   sleep 1
 done
-left=$(ps -eo pid,args | awk '($2=="/root/robot" || $2=="./robot") && NF==2 {print $1}')
+left=$(ps -eo pid,args | awk '$2=="/root/robot" && NF==2 {print $1}')
 [ -z "$left" ] || kill -KILL $left || true
 pkill -KILL -f '^/root/robot --web-admin' 2>/dev/null || true
-pkill -KILL -f '^/root/robot --bounded-log-sink .*/robot_stdout.log' 2>/dev/null || true
-mkdir -p /root/config
-nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/config/robot_stdout.log' >/dev/null 2>/root/config/robot_start_error.log &
+pkill -KILL -f '^/root/robot --bounded-log-sink /root/config/logs/stdout.log( |$)' 2>/dev/null || true
+mkdir -p /root/config/logs
+nohup sh -c '/root/robot 2>&1 | /root/robot --bounded-log-sink /root/config/logs/stdout.log' >/dev/null 2>/root/config/logs/start_error.log &
 pgrep -af '/root/robot|df_game_r|df_monitor_r|df_bridge_r|df_auction_r|df_point_r|df_relay_r' || true
 ss -lntp | grep -E ':(%s)' || true
 """ % hot_ports
@@ -4578,7 +4670,7 @@ ss -lntp | grep -E ':(%s)' || true
 
     def keyword_hits(self):
         counts = dict((key, 0) for key in KEYWORDS)
-        for path in ("/root/config/log_robot", "/root/config/robot_stdout.log"):
+        for path in (ROBOT_LOG_PATH, ROBOT_STDOUT_LOG_PATH):
             try:
                 out = subprocess.check_output(["tail", "-n", str(self.args.log_tail_lines), path])
             except Exception:
@@ -4682,7 +4774,7 @@ ss -lntp | grep -E ':(%s)' || true
             )
         except Exception as exc:
             row["api_error"] = repr(exc)
-        row["robot_pid_cpu"] = self.proc_pid_cpu("^/root/robot$|^./robot$")
+        row["robot_pid_cpu"] = self.proc_pid_cpu("^/root/robot$")
         row["df_game_cpu"] = self.proc_pid_cpu("df_game_r")
         row["auction_cpu"] = self.proc_pid_cpu("df_auction_r")
         row["point_cpu"] = self.proc_pid_cpu("df_point_r")
@@ -4991,7 +5083,7 @@ ss -lntp | grep -E ':(%s)' || true
 
     def robot_fd_count(self):
         try:
-            out = subprocess.check_output("pgrep -f '^/root/robot$|^./robot$' | head -1", shell=True)
+            out = subprocess.check_output("pgrep -f '^/root/robot$' | head -1", shell=True)
             if not isinstance(out, str):
                 out = out.decode("utf-8", "replace")
             pid = out.strip()
@@ -5015,20 +5107,19 @@ ss -ant | awk 'NR>1 {c[$1]++} END {for (k in c) print k,c[k]}'
 echo '===== tcp hot ports ====='
 ss -ant | grep -E ':(%s)' | head -n 120 || true
 echo '===== fds ====='
-for p in $(pgrep -f '^/root/robot$|^./robot$|df_game_r|df_monitor_r|df_bridge_r|df_auction_r|df_point_r|df_relay_r' 2>/dev/null); do echo "$p $(ps -p $p -o comm=) fds=$(ls /proc/$p/fd 2>/dev/null | wc -l)"; done
+for p in $(pgrep -f '^/root/robot$|df_game_r|df_monitor_r|df_bridge_r|df_auction_r|df_point_r|df_relay_r' 2>/dev/null); do echo "$p $(ps -p $p -o comm=) fds=$(ls /proc/$p/fd 2>/dev/null | wc -l)"; done
 echo '===== robot log filtered ====='
-tail -n %s /root/config/log_robot 2>/dev/null | grep -a -E '%s' | tail -n 200 || true
+tail -n %s /root/config/logs/robot.log 2>/dev/null | grep -a -E '%s' | tail -n 200 || true
 echo '===== market log filtered ====='
-tail -n %s /root/config/market_log.jsonl 2>/dev/null | grep -a -E 'market_service|job_end|auto_run|special|creature|iteminfo|cannot assign requested address|too many open files|connection reset' | tail -n 200 || true
-echo '===== market service logs ====='
-tail -n 80 /root/config/market_auction_service.log 2>/dev/null || true
-tail -n 80 /root/config/market_point_service.log 2>/dev/null || true
+tail -n %s /root/config/logs/market.jsonl 2>/dev/null | grep -a -E 'market_service|job_end|auto_run|special|creature|iteminfo|cannot assign requested address|too many open files|connection reset' | tail -n 200 || true
 echo '===== market special db ====='
 mysql -ugame -puu5!^%%jg -e "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=210000000; SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001; SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001; SELECT 'creature_orphans',COUNT(*),COUNT(DISTINCT c.it_id) FROM taiwan_cain_2nd.creature_items c LEFT JOIN taiwan_cain_auction_gold.auction_main a ON a.add_info=c.ui_id AND a.owner_id=c.charac_no WHERE c.charac_no>=90000001 AND a.auction_id IS NULL;" 2>/dev/null || true
 echo '===== market files ====='
-ls -l /root/config/market_config.ini /root/config/market_item_price_ranges.json /root/config/pvf_*catalog.json /root/config/pvf_iteminfo.dat %s %s 2>/dev/null || true
+ls -l /root/config/conf/market_config.ini /root/config/conf/market_item_price_ranges.json /root/config/pvf/pvf_manifest.json /root/config/pvf/*_catalog.json /root/config/pvf/iteminfo.dat %s %s 2>/dev/null || true
 echo '===== web stdout filtered ====='
-tail -n %s /root/config/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth rejected|web admin exited' | tail -n 120 || true
+tail -n %s /root/config/logs/stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth rejected|web admin exited' | tail -n 120 || true
+echo '===== startup error ====='
+tail -n 80 /root/config/logs/start_error.log 2>/dev/null || true
 """ % (
             label,
             now_text(),
@@ -5052,22 +5143,36 @@ tail -n %s /root/config/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pi
         self.log("collect_logs label=%s path=%s bytes=%s" % (label, path, len(out)))
 
     def shell(self, command, timeout, log_output=True):
-        proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        start = time.time()
-        while proc.poll() is None:
-            if time.time() - start > timeout:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                out = proc.communicate()[0] or b""
-                text = out.decode("utf-8", "replace") if not isinstance(out, str) else out
-                if log_output:
-                    self.log("shell_timeout command=%s output=%s" % (safe_text(command)[:160], safe_text(text)[:2000]))
-                return text
-            time.sleep(1)
-        out = proc.communicate()[0] or b""
-        text = out.decode("utf-8", "replace") if not isinstance(out, str) else out
+        with tempfile.TemporaryFile() as output:
+            proc = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                **subprocess_group_options()
+            )
+            deadline = time.time() + max(0, timeout)
+            timed_out = False
+            while proc.poll() is None:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    timed_out = True
+                    kill_subprocess_group(proc)
+                    reap_deadline = time.time() + 5
+                    while proc.poll() is None and time.time() < reap_deadline:
+                        time.sleep(0.05)
+                    if proc.poll() is None:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    break
+                time.sleep(min(0.2, max(0.01, remaining)))
+            text = read_bounded_shell_output(output)
+        if timed_out:
+            if log_output:
+                self.log("shell_timeout command=%s output=%s" % (safe_text(command)[:160], safe_text(text)[:2000]))
+            return text
         if log_output:
             self.log("shell command=%s output=%s" % (safe_text(command)[:160], safe_text(text)[:2000]))
         return text

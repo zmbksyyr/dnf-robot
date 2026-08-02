@@ -11,6 +11,8 @@ import (
 	foundationlog "robot/internal/foundation/log"
 )
 
+const webAdminShutdownTimeout = 6 * time.Second
+
 func StartSupervisor(cfg *config.SysConfig) func() {
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -40,10 +42,13 @@ func StartSupervisor(cfg *config.SysConfig) func() {
 			select {
 			case <-stop:
 				if cmd.Process != nil {
-					_ = cmd.Process.Signal(syscall.SIGTERM)
+					if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+						foundationlog.Robotf("web admin SIGTERM failed pid=%d err=%v\n", pid, err)
+					}
 					select {
 					case <-waitCh:
-					case <-time.After(500 * time.Millisecond):
+					case <-time.After(webAdminShutdownTimeout):
+						foundationlog.Robotf("web admin graceful shutdown timed out pid=%d; killing\n", pid)
 						_ = cmd.Process.Kill()
 						<-waitCh
 					}

@@ -15,7 +15,7 @@ func Default() RuntimeConfig {
 		PreferEquipSets: true, EquipSetMinSlots: 2,
 		AvatarSlots: []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, MinAvatarSlots: 8, PreferAvatarSets: true, AvatarSetMinSlots: 2,
 		StoreItemSlots: 1, StoreItemCountMin: 1, StoreItemCountMax: 1, StoreInventoryStartBox: 7,
-		StoreEquipmentStartBox: 7, StoreMaterialStartBox: 105, StoreEquipmentIntensifyMin: 7, StoreEquipmentIntensifyMax: 13, StoreTitleFile: "robot_store_titles.json",
+		StoreEquipmentStartBox: 7, StoreMaterialStartBox: 105, StoreEquipmentIntensifyMin: 7, StoreEquipmentIntensifyMax: 13,
 		StoreEquipmentPriceMin: 500000, StoreEquipmentPriceMax: 1000000, StoreMaterialPriceMin: 10, StoreMaterialPriceMax: 50,
 		StoreItemAllowIDs: []int{3037, 3031, 3032, 3034, 3035}, StoreItemDenyIDs: []int{7312, 7404, 7560, 7563, 7567, 7746},
 		StoreConfirmTimeoutSec: 30,
@@ -94,7 +94,7 @@ func Normalize(rc *RuntimeConfig) {
 	if rc.EquipSetMinSlots <= 1 {
 		rc.EquipSetMinSlots = 2
 	}
-	if len(rc.EquipSlots) > 0 && rc.EquipSetMinSlots > len(rc.EquipSlots) {
+	if rc.PreferEquipSets && len(rc.EquipSlots) > 0 && rc.EquipSetMinSlots > len(rc.EquipSlots) {
 		rc.EquipSetMinSlots = len(rc.EquipSlots)
 	}
 	if rc.MinAvatarSlots < 0 {
@@ -103,7 +103,7 @@ func Normalize(rc *RuntimeConfig) {
 	if rc.AvatarSetMinSlots <= 1 {
 		rc.AvatarSetMinSlots = 2
 	}
-	if len(rc.AvatarSlots) > 0 && rc.AvatarSetMinSlots > len(rc.AvatarSlots) {
+	if rc.PreferAvatarSets && len(rc.AvatarSlots) > 0 && rc.AvatarSetMinSlots > len(rc.AvatarSlots) {
 		rc.AvatarSetMinSlots = len(rc.AvatarSlots)
 	}
 	if rc.AutoMoveIntervalMinSec <= 0 {
@@ -312,9 +312,6 @@ func Normalize(rc *RuntimeConfig) {
 	}
 	if rc.StoreEquipmentIntensifyMax < rc.StoreEquipmentIntensifyMin {
 		rc.StoreEquipmentIntensifyMin, rc.StoreEquipmentIntensifyMax = rc.StoreEquipmentIntensifyMax, rc.StoreEquipmentIntensifyMin
-	}
-	if rc.StoreTitleFile == "" {
-		rc.StoreTitleFile = "robot_store_titles.json"
 	}
 	if rc.StoreConfirmTimeoutSec <= 0 {
 		rc.StoreConfirmTimeoutSec = 30

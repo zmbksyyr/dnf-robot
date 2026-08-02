@@ -1,33 +1,35 @@
 package marketapp
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+
+	"robot/internal/foundation/atomicfile"
 )
 
-func loadItemInfoRows(paths []string) map[uint32][]byte {
+func loadItemInfoRows(paths []string) (map[uint32][]byte, error) {
 	rows := make(map[uint32][]byte)
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		scanItemInfoLines(data, func(id uint32, line []byte) bool {
+		_, err := scanItemInfoFile(path, func(id uint32, line []byte) bool {
 			if rows[id] == nil {
 				rows[id] = append([]byte(nil), bytes.TrimRight(line, "\r\n")...)
 			}
 			return false
 		})
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read native iteminfo %s: %w", path, err)
+		}
 	}
-	return rows
+	return rows, nil
 }
 
 // mergeItemInfoOverlay keeps the PVF row for duplicate IDs and restores only
@@ -87,9 +89,37 @@ func validateConfiguredCeraItemInfo(data []byte, rows []ceraRow) error {
 	return nil
 }
 
+func validateConfiguredCeraItemInfoFile(path string, rows []ceraRow) error {
+	required := configuredCeraItemIDs(rows)
+	if len(required) == 0 {
+		return nil
+	}
+	missing := make(map[uint32]bool, len(required))
+	for _, id := range required {
+		missing[id] = true
+	}
+	_, err := scanItemInfoFile(path, func(id uint32, _ []byte) bool {
+		delete(missing, id)
+		return len(missing) == 0
+	})
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	ids := make([]uint32, 0, len(missing))
+	for id := range missing {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return fmt.Errorf("configured cera iteminfo ids missing: %v", ids)
+}
+
 func (a *App) ensureConfiguredCeraItemInfo() ItemInfoSyncStatus {
+	cfg := a.configSnapshot()
 	status := a.itemInfoStatus()
-	if len(configuredCeraItemIDs(a.cfg.Cera.Items)) == 0 {
+	if len(configuredCeraItemIDs(cfg.Cera.Items)) == 0 {
 		return status
 	}
 	paths := append([]string(nil), status.Targets...)
@@ -103,7 +133,7 @@ func (a *App) ensureConfiguredCeraItemInfo() ItemInfoSyncStatus {
 			continue
 		}
 		seen[path] = true
-		data, err := os.ReadFile(path)
+		err := validateConfiguredCeraItemInfoFile(path, cfg.Cera.Items)
 		if os.IsNotExist(err) {
 			status.Skipped++
 			continue
@@ -113,17 +143,11 @@ func (a *App) ensureConfiguredCeraItemInfo() ItemInfoSyncStatus {
 			continue
 		}
 		validated++
-		if err := validateConfiguredCeraItemInfo(data, a.cfg.Cera.Items); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", path, err))
-		}
 	}
 	if validated == 0 && len(failures) == 0 && strings.TrimSpace(status.SourcePath) != "" {
-		data, err := os.ReadFile(status.SourcePath)
+		err := validateConfiguredCeraItemInfoFile(status.SourcePath, cfg.Cera.Items)
 		if err == nil {
 			validated++
-			if err := validateConfiguredCeraItemInfo(data, a.cfg.Cera.Items); err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", status.SourcePath, err))
-			}
 		} else if !os.IsNotExist(err) {
 			failures = append(failures, fmt.Sprintf("%s: %v", status.SourcePath, err))
 		}
@@ -165,6 +189,33 @@ func scanItemInfoLines(data []byte, visit func(uint32, []byte) bool) bool {
 	return found
 }
 
+func scanItemInfoFile(path string, visit func(uint32, []byte) bool) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	reader := bufio.NewReaderSize(file, 64*1024)
+	found := false
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			if id, ok := leadingItemInfoID(line); ok {
+				found = true
+				if visit != nil && visit(id, line) {
+					return true, nil
+				}
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return found, nil
+			}
+			return found, readErr
+		}
+	}
+}
+
 func leadingItemInfoID(line []byte) (uint32, bool) {
 	index := 0
 	for index < len(line) && (line[index] == ' ' || line[index] == '\t' || line[index] == '\r') {
@@ -204,21 +255,38 @@ func configuredCeraItemIDs(rows []ceraRow) []uint32 {
 }
 
 func replaceItemInfoFile(path string, data []byte, mode os.FileMode) error {
-	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	return atomicfile.WriteFile(path, data, mode)
+}
+
+func itemInfoFileEquals(path string, want []byte) (bool, error) {
+	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return false, err
 	}
-	tempPath := file.Name()
-	defer os.Remove(tempPath)
 	defer file.Close()
-	if err := file.Chmod(mode); err != nil {
-		return err
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
 	}
-	if _, err := file.Write(data); err != nil {
-		return err
+	if info.Size() != int64(len(want)) {
+		return false, nil
 	}
-	if err := file.Close(); err != nil {
-		return err
+	buf := make([]byte, 64*1024)
+	offset := 0
+	for offset < len(want) {
+		n, readErr := file.Read(buf)
+		if n > 0 {
+			if !bytes.Equal(buf[:n], want[offset:offset+n]) {
+				return false, nil
+			}
+			offset += n
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			return false, readErr
+		}
 	}
-	return os.Rename(tempPath, path)
+	return offset == len(want), nil
 }

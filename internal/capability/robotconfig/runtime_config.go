@@ -58,7 +58,6 @@ type RuntimeConfig struct {
 	StoreMaterialStartBox         int    `json:"store_material_start_box_index"`
 	StoreEquipmentIntensifyMin    int    `json:"store_equipment_intensify_min"`
 	StoreEquipmentIntensifyMax    int    `json:"store_equipment_intensify_max"`
-	StoreTitleFile                string `json:"store_title_file"`
 	StoreItemAllowIDs             []int  `json:"store_item_allow_ids"`
 	StoreItemDenyIDs              []int  `json:"store_item_deny_ids"`
 	StoreConfirmTimeoutSec        int    `json:"store_confirm_timeout_sec"`

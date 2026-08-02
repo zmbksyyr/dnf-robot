@@ -52,6 +52,7 @@ type auctionDecisionCounts struct {
 }
 
 func (a *App) newMarketDecisionSnapshot(market string, req RestockRequest, pvfReady bool, occ map[uint32]int, haveAuction map[uint32]int, haveCera map[uint32]int) marketDecisionSnapshot {
+	cfg := a.configSnapshot()
 	return marketDecisionSnapshot{
 		Market:            market,
 		PVFReady:          pvfReady,
@@ -60,8 +61,8 @@ func (a *App) newMarketDecisionSnapshot(market string, req RestockRequest, pvfRe
 		DBOwners:          len(occ),
 		DBAuctionKinds:    len(haveAuction),
 		DBCeraKinds:       len(haveCera),
-		CeraConfigRows:    len(a.cfg.Cera.Items),
-		CeraEnabledRows:   countEnabledCeraRows(a.cfg.Cera.Items),
+		CeraConfigRows:    len(cfg.Cera.Items),
+		CeraEnabledRows:   countEnabledCeraRows(cfg.Cera.Items),
 		CeraRejectedRows:  a.ceraRejectedCount(),
 	}
 }

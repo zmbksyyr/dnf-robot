@@ -1,6 +1,7 @@
 package marketapp
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -76,7 +77,7 @@ func (a *App) resetCeraRejected() {
 	a.stateMu.Unlock()
 }
 
-func (a *App) reconcileCeraLanding(entries []ActionEntry) {
+func (a *App) reconcileCeraLanding(ctx context.Context, entries []ActionEntry) {
 	if a.repository == nil {
 		return
 	}
@@ -89,8 +90,15 @@ func (a *App) reconcileCeraLanding(entries []ActionEntry) {
 	if len(okIDs) == 0 {
 		return
 	}
-	time.Sleep(3 * time.Second)
-	have, err := a.repository.LoadMarketStock(a.cfg.CeraDB, a.cfg.SystemOwner.IDBase, map[uint32]int{})
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return
+	}
+	cfg := a.configSnapshot()
+	have, err := a.repository.LoadMarketStock(cfg.CeraDB, cfg.SystemOwner.IDBase, map[uint32]int{})
 	if err != nil {
 		a.appendLog(LogEvent{Type: "cera_landing", Market: marketNameCera, Status: marketLogStatusFailed, Message: err.Error()})
 		return
@@ -136,7 +144,8 @@ func (a *App) reconcileCeraRejects(entries []ActionEntry) {
 	if total == 0 || rejected118 != total {
 		return
 	}
-	have, err := a.repository.LoadMarketStock(a.cfg.CeraDB, a.cfg.SystemOwner.IDBase, map[uint32]int{})
+	cfg := a.configSnapshot()
+	have, err := a.repository.LoadMarketStock(cfg.CeraDB, cfg.SystemOwner.IDBase, map[uint32]int{})
 	if err != nil {
 		a.appendLog(LogEvent{Type: "cera_reject", Market: marketNameCera, Status: marketLogStatusFailed, Message: err.Error()})
 		return

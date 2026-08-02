@@ -69,17 +69,15 @@ func TestMissingConfiguredCeraItemIsNotGenerated(t *testing.T) {
 }
 
 func TestEnsureConfiguredCeraItemInfoValidatesServiceTargetsBeforeSource(t *testing.T) {
-	dir := t.TempDir()
-	source := filepath.Join(dir, "pvf_iteminfo.dat")
-	target := filepath.Join(dir, "point", "iteminfo.dat")
+	app := testApp(t)
+	source := appPaths(app).PVFItemInfo()
+	target := filepath.Join(app.configDir, "point", "iteminfo.dat")
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		t.Fatal(err)
 	}
 	mustWriteText(t, source, "1001 0 `pvf_only`\n")
 	mustWriteText(t, target, "2675336 2 `native_gold`\n")
 
-	app := testApp(t)
-	app.cfg.ItemInfoSourcePath = source
 	app.cfg.ItemInfoTargets = []string{target}
 	app.cfg.Cera.Items = []ceraRow{{ItemID: 2675336, Enabled: true, RestockQty: 1}}
 
@@ -97,17 +95,15 @@ func TestEnsureConfiguredCeraItemInfoValidatesServiceTargetsBeforeSource(t *test
 }
 
 func TestSyncItemInfoDATOverlaysPVFOnOriginalTarget(t *testing.T) {
-	dir := t.TempDir()
-	source := filepath.Join(dir, "pvf_iteminfo.dat")
-	target := filepath.Join(dir, "point", "iteminfo.dat")
+	app := testApp(t)
+	source := appPaths(app).PVFItemInfo()
+	target := filepath.Join(app.configDir, "point", "iteminfo.dat")
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		t.Fatal(err)
 	}
 	mustWriteText(t, source, "1001 0 `pvf_only`\n2675336 2 `pvf_gold`\n")
 	mustWriteText(t, target, "2675336 2 `native_gold`\n2681762 2 `native_point`\n")
 
-	app := testApp(t)
-	app.cfg.ItemInfoSourcePath = source
 	app.cfg.ItemInfoTargets = []string{target}
 	app.cfg.Cera.Items = []ceraRow{{ItemID: 2675336, Enabled: true, RestockQty: 1}}
 
@@ -129,5 +125,40 @@ func TestSyncItemInfoDATOverlaysPVFOnOriginalTarget(t *testing.T) {
 		if strings.Contains(text, "`native_gold`") {
 			t.Fatalf("%s kept native duplicate instead of PVF row: %q", path, text)
 		}
+	}
+}
+
+func TestItemInfoFileHelpersHandleLargeRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "iteminfo.dat")
+	data := []byte("2675336 2 `" + strings.Repeat("x", 128*1024) + "`\n2681762 2 `point`\n")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	rows := []ceraRow{
+		{ItemID: 2675336, Enabled: true, RestockQty: 1},
+		{ItemID: 2681762, Enabled: true, RestockQty: 1},
+	}
+	if err := validateConfiguredCeraItemInfoFile(path, rows); err != nil {
+		t.Fatal(err)
+	}
+	equal, err := itemInfoFileEquals(path, data)
+	if err != nil || !equal {
+		t.Fatalf("equal=%t err=%v", equal, err)
+	}
+	changed := append([]byte(nil), data...)
+	changed[len(changed)-2] = 'X'
+	equal, err = itemInfoFileEquals(path, changed)
+	if err != nil || equal {
+		t.Fatalf("changed equal=%t err=%v", equal, err)
+	}
+}
+
+func TestLoadItemInfoRowsSkipsMissingAndReportsReadFailure(t *testing.T) {
+	rows, err := loadItemInfoRows([]string{filepath.Join(t.TempDir(), "missing.dat")})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("missing target rows=%v err=%v", rows, err)
+	}
+	if _, err := loadItemInfoRows([]string{"bad\x00path"}); err == nil {
+		t.Fatal("invalid target read failure was ignored")
 	}
 }

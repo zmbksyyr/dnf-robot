@@ -53,7 +53,8 @@ func (s *Server) handleKeypairDownload(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="tw_game_keypair.zip"`)
 	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
-	_, _ = w.Write(buf.Bytes())
+	_, err = w.Write(buf.Bytes())
+	reportResponseWriteError(w, err)
 }
 
 func addZipFile(zw *zip.Writer, name string, data []byte) error {

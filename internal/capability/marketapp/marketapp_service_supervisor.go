@@ -14,7 +14,10 @@ import (
 	"robot/internal/foundation/config"
 )
 
-const marketServiceRestartCooldown = 10 * time.Minute
+const (
+	marketServiceRestartCooldown = 10 * time.Minute
+	marketServiceStatusCacheTTL  = 2 * time.Second
+)
 
 const (
 	marketServiceStabilitySamples  = 3
@@ -68,7 +71,14 @@ func (a *App) ensureMarketServiceSet(services []marketServiceSpec) map[string]bo
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results <- result{name: service.name, ready: a.ensureMarketService(service)}
+			ready := false
+			if err := runMarketServiceCall(service.name, "ensure", func() error {
+				ready = a.ensureMarketService(service)
+				return nil
+			}); err != nil {
+				fmt.Printf("[MarketService] %v\n", err)
+			}
+			results <- result{name: service.name, ready: ready}
 		}()
 	}
 	wg.Wait()
@@ -250,9 +260,39 @@ func validateMarketServiceItemInfo(path string) error {
 }
 
 func (a *App) refreshMarketServiceStatuses() {
-	for _, service := range a.marketServiceSpecs() {
-		a.refreshMarketServiceStatus(service)
+	a.serviceStatusMu.Lock()
+	defer a.serviceStatusMu.Unlock()
+	services := a.marketServiceSpecs()
+	if a.marketServiceStatusesFresh(services, time.Now()) {
+		return
 	}
+	var wg sync.WaitGroup
+	for _, service := range services {
+		service := service
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := runMarketServiceCall(service.name, "refresh", func() error {
+				a.refreshMarketServiceStatus(service)
+				return nil
+			}); err != nil {
+				fmt.Printf("[MarketService] %v\n", err)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func (a *App) marketServiceStatusesFresh(services []marketServiceSpec, now time.Time) bool {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	for _, service := range services {
+		status, ok := a.services[service.name]
+		if !ok || status.CheckedAt.IsZero() || now.Sub(status.CheckedAt) >= marketServiceStatusCacheTTL {
+			return false
+		}
+	}
+	return len(services) > 0
 }
 
 func (a *App) refreshMarketServiceStatus(service marketServiceSpec) {
@@ -307,7 +347,7 @@ func (a *App) marketServiceStaleItemInfoReason(service marketServiceSpec, pid in
 func (a *App) itemInfoTargetForService(serviceName string) string {
 	preferredDir := filepath.Clean(filepath.Join(config.DNFServiceRoot(a.dfGameR), serviceName))
 	fallback := ""
-	for _, target := range a.cfg.ItemInfoTargets {
+	for _, target := range a.configSnapshot().ItemInfoTargets {
 		target = strings.TrimSpace(target)
 		if target == "" || filepath.Base(filepath.Dir(target)) != serviceName {
 			continue
@@ -323,21 +363,28 @@ func (a *App) itemInfoTargetForService(serviceName string) string {
 }
 
 func (a *App) marketServiceSpecs() []marketServiceSpec {
-	auctionPort := a.cfg.AuctionPort
+	a.serviceSpecMu.Lock()
+	defer a.serviceSpecMu.Unlock()
+	if a.serviceSpecs != nil {
+		return append([]marketServiceSpec(nil), a.serviceSpecs...)
+	}
+	cfg := a.configSnapshot()
+	auctionPort := cfg.AuctionPort
 	if auctionPort <= 0 {
 		auctionPort = 30803
 	}
-	pointPort := a.cfg.CeraPort
+	pointPort := cfg.CeraPort
 	if pointPort <= 0 {
 		pointPort = 30603
 	}
 	root := config.DNFServiceRoot(a.dfGameR)
 	auctionLaunch, auctionErr := a.discoverMarketServiceLaunch(marketServiceNameAuction, root)
 	pointLaunch, pointErr := a.discoverMarketServiceLaunch(marketServiceNamePoint, root)
-	return []marketServiceSpec{
+	a.serviceSpecs = []marketServiceSpec{
 		{name: marketServiceNameAuction, addr: fmt.Sprintf("127.0.0.1:%d", auctionPort), dir: auctionLaunch.dir, bin: auctionLaunch.bin, args: auctionLaunch.args, source: auctionLaunch.source, launchErr: auctionErr},
 		{name: marketServiceNamePoint, addr: fmt.Sprintf("127.0.0.1:%d", pointPort), dir: pointLaunch.dir, bin: pointLaunch.bin, args: pointLaunch.args, source: pointLaunch.source, launchErr: pointErr},
 	}
+	return append([]marketServiceSpec(nil), a.serviceSpecs...)
 }
 
 func (a *App) marketServiceSpecByName(name string) (marketServiceSpec, bool) {
@@ -388,7 +435,9 @@ func (a *App) restartMarketServicesAfterItemInfo(running map[string]bool) error 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := a.restartMarketServiceAfterItemInfo(service); err != nil {
+			if err := runMarketServiceCall(service.name, "restart", func() error {
+				return a.restartMarketServiceAfterItemInfo(service)
+			}); err != nil {
 				errorsByName <- fmt.Sprintf("%s: %v", service.name, err)
 			}
 		}()
@@ -424,6 +473,18 @@ func (a *App) setMarketServiceStatus(status MarketServiceStatus) {
 		a.services = map[string]MarketServiceStatus{}
 	}
 	a.services[status.Name] = status
+}
+
+func runMarketServiceCall(name, operation string, call func() error) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("%s %s panic: %v", name, operation, rec)
+		}
+	}()
+	if call == nil {
+		return fmt.Errorf("%s %s callback is nil", name, operation)
+	}
+	return call()
 }
 
 func (a *App) restartMarketService(name, reason string) {

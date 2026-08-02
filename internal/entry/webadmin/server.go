@@ -1,9 +1,12 @@
 package webadmin
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"robot/internal/foundation/config"
@@ -18,13 +21,23 @@ type Server struct {
 	tokens                  map[string]time.Time
 	partyCompatMu           lockhub.Locker
 	partyCompatWake         chan struct{}
+	mailboxGuardWake        chan struct{}
+	mailboxGuardSnapshot    atomic.Pointer[mailboxGuardConfig]
+	partyCompatSnapshot     atomic.Pointer[partyCompatConfig]
+	partySkillSnapshot      atomic.Pointer[partySkillFileState]
 	partyCompatFailures     int
 	partyCompatFirstFailure time.Time
 	partyCompatNextRetry    time.Time
 	partyCompatLastError    string
 	serverScriptMu          lockhub.Locker
 	serverScript            serverScriptStatus
-	serverRunCancel         func()
+	serverScriptCancel      func()
+	gameMaxUserMu           lockhub.Locker
+	gameMaxUser             gameMaxUserCache
+}
+
+type partySkillFileState struct {
+	enabled bool
 }
 
 func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
@@ -35,15 +48,22 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 		webAddr = fmt.Sprintf("0.0.0.0:%d", cfg.WebPort)
 	}
 	return &Server{
-		cfg:             cfg,
-		robotAddr:       robotAddr,
-		webAddr:         webAddr,
-		tokens:          make(map[string]time.Time),
-		partyCompatWake: make(chan struct{}, 1),
+		cfg:              cfg,
+		robotAddr:        robotAddr,
+		webAddr:          webAddr,
+		tokens:           make(map[string]time.Time),
+		partyCompatWake:  make(chan struct{}, 1),
+		mailboxGuardWake: make(chan struct{}, 1),
 	}
 }
 
-func (s *Server) ListenAndServe() error {
+func (s *Server) Serve(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	defer s.stopServerScript()
+	stopRuntimeFiles := s.startRuntimeFileWatcher()
+	defer stopRuntimeFiles()
 	stopPartyCompat := s.startPartyCompatSupervisor()
 	defer stopPartyCompat()
 	stopMailboxGuard := s.startMailboxGuardSupervisor()
@@ -73,5 +93,26 @@ func (s *Server) ListenAndServe() error {
 		IdleTimeout:       60 * time.Second,
 	}
 	fmt.Printf("[WebAdmin] listening on %s, robot=%s pid=%d sessions=%d\n", s.webAddr, s.robotAddr, os.Getpid(), s.sessionCount())
-	return server.ListenAndServe()
+	serveDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			s.stopServerScript()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				fmt.Printf("[WebAdmin] graceful shutdown failed: %v\n", err)
+				if closeErr := server.Close(); closeErr != nil {
+					fmt.Printf("[WebAdmin] forced close failed: %v\n", closeErr)
+				}
+			}
+		case <-serveDone:
+		}
+	}()
+	err := server.ListenAndServe()
+	close(serveDone)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }

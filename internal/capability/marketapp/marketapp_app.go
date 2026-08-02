@@ -1,15 +1,21 @@
 package marketapp
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"math/rand"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/filewatch"
+	"robot/internal/foundation/layout"
 	"robot/internal/foundation/lockhub"
+	"robot/internal/foundation/logfile"
 )
 
 type App struct {
@@ -24,21 +30,35 @@ type App struct {
 	executors        ActionExecutorFactory
 	restarter        func(name, reason string)
 
-	stateMu   lockhub.Locker
-	jobMu     lockhub.Locker
-	autoMu    lockhub.Locker
-	logMu     lockhub.Locker
-	serviceMu lockhub.Locker
-	autoRun   bool
-	autoStop  bool
-	lastJob   *JobSummary
-	dbInit    []string
-	dbInitErr string
-	itemInfo  ItemInfoSyncStatus
-	services  map[string]MarketServiceStatus
-	rand      *rand.Rand
-	stopAuto  chan struct{}
-	autoDone  chan struct{}
+	stateMu         lockhub.RWLocker
+	jobMu           lockhub.Locker
+	autoMu          lockhub.Locker
+	logMu           lockhub.Locker
+	serviceMu       lockhub.Locker
+	serviceSpecMu   lockhub.Locker
+	serviceStatusMu lockhub.Locker
+	randMu          lockhub.Locker
+	addInfoMu       lockhub.Locker
+	patchMu         lockhub.Locker
+	autoRun         bool
+	autoStop        bool
+	lastJob         *JobSummary
+	dbInit          []string
+	dbInitErr       string
+	dbInitOK        bool
+	dbRetryAt       time.Time
+	dbGeneration    uint64
+	itemInfo        ItemInfoSyncStatus
+	services        map[string]MarketServiceStatus
+	serviceSpecs    []marketServiceSpec
+	rand            *rand.Rand
+	autoDone        chan struct{}
+	autoCtx         context.Context
+	autoCancel      context.CancelFunc
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	autoRestart     bool
+	autoShutdown    bool
 
 	auctionQueue        []uint32
 	auctionSpecialQueue []uint32
@@ -53,8 +73,11 @@ type App struct {
 	lastServiceRestart  map[string]time.Time
 	logMaxBytes         int64
 	logBackups          int
+	logWriter           *logfile.Appender
+	logClosed           bool
 	priceRanges         map[uint32]customPriceRange
 	priceRangeStatus    PriceRangeStatus
+	runtimeFilesWatched atomic.Bool
 }
 
 type auctionRejectedState struct {
@@ -126,6 +149,9 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	if sys == nil {
 		return nil, errors.New("nil system config")
 	}
+	if strings.TrimSpace(sys.ConfigDir) == "" {
+		return nil, errors.New("empty config dir")
+	}
 	if executors == nil {
 		executors = unsupportedActionExecutorFactory{}
 	}
@@ -137,7 +163,7 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	if logBackups <= 0 {
 		logBackups = defaultMarketLogBackups
 	}
-	cfg, path, loadStatus, err := loadConfig(sys.ConfigDir)
+	cfg, path, err := loadConfig(sys.ConfigDir)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +175,7 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	if sys.PointPort > 0 {
 		cfg.CeraPort = sys.PointPort
 	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	app := &App{
 		repository:         SQLRepository{db: db},
 		cfg:                cfg,
@@ -164,58 +191,122 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		logMaxBytes:        int64(logMaxSizeMB) * 1024 * 1024,
 		logBackups:         logBackups,
 		rand:               rand.New(rand.NewSource(time.Now().UnixNano())),
-		stopAuto:           make(chan struct{}),
 		autoDone:           make(chan struct{}),
+		lifecycleCtx:       lifecycleCtx,
+		lifecycleCancel:    lifecycleCancel,
 	}
+	app.setConfig(cfg)
 	app.refreshCustomPriceRanges()
 	app.itemInfo = app.ensureConfiguredCeraItemInfo()
-	if loadStatus.Recovered {
-		app.appendLog(LogEvent{
-			Type:    "config",
-			Status:  marketLogStatusFallback,
-			Message: "invalid legacy market config backed up to " + loadStatus.BackupPath + ": " + loadStatus.Reason,
-		})
-	}
-	if loadStatus.MigratedFrom != "" {
-		app.appendLog(LogEvent{Type: "config", Status: marketLogStatusSuccess, Message: "migrated legacy market config from " + loadStatus.MigratedFrom + " to " + path})
-	}
-	if tables, err := app.repository.EnsureMarketTables(app.marketDBNames(), time.Now()); err != nil {
-		app.dbInit = tables
-		app.dbInitErr = err.Error()
-		app.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusFailed, Message: err.Error()})
-	} else {
-		app.dbInit = tables
-		app.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusSuccess, Message: strings.Join(tables, ",")})
-	}
+	app.ensureMarketTables(time.Now())
 	app.refreshMarketServiceStatuses()
 	return app, nil
 }
 
+func (a *App) RuntimeFileEntries() []filewatch.Entry {
+	if a == nil {
+		return nil
+	}
+	paths := layout.New(a.configDir)
+	a.runtimeFilesWatched.Store(true)
+	return []filewatch.Entry{
+		{Name: "market_config", Path: paths.MarketConfig(), Apply: a.reloadMarketConfigFile},
+		{Name: "market_prices", Path: paths.MarketPrices(), Apply: a.reloadCustomPriceRangeFile},
+	}
+}
+
+func (a *App) reloadMarketConfigFile(path string) error {
+	cfg, err := loadConfigSnapshot(path)
+	if err != nil {
+		return err
+	}
+
+	a.jobMu.Lock()
+	previous := a.configSnapshot()
+	cfg.AuctionHost, cfg.AuctionPort = previous.AuctionHost, previous.AuctionPort
+	cfg.CeraHost, cfg.CeraPort = previous.CeraHost, previous.CeraPort
+	if reflect.DeepEqual(previous, cfg) {
+		a.jobMu.Unlock()
+		a.reconcileAutoRuntime(cfg.Auto, cfg.Auto)
+		return nil
+	}
+	databaseChanged := previous.GameDB != cfg.GameDB || previous.AuctionDB != cfg.AuctionDB || previous.CeraDB != cfg.CeraDB
+	itemInfoChanged := !reflect.DeepEqual(previous.ItemInfoTargets, cfg.ItemInfoTargets) || !reflect.DeepEqual(previous.Cera.Items, cfg.Cera.Items)
+	a.setConfig(cfg)
+	if databaseChanged {
+		a.ensureMarketTables(time.Now())
+	}
+	if itemInfoChanged {
+		status := a.ensureConfiguredCeraItemInfo()
+		a.stateMu.Lock()
+		a.itemInfo = status
+		a.stateMu.Unlock()
+	}
+	a.jobMu.Unlock()
+
+	if err := a.reloadCustomPriceRangeFile(a.customPriceRangePath()); err != nil {
+		a.appendLog(LogEvent{Type: "config", Status: marketLogStatusFallback, Message: "market price snapshot retained: " + err.Error()})
+	}
+	a.reconcileAutoRuntime(previous.Auto, cfg.Auto)
+	a.appendLog(LogEvent{Type: "config", Status: marketLogStatusSuccess, Message: "market runtime config reloaded"})
+	return nil
+}
+
+func (a *App) reconcileAutoRuntime(previous, current AutoCfg) {
+	if !current.Enabled {
+		a.StopAutoAsync()
+		return
+	}
+	if !previous.Enabled {
+		a.RestartAutoAsync()
+		return
+	}
+	if !a.AutoRunning() {
+		a.StartAuto()
+		return
+	}
+	if marketAutoScheduleChanged(previous, current) {
+		a.RestartAutoAsync()
+	}
+}
+
+func marketAutoScheduleChanged(old, current AutoCfg) bool {
+	return old.InitialDelayMS != current.InitialDelayMS ||
+		old.IntervalMS != current.IntervalMS ||
+		!reflect.DeepEqual(old.Markets, current.Markets)
+}
+
 func (a *App) Config() Config {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
-	return a.cfg
+	return cloneConfig(a.configSnapshot())
 }
 
 func (a *App) Status() Status {
 	a.refreshMarketServiceStatuses()
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
+	cfg := a.Config()
+	a.stateMu.RLock()
+	dbInit := append([]string(nil), a.dbInit...)
+	dbInitErr := a.dbInitErr
+	itemInfo := cloneItemInfoStatus(a.itemInfo)
+	services := cloneServiceStatusMap(a.services)
+	policy := clonePolicyStatusMap(a.policy)
+	lastJob := compactJob(a.lastJob)
+	priceRanges := a.priceRangeStatus
+	a.stateMu.RUnlock()
 	return Status{
 		ConfigPath:  a.configPath,
 		LogPath:     marketLogPath(a.configDir),
-		Auto:        a.cfg.Auto,
-		Collector:   a.cfg.Collector,
-		Restock:     a.cfg.Restock,
-		PriceRanges: a.priceRangeStatus,
+		Auto:        cfg.Auto,
+		Collector:   cfg.Collector,
+		Restock:     cfg.Restock,
+		PriceRanges: priceRanges,
 		AutoRunning: a.AutoRunning(),
 		Ready:       true,
-		DBInit:      append([]string(nil), a.dbInit...),
-		DBInitError: a.dbInitErr,
-		ItemInfo:    a.itemInfo,
-		Services:    cloneServiceStatusMap(a.services),
-		Policy:      clonePolicyStatusMap(a.policy),
-		LastJob:     compactJob(a.lastJob),
+		DBInit:      dbInit,
+		DBInitError: dbInitErr,
+		ItemInfo:    itemInfo,
+		Services:    services,
+		Policy:      policy,
+		LastJob:     lastJob,
 	}
 }
 
@@ -229,10 +320,14 @@ func (a *App) EnsureServices(markets []string) Status {
 }
 
 func (a *App) SetAutoEnabled(enabled bool) (Status, error) {
-	a.stateMu.Lock()
-	a.cfg.Auto.Enabled = enabled
-	err := writeMarketConfig(a.configPath, a.cfg)
-	a.stateMu.Unlock()
+	a.jobMu.Lock()
+	cfg := cloneConfig(a.configSnapshot())
+	cfg.Auto.Enabled = enabled
+	err := writeMarketConfig(a.configPath, cfg)
+	if err == nil {
+		a.setConfig(cfg)
+	}
+	a.jobMu.Unlock()
 	if err != nil {
 		return a.Status(), err
 	}
@@ -245,126 +340,115 @@ func (a *App) SetAutoEnabled(enabled bool) (Status, error) {
 }
 
 func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
-	a.stateMu.Lock()
+	a.jobMu.Lock()
+	previous := a.configSnapshot()
+	cfg := cloneConfig(previous)
 	if req.AutoEnabled != nil {
-		a.cfg.Auto.Enabled = *req.AutoEnabled
+		cfg.Auto.Enabled = *req.AutoEnabled
 	}
 	if req.CollectorEnabled != nil {
-		a.cfg.Collector.Enabled = *req.CollectorEnabled
+		cfg.Collector.Enabled = *req.CollectorEnabled
 	}
 	if req.QualityFilter != nil {
-		a.cfg.Restock.QualityFilter = req.QualityFilter
+		cfg.Restock.QualityFilter = boolPtr(*req.QualityFilter)
 	}
-	if req.IntervalMS > 0 {
-		a.cfg.Auto.IntervalMS = req.IntervalMS
+	if req.IntervalMS != nil {
+		cfg.Auto.IntervalMS = *req.IntervalMS
 	}
-	if req.InitialDelayMS != nil && *req.InitialDelayMS >= 0 {
-		a.cfg.Auto.InitialDelayMS = *req.InitialDelayMS
+	if req.InitialDelayMS != nil {
+		cfg.Auto.InitialDelayMS = *req.InitialDelayMS
 	}
-	if req.MaxActions != nil && *req.MaxActions >= 0 {
-		a.cfg.Auto.MaxActions = *req.MaxActions
-		a.cfg.Collector.MaxActions = *req.MaxActions
-		a.cfg.Restock.MaxActions = *req.MaxActions
+	if req.AutoMaxActions != nil {
+		cfg.Auto.MaxActions = *req.AutoMaxActions
 	}
-	if req.MaxConcurrent != nil && *req.MaxConcurrent > 0 {
-		a.cfg.Auto.MaxConcurrent = *req.MaxConcurrent
-		a.cfg.Collector.MaxConcurrent = *req.MaxConcurrent
-		a.cfg.Restock.MaxConcurrent = *req.MaxConcurrent
+	if req.AutoMaxConcurrent != nil {
+		cfg.Auto.MaxConcurrent = *req.AutoMaxConcurrent
 	}
-	if req.AutoMaxActions != nil && *req.AutoMaxActions >= 0 {
-		a.cfg.Auto.MaxActions = *req.AutoMaxActions
+	if req.RestockMaxActions != nil {
+		cfg.Restock.MaxActions = *req.RestockMaxActions
 	}
-	if req.AutoMaxConcurrent != nil && *req.AutoMaxConcurrent > 0 {
-		a.cfg.Auto.MaxConcurrent = *req.AutoMaxConcurrent
+	if req.RestockMaxConcurrent != nil {
+		cfg.Restock.MaxConcurrent = *req.RestockMaxConcurrent
 	}
-	if req.RestockMaxActions != nil && *req.RestockMaxActions >= 0 {
-		a.cfg.Restock.MaxActions = *req.RestockMaxActions
+	if req.CollectorMaxActions != nil {
+		cfg.Collector.MaxActions = *req.CollectorMaxActions
 	}
-	if req.RestockMaxConcurrent != nil && *req.RestockMaxConcurrent > 0 {
-		a.cfg.Restock.MaxConcurrent = *req.RestockMaxConcurrent
-	}
-	if req.CollectorMaxActions != nil && *req.CollectorMaxActions >= 0 {
-		a.cfg.Collector.MaxActions = *req.CollectorMaxActions
-	}
-	if req.CollectorMaxConcurrent != nil && *req.CollectorMaxConcurrent > 0 {
-		a.cfg.Collector.MaxConcurrent = *req.CollectorMaxConcurrent
+	if req.CollectorMaxConcurrent != nil {
+		cfg.Collector.MaxConcurrent = *req.CollectorMaxConcurrent
 	}
 	if req.ContinueOnError != nil {
-		a.cfg.Auto.ContinueOnError = *req.ContinueOnError
+		cfg.Auto.ContinueOnError = *req.ContinueOnError
 	}
-	if len(req.Markets) > 0 {
-		a.cfg.Auto.Markets = req.Markets
+	if req.Markets != nil {
+		cfg.Auto.Markets = append([]string(nil), req.Markets...)
 	}
-	if len(req.StackSizes) > 0 {
-		a.cfg.Restock.StackSizes = append([]int(nil), req.StackSizes...)
+	if req.StackSizes != nil {
+		cfg.Restock.StackSizes = append([]int(nil), req.StackSizes...)
 	}
 	if req.EquipmentQtyMin != nil {
-		a.cfg.Restock.EquipmentQtyMin = *req.EquipmentQtyMin
+		cfg.Restock.EquipmentQtyMin = *req.EquipmentQtyMin
 	}
 	if req.EquipmentQtyMax != nil {
-		a.cfg.Restock.EquipmentQtyMax = *req.EquipmentQtyMax
+		cfg.Restock.EquipmentQtyMax = *req.EquipmentQtyMax
 	}
 	if req.EquipInflateMin != nil {
-		a.cfg.Restock.EquipInflateMin = *req.EquipInflateMin
+		cfg.Restock.EquipInflateMin = *req.EquipInflateMin
 	}
 	if req.EquipInflateMax != nil {
-		a.cfg.Restock.EquipInflateMax = *req.EquipInflateMax
+		cfg.Restock.EquipInflateMax = *req.EquipInflateMax
 	}
 	if req.EquipmentLevelMin != nil {
-		a.cfg.Restock.EquipmentLevelMin = *req.EquipmentLevelMin
+		cfg.Restock.EquipmentLevelMin = *req.EquipmentLevelMin
 	}
 	if req.EquipmentLevelMax != nil {
-		a.cfg.Restock.EquipmentLevelMax = *req.EquipmentLevelMax
+		cfg.Restock.EquipmentLevelMax = *req.EquipmentLevelMax
 	}
 	if req.UpgradeMin != nil {
-		a.cfg.Restock.UpgradeMin = *req.UpgradeMin
+		cfg.Restock.UpgradeMin = *req.UpgradeMin
 	}
 	if req.UpgradeMax != nil {
-		a.cfg.Restock.UpgradeMax = *req.UpgradeMax
+		cfg.Restock.UpgradeMax = *req.UpgradeMax
 	}
 	if req.UpgradePriceRate != nil {
-		a.cfg.Restock.UpgradePriceRate = *req.UpgradePriceRate
+		cfg.Restock.UpgradePriceRate = *req.UpgradePriceRate
 	}
 	if req.RandLow != nil {
-		a.cfg.Restock.RandLow = *req.RandLow
+		cfg.Restock.RandLow = *req.RandLow
 	}
 	if req.RandHigh != nil {
-		a.cfg.Restock.RandHigh = *req.RandHigh
+		cfg.Restock.RandHigh = *req.RandHigh
 	}
 	if req.CustomPriceEnabled != nil {
-		a.cfg.Restock.CustomPriceEnabled = *req.CustomPriceEnabled
-	}
-	if req.CustomPriceFile != nil {
-		a.cfg.Restock.CustomPriceFile = strings.TrimSpace(*req.CustomPriceFile)
+		cfg.Restock.CustomPriceEnabled = *req.CustomPriceEnabled
 	}
 	if req.PriceRangeEnabled != nil {
-		a.cfg.Collector.PriceRangeEnabled = *req.PriceRangeEnabled
+		cfg.Collector.PriceRangeEnabled = *req.PriceRangeEnabled
 	}
 	if req.InRangeProbability != nil {
-		a.cfg.Collector.InRangeProbability = *req.InRangeProbability
+		cfg.Collector.InRangeProbability = *req.InRangeProbability
 	}
 	if req.OutRangeProbability != nil {
-		a.cfg.Collector.OutRangeProbability = *req.OutRangeProbability
+		cfg.Collector.OutRangeProbability = *req.OutRangeProbability
 	}
 	if req.RestockPerItemDelayMS != nil {
-		a.cfg.Restock.PerItemDelayMS = *req.RestockPerItemDelayMS
+		cfg.Restock.PerItemDelayMS = *req.RestockPerItemDelayMS
 	}
-	a.cfg.applyDefaults()
-	cfg := a.cfg
 	err := writeMarketConfig(a.configPath, cfg)
-	a.stateMu.Unlock()
+	if err == nil {
+		a.setConfig(cfg)
+	}
+	a.jobMu.Unlock()
 	if err != nil {
 		return a.Status(), err
 	}
-	a.refreshCustomPriceRanges()
-	if cfg.Auto.Enabled {
-		a.RestartAutoAsync()
+	if a.runtimeFilesWatched.Load() {
+		if priceErr := a.reloadCustomPriceRangeFile(a.customPriceRangePath()); priceErr != nil {
+			a.appendLog(LogEvent{Type: "config", Status: marketLogStatusFallback, Message: "market price snapshot retained: " + priceErr.Error()})
+		}
 	} else {
-		a.StopAutoAsync()
+		a.refreshCustomPriceRanges()
 	}
-	if cfg.Auto.Enabled && !a.AutoRunning() {
-		a.StartAuto()
-	}
+	a.reconcileAutoRuntime(previous.Auto, cfg.Auto)
 	return a.Status(), nil
 }
 
@@ -403,4 +487,9 @@ func clonePolicyStatusMap(in map[string]MarketPolicyStatus) map[string]MarketPol
 		out[key] = value
 	}
 	return out
+}
+
+func cloneItemInfoStatus(in ItemInfoSyncStatus) ItemInfoSyncStatus {
+	in.Targets = append([]string(nil), in.Targets...)
+	return in
 }

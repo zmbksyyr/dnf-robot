@@ -11,6 +11,71 @@ sys.path.insert(0, os.path.dirname(__file__))
 import vm_random_stability as stability
 
 
+class RobotLayoutPathTest(unittest.TestCase):
+    def test_runtime_files_are_grouped_under_config_subdirectories(self):
+        expected = (
+            (stability.MAIN_CONFIG_PATH, "/root/config/conf/config.ini"),
+            (stability.ROBOT_CONFIG_PATH, "/root/config/conf/robot_config.ini"),
+            (stability.MARKET_CONFIG_PATH, "/root/config/conf/market_config.ini"),
+            (stability.MARKET_PRICE_RANGES_PATH, "/root/config/conf/market_item_price_ranges.json"),
+            (stability.MAILBOX_COMPAT_PATH, "/root/config/conf/compat.json"),
+            (stability.PARTY_COMPAT_PATH, "/root/config/conf/party_compat.json"),
+            (stability.NAME_TEMPLATES_PATH, "/root/config/templates/robot_name_templates.json"),
+            (stability.SHOUT_TEMPLATES_PATH, "/root/config/templates/robot_shout_templates.json"),
+            (stability.STORE_TITLES_PATH, "/root/config/templates/robot_store_titles.json"),
+            (stability.PARTY_SKILLS_PATH, "/root/config/templates/party_skill_catalog.json"),
+            (stability.PRIVATE_KEY_PATH, "/root/config/keys/privatekey.pem"),
+            (stability.PUBLIC_KEY_PATH, "/root/config/keys/publickey.pem"),
+            (stability.PVF_MANIFEST_PATH, "/root/config/pvf/pvf_manifest.json"),
+            (stability.PVF_EQUIPMENT_PATH, "/root/config/pvf/equipment_catalog.json"),
+            (stability.PVF_STACKABLE_PATH, "/root/config/pvf/stackable_catalog.json"),
+            (stability.PVF_MAP_PATH, "/root/config/pvf/map_catalog.json"),
+            (stability.PVF_SKILL_STATE_PATH, "/root/config/pvf/skill_state_catalog.json"),
+            (stability.PVF_LEVEL_EXP_PATH, "/root/config/pvf/level_exp_catalog.json"),
+            (stability.PVF_ITEMINFO_PATH, "/root/config/pvf/iteminfo.dat"),
+            (stability.STORE_POINTS_CACHE_PATH, "/root/config/state/store_points_cache.json"),
+            (stability.STORE_POINTS_ACTIVE_PATH, "/root/config/state/store_points_active.json"),
+            (stability.MAIL_NOTIFY_CURSOR_PATH, "/root/config/state/mail_notify_cursor.json"),
+            (stability.ROBOT_LOG_PATH, "/root/config/logs/robot.log"),
+            (stability.ROBOT_STDOUT_LOG_PATH, "/root/config/logs/stdout.log"),
+            (stability.ROBOT_START_ERROR_LOG_PATH, "/root/config/logs/start_error.log"),
+            (stability.MARKET_LOG_PATH, "/root/config/logs/market.jsonl"),
+            (stability.STABILITY_OUTPUT_ROOT, "/root/config/logs/stability"),
+            (stability.CORE_START_LOG, "/root/config/logs/stability/core_start.log"),
+            (stability.CONFIG_TEMP_DIR, "/root/config/tmp"),
+        )
+        for actual, wanted in expected:
+            self.assertEqual(actual, wanted)
+
+    def test_filtered_config_backup_preserves_layout_and_skips_runtime_output(self):
+        script = stability.filtered_config_backup_script(stability.CONFIG_ROOT, "/tmp/config-backup")
+        self.assertIn('$TMP/conf/config.ini', script)
+        self.assertIn("--exclude='logs'", script)
+        self.assertIn("--exclude='tmp'", script)
+        self.assertNotIn('$TMP/config.ini', script)
+
+    def test_nested_runtime_file_backups_are_cleanup_candidates(self):
+        self.assertIn("/root/config/*/*.vm_random_backup_*", stability.CONFIG_FAULT_BACKUP_GLOBS)
+
+    def test_stability_output_cannot_escape_config_logs(self):
+        stamp = "20260803-120000"
+        default_path = stability.stability_output_directory("", stamp)
+        self.assertEqual(
+            default_path,
+            os.path.join(stability.STABILITY_OUTPUT_ROOT, "robot_stability_%s" % stamp),
+        )
+        custom_path = os.path.join(stability.STABILITY_OUTPUT_ROOT, "custom")
+        self.assertEqual(stability.stability_output_directory(custom_path, stamp), custom_path)
+        with self.assertRaises(ValueError):
+            stability.stability_output_directory(tempfile.gettempdir(), stamp)
+
+    def test_robot_process_detection_uses_fixed_deployment_path(self):
+        with open(stability.__file__, "r", encoding="utf-8") as source_file:
+            source = source_file.read()
+        self.assertNotIn('"./robot"', source)
+        self.assertNotIn("^./robot", source)
+
+
 class StatusRowCompatibilityTest(unittest.TestCase):
     def test_current_status_fields(self):
         row = {
@@ -364,6 +429,7 @@ class StablePortObservationTest(unittest.TestCase):
         run.wait_service_ports_stable = wait_ports
         self.assertTrue(run.restart_core_services("unit"))
         launch = [entry[1] for entry in calls if entry[0] == "shell" and "setsid sh -c" in entry[1]][0]
+        self.assertIn("mkdir -p %s" % stability.shell_quote(stability.STABILITY_OUTPUT_ROOT), launch)
         self.assertIn("setsid sh -c 'cd /root && ./run' </dev/null", launch)
         self.assertIn(stability.CORE_START_LOG, launch)
         port_checks = [entry for entry in calls if entry[0] == "ports"]
@@ -614,7 +680,7 @@ class LogCursorTest(unittest.TestCase):
     def test_reads_only_appended_and_rotated_content(self):
         directory = tempfile.mkdtemp()
         try:
-            path = os.path.join(directory, "log_robot")
+            path = os.path.join(directory, "robot.log")
             with open(path, "wb") as fh:
                 fh.write(b"old\n")
             run = object.__new__(stability.StabilityRun)
@@ -653,8 +719,133 @@ class LogCollectionTest(unittest.TestCase):
             run.collect_logs("unit")
             self.assertEqual(calls[0][1], 30)
             self.assertNotIn("find ", calls[0][0])
+            self.assertIn(stability.ROBOT_LOG_PATH, calls[0][0])
+            self.assertIn(stability.ROBOT_STDOUT_LOG_PATH, calls[0][0])
+            self.assertIn(stability.ROBOT_START_ERROR_LOG_PATH, calls[0][0])
+            self.assertIn(stability.MARKET_LOG_PATH, calls[0][0])
+            self.assertNotIn("/root/config/log_robot", calls[0][0])
+            self.assertNotIn("market_auction_service.log", calls[0][0])
+            self.assertNotIn("market_point_service.log", calls[0][0])
         finally:
             shutil.rmtree(directory)
+
+
+class RobotRestartCommandTest(unittest.TestCase):
+    def test_restart_uses_classified_log_paths(self):
+        run = object.__new__(stability.StabilityRun)
+        commands = []
+        events = []
+        run.log = lambda message: None
+        run.sample_with_event = lambda event: events.append(event)
+        run.port_regex = lambda names: "8111|8112"
+        run.shell = lambda command, timeout: commands.append(command) or ""
+        run.wait_robot_api = lambda *args: True
+        run.web_opener = object()
+
+        self.assertTrue(run.robot_restart_without_target("unit"))
+        self.assertEqual(len(commands), 1)
+        self.assertIn("mkdir -p /root/config/logs", commands[0])
+        self.assertIn("--bounded-log-sink /root/config/logs/stdout.log", commands[0])
+        self.assertIn("2>/root/config/logs/start_error.log", commands[0])
+        self.assertNotIn("robot_stdout.log", commands[0])
+        self.assertEqual(events, ["unit_stop", "unit_started"])
+
+
+class ConfigDirectoryFaultCommandTest(unittest.TestCase):
+    def test_fault_and_restore_preserve_logs_and_use_conf_directory(self):
+        run = object.__new__(stability.StabilityRun)
+        commands = []
+        failures = []
+        run.log = lambda message: None
+        run.safe_call = lambda command, payload: {"ok": True}
+        run.wait_market_job_idle = lambda *args: True
+        run.stop_market_services = lambda: None
+        run.sample_with_event = lambda event: None
+        run.robot_restart_without_target = lambda label: True
+        run.mark_coverage = lambda *args: None
+        run.record_failure = lambda name, error: failures.append((name, error))
+        run.market_enable_auto = lambda **kwargs: None
+        run.wait_market_services = lambda *args: True
+
+        def shell(command, timeout, log_output=True):
+            commands.append(command)
+            if "CONFIG_BACKUP_OK" in command:
+                return "CONFIG_BACKUP_OK"
+            if "CONFIG_RESTORE_OK" in command:
+                return "CONFIG_RESTORE_OK"
+            return ""
+
+        run.shell = shell
+        run.config_dir_fault()
+
+        fault = [command for command in commands if "equip_inflate_min = broken" in command][0]
+        restore = [command for command in commands if "CONFIG_RESTORE_OK" in command][0]
+        for command in (fault, restore):
+            self.assertIn("! -name 'logs'", command)
+            self.assertNotIn("log_robot", command)
+            self.assertNotIn("market_log.jsonl", command)
+        self.assertIn(stability.MARKET_CONFIG_PATH, fault)
+        self.assertIn('cp -af', restore)
+        self.assertEqual(failures, [])
+
+
+class ShellExecutionTest(unittest.TestCase):
+    def test_large_output_does_not_fill_a_pipe(self):
+        fd, path = tempfile.mkstemp(suffix=".py")
+        os.close(fd)
+        try:
+            with open(path, "w") as script:
+                script.write("import sys\nsys.stdout.write('x' * (512 * 1024))\n")
+            command = '"%s" "%s"' % (sys.executable.replace('"', '\\"'), path.replace('"', '\\"'))
+            run = object.__new__(stability.StabilityRun)
+            run.log = lambda message: None
+            output = run.shell(command, 10, log_output=False)
+            self.assertEqual(len(output), 512 * 1024)
+        finally:
+            os.remove(path)
+
+    def test_timeout_terminates_the_subprocess_group_without_pipe_communication(self):
+        class FakeProcess(object):
+            pid = 123
+
+            def __init__(self):
+                self.stopped = False
+
+            def poll(self):
+                return -9 if self.stopped else None
+
+            def kill(self):
+                self.stopped = True
+
+        proc = FakeProcess()
+        popen_calls = []
+        kill_calls = []
+        original_popen = stability.subprocess.Popen
+        original_kill = stability.kill_subprocess_group
+
+        def fake_popen(command, **kwargs):
+            popen_calls.append((command, kwargs))
+            self.assertIsNot(kwargs["stdout"], stability.subprocess.PIPE)
+            kwargs["stdout"].write(b"partial output")
+            return proc
+
+        def fake_kill(target):
+            kill_calls.append(target)
+            target.stopped = True
+
+        stability.subprocess.Popen = fake_popen
+        stability.kill_subprocess_group = fake_kill
+        try:
+            run = object.__new__(stability.StabilityRun)
+            run.log = lambda message: None
+            output = run.shell("blocked", 0.01, log_output=False)
+        finally:
+            stability.subprocess.Popen = original_popen
+            stability.kill_subprocess_group = original_kill
+
+        self.assertEqual(output, "partial output")
+        self.assertEqual(kill_calls, [proc])
+        self.assertEqual(len(popen_calls), 1)
 
 
 if __name__ == "__main__":

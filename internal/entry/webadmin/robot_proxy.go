@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	foundationconfig "robot/internal/foundation/config"
+	foundationnetwork "robot/internal/foundation/network"
 )
 
 type callRequest struct {
@@ -22,7 +25,7 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req callRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 2*1024*1024)).Decode(&req); err != nil {
+	if err := foundationconfig.DecodeJSONLimit(r.Body, 2*1024*1024, &req); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}
@@ -58,7 +61,10 @@ func callRobot(addr, command string, payload map[string]interface{}, timeout tim
 	if maxResponseBytes <= 0 {
 		maxResponseBytes = 4 * 1024 * 1024
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
 	packet := fmt.Sprintf("<tw><c>%s</c><json>%s</json></tw>", command, body)
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
@@ -66,20 +72,27 @@ func callRobot(addr, command string, payload map[string]interface{}, timeout tim
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
-	if _, err := conn.Write([]byte(packet)); err != nil {
+	if err := foundationnetwork.WriteFull(conn, []byte(packet)); err != nil {
 		return "", err
 	}
 	var buf bytes.Buffer
+	endTag := []byte("</tw>")
+	searchFrom := 0
 	tmp := make([]byte, 64*1024)
 	for {
 		n, err := conn.Read(tmp)
 		if n > 0 {
 			buf.Write(tmp[:n])
-			if bytes.Contains(buf.Bytes(), []byte("</tw>")) {
-				return buf.String(), nil
-			}
 			if buf.Len() > maxResponseBytes {
 				return "", fmt.Errorf("robot response too large")
+			}
+			data := buf.Bytes()
+			if bytes.Index(data[searchFrom:], endTag) >= 0 {
+				return buf.String(), nil
+			}
+			searchFrom = len(data) - len(endTag) + 1
+			if searchFrom < 0 {
+				searchFrom = 0
 			}
 		}
 		if err != nil {
@@ -112,5 +125,5 @@ func parseRobotResult(raw string) interface{} {
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(v)
+	reportResponseWriteError(w, json.NewEncoder(w).Encode(v))
 }

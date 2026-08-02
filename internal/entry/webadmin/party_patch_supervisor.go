@@ -32,13 +32,10 @@ func (s *Server) startPartyCompatSupervisor() func() {
 				timer.Stop()
 			case <-timer.C:
 			}
-			delay = s.reconcilePartyCompat()
+			delay = runBackgroundSupervisorStep("PARTY_COMPAT_SUPERVISOR", partyCompatMaxRetry, s.reconcilePartyCompat)
 		}
 	}()
-	return func() {
-		close(stop)
-		<-done
-	}
+	return stopBackgroundSupervisor(stop, done)
 }
 
 func (s *Server) wakePartyCompatSupervisor() {

@@ -1,6 +1,9 @@
 package marketapp
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 var ErrExecutorUnavailable = errors.New("market action executor unavailable")
 
@@ -12,7 +15,7 @@ type ActionExecutionResult struct {
 }
 
 type ActionExecutor interface {
-	Execute(action Action) (ActionExecutionResult, error)
+	Execute(ctx context.Context, action Action) (ActionExecutionResult, error)
 	Close()
 }
 
@@ -28,7 +31,7 @@ func (unsupportedActionExecutorFactory) NewActionExecutor(cfg Config) ActionExec
 
 type unsupportedActionExecutor struct{}
 
-func (unsupportedActionExecutor) Execute(action Action) (ActionExecutionResult, error) {
+func (unsupportedActionExecutor) Execute(context.Context, Action) (ActionExecutionResult, error) {
 	return ActionExecutionResult{}, ErrExecutorUnavailable
 }
 

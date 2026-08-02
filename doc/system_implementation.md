@@ -2,7 +2,7 @@
 
 本文记录当前仓库的实际实现、关键数据边界、兼容策略和发布验收口径。内容以代码调用链为准，不把历史实验方案当作现行逻辑。
 
-- 文档日期：2026-07-26
+- 文档日期：2026-08-03
 - 主程序：`cmd/robot`
 - 默认管理端口：Robot TCP `8111`，Web `8112`
 - 默认游戏服务端口：Game `10011`，Monitor `30303`，Auction `30803`，Point `30603`，Relay `7200`
@@ -31,10 +31,10 @@
 
 主进程启动顺序如下：
 
-1. 根据可执行文件目录定位 `config/config.ini`，缺失时生成默认配置。
-2. 初始化 `config/log_robot` 的大小轮转日志。
-3. 释放缺失的运行文件，包括 `robot_config.ini`、名字和喊话模板、默认 RSA 密钥。
-4. 从 `DfGameR` 同目录的 `Script.pvf` 导出装备、材料、地图、等级经验、技能状态和 `pvf_iteminfo.dat`。
+1. 根据可执行文件目录定位 `config/conf/config.ini`，缺失时生成默认配置。
+2. 创建 `config/{conf,templates,keys,pvf,state,logs,tmp}` 固定目录，并初始化 `config/logs/robot.log` 的大小轮转日志。
+3. 释放缺失的 `config/conf/robot_config.ini`、`config/templates/*.json`、`config/conf/{compat,party_compat}.json` 和 `config/keys/*.pem`。
+4. 从 `DfGameR` 同目录的 `Script.pvf` 向 `config/pvf/` 导出装备、材料、地图、等级经验、技能状态和 `iteminfo.dat`。
 5. 校验 RSA 密钥。密钥无效时保留管理和诊断能力，但阻止创建、登录、移动、喊话、摆摊等游戏业务命令。
 6. 根据最大在线数和数据库池大小检查 Linux 文件描述符容量。
 7. 启动 Party route-0 UDP sink，并配置机器人账号范围、Relay 端口和 RSA 运行密钥。
@@ -43,11 +43,30 @@
 10. 启动 Robot TCP API、Web 子进程 Supervisor、自动 Actor Supervisor 和可选 Market Auto。
 11. 收到 SIGINT/SIGTERM 后按 TCP、Web、Market、Actor、DNF Runtime、数据库顺序关闭。
 
-日志输出采用轮转、周期 flush 和关闭时同步落盘。`robot_stdout.log` 必须经 `--bounded-log-sink` 写入，不能用无限增长的直接重定向。
+日志输出采用轮转、周期 flush 和关闭时同步落盘。`config/logs/stdout.log` 必须经 `--bounded-log-sink` 写入，不能用无限增长的直接重定向。
+
+### 2.1 固定运行目录
+
+正式部署的唯一入口是 `/root/robot`，唯一 Robot 自有运行目录是 `/root/config`。程序按“可执行文件同级 `config`”推导路径只是为了把二进制和配置绑定在一起，部署器不支持其他部署根，也不从配置项重定向运行目录。所有 Robot 自己生成和持久化的文件只能落在以下七个子目录：
+
+```text
+/root/config/
+├─ conf/       # 主配置、Robot/Market 配置、兼容补丁期望状态
+├─ templates/  # 名称、喊话、摆摊标题、组队技能模板
+├─ keys/       # 当前 game RSA 密钥的 Robot 归档镜像
+├─ pvf/        # PVF 导出及 manifest
+├─ state/      # 邮件游标、点位缓存、活跃占用和外部文件补丁备份
+├─ logs/       # Robot、stdout、启动错误和 Market 日志
+└─ tmp/        # 临时运行文件
+```
+
+game 目录密钥、Auction/Point 的 `iteminfo.dat`、df_game_r cfg 和补丁目标属于外部服务集成文件，不构成第二个 Robot 运行目录。Robot 自有的密钥归档、`iteminfo.dat` 标准源和补丁恢复副本仍分别固定在 `keys/`、`pvf/`、`state/backups/`。
+
+部署器每次部署都先把完整 `/root/config` 移为 `/root/config.bak.<时间>`，仅保留最新 3 份，然后创建空 `/root/config` 让新 Robot 重新释放默认文件。部署器不识别用户修改、不合并配置，也不自动迁移旧文件；需要的内容由用户从备份手工取回。普通 Restart 只停止并重新启动 `/root/robot`，不得移动、删除或重建 `/root/config`。
 
 ## 3. 配置层
 
-### 3.1 `config.ini`
+### 3.1 `config/conf/config.ini`
 
 负责服务和基础设施配置：
 
@@ -59,7 +78,9 @@
 
 `DfGameR` 同时用于推导服务根目录：当路径形如 `<root>/game/df_game_r` 时，Auction 和 Point 使用同一个 `<root>`；无法识别的布局才回退 `/home/neople`。因此 `/home/neople` 和 `/home/dxf` 布局共用同一套逻辑。
 
-### 3.2 `robot_config.ini`
+主配置包含监听端口、数据库连接、Web 密码和基础路径，只在 Robot 重启时重新读取。
+
+### 3.2 `config/conf/robot_config.ini`
 
 公开给用户的配置集中在以下部分：
 
@@ -72,31 +93,52 @@
 - `shout`：喊话节奏及是否实际发送。
 - `auto`：自动开关和目标在线数。
 
-登录速率、熔断、摆摊并发和动作间隔等细节仍可由旧配置键读取，但运行时会根据目标和健康状态重新计算，不作为主要用户调参面。
+登录速率、熔断、摆摊并发和动作间隔等细节仍保留在当前模板中，但运行时会根据目标和健康状态重新计算，不作为主要用户调参面。旧版扁平配置和已删除的动态路径不再读取或迁移。
 
-### 3.3 `market_config.ini`
+Robot 主进程统一每秒检查该文件和 `config/templates/*.json`。文件校验成功后发布新的内存快照，修改最迟约 1 秒生效；校验失败时保留上一个有效快照并记录错误。业务热路径只读取内存快照，不反复读磁盘。
 
-负责 Market 实际可调的数据库名、系统卖家/买家 UID、补货、回收、金币寄售、并发、自动周期和 `iteminfo.dat` 同步目标。Auction/Point 地址和端口沿用主 `config.ini`，不在 Market 配置中重复。文件按 INI 分节保存，每个价格与动作限制参数都有独立注释；旧版 `market_config.json` 会在首次启动时自动读取并迁移为 INI。
+### 3.3 `config/conf/market_config.ini`
 
-拍卖价格包含装备基础倍率、随机强化区间、每级强化加价率和最终随机倍率。`equipment_level_min/max` 在生成上架动作前按 PVF 装备等级过滤，任一边界为 `0` 表示不限制对应方向。开启 `custom_price_enabled` 后，`market_item_price_ranges.json` 中有效的物品最终价格范围优先于通用公式；未命中的物品继续使用公式。补货与虚拟买家概率回收共用同一价格范围，范围内使用高回收概率，范围外使用低回收概率。
+负责 Market 实际可调的数据库名、系统卖家/买家 UID、补货、回收、金币寄售、并发、自动周期和 `iteminfo.dat` 同步目标。Auction/Point 地址和端口沿用主配置，不在 Market 配置中重复。文件按 INI 分节保存，每个价格与动作限制参数都有独立注释。程序不读取或迁移旧版 `market_config.json`。
 
-配置使用临时文件原子替换。单品价格 JSON 不存在时自动生成带字段说明的空模板；文件整体损坏或单条数据无效时记录状态并回退通用公式，不中断 Market。旧版 Market JSON 损坏时保存为 `market_config.json.invalid` 并使用安全默认值生成 INI。
+拍卖价格包含装备基础倍率、随机强化区间、每级强化加价率和最终随机倍率。`equipment_level_min/max` 在生成上架动作前按 PVF 装备等级过滤，任一边界为 `0` 表示不限制对应方向。开启 `custom_price_enabled` 后，`config/conf/market_item_price_ranges.json` 中有效的物品最终价格范围优先于通用公式；未命中的物品继续使用公式。补货与虚拟买家概率回收共用同一价格范围，范围内使用高回收概率，范围外使用低回收概率。
+
+配置使用同目录临时文件原子替换。Web 或直接编辑后，Market watcher 最迟约 1 秒分别校验并发布 INI 配置快照和价格范围快照，按需重排自动任务；其中一份校验失败时只保留该部分上一份有效快照，另一份仍可独立生效。`config/conf/market_item_price_ranges.json` 不存在时由启动流程生成带字段说明的空模板，不执行旧格式恢复。
+
+热更新由每个进程各自持有的一个统一文件轮询器负责：Robot 主进程轮询 Robot/Market 配置和模板，Web 子进程轮询兼容期望状态与技能目录。轮询器在文件未变化时只执行 `stat`，元数据变化后才读取并完整解析；业务请求只读取已发布的内存快照，不在请求热路径读磁盘，因此固定约 1 秒周期不会产生按请求放大的 I/O 或 goroutine 开销。写入方统一使用同目录临时文件、刷盘后 rename，避免读到半文件。
+
+### 3.4 配置生效边界
+
+| 文件 | 读取与生效 | 失败或删除时 |
+| --- | --- | --- |
+| `conf/config.ini` | Robot 启动读取；端口、数据库、Web 密码和路径需重启 Robot | 不覆盖当前进程；启动配置错误时拒绝启动 |
+| `conf/robot_config.ini` | 启动时必须完整解析成功；运行中每秒检查，成功后约 1 秒热更新；关闭 `auto_actions` 会释放现有自动 Actor；提高 `max_online_robots` 时先重新校验并按需提升文件描述符上限 | 启动时拒绝启动；运行中校验或资源上限不足时保留上一份有效配置 |
+| `conf/market_config.ini` | Market 每秒检查，约 1 秒热更新；只有自动周期/市场列表变化才重排自动循环 | 保留上一份 INI 快照 |
+| `conf/market_item_price_ranges.json` | Market 每秒检查，约 1 秒热更新；价格范围独立发布，下一轮规划使用新快照 | 保留上一份价格范围快照 |
+| `conf/compat.json`、`conf/party_compat.json` | Web watcher 约 1 秒检查；内存补丁由 Supervisor 在游戏可用时补偿应用 | 保留上一份期望状态 |
+| `templates/party_skill_catalog.json` | Robot/Web 各自约 1 秒检查；Robot 下一轮技能读取使用新快照 | 保留上一份技能快照 |
+| `templates/robot_name_templates.json`、`robot_shout_templates.json`、`robot_store_titles.json` | 主进程每秒检查，约 1 秒更新内存快照 | 保留上一份模板快照 |
+| `pvf/equipment_catalog.json`、`stackable_catalog.json`、`map_catalog.json` | 由 PVF 导出流程生成；Catalog 在下一次查询按自身文件时间/大小重载，通常约 1 秒内被下一次业务使用 | 保留上一份可读 Catalog；读取失败报告错误 |
+| `pvf/skill_state_catalog.json`、`level_exp_catalog.json` | 启动 PVF 流程装载；修改后需重启 Robot 或显式重新初始化 PVF | 保留当前已装载曲线/技能快照 |
+| `pvf/iteminfo.dat` | 由 PVF 导出或 Market 显式同步流程生成；显式操作会按 manifest/source 校验后重建 | 保留上一份可验证文件 |
+| `keys/*.pem` | `config/keys` 是 Robot 的归档镜像；实际游戏密钥由 `DfGameR` 同目录的 game 密钥提供，启动/状态检查会同步到该目录。直接替换 game 密钥需重启 Robot；Web“释放默认密钥”会同时写入两处并立即刷新 Robot 运行密钥。直接编辑 `config/keys` 不作为持久入口，可能被下一次同步覆盖 | 保留当前已装载密钥；game 密钥无效时阻止游戏业务命令 |
+| `state/`、`logs/`、`tmp/` | 程序内部状态、日志和临时文件，按各模块生命周期读写；不支持手工配置 | 由对应模块按失败策略恢复或报告 |
 
 ## 4. PVF 与运行文件
 
 程序检查 `Script.pvf` 的路径、大小、修改时间和 MD5。导出有效时生成：
 
-- `pvf_equipment_catalog.json`
-- `pvf_stackable_catalog.json`
-- `pvf_map_catalog.json`
-- `pvf_level_exp_catalog.json`
-- `pvf_skill_state_catalog.json`
-- `pvf_iteminfo.dat`
-- `pvf_manifest.json`
+- `config/pvf/equipment_catalog.json`
+- `config/pvf/stackable_catalog.json`
+- `config/pvf/map_catalog.json`
+- `config/pvf/level_exp_catalog.json`
+- `config/pvf/skill_state_catalog.json`
+- `config/pvf/iteminfo.dat`
+- `config/pvf/pvf_manifest.json`
 
 PVF 未变化时直接加载现有导出，避免重复全量解析。目录缓存以绝对路径、修改时间和文件大小为键，文件变化后自动重载。
 
-`pvf_iteminfo.dat` 可同步到 `/home/neople` 和 `/home/dxf` 的 Auction/Point 目录；不存在的目标跳过，存在的目标写入并由状态页报告。
+`config/pvf/iteminfo.dat` 是 Robot 的标准源文件，可同步到 `/home/neople` 和 `/home/dxf` 的 Auction/Point 服务目录；外部服务目录中的 `iteminfo.dat` 只是发布副本。不存在的目标跳过，存在的目标写入并由状态页报告。game 目录的 RSA 文件同样属于外部集成边界：当前实现以 game 密钥保证游戏兼容并归档到 `config/keys/`，Web“释放默认密钥”会同时更新外部 game 文件和 Robot 归档；这些外部文件都不是新的部署根。
 
 ## 5. 机器人创建
 
@@ -117,7 +159,7 @@ PVF 未变化时直接加载现有导出，避免重复全量解析。目录缓�
 11. 装扮优先选择覆盖至少 6 槽或配置最低槽位数的套装，再补齐其他槽位。
 12. 写世界喇叭、重建 `charac_view`、写 `Dummylist` 并登记 `robot_registry`。
 
-装备实例使用完整 61 字节槽位格式。普通角色装备强化、锻造按配置随机；摆摊装备使用独立的强化范围和封装标记，默认在 `7～13` 之间生成。普通物品摊从 `robot_store_titles.json` 读取中文名称，使用 UID 与名称内容的一致性最高分稳定选择；列表顺序变化不影响结果。默认按 64 个有效名称规划，数量不足时缺少的名额作为稳定回退槽位，文件缺失、解析失败、没有有效名称或命中回退槽位时使用原有的 `tw-UID`。分解摊不使用该名称列表。
+装备实例使用完整 61 字节槽位格式。普通角色装备强化、锻造按配置随机；摆摊装备使用独立的强化范围和封装标记，默认在 `7～13` 之间生成。普通物品摊从 `config/templates/robot_store_titles.json` 读取中文名称，使用 UID 与名称内容的一致性最高分稳定选择；列表顺序变化不影响结果。默认按 64 个有效名称规划，数量不足时缺少的名额作为稳定回退槽位，文件缺失、解析失败、没有有效名称或命中回退槽位时使用原有的 `tw-UID`。分解摊不使用该名称列表。
 
 ## 6. 登录、Logout 与缓存边界
 
@@ -283,7 +325,7 @@ store_target = min(ceil(auto_target_online_count / 4), 108)
 
 ## 11. 点位系统
 
-点位来自 `pvf_map_catalog.json`：
+点位来自 `config/pvf/map_catalog.json`：
 
 - X 步长 120。
 - Y 步长 80，但活跃摊位垂直冲突距离按 160 控制。
@@ -299,8 +341,8 @@ store_target = min(ceil(auto_target_online_count / 4), 108)
 
 缓存文件：
 
-- `store_points_cache.json`：地图 MD5、点位和成功/失败历史。版本、地图 MD5 或步长变化时自动重建。
-- `store_points_active.json`：活跃占用及到期时间，Robot 重启后继续防止与现存摊位重叠。
+- `config/state/store_points_cache.json`：地图 MD5、点位和成功/失败历史。版本、地图 MD5 或步长变化时自动重建。
+- `config/state/store_points_active.json`：活跃占用及到期时间，Robot 重启后继续防止与现存摊位重叠。
 
 不建议在活跃摊位存在时手工删除缓存，否则会丢失占用证据并增加重叠概率。需要清理时应先停止自动调度、确认摊位已释放，再删除两个文件后启动 Robot。
 
@@ -373,7 +415,9 @@ Market App 管理两类市场：
 
 - Auction/Point 服务目录从 `DfGameR` 推导的服务根目录定位。
 - 启动前检查二进制、端口、`iteminfo.dat` 和月度历史表。
-- Auction 搜索保护补丁修改文件前保留备份，并使用标记保证可重复执行。
+- Auction 搜索保护和 PVF `upgrade_separate` 补丁修改外部文件前，先在 `config/state/backups/{auction_guard,pvf_upgrade_separate}/` 保留最多 3 份恢复副本；目录按外部目标的绝对路径镜像，主文件是最新副本，`.1`、`.2` 依次更旧，因此可直接识别恢复目标。
+- 补丁备份属于 Robot 生成物，不写在 `/dp2` 或游戏目录旁；部署时随完整 `config` 一起进入 `config.bak.<时间>`。部署后不会从旧备份自动恢复，需要时由用户手工复制回镜像路径对应的外部目标。
+- Auction 搜索保护补丁使用标记保证可重复执行。
 - Auction 内存补丁仅在 PID、地址和期望字节匹配时写入，并逐项回读。
 - `marketClearSystemStock` 只清理系统卖家范围及对应宠物实例。
 
@@ -391,7 +435,17 @@ Web 使用密码登录和带过期时间的内存会话。主要能力：
 - 右上角 `Compat` 管理 mailbox bad-node guard。
 - `Diag` 汇总文件、进程、端口、数据库、PVF、密钥、市场、补丁和日志检查。
 
-Web 只作为 Robot TCP API 的受控代理，不维护第二套机器人业务状态。
+Web 只作为 Robot TCP API 的受控代理，不维护第二套机器人业务状态。Web 的勾选项均写入上述 canonical 文件：70 兼容补丁和组队补丁保存后立即进入 Supervisor 期望状态，技能释放和邮件刷新由 Robot 下一轮配置读取生效；端口和 `max_user_num` 明确返回需重启对应进程。
+
+| Web 控件 | 持久化位置 | 生效方式 |
+| --- | --- | --- |
+| Auto Enabled、Mail Refresh、Fixed Spawn 及目标/出生点字段 | `conf/robot_config.ini` 的 `[auto]`、`[spawn]` | 约 1 秒热更新；关闭 Auto 同时释放现有自动 Actor |
+| Market 的 Auction/Gold、Continue on error、稀有度过滤、Collector、价格范围策略及同窗数值 | `conf/market_config.ini` | 约 1 秒热更新；自动周期或市场列表变化时重排循环 |
+| 70 Mailbox cleanup | `conf/compat.json` | 保存后立即唤醒 Supervisor，游戏进程可用时应用 |
+| Party On/Off 与账号范围 | `conf/party_compat.json` | 保存后立即唤醒 Supervisor，游戏进程可用时应用 |
+| Party Skills Cast | `templates/party_skill_catalog.json` 的 `enabled` | 保存后主动通知 Robot，并由轮询器兜底在约 1 秒内生效 |
+| Ports | `conf/config.ini` | 仅写盘；重启 Robot 后监听和服务连接使用新端口 |
+| Max `max_user_num` | df_game_r 自身 cfg | 修改后需重启 Core，不属于 Robot `config` |
 
 ## 16. 70 布局的 Compat 补丁
 
@@ -401,7 +455,7 @@ Web 只作为 Robot TCP API 的受控代理，不维护第二套机器人业务�
 2. 对损坏的 mailbox stream list 零头指针按 empty 处理，避免访问 `0x4`。
 3. 应用前校验两处上下文签名。
 4. 暂停 df_game_r 后写内存并逐处回读；部分应用或未知字节会回滚并报错。
-5. 期望状态保存到 `compat.json`，Robot/Web 重启后 Supervisor 自动重放。
+5. 期望状态保存到 `config/conf/compat.json`，文件修改后由 Web watcher 重新应用，Robot/Web 重启后 Supervisor 也会自动重放。
 
 此补丁只适用于签名匹配的 df_game_r。其他布局显示 unsupported 时不得强行写入。
 
@@ -409,15 +463,16 @@ Web 只作为 Robot TCP API 的受控代理，不维护第二套机器人业务�
 
 主要运行文件：
 
-- `log_robot`：Robot 主日志，按大小轮转。
-- `robot_stdout.log`：主进程和 Web 子进程 stdout，经 bounded sink 轮转。
-- `market_log.jsonl`：Market 结构化事件日志。
-- `mail_notify_cursor.json`：Robot 内置邮件通知轮询的 letter/postal 游标和待发送角色。
-- `pvf_manifest.json`：PVF 和运行文件自检。
-- `store_points_cache.json`：点位历史。
-- `store_points_active.json`：活跃点位租约。
-- `party_compat.json`：Party 补丁期望状态。
-- `compat.json`：Mailbox guard 期望状态。
+- `config/logs/robot.log`：Robot 主日志，按大小轮转。
+- `config/logs/stdout.log`：主进程和 Web 子进程 stdout，经 bounded sink 轮转。
+- `config/logs/start_error.log`：外层启动错误输出，每次启动截断。
+- `config/logs/market.jsonl`：Market 结构化事件日志。
+- `config/state/mail_notify_cursor.json`：Robot 内置邮件通知轮询的 letter/postal 游标和待发送角色。
+- `config/pvf/pvf_manifest.json`：PVF 和运行文件自检。
+- `config/state/store_points_cache.json`：点位历史。
+- `config/state/store_points_active.json`：活跃点位租约。
+- `config/conf/party_compat.json`：Party 补丁期望状态。
+- `config/conf/compat.json`：Mailbox guard 期望状态。
 
 诊断接口检查：
 
@@ -498,7 +553,7 @@ Web 只作为 Robot TCP API 的受控代理，不维护第二套机器人业务�
 每种布局必须单独开机并完成：
 
 1. 确认 `DfGameR`、服务根目录、进程和端口与当前 VM 对应。
-2. 部署前记录 Git commit，备份 `/root/robot`，上传 `/root/robot.new` 后原子替换。
+2. 部署前记录 Git commit，备份 `/root/robot`；暂存的 `/root/robot.new` 替换 `/root/robot`，部署器把完整 `/root/config` 移到 `/root/config.bak.<时间>`、仅保留最新 3 份，再创建空配置目录。旧配置不迁移，Robot 启动时重新释放。
 3. 启动 Robot，检查 `8111`、`8112`、`10011`、`30303`、`7200`、`30603`、`30803`。
 4. 检查 Web、数据库、RSA、PVF 和 Market 诊断。
 5. 创建少量角色，检查等级、职业、装备、至少配置数量的装扮、出生村庄和坐标。
@@ -553,11 +608,11 @@ python2.7 /root/vm_random_stability.py 1
 
 1. 代码、文档和本地质量门完成，过程中分步本地提交，暂不推送。
 2. 在当前 70 VM 执行唯一一次完整两矩阵压测并通过。
-3. 生成本地 Git bundle，保留首版检查点和压扁前完整历史 HEAD。
-4. 确认远端 `main` 未变化，将最终工作树压成一个清晰根提交。
-5. 使用锁定旧远端提交的 `--force-with-lease` 强推 `main`，不使用无保护的 `--force`。
-6. 核对远端树、构建产物、最终压测报告和桌面实现文档。
+3. 按目录布局、热更新、部署工具、稳定性工具和代码收敛等阶段形成清晰提交。
+4. 完成最终全量检查，确认远端分支未出现意外变化。
+5. 一次性正常推送阶段提交；除非用户另行明确要求，不压扁历史、不强制推送。
+6. 核对远端树、构建产物、最终压测报告和实现文档。
 
 三种同 IP 布局的完整兼容验收仍按第 21 节逐台执行，但不与本轮唯一一次 70 VM 压测交叉，避免代码收敛后重复制造不可比较的中间结果。
 
-压测未通过前不得压扁历史；压测或兼容验收发现问题时，先在本地形成可追溯提交并重新执行受影响的检查，最终通过后再进入压扁和推送阶段。
+压测或兼容验收发现问题时，先在本地形成可追溯修复提交并重新执行受影响的检查，最终通过后再统一推送。

@@ -7,12 +7,14 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	lifecyclecap "robot/internal/capability/robotlifecycle"
+	robottemplate "robot/internal/capability/robottemplate"
 	storecap "robot/internal/capability/store"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/dbstatus"
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/shared"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -67,6 +69,9 @@ type RobotManager struct {
 	actorContainerOp                string
 	actorContainerOpStarted         time.Time
 	configSnapshot                  atomic.Pointer[robotConfigSnapshot]
+	runtimeFilesWatched             atomic.Bool
+	shoutTemplateSnapshot           atomic.Pointer[robottemplate.ShoutTemplates]
+	nameTemplateSnapshot            atomic.Pointer[robottemplate.NameTemplates]
 	supervisor                      *RobotSupervisor
 	storePointsCoord                *storecap.PointCoordinator
 	worldHornCache                  *storecap.WorldHornCache
@@ -74,6 +79,8 @@ type RobotManager struct {
 	storeItemPool                   *storecap.ItemPool
 	storeTitleLock                  lockhub.Locker
 	storeTitles                     *storecap.TitleCatalog
+	storeTitleSnapshot              atomic.Pointer[storecap.TitleCatalog]
+	storeTitlePathSnapshot          atomic.Pointer[storeTitlePathValue]
 	storeTitlePath                  string
 	storeTitlesLoaded               bool
 	positionWrites                  *positionBatcher
@@ -82,7 +89,18 @@ type RobotManager struct {
 	mailNotifyNext                  time.Time
 	mailNotifyRunning               bool
 	mailNotifyDone                  chan struct{}
+	mailNotifyCancel                context.CancelFunc
 	mailNotifyLastErrorLog          time.Time
+	partyAccountRangeSink           func(start, end int)
+	backgroundMu                    lockhub.Locker
+	backgroundWG                    sync.WaitGroup
+	shuttingDown                    bool
+	shutdownOnce                    sync.Once
+	shutdownErr                     error
+}
+
+type storeTitlePathValue struct {
+	path string
 }
 
 func NewRobotManager(database dbstatus.Database, cfg *config.SysConfig, doll Runtime) *RobotManager {
@@ -139,6 +157,30 @@ func (m *RobotManager) withCache(reason string, fn func()) {
 		fn()
 		return nil
 	})
+}
+
+// BeginBackgroundWork registers API work that must finish before Manager
+// resources are closed. The mutex prevents Wait from racing a late Add.
+func (m *RobotManager) BeginBackgroundWork() (func(), bool) {
+	if m == nil {
+		return nil, false
+	}
+	m.backgroundMu.Lock()
+	if m.shuttingDown {
+		m.backgroundMu.Unlock()
+		return nil, false
+	}
+	m.backgroundWG.Add(1)
+	m.backgroundMu.Unlock()
+	var once sync.Once
+	return func() { once.Do(m.backgroundWG.Done) }, true
+}
+
+func (m *RobotManager) stopAndWaitBackgroundWork() {
+	m.backgroundMu.Lock()
+	m.shuttingDown = true
+	m.backgroundMu.Unlock()
+	m.backgroundWG.Wait()
 }
 
 type SchedulerRepository interface {

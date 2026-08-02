@@ -14,11 +14,31 @@ func TestAppendLogUsesConfiguredRotation(t *testing.T) {
 		logMaxBytes: 256,
 		logBackups:  1,
 	}
+	t.Cleanup(app.Shutdown)
 	for index := 0; index < 8; index++ {
 		app.appendLog(LogEvent{Type: "rotation", Message: strings.Repeat("x", 80)})
 	}
 	path := marketLogPath(app.configDir)
 	assertLogFilesBounded(t, path, 256, 1)
+}
+
+func TestShutdownClosesMarketLogAppender(t *testing.T) {
+	app := testApp(t)
+	app.appendLog(LogEvent{Type: "before_shutdown"})
+	path := marketLogPath(app.configDir)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.Shutdown()
+	app.appendLog(LogEvent{Type: "after_shutdown"})
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("market log changed after shutdown: before=%q after=%q", before, after)
+	}
 }
 
 func TestMarketServiceCommandLeavesLogsToService(t *testing.T) {

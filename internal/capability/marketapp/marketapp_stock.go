@@ -14,7 +14,8 @@ const maxInt32 int32 = 2147483647
 var mysqlIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 func (a *App) marketDBNames() []string {
-	return []string{a.cfg.AuctionDB, a.cfg.CeraDB}
+	cfg := a.configSnapshot()
+	return []string{cfg.AuctionDB, cfg.CeraDB}
 }
 
 func (r SQLRepository) EnsureMarketTables(dbNames []string, now time.Time) ([]string, error) {
@@ -59,12 +60,13 @@ func (r SQLRepository) ensureAuctionMonthlyTables(dbName string, now time.Time) 
 }
 
 func (a *App) loadSystemStock() (map[uint32]int, map[uint32]int, map[uint32]int, error) {
+	cfg := a.configSnapshot()
 	occ := map[uint32]int{}
-	auctionHave, err := a.repository.LoadMarketStock(a.cfg.AuctionDB, a.cfg.SystemOwner.IDBase, occ)
+	auctionHave, err := a.repository.LoadMarketStock(cfg.AuctionDB, cfg.SystemOwner.IDBase, occ)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ceraHave, err := a.repository.LoadMarketStock(a.cfg.CeraDB, a.cfg.SystemOwner.IDBase, occ)
+	ceraHave, err := a.repository.LoadMarketStock(cfg.CeraDB, cfg.SystemOwner.IDBase, occ)
 	if err != nil {
 		return nil, nil, nil, err
 	}

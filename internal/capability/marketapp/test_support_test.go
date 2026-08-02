@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"robot/internal/foundation/layout"
 )
 
 func testApp(t *testing.T) *App {
@@ -13,13 +16,22 @@ func testApp(t *testing.T) *App {
 	cfg := DefaultConfig()
 	cfg.Restock.RandLow = 1
 	cfg.Restock.RandHigh = 1
-	return &App{cfg: cfg, configDir: t.TempDir(), rand: rand.New(rand.NewSource(1))}
+	root := t.TempDir()
+	if err := layout.New(root).Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: cfg, configDir: root, rand: rand.New(rand.NewSource(1))}
+	t.Cleanup(app.Shutdown)
+	return app
 }
 
 func mustWriteJSON(t *testing.T, path string, value interface{}) {
 	t.Helper()
 	data, err := json.Marshal(value)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
@@ -29,10 +41,15 @@ func mustWriteJSON(t *testing.T, path string, value interface{}) {
 
 func mustWriteText(t *testing.T, path, value string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(value), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
+
+func appPaths(app *App) layout.Paths { return layout.New(app.configDir) }
 
 type clearStockRepository struct {
 	counts            map[string]int
@@ -45,6 +62,9 @@ type clearStockRepository struct {
 	createCreatureErr error
 	creatureCreates   []creatureCreateCall
 	creatureCount     int
+	ensureCalls       int
+	ensureTables      []string
+	ensureErr         error
 }
 
 type creatureCreateCall struct {
@@ -54,7 +74,8 @@ type creatureCreateCall struct {
 }
 
 func (r *clearStockRepository) EnsureMarketTables([]string, time.Time) ([]string, error) {
-	return nil, nil
+	r.ensureCalls++
+	return append([]string(nil), r.ensureTables...), r.ensureErr
 }
 
 func (r *clearStockRepository) LoadCollectRows(dbName, _ string, _ uint32, _ bool) ([]collectRow, error) {

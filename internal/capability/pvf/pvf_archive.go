@@ -31,50 +31,76 @@ func openPVF(path string) (*pvfArchive, error) {
 	if len(raw) < 56 {
 		return nil, fmt.Errorf("pvf too small")
 	}
-	headerLen := int(binary.LittleEndian.Uint32(raw[0:4]))
-	pos := 4 + headerLen
+	headerLen := uint64(binary.LittleEndian.Uint32(raw[0:4]))
+	if headerLen > uint64(len(raw)-4) {
+		return nil, fmt.Errorf("pvf header truncated")
+	}
+	pos := 4 + int(headerLen)
 	if pos+16 > len(raw) {
 		return nil, fmt.Errorf("pvf header truncated")
 	}
-	treeLen := int(binary.LittleEndian.Uint32(raw[pos+4 : pos+8]))
+	treeLenValue := uint64(binary.LittleEndian.Uint32(raw[pos+4 : pos+8]))
 	treeCRC := binary.LittleEndian.Uint32(raw[pos+8 : pos+12])
-	fileCount := int(binary.LittleEndian.Uint32(raw[pos+12 : pos+16]))
+	fileCount := uint64(binary.LittleEndian.Uint32(raw[pos+12 : pos+16]))
 	treeStart := pos + 16
-	treeEnd := treeStart + treeLen
-	if treeEnd > len(raw) {
+	if treeLenValue > uint64(len(raw)-treeStart) {
 		return nil, fmt.Errorf("pvf file tree truncated")
 	}
+	treeLen := int(treeLenValue)
+	treeEnd := treeStart + treeLen
 	tree := append([]byte(nil), raw[treeStart:treeEnd]...)
 	decryptPVFBlock(tree, treeLen, treeCRC)
 	dataStart := treeLen + 0x38
 	if dataStart > len(raw) {
-		dataStart = treeEnd
+		return nil, fmt.Errorf("pvf data section truncated")
 	}
 	archive := &pvfArchive{files: make(map[string]*pvfFile)}
 	offset := 0
-	for i := 0; i < fileCount && offset+20 <= len(tree); i++ {
-		nameLen := int(binary.LittleEndian.Uint32(tree[offset+4 : offset+8]))
-		if nameLen < 0 || offset+20+nameLen > len(tree) {
-			break
+	parsed := uint64(0)
+	for parsed < fileCount {
+		if len(tree)-offset < 20 {
+			return nil, fmt.Errorf("pvf file tree entry %d truncated", parsed)
 		}
-		name := normalizePVFPath(string(tree[offset+8 : offset+8+nameLen]))
-		fileSize := int(binary.LittleEndian.Uint32(tree[offset+8+nameLen : offset+12+nameLen]))
-		fileCRC := binary.LittleEndian.Uint32(tree[offset+12+nameLen : offset+16+nameLen])
-		fileOffset := int(binary.LittleEndian.Uint32(tree[offset+16+nameLen : offset+20+nameLen]))
-		offset += nameLen + 20
-		if name == "" || fileSize <= 0 {
+		nameLen := uint64(binary.LittleEndian.Uint32(tree[offset+4 : offset+8]))
+		if nameLen > uint64(len(tree)-offset-20) {
+			return nil, fmt.Errorf("pvf file tree entry %d name truncated", parsed)
+		}
+		nameEnd := offset + 8 + int(nameLen)
+		name := normalizePVFPath(string(tree[offset+8 : nameEnd]))
+		fileSize := uint64(binary.LittleEndian.Uint32(tree[nameEnd : nameEnd+4]))
+		fileCRC := binary.LittleEndian.Uint32(tree[nameEnd+4 : nameEnd+8])
+		fileOffset := uint64(binary.LittleEndian.Uint32(tree[nameEnd+8 : nameEnd+12]))
+		offset = nameEnd + 12
+		parsed++
+		if name == "" {
+			return nil, fmt.Errorf("pvf file tree entry %d has empty name", parsed-1)
+		}
+		if _, exists := archive.files[name]; exists {
+			return nil, fmt.Errorf("pvf file tree entry %d duplicates %q", parsed-1, name)
+		}
+		if fileSize == 0 {
+			archive.files[name] = &pvfFile{Name: name, Data: nil}
 			continue
 		}
-		aligned := align4(fileSize)
-		start := dataStart + fileOffset
-		end := start + aligned
-		if start < 0 || end > len(raw) {
-			continue
+		aligned := (fileSize + 3) &^ uint64(3)
+		if fileOffset > uint64(len(raw)-dataStart) {
+			return nil, fmt.Errorf("pvf file tree entry %d offset out of bounds", parsed-1)
 		}
-		data := append([]byte(nil), raw[start:end]...)
-		decryptPVFBlock(data, aligned, fileCRC)
-		data = data[:fileSize]
+		start := dataStart + int(fileOffset)
+		if aligned > uint64(len(raw)-start) {
+			return nil, fmt.Errorf("pvf file tree entry %d data out of bounds", parsed-1)
+		}
+		end := start + int(aligned)
+		// The archive owns raw for its lifetime. Decrypt valid file regions in
+		// place and retain bounded slices instead of duplicating the entire PVF
+		// payload a second time at startup.
+		data := raw[start:end]
+		decryptPVFBlock(data, int(aligned), fileCRC)
+		data = data[:int(fileSize):int(fileSize)]
 		archive.files[name] = &pvfFile{Name: name, Data: data}
+	}
+	if parsed != fileCount {
+		return nil, fmt.Errorf("pvf file tree entry count %d does not match header %d", parsed, fileCount)
 	}
 	archive.loadStringTable()
 	return archive, nil
@@ -86,18 +112,15 @@ func (a *pvfArchive) loadStringTable() {
 		return
 	}
 	count := int(binary.LittleEndian.Uint32(f.Data[0:4]))
-	if count <= 0 || 4+count*4 > len(f.Data) {
+	if count <= 0 || len(f.Data) < 8 || count > (len(f.Data)-8)/4 {
 		return
 	}
 	a.stringList = make([]string, count)
 	for i := 0; i < count; i++ {
 		start := int(binary.LittleEndian.Uint32(f.Data[4+i*4 : 8+i*4]))
 		endOff := 8 + i*4
-		if endOff > len(f.Data) {
-			break
-		}
 		end := int(binary.LittleEndian.Uint32(f.Data[endOff : endOff+4]))
-		if start < 0 || end < start || end+4 > len(f.Data) {
+		if end < start || start > len(f.Data)-4 || end > len(f.Data)-4 {
 			continue
 		}
 		a.stringList[i] = cleanPVFTableString(charset.DecodePVFBytes(f.Data[start+4 : end+4]))

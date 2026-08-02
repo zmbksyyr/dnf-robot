@@ -2,11 +2,10 @@ package marketapp
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"robot/internal/foundation/layout"
 	"robot/internal/foundation/logfile"
 )
 
@@ -75,13 +74,11 @@ type ActionLogItem struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-const marketLogFile = "market_log.jsonl"
-
 func marketLogPath(configDir string) string {
 	if strings.TrimSpace(configDir) == "" {
 		return ""
 	}
-	return filepath.Join(configDir, marketLogFile)
+	return layout.New(configDir).MarketLog()
 }
 
 func (a *App) appendLog(event LogEvent) {
@@ -92,17 +89,27 @@ func (a *App) appendLog(event LogEvent) {
 	if path == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return
-	}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return
 	}
 	a.logMu.Lock()
 	defer a.logMu.Unlock()
+	if a.logClosed {
+		return
+	}
 	maxBytes, backups := a.logLimits()
-	_ = logfile.Append(path, append(data, '\n'), maxBytes, backups)
+	if a.logWriter == nil {
+		writer, openErr := logfile.OpenAppender(path, maxBytes, backups)
+		if openErr != nil {
+			return
+		}
+		a.logWriter = writer
+	}
+	if err := a.logWriter.Append(append(data, '\n')); err != nil {
+		_ = a.logWriter.Close()
+		a.logWriter = nil
+	}
 }
 
 func (a *App) logLimits() (int64, int) {

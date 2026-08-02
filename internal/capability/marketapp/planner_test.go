@@ -1,6 +1,7 @@
 package marketapp
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ func TestRestockJobWaitsForAuctionDBFactAfterAck(t *testing.T) {
 	}}
 	job := JobSummary{Status: MarketJobStatusRunning}
 
-	app.applyRestockDBConfirmation(&job, []Action{{
+	app.applyRestockDBConfirmation(context.Background(), &job, []Action{{
 		Market:    marketNameAuction,
 		Operation: "register",
 		ItemID:    1001,
@@ -36,7 +37,7 @@ func TestRestockJobSucceedsWhenAuctionDBFactExists(t *testing.T) {
 	}}
 	job := JobSummary{Status: MarketJobStatusRunning}
 
-	app.applyRestockDBConfirmation(&job, []Action{{
+	app.applyRestockDBConfirmation(context.Background(), &job, []Action{{
 		Market:    marketNameAuction,
 		Operation: "register",
 		ItemID:    1001,
@@ -71,7 +72,7 @@ func TestAppendLogWithoutConfigDirDoesNotWriteCurrentDirectory(t *testing.T) {
 	if marketLogPath("") != "" {
 		t.Fatalf("empty config dir should not resolve to a relative log path")
 	}
-	if _, err := os.Stat(filepath.Join(dir, marketLogFile)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "market.jsonl")); !os.IsNotExist(err) {
 		t.Fatalf("appendLog wrote runtime log in current directory, stat err=%v", err)
 	}
 }
@@ -143,11 +144,11 @@ func TestPlanAuctionAddsCollectForExistingHighRaritySystemStock(t *testing.T) {
 	}
 	app.repository = repo
 	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
-	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{
+	mustWriteJSON(t, appPaths(app).PVFStackable(), []map[string]interface{}{
 		{"id": 1001, "price": 100, "rarity": 3},
 		{"id": 1002, "price": 100, "rarity": 4},
 	})
-	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{})
+	mustWriteJSON(t, appPaths(app).PVFEquipment(), []map[string]interface{}{})
 	mustWriteText(t, filepath.Join(dir, "iteminfo.dat"), "1001 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n")
 
 	result, err := app.Plan(RestockRequest{Market: marketNameAuction, MaxActions: 10})

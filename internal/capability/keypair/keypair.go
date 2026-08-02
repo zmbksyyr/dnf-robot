@@ -14,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"robot/internal/foundation/atomicfile"
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 	"robot/internal/foundation/lockhub"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/foundation/rsakey"
@@ -260,7 +262,7 @@ func ensureGameKeypair(cfg *config.SysConfig) (loadedKeypair, string, error) {
 			reason := "game目录当前 privatekey.pem 导出 publickey.pem 失败"
 			return loadedKeypair{}, reason, fmt.Errorf("%s: %w", reason, err)
 		}
-		if err := os.WriteFile(gamePub, pubPEM, 0644); err != nil {
+		if err := atomicfile.WriteFile(gamePub, pubPEM, 0644); err != nil {
 			reason := "game目录当前 privatekey.pem 合法，但写入 publickey.pem 失败"
 			return loadedKeypair{}, reason, fmt.Errorf("%s: %w", reason, err)
 		}
@@ -367,7 +369,7 @@ func marshalRSAPublicPEM(pub *rsa.PublicKey) ([]byte, error) {
 }
 
 func copyKeypairToConfig(configDir, srcPriv, srcPub string, pair loadedKeypair) error {
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(layout.New(configDir).Keys, 0755); err != nil {
 		return err
 	}
 	dstPriv, dstPub := keypairConfigPaths(configDir)
@@ -388,14 +390,15 @@ func copyFileIfDifferent(src, dst string, mode os.FileMode) error {
 	if current, err := os.ReadFile(dst); err == nil && bytes.Equal(current, data) {
 		return os.Chmod(dst, mode)
 	}
-	if err := os.WriteFile(dst, data, mode); err != nil {
+	if err := atomicfile.WriteFile(dst, data, mode); err != nil {
 		return err
 	}
 	return os.Chmod(dst, mode)
 }
 
 func keypairConfigPaths(configDir string) (string, string) {
-	return filepath.Join(configDir, "privatekey.pem"), filepath.Join(configDir, "publickey.pem")
+	paths := layout.New(configDir)
+	return paths.PrivateKey(), paths.PublicKey()
 }
 
 func keypairGamePaths(cfg *config.SysConfig) (string, string) {
@@ -461,19 +464,19 @@ func writeDefaultKeypairToGameAndConfig(cfg *config.SysConfig) error {
 	if err := os.MkdirAll(filepath.Dir(gamePriv), 0755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(cfg.ConfigDir, 0755); err != nil {
+	if err := os.MkdirAll(layout.New(cfg.ConfigDir).Keys, 0755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(gamePriv, priv, 0600); err != nil {
+	if err := atomicfile.WriteFile(gamePriv, priv, 0600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(gamePub, pub, 0644); err != nil {
+	if err := atomicfile.WriteFile(gamePub, pub, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(cfgPriv, priv, 0600); err != nil {
+	if err := atomicfile.WriteFile(cfgPriv, priv, 0600); err != nil {
 		return err
 	}
-	return os.WriteFile(cfgPub, pub, 0644)
+	return atomicfile.WriteFile(cfgPub, pub, 0644)
 }
 
 func InitPrivateKey(keyFile string) error {

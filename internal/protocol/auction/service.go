@@ -1,6 +1,10 @@
 package auction
 
-import marketproto "robot/internal/protocol/market"
+import (
+	"context"
+
+	marketproto "robot/internal/protocol/market"
+)
 
 type RobotSvc struct{}
 
@@ -10,6 +14,10 @@ func NewRobotSvc() *RobotSvc {
 
 func NewSession(host string, port, timeoutMS int, point, registerFirst bool) (*Session, error) {
 	return NewMarketDirectAuctionSession(host, port, timeoutMS, point, registerFirst)
+}
+
+func NewSessionContext(ctx context.Context, host string, port, timeoutMS int, point, registerFirst bool) (*Session, error) {
+	return NewMarketDirectAuctionSessionContext(ctx, host, port, timeoutMS, point, registerFirst)
 }
 
 func (rs *RobotSvc) MarketDirectRegisterItem(req MarketDirectRegisterItemRequest) (MarketDirectAuctionResult, error) {

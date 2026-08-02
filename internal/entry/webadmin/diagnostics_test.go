@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"robot/internal/foundation/layout"
 )
 
 func TestDiagnosticsSectionStatusUsesWorstCheck(t *testing.T) {
@@ -71,7 +73,11 @@ func TestCompareFileHashCheckDetectsMismatch(t *testing.T) {
 
 func TestSkillCatalogCheckReportsWhitelistRisks(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "party_skill_catalog.json")
+	paths := layout.New(dir)
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	path := paths.PartySkills()
 	raw := `{"enabled":true,"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":71,"state_data":[256]}]}`
 	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
 		t.Fatal(err)
@@ -190,18 +196,26 @@ func TestPartySkillErrorPatternsMatchRuntimeLogs(t *testing.T) {
 
 func writeSkillDiagnosticCatalogs(t *testing.T, dir, whitelist, pvf string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "party_skill_catalog.json"), []byte(whitelist), 0644); err != nil {
+	paths := layout.New(dir)
+	if err := paths.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "pvf_skill_state_catalog.json"), []byte(pvf), 0644); err != nil {
+	if err := os.WriteFile(paths.PartySkills(), []byte(whitelist), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.PVFSkillStates(), []byte(pvf), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestPartyAccountRangeCheckUsesConfiguredRobotRange(t *testing.T) {
 	dir := t.TempDir()
-	raw := "[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18001999\n"
-	if err := os.WriteFile(filepath.Join(dir, "robot_config.ini"), []byte(raw), 0644); err != nil {
+	paths := layout.New(dir)
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	raw := "[create]\nrobot_uid_start = 18000000\nrobot_uid_end = 18001999\nrobot_uid_guard = 18999999\n"
+	if err := os.WriteFile(paths.RobotConfig(), []byte(raw), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -217,7 +231,7 @@ func TestPartyAccountRangeCheckUsesConfiguredRobotRange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			check := partyAccountRangeCheck(dir, tt.patchStart, tt.patchEnd)
+			check := partyAccountRangeCheck(paths.RobotConfig(), tt.patchStart, tt.patchEnd)
 			if check.Status != tt.wantStatus {
 				t.Fatalf("status = %s message=%s, want %s", check.Status, check.Message, tt.wantStatus)
 			}
@@ -226,7 +240,7 @@ func TestPartyAccountRangeCheckUsesConfiguredRobotRange(t *testing.T) {
 }
 
 func TestPartyAccountRangeCheckReportsConfigLoadFailure(t *testing.T) {
-	check := partyAccountRangeCheck(t.TempDir(), 17000000, 17001000)
+	check := partyAccountRangeCheck(filepath.Join(t.TempDir(), "missing.ini"), 17000000, 17001000)
 	if check.Status != diagError {
 		t.Fatalf("status = %s message=%s, want error", check.Status, check.Message)
 	}

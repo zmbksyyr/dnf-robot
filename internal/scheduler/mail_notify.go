@@ -1,13 +1,17 @@
 package scheduler
 
 import (
+	"context"
+	"errors"
 	"time"
 
 	robotconfig "robot/internal/capability/robotconfig"
 )
 
+var mailNotifyShutdownTimeout = 5 * time.Second
+
 type MailNotifier interface {
-	PollOnce(now time.Time) error
+	PollOnce(ctx context.Context, now time.Time) error
 }
 
 func (m *RobotManager) SetMailNotifier(notifier MailNotifier) {
@@ -37,17 +41,21 @@ func (m *RobotManager) pollMailNotifications(now time.Time, rc robotconfig.Runti
 	m.mailNotifyNext = now.Add(interval)
 	m.mailNotifyRunning = true
 	done := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
 	m.mailNotifyDone = done
+	m.mailNotifyCancel = cancel
 	m.autoMu.Unlock()
 
 	go func() {
-		err := notifier.PollOnce(now)
+		defer cancel()
+		err := notifier.PollOnce(ctx, now)
 		m.autoMu.Lock()
 		m.mailNotifyRunning = false
 		if m.mailNotifyDone == done {
 			m.mailNotifyDone = nil
+			m.mailNotifyCancel = nil
 		}
-		shouldLog := err != nil && (m.mailNotifyLastErrorLog.IsZero() || now.Sub(m.mailNotifyLastErrorLog) >= 30*time.Second)
+		shouldLog := err != nil && !errors.Is(err, context.Canceled) && (m.mailNotifyLastErrorLog.IsZero() || now.Sub(m.mailNotifyLastErrorLog) >= 30*time.Second)
 		if err != nil && shouldLog {
 			m.mailNotifyLastErrorLog = now
 		}
@@ -65,8 +73,18 @@ func (m *RobotManager) waitMailNotifications() {
 	}
 	m.autoMu.Lock()
 	done := m.mailNotifyDone
+	cancel := m.mailNotifyCancel
 	m.autoMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if done != nil {
-		<-done
+		timer := time.NewTimer(mailNotifyShutdownTimeout)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+			robotLogf("[MAIL_NOTIFY] shutdown_timeout timeout=%s\n", mailNotifyShutdownTimeout)
+		}
 	}
 }

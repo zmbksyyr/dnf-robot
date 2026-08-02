@@ -1,6 +1,7 @@
 package auction
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -19,6 +20,13 @@ type MarketDirectAuctionSession struct {
 }
 
 func NewMarketDirectAuctionSession(host string, port int, timeoutMS int, point bool, registerFirst bool) (*MarketDirectAuctionSession, error) {
+	return NewMarketDirectAuctionSessionContext(context.Background(), host, port, timeoutMS, point, registerFirst)
+}
+
+func NewMarketDirectAuctionSessionContext(ctx context.Context, host string, port int, timeoutMS int, point bool, registerFirst bool) (*MarketDirectAuctionSession, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	host = strings.TrimSpace(host)
 	if host == "" {
 		host = "127.0.0.1"
@@ -31,7 +39,8 @@ func NewMarketDirectAuctionSession(host string, port int, timeoutMS int, point b
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), timeout)
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return nil, err
 	}
@@ -39,21 +48,50 @@ func NewMarketDirectAuctionSession(host string, port int, timeoutMS int, point b
 	prelude := directPrelude(point, registerFirst)
 	if len(prelude) > 0 {
 		result := MarketDirectAuctionResult{Host: host, Port: port}
-		deadline := time.Now().Add(timeout)
+		deadline := contextDeadline(ctx, timeout)
 		if err := conn.SetDeadline(deadline); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
-		if _, err := conn.Write(prelude); err != nil {
+		stopCancel := closeConnOnCancel(ctx, conn)
+		if err := writeDirectAuctionPacket(conn, prelude); err != nil {
+			stopCancel()
 			_ = conn.Close()
 			return nil, err
 		}
 		if err := readDirectAuctionPackets(conn, deadline, &result, marketproto.DirectPacketRegisterService); err != nil {
+			stopCancel()
+			_ = conn.Close()
+			return nil, err
+		}
+		stopCancel()
+		if err := ctx.Err(); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
 	}
 	return s, nil
+}
+
+func contextDeadline(ctx context.Context, timeout time.Duration) time.Time {
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		return ctxDeadline
+	}
+	return deadline
+}
+
+func closeConnOnCancel(ctx context.Context, conn net.Conn) func() {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+		close(done)
+	})
+	return func() {
+		if !stop() {
+			<-done
+		}
+	}
 }
 
 func (s *MarketDirectAuctionSession) Close() error {
@@ -110,7 +148,7 @@ func (s *MarketDirectAuctionSession) send(packet []byte, wantPacketID byte) (Mar
 	if err := s.conn.SetDeadline(deadline); err != nil {
 		return result, err
 	}
-	if _, err := s.conn.Write(packet); err != nil {
+	if err := writeDirectAuctionPacket(s.conn, packet); err != nil {
 		return result, err
 	}
 	if err := readDirectAuctionPackets(s.conn, deadline, &result, wantPacketID); err != nil {
@@ -148,14 +186,14 @@ func sendDirectAuction(host string, port int, timeoutMS int, prelude []byte, pac
 		return result, err
 	}
 	if len(prelude) > 0 {
-		if _, err := conn.Write(prelude); err != nil {
+		if err := writeDirectAuctionPacket(conn, prelude); err != nil {
 			return result, err
 		}
 		if err := readDirectAuctionPackets(conn, deadline, &result, marketproto.DirectPacketRegisterService); err != nil {
 			return result, err
 		}
 	}
-	if _, err := conn.Write(packet); err != nil {
+	if err := writeDirectAuctionPacket(conn, packet); err != nil {
 		return result, err
 	}
 	if err := readDirectAuctionPackets(conn, deadline, &result, wantPacketID); err != nil {

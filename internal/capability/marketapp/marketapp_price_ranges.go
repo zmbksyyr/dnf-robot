@@ -1,12 +1,12 @@
 package marketapp
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
+
+	foundationconfig "robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
 type customPriceRangeDocument struct {
@@ -32,24 +32,15 @@ func defaultCustomPriceRangeDocument() customPriceRangeDocument {
 }
 
 func (a *App) customPriceRangePath() string {
-	a.stateMu.Lock()
-	name := strings.TrimSpace(a.cfg.Restock.CustomPriceFile)
-	configDir := a.configDir
-	a.stateMu.Unlock()
-	if name == "" {
-		name = DefaultConfig().Restock.CustomPriceFile
-	}
-	if filepath.IsAbs(name) {
-		return filepath.Clean(name)
-	}
-	return filepath.Join(configDir, name)
+	return layout.New(a.configDir).MarketPrices()
 }
 
 func (a *App) refreshCustomPriceRanges() {
+	if a.runtimeFilesWatched.Load() {
+		return
+	}
 	path := a.customPriceRangePath()
-	a.stateMu.Lock()
-	enabled := a.cfg.Restock.CustomPriceEnabled
-	a.stateMu.Unlock()
+	enabled := a.configSnapshot().Restock.CustomPriceEnabled
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if writeErr := writeJSONFile(path, defaultCustomPriceRangeDocument()); writeErr != nil {
@@ -57,37 +48,65 @@ func (a *App) refreshCustomPriceRanges() {
 			return
 		}
 	}
-	if !enabled {
-		a.setPriceRangeState(nil, PriceRangeStatus{Enabled: false, Path: path})
-		return
-	}
-	data, err := os.ReadFile(path)
+	ranges, status, err := readCustomPriceRanges(path, enabled)
 	if err != nil {
-		a.setPriceRangeState(nil, PriceRangeStatus{Enabled: true, Path: path, Error: err.Error()})
+		a.setPriceRangeState(nil, PriceRangeStatus{Enabled: enabled, Path: path, Error: err.Error()})
 		return
-	}
-	var doc customPriceRangeFile
-	if err := json.Unmarshal(data, &doc); err != nil {
-		a.setPriceRangeState(nil, PriceRangeStatus{Enabled: true, Path: path, Error: err.Error()})
-		return
-	}
-	ranges := make(map[uint32]customPriceRange)
-	invalid := 0
-	for _, row := range doc.Items {
-		if !row.Enabled {
-			continue
-		}
-		if row.ItemID == 0 || row.MinPrice <= 0 || row.MaxPrice < row.MinPrice {
-			invalid++
-			continue
-		}
-		ranges[row.ItemID] = row
-	}
-	status := PriceRangeStatus{Enabled: true, Path: path, LoadedItems: len(ranges), InvalidItems: invalid, LoadedAt: time.Now()}
-	if invalid > 0 {
-		status.Error = fmt.Sprintf("ignored %d invalid item price ranges", invalid)
 	}
 	a.setPriceRangeState(ranges, status)
+}
+
+func (a *App) reloadCustomPriceRangeFile(path string) error {
+	expected := a.customPriceRangePath()
+	if path != expected {
+		return nil
+	}
+	enabled := a.configSnapshot().Restock.CustomPriceEnabled
+	ranges, status, err := readCustomPriceRanges(path, enabled)
+	if err != nil {
+		return err
+	}
+	a.setPriceRangeState(ranges, status)
+	a.appendLog(LogEvent{Type: "config", Status: marketLogStatusSuccess, Message: fmt.Sprintf("market price ranges reloaded: items=%d", status.LoadedItems)})
+	return nil
+}
+
+func readCustomPriceRanges(path string, enabled bool) (map[uint32]customPriceRange, PriceRangeStatus, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, PriceRangeStatus{}, err
+	}
+	var doc struct {
+		Description string              `json:"description"`
+		FieldNotes  map[string]string   `json:"field_notes"`
+		Version     int                 `json:"version"`
+		Items       *[]customPriceRange `json:"items"`
+	}
+	if err := foundationconfig.DecodeJSONBytes(data, &doc); err != nil {
+		return nil, PriceRangeStatus{}, err
+	}
+	if doc.Version != 1 || doc.Items == nil {
+		return nil, PriceRangeStatus{}, fmt.Errorf("unsupported or incomplete price range document")
+	}
+	ranges := make(map[uint32]customPriceRange, len(*doc.Items))
+	seen := make(map[uint32]struct{}, len(*doc.Items))
+	for index, row := range *doc.Items {
+		if row.ItemID == 0 || row.MinPrice <= 0 || row.MaxPrice < row.MinPrice {
+			return nil, PriceRangeStatus{}, fmt.Errorf("invalid item price range at index %d", index)
+		}
+		if _, exists := seen[row.ItemID]; exists {
+			return nil, PriceRangeStatus{}, fmt.Errorf("duplicate item price range for item_id %d", row.ItemID)
+		}
+		seen[row.ItemID] = struct{}{}
+		if row.Enabled {
+			ranges[row.ItemID] = row
+		}
+	}
+	if !enabled {
+		return map[uint32]customPriceRange{}, PriceRangeStatus{Enabled: false, Path: path, LoadedAt: time.Now()}, nil
+	}
+	status := PriceRangeStatus{Enabled: true, Path: path, LoadedItems: len(ranges), LoadedAt: time.Now()}
+	return ranges, status, nil
 }
 
 func (a *App) setPriceRangeState(ranges map[uint32]customPriceRange, status PriceRangeStatus) {
@@ -101,11 +120,11 @@ func (a *App) setPriceRangeState(ranges map[uint32]customPriceRange, status Pric
 }
 
 func (a *App) customPriceRange(itemID uint32) (customPriceRange, bool) {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
-	if !a.cfg.Restock.CustomPriceEnabled {
+	if !a.configSnapshot().Restock.CustomPriceEnabled {
 		return customPriceRange{}, false
 	}
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
 	rangeCfg, ok := a.priceRanges[itemID]
 	return rangeCfg, ok
 }

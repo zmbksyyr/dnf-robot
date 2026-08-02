@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
 func newRobotActor(slotID int, mode actormodel.Mode, runtime actormodel.RobotRuntime) *actormodel.Actor {
@@ -71,8 +71,12 @@ func (r snapshotActorRegistry) actorSnapshots() []actormodel.Snapshot {
 func testRobotManagerWithConfig(t *testing.T, robotConfig string) *RobotManager {
 	t.Helper()
 	configDir := t.TempDir()
+	paths := layout.New(configDir)
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
 	if robotConfig != "" {
-		if err := os.WriteFile(filepath.Join(configDir, "robot_config.ini"), []byte(robotConfig), 0644); err != nil {
+		if err := os.WriteFile(paths.RobotConfig(), []byte(robotConfig), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}

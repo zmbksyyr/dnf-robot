@@ -78,8 +78,8 @@ func TestMarketPolicyTracksZeroAuctionCandidates(t *testing.T) {
 	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
 		app.cfg.AuctionDB: {10075: 1},
 	}}
-	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{})
-	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
+	mustWriteJSON(t, appPaths(app).PVFStackable(), []map[string]interface{}{})
+	mustWriteJSON(t, appPaths(app).PVFEquipment(), []map[string]interface{}{
 		{"id": 10075, "price": 100, "attach": "trade", "slot": "weapon"},
 	})
 	mustWriteText(t, filepath.Join(dir, "iteminfo.dat"), "99999 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n")
@@ -115,8 +115,8 @@ func TestMarketPolicyDetectsStagnantAuctionGrowth(t *testing.T) {
 	app.repository = &clearStockRepository{stock: map[string]map[uint32]int{
 		app.cfg.AuctionDB: stock,
 	}}
-	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{})
-	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
+	mustWriteJSON(t, appPaths(app).PVFStackable(), []map[string]interface{}{})
+	mustWriteJSON(t, appPaths(app).PVFEquipment(), []map[string]interface{}{
 		{"id": 10075, "price": 100, "attach": "trade", "slot": "weapon"},
 		{"id": 10076, "price": 100, "attach": "trade", "slot": "weapon"},
 		{"id": 10077, "price": 100, "attach": "trade", "slot": "weapon"},

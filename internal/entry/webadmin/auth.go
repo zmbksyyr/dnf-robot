@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const maxWebSessions = 64
+
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -43,8 +45,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.WebPassword)) == 1 {
 		token := randomToken()
 		s.tokenMu.Lock()
-		s.cleanupExpiredTokensLocked(time.Now())
-		s.tokens[token] = time.Now().Add(12 * time.Hour)
+		now := time.Now()
+		s.cleanupExpiredTokensLocked(now)
+		s.storeSessionTokenLocked(token, now.Add(12*time.Hour))
 		active := len(s.tokens)
 		s.tokenMu.Unlock()
 		fmt.Printf("[WebAdmin] session created pid=%d active=%d remote=%s\n", os.Getpid(), active, r.RemoteAddr)
@@ -121,10 +124,25 @@ func (s *Server) sessionCount() int {
 
 func (s *Server) cleanupExpiredTokensLocked(now time.Time) {
 	for token, expires := range s.tokens {
-		if now.After(expires) {
+		if !now.Before(expires) {
 			delete(s.tokens, token)
 		}
 	}
+}
+
+func (s *Server) storeSessionTokenLocked(token string, expires time.Time) {
+	if len(s.tokens) >= maxWebSessions {
+		var oldestToken string
+		var oldestExpiry time.Time
+		for candidate, candidateExpiry := range s.tokens {
+			if oldestToken == "" || candidateExpiry.Before(oldestExpiry) {
+				oldestToken = candidate
+				oldestExpiry = candidateExpiry
+			}
+		}
+		delete(s.tokens, oldestToken)
+	}
+	s.tokens[token] = expires
 }
 
 func randomToken() string {

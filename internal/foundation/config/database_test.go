@@ -25,7 +25,7 @@ func TestLoadConfigUsesIndependentDatabaseTimeouts(t *testing.T) {
 	}
 }
 
-func TestLoadConfigBoundsDatabaseTimeouts(t *testing.T) {
+func TestLoadConfigRejectsOutOfRangeDatabaseTimeouts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.ini")
 	data := []byte("[db]\n" +
 		"db_dial_timeout_sec = 300\n" +
@@ -35,11 +35,7 @@ func TestLoadConfigBoundsDatabaseTimeouts(t *testing.T) {
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.DBDialTimeoutSec != 30 || cfg.DBReadTimeoutSec != 120 || cfg.DBWriteTimeoutSec != 30 || cfg.DBConnMaxLifetimeSec != 86400 {
-		t.Fatalf("database timeout bounds not applied: %+v", cfg)
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("out-of-range database timeouts unexpectedly loaded")
 	}
 }

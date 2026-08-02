@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"net"
 	robotcap "robot/internal/capability/robot"
+	"robot/internal/foundation/lockhub"
 	"robot/internal/scheduler"
 	"strings"
-	"sync"
 	"time"
 )
 
 const dangerousDeleteUnlockCode = "123"
+
+const maxDangerousDeleteTokens = 32
 
 type dangerousDeleteUnlockRequest struct {
 	Code string `json:"code"`
@@ -27,7 +29,10 @@ type dangerousDeleteCommandRequest struct {
 	MaxUID int    `json:"uid_max"`
 }
 
-var dangerousDeleteTokens sync.Map
+var dangerousDeleteTokens = struct {
+	access lockhub.Locker
+	values map[string]dangerousDeleteToken
+}{values: make(map[string]dangerousDeleteToken)}
 
 type dangerousDeleteToken struct {
 	Expires  time.Time
@@ -69,7 +74,7 @@ func handleDangerousDeleteCommand(clientID, cmd, pkt string, manager *scheduler.
 			return wrapResult(map[string]interface{}{"ok": false, "error": "dangerous delete is not unlocked or token expired"}), true
 		}
 		deleteReq := robotcap.DangerousDeleteRequest{Mode: req.Mode, CID: req.CID, UID: req.UID, MinUID: req.MinUID, MaxUID: req.MaxUID}
-		return queueExclusiveAction("dangerousDeleteAsync", func() {
+		return queueExclusiveAction(manager, "dangerousDeleteAsync", func() {
 			res, err := manager.DangerousDelete(deleteReq)
 			if err != nil {
 				logRobotActionf("[WebAction] dangerousDeleteAsync failed mode=%s err=%v\n", req.Mode, err)
@@ -89,11 +94,34 @@ func issueDangerousDeleteToken(clientIP string) (string, error) {
 		return "", fmt.Errorf("generate dangerous delete token: %w", err)
 	}
 	token := hex.EncodeToString(raw)
-	dangerousDeleteTokens.Store(token, dangerousDeleteToken{
-		Expires:  time.Now().Add(10 * time.Minute),
+	now := time.Now()
+	dangerousDeleteTokens.access.Lock()
+	defer dangerousDeleteTokens.access.Unlock()
+	pruneDangerousDeleteTokensLocked(now)
+	if len(dangerousDeleteTokens.values) >= maxDangerousDeleteTokens {
+		var oldestToken string
+		var oldestExpiry time.Time
+		for candidate, issued := range dangerousDeleteTokens.values {
+			if oldestToken == "" || issued.Expires.Before(oldestExpiry) {
+				oldestToken = candidate
+				oldestExpiry = issued.Expires
+			}
+		}
+		delete(dangerousDeleteTokens.values, oldestToken)
+	}
+	dangerousDeleteTokens.values[token] = dangerousDeleteToken{
+		Expires:  now.Add(10 * time.Minute),
 		ClientIP: clientIP,
-	})
+	}
 	return token, nil
+}
+
+func pruneDangerousDeleteTokensLocked(now time.Time) {
+	for token, issued := range dangerousDeleteTokens.values {
+		if !now.Before(issued.Expires) {
+			delete(dangerousDeleteTokens.values, token)
+		}
+	}
 }
 
 func consumeDangerousDeleteToken(token, clientIP string, now time.Time) bool {
@@ -101,12 +129,14 @@ func consumeDangerousDeleteToken(token, clientIP string, now time.Time) bool {
 	if token == "" {
 		return false
 	}
-	raw, ok := dangerousDeleteTokens.LoadAndDelete(token)
+	dangerousDeleteTokens.access.Lock()
+	defer dangerousDeleteTokens.access.Unlock()
+	issued, ok := dangerousDeleteTokens.values[token]
 	if !ok {
 		return false
 	}
-	issued, ok := raw.(dangerousDeleteToken)
-	return ok && issued.ClientIP == clientIP && now.Before(issued.Expires)
+	delete(dangerousDeleteTokens.values, token)
+	return issued.ClientIP == clientIP && now.Before(issued.Expires)
 }
 
 func loopbackClientIP(clientID string) (string, bool) {

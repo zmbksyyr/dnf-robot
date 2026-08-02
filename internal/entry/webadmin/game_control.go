@@ -3,9 +3,7 @@ package webadmin
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -15,7 +13,26 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"robot/internal/foundation/atomicfile"
+	foundationconfig "robot/internal/foundation/config"
 )
+
+const gameMaxUserCacheTTL = 30 * time.Second
+
+var (
+	maxUserValuePattern   = regexp.MustCompile(`(?m)^\s*max_user_num\s*=\s*([0-9]+)\s*$`)
+	maxUserReplacePattern = regexp.MustCompile(`(?m)^(\s*max_user_num\s*=\s*)[0-9]+(\s*)$`)
+	writeGameConfigFile   = atomicfile.WriteFile
+)
+
+type gameMaxUserCache struct {
+	checkedAt time.Time
+	maxUser   int
+	cfgName   string
+	cfgPath   string
+	ok        bool
+}
 
 func (s *Server) handleGamePort(w http.ResponseWriter, _ *http.Request) {
 	addr := net.JoinHostPort(s.cfg.RobotConnectIP, strconv.Itoa(s.cfg.RobotGamePort))
@@ -47,7 +64,7 @@ func (s *Server) handleMaxUser(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			MaxUserNum int `json:"max_user_num"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		if err := foundationconfig.DecodeJSONLimit(r.Body, 64*1024, &req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
@@ -55,14 +72,16 @@ func (s *Server) handleMaxUser(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "max_user_num must be between 1 and 1000000"})
 			return
 		}
-		files, err := s.writeMaxUserNum(req.MaxUserNum)
+		files, changed, err := s.writeMaxUserNum(req.MaxUserNum)
 		if err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
 		running := dfGameRRunning()
-		out := map[string]interface{}{"ok": true, "max_user_num": req.MaxUserNum, "files": files, "running": running}
-		if running {
+		out := map[string]interface{}{"ok": true, "max_user_num": req.MaxUserNum, "files": files, "changed": changed, "running": running, "restart_required": changed && running}
+		if !changed {
+			out["message"] = "max_user_num already configured"
+		} else if running {
 			out["message"] = "max_user_num updated; df_game_r is running, restart df_game_r for the change to take effect"
 		} else {
 			out["message"] = "max_user_num updated"
@@ -85,7 +104,7 @@ func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action string `json:"action"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+	if err := foundationconfig.DecodeJSONLimit(r.Body, 64*1024, &req); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}
@@ -137,9 +156,9 @@ func (s *Server) startServerScript(action, script string) serverScriptStatus {
 	// Server scripts are command dispatchers, not long-running service jobs.
 	// Cancel an older startup dispatcher before submitting another run or stop,
 	// so a delayed /root/run cannot relaunch services after a stop request.
-	if s.serverRunCancel != nil {
-		s.serverRunCancel()
-		s.serverRunCancel = nil
+	if s.serverScriptCancel != nil {
+		s.serverScriptCancel()
+		s.serverScriptCancel = nil
 	}
 	status := serverScriptStatus{
 		OK:        false,
@@ -154,9 +173,7 @@ func (s *Server) startServerScript(action, script string) serverScriptStatus {
 		s.serverScript = status
 		return status
 	}
-	if action == "run" {
-		s.serverRunCancel = cancel
-	}
+	s.serverScriptCancel = cancel
 	status.OK = true
 	s.serverScript = status
 	return status
@@ -173,6 +190,7 @@ var launchDetachedServerScript = func(script string) (func(), error) {
 	cmd.Stdin = devNull
 	cmd.Stdout = devNull
 	cmd.Stderr = devNull
+	configureCommandProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		cancel()
 		_ = devNull.Close()
@@ -185,10 +203,18 @@ var launchDetachedServerScript = func(script string) (func(), error) {
 	}()
 	return func() {
 		cancel()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		killCommandProcessGroup(cmd)
 	}, nil
+}
+
+func (s *Server) stopServerScript() {
+	s.serverScriptMu.Lock()
+	defer s.serverScriptMu.Unlock()
+	if s.serverScriptCancel == nil {
+		return
+	}
+	s.serverScriptCancel()
+	s.serverScriptCancel = nil
 }
 
 func (s *Server) handleMonitorService(w http.ResponseWriter, _ *http.Request) {
@@ -215,7 +241,6 @@ func (s *Server) readMaxUserNum() (int, []string, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	re := regexp.MustCompile(`(?m)^\s*max_user_num\s*=\s*([0-9]+)\s*$`)
 	files := make([]string, 0, len(paths))
 	maxUser := 0
 	for _, path := range paths {
@@ -223,7 +248,7 @@ func (s *Server) readMaxUserNum() (int, []string, error) {
 		if err != nil {
 			return 0, nil, err
 		}
-		m := re.FindSubmatch(data)
+		m := maxUserValuePattern.FindSubmatch(data)
 		if len(m) != 2 {
 			continue
 		}
@@ -242,31 +267,63 @@ func (s *Server) readMaxUserNum() (int, []string, error) {
 	return maxUser, files, nil
 }
 
-func (s *Server) writeMaxUserNum(maxUser int) ([]string, error) {
+func (s *Server) writeMaxUserNum(maxUser int) ([]string, bool, error) {
 	paths, err := s.gameCfgPaths()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	re := regexp.MustCompile(`(?m)^(\s*max_user_num\s*=\s*)[0-9]+(\s*)$`)
-	updated := make([]string, 0, len(paths))
+	matched := make([]string, 0, len(paths))
+	type pendingUpdate struct {
+		path     string
+		original []byte
+		next     []byte
+		mode     os.FileMode
+	}
+	updates := make([]pendingUpdate, 0, len(paths))
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		if !re.Match(data) {
+		if !maxUserReplacePattern.Match(data) {
 			continue
 		}
-		next := re.ReplaceAll(data, []byte("${1}"+strconv.Itoa(maxUser)+"${2}"))
-		if err := os.WriteFile(path, next, 0644); err != nil {
-			return nil, err
+		matched = append(matched, path)
+		next := maxUserReplacePattern.ReplaceAll(data, []byte("${1}"+strconv.Itoa(maxUser)+"${2}"))
+		if bytes.Equal(next, data) {
+			continue
 		}
-		updated = append(updated, path)
+		mode := os.FileMode(0644)
+		if info, statErr := os.Stat(path); statErr == nil {
+			mode = info.Mode().Perm()
+		}
+		updates = append(updates, pendingUpdate{path: path, original: data, next: next, mode: mode})
 	}
-	if len(updated) == 0 {
-		return nil, fmt.Errorf("no max_user_num found under %s", filepath.Join(filepath.Dir(s.cfg.DFGameR), "cfg"))
+	if len(matched) == 0 {
+		return nil, false, fmt.Errorf("no max_user_num found under %s", filepath.Join(filepath.Dir(s.cfg.DFGameR), "cfg"))
 	}
-	return updated, nil
+	if len(updates) == 0 {
+		return matched, false, nil
+	}
+	written := make([]pendingUpdate, 0, len(updates))
+	for _, update := range updates {
+		if err := writeGameConfigFile(update.path, update.next, update.mode); err != nil {
+			rollbackErrors := make([]string, 0)
+			for i := len(written) - 1; i >= 0; i-- {
+				previous := written[i]
+				if rollbackErr := writeGameConfigFile(previous.path, previous.original, previous.mode); rollbackErr != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Sprintf("%s: %v", previous.path, rollbackErr))
+				}
+			}
+			if len(rollbackErrors) > 0 {
+				return nil, false, fmt.Errorf("update %s: %w; rollback failed: %s", update.path, err, strings.Join(rollbackErrors, "; "))
+			}
+			return nil, false, fmt.Errorf("update %s: %w", update.path, err)
+		}
+		written = append(written, update)
+	}
+	s.invalidateGameMaxUserCache()
+	return matched, true, nil
 }
 
 func (s *Server) gameCfgPaths() ([]string, error) {
@@ -312,25 +369,47 @@ func dfGameRRunning() bool {
 }
 
 func (s *Server) gameMaxUserNum() (int, string, string, bool) {
+	s.gameMaxUserMu.Lock()
+	defer s.gameMaxUserMu.Unlock()
+	if !s.gameMaxUser.checkedAt.IsZero() && time.Since(s.gameMaxUser.checkedAt) < gameMaxUserCacheTTL {
+		cache := s.gameMaxUser
+		return cache.maxUser, cache.cfgName, cache.cfgPath, cache.ok
+	}
+	s.gameMaxUser = s.readGameMaxUserNum()
+	cache := s.gameMaxUser
+	return cache.maxUser, cache.cfgName, cache.cfgPath, cache.ok
+}
+
+func (s *Server) readGameMaxUserNum() gameMaxUserCache {
+	cache := gameMaxUserCache{checkedAt: time.Now()}
 	cfgName, ok := gameConfigNameForPort(s.cfg.RobotGamePort)
 	if !ok || cfgName == "" || strings.ContainsAny(cfgName, `/\`) {
-		return 0, "", "", false
+		return cache
 	}
 	cfgPath := filepath.Join(filepath.Dir(s.cfg.DFGameR), "cfg", cfgName+".cfg")
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return 0, "", "", false
+		return cache
 	}
-	re := regexp.MustCompile(`(?m)^\s*max_user_num\s*=\s*([0-9]+)\s*$`)
-	m := re.FindSubmatch(data)
+	m := maxUserValuePattern.FindSubmatch(data)
 	if len(m) != 2 {
-		return 0, "", "", false
+		return cache
 	}
 	n, err := strconv.Atoi(string(m[1]))
 	if err != nil || n <= 0 {
-		return 0, "", "", false
+		return cache
 	}
-	return n, cfgName, cfgPath, true
+	cache.maxUser = n
+	cache.cfgName = cfgName
+	cache.cfgPath = cfgPath
+	cache.ok = true
+	return cache
+}
+
+func (s *Server) invalidateGameMaxUserCache() {
+	s.gameMaxUserMu.Lock()
+	s.gameMaxUser = gameMaxUserCache{}
+	s.gameMaxUserMu.Unlock()
 }
 
 func gameConfigNameForPort(port int) (string, bool) {

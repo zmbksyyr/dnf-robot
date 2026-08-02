@@ -1,21 +1,32 @@
 package marketapp
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"time"
 )
 
+const marketTableRetryInterval = time.Minute
+
 func (a *App) StartAuto() {
 	a.autoMu.Lock()
 	defer a.autoMu.Unlock()
-	if a.autoRun {
+	if a.autoRun || a.autoShutdown {
 		return
 	}
-	a.stopAuto = make(chan struct{})
+	a.startAutoLocked()
+}
+
+func (a *App) startAutoLocked() {
+	ctx, cancel := context.WithCancel(a.lifecycleContextLocked())
 	a.autoDone = make(chan struct{})
+	a.autoCtx = ctx
+	a.autoCancel = cancel
 	a.autoRun = true
 	a.autoStop = false
-	go a.autoLoop()
+	a.autoRestart = false
+	go a.autoLoop(ctx, a.autoDone)
 }
 
 func (a *App) StopAuto() {
@@ -28,50 +39,32 @@ func (a *App) StopAutoAsync() {
 
 func (a *App) RestartAutoAsync() {
 	a.autoMu.Lock()
+	defer a.autoMu.Unlock()
+	if a.autoShutdown {
+		return
+	}
 	if !a.autoRun {
-		a.autoMu.Unlock()
-		a.StartAuto()
+		a.startAutoLocked()
 		return
 	}
-	if a.autoStop {
-		done := a.autoDone
-		a.autoMu.Unlock()
-		go func() {
-			<-done
-			a.StartAuto()
-		}()
-		return
-	}
-	stop := a.stopAuto
-	done := a.autoDone
-	a.autoStop = true
-	close(stop)
-	a.autoMu.Unlock()
-	go func() {
-		<-done
-		a.StartAuto()
-	}()
+	a.autoRestart = true
+	a.cancelAutoLocked()
 }
 
 func (a *App) startAutoIfEnabled() {
-	a.stateMu.Lock()
-	enabled := a.cfg.Auto.Enabled
-	a.stateMu.Unlock()
-	if enabled {
+	if a.configSnapshot().Auto.Enabled {
 		a.StartAuto()
 	}
 }
 
 func (a *App) stopAutoWithWait(wait bool) {
 	a.autoMu.Lock()
+	a.autoRestart = false
 	if !a.autoRun {
 		a.autoMu.Unlock()
 		return
 	}
-	if !a.autoStop {
-		close(a.stopAuto)
-		a.autoStop = true
-	}
+	a.cancelAutoLocked()
 	done := a.autoDone
 	a.autoMu.Unlock()
 	if wait {
@@ -80,13 +73,46 @@ func (a *App) stopAutoWithWait(wait bool) {
 }
 
 func (a *App) Shutdown() {
-	a.StopAuto()
+	a.autoMu.Lock()
+	a.autoShutdown = true
+	a.autoRestart = false
+	if a.lifecycleCancel != nil {
+		a.lifecycleCancel()
+	}
+	var done chan struct{}
+	if a.autoRun {
+		a.cancelAutoLocked()
+		done = a.autoDone
+	}
+	a.autoMu.Unlock()
+	if done != nil {
+		<-done
+	}
+	a.logMu.Lock()
+	a.logClosed = true
+	if a.logWriter != nil {
+		_ = a.logWriter.Close()
+		a.logWriter = nil
+	}
+	a.logMu.Unlock()
 }
 
-func (a *App) markAutoStopped() {
+func (a *App) finishAutoLoop(done chan struct{}) {
 	a.autoMu.Lock()
+	if a.autoDone != done {
+		a.autoMu.Unlock()
+		return
+	}
 	a.autoRun = false
 	a.autoStop = false
+	a.autoCtx = nil
+	a.autoCancel = nil
+	restart := a.autoRestart && !a.autoShutdown
+	a.autoRestart = false
+	close(done)
+	if restart {
+		a.startAutoLocked()
+	}
 	a.autoMu.Unlock()
 }
 
@@ -96,30 +122,26 @@ func (a *App) AutoRunning() bool {
 	return a.autoRun
 }
 
-func (a *App) autoLoop() {
-	defer func() {
-		a.markAutoStopped()
-		close(a.autoDone)
-	}()
-	a.stateMu.Lock()
-	enabled := a.cfg.Auto.Enabled
-	initialMS := a.cfg.Auto.InitialDelayMS
-	intervalMS := a.cfg.Auto.IntervalMS
-	a.stateMu.Unlock()
-	if !enabled {
+func (a *App) autoLoop(ctx context.Context, done chan struct{}) {
+	defer a.finishAutoLoop(done)
+	cfg := a.configSnapshot()
+	if !cfg.Auto.Enabled {
 		a.appendLog(LogEvent{Type: "auto", Status: marketLogStatusDisabled})
 		return
 	}
-	initial := time.Duration(initialMS) * time.Millisecond
+	initial := time.Duration(cfg.Auto.InitialDelayMS) * time.Millisecond
 	if initial > 0 {
 		select {
 		case <-time.After(initial):
-		case <-a.stopAuto:
+		case <-ctx.Done():
 			return
 		}
 	}
-	a.runAutoOnce()
-	interval := time.Duration(intervalMS) * time.Millisecond
+	a.runAutoOnceSafely(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	interval := time.Duration(cfg.Auto.IntervalMS) * time.Millisecond
 	if interval <= 0 {
 		interval = time.Hour
 	}
@@ -128,27 +150,26 @@ func (a *App) autoLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			a.runAutoOnce()
-		case <-a.stopAuto:
+			a.runAutoOnceSafely(ctx)
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (a *App) runAutoOnce() {
-	if tables, err := a.repository.EnsureMarketTables(a.marketDBNames(), time.Now()); err != nil {
-		a.stateMu.Lock()
-		a.dbInit = tables
-		a.dbInitErr = err.Error()
-		a.stateMu.Unlock()
-		a.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusFailed, Message: err.Error()})
-	} else {
-		a.stateMu.Lock()
-		a.dbInit = tables
-		a.dbInitErr = ""
-		a.stateMu.Unlock()
-	}
-	markets := a.cfg.Auto.Markets
+func (a *App) runAutoOnceSafely(ctx context.Context) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Printf("[MarketAuto] run panic err=%v\n", rec)
+		}
+	}()
+	a.runAutoOnce(ctx)
+}
+
+func (a *App) runAutoOnce(ctx context.Context) {
+	cfg := a.configSnapshot()
+	a.ensureMarketTables(time.Now())
+	markets := cfg.Auto.Markets
 	if len(markets) == 0 {
 		markets = []string{marketNameAuction, marketNameCera}
 	}
@@ -177,15 +198,15 @@ func (a *App) runAutoOnce() {
 			a.markMarketPolicyBlocked(market, "market service is not ready")
 			continue
 		}
-		policy := a.marketAutoPolicy(market, a.cfg.Auto)
-		if a.cfg.Collector.Enabled {
+		policy := a.marketAutoPolicy(market, cfg.Auto)
+		if cfg.Collector.Enabled {
 			a.appendLog(LogEvent{Type: "auto_collect", Market: market, Status: marketLogStatusStart})
-			job, err := a.CollectOnce(CollectRequest{
+			job, err := a.collectOnce(ctx, CollectRequest{
 				Market:          market,
 				Execute:         true,
 				MaxActions:      policy.MaxActions,
 				MaxConcurrent:   policy.MaxConcurrent,
-				ContinueOnError: a.cfg.Auto.ContinueOnError,
+				ContinueOnError: cfg.Auto.ContinueOnError,
 			})
 			status := job.Status
 			msg := ""
@@ -195,12 +216,12 @@ func (a *App) runAutoOnce() {
 			a.appendLog(LogEvent{Type: "auto_collect", JobID: job.ID, Market: market, Status: status, Message: msg})
 		}
 		a.appendLog(LogEvent{Type: "auto_run", Market: market, Status: marketLogStatusStart})
-		job, err := a.RestockOnce(RestockRequest{
+		job, err := a.restockOnce(ctx, RestockRequest{
 			Market:          market,
 			Execute:         true,
 			MaxActions:      policy.MaxActions,
 			MaxConcurrent:   policy.MaxConcurrent,
-			ContinueOnError: a.cfg.Auto.ContinueOnError,
+			ContinueOnError: cfg.Auto.ContinueOnError,
 		})
 		status := job.Status
 		msg := ""
@@ -210,4 +231,69 @@ func (a *App) runAutoOnce() {
 		a.appendLog(LogEvent{Type: "auto_run", JobID: job.ID, Market: market, Status: status, Message: msg})
 		a.recordMarketPolicyJob(market, job)
 	}
+}
+
+func (a *App) cancelAutoLocked() {
+	if a.autoStop {
+		return
+	}
+	a.autoStop = true
+	if a.autoCancel != nil {
+		a.autoCancel()
+	}
+}
+
+func (a *App) lifecycleContext() context.Context {
+	a.autoMu.Lock()
+	defer a.autoMu.Unlock()
+	return a.lifecycleContextLocked()
+}
+
+func (a *App) lifecycleContextLocked() context.Context {
+	if a.lifecycleCtx == nil {
+		a.lifecycleCtx, a.lifecycleCancel = context.WithCancel(context.Background())
+	}
+	return a.lifecycleCtx
+}
+
+// ensureMarketTables performs schema preparation once after a successful
+// initialization. Failures are retried with a bounded interval instead of
+// issuing DDL on every automatic market cycle.
+func (a *App) ensureMarketTables(now time.Time) {
+	if a == nil || a.repository == nil {
+		return
+	}
+	a.stateMu.Lock()
+	if a.dbGeneration == 0 {
+		a.dbGeneration = 1
+	}
+	generation := a.dbGeneration
+	dbNames := []string{a.cfg.AuctionDB, a.cfg.CeraDB}
+	if a.dbInitOK || !a.dbRetryAt.IsZero() && now.Before(a.dbRetryAt) {
+		a.stateMu.Unlock()
+		return
+	}
+	a.dbRetryAt = now.Add(marketTableRetryInterval)
+	a.stateMu.Unlock()
+
+	tables, err := a.repository.EnsureMarketTables(dbNames, now)
+	a.stateMu.Lock()
+	if generation != a.dbGeneration {
+		a.stateMu.Unlock()
+		return
+	}
+	a.dbInit = tables
+	a.dbInitOK = err == nil
+	if err != nil {
+		a.dbInitErr = err.Error()
+	} else {
+		a.dbInitErr = ""
+		a.dbRetryAt = time.Time{}
+	}
+	a.stateMu.Unlock()
+	if err != nil {
+		a.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusFailed, Message: err.Error()})
+		return
+	}
+	a.appendLog(LogEvent{Type: "db_init", Status: marketLogStatusSuccess, Message: strings.Join(tables, ",")})
 }

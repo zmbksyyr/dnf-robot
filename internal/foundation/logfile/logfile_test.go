@@ -46,6 +46,28 @@ func TestAppendRejectsRecordLargerThanLimit(t *testing.T) {
 	}
 }
 
+func TestAppenderRotatesWholeRecordsAndCloses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	appender, err := OpenAppender(path, 8, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := appender.Append([]byte("abcd")); err != nil {
+		t.Fatal(err)
+	}
+	if err := appender.Append([]byte("efghi")); err != nil {
+		t.Fatal(err)
+	}
+	if err := appender.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := appender.Append([]byte("x")); err == nil {
+		t.Fatal("closed appender accepted a record")
+	}
+	assertFileText(t, path, "efghi")
+	assertFileText(t, path+".1", "abcd")
+}
+
 func TestCopyRotatingDrainsInputAndBoundsEveryFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service.log")
 	src := bytes.NewReader([]byte("0123456789abcdefghijklmnopqrst"))

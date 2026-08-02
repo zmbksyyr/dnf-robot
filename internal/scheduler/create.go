@@ -8,6 +8,7 @@ import (
 	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/capability/robotspawn"
 	robottemplate "robot/internal/capability/robottemplate"
+	"robot/internal/foundation/layout"
 	"robot/internal/shared"
 )
 
@@ -56,14 +57,14 @@ func (m *RobotManager) loadItemCatalogs() catalog.ItemCatalogView {
 	if m.cfg == nil {
 		return catalog.ItemCatalogView{}
 	}
-	return catalog.ViewItemCatalogs(m.cfg.ConfigDir)
+	return catalog.ViewItemCatalogs(layout.New(m.cfg.ConfigDir).PVF)
 }
 
 func (m *RobotManager) loadStackableCatalog() []shared.EquipmentCatalogItem {
 	if m.cfg == nil {
 		return nil
 	}
-	return catalog.ViewStackable(m.cfg.ConfigDir)
+	return catalog.ViewStackable(layout.New(m.cfg.ConfigDir).PVF)
 }
 
 func (m *RobotManager) applyConfiguredLocation(info *robotcap.Info, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem) {

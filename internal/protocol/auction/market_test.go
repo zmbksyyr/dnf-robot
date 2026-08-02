@@ -58,6 +58,42 @@ func TestReadDirectRegisterAuctionIDForAuctionService(t *testing.T) {
 	}
 }
 
+func TestReadDirectAuctionPacketsRejectsOversizedFrame(t *testing.T) {
+	server, client := net.Pipe()
+	defer client.Close()
+	go func() {
+		defer server.Close()
+		header := make([]byte, marketproto.DirectPacketHeaderSize)
+		binary.LittleEndian.PutUint32(header[2:6], maxDirectAuctionPacketSize+1)
+		_, _ = server.Write(header)
+	}()
+
+	var result MarketDirectAuctionResult
+	if err := readDirectAuctionPackets(client, time.Now().Add(time.Second), &result, marketproto.DirectResultRegisterItemAG); err == nil {
+		t.Fatal("oversized direct auction frame unexpectedly accepted")
+	}
+}
+
+func TestReadDirectAuctionPacketsRejectsOversizedAggregateResponse(t *testing.T) {
+	server, client := net.Pipe()
+	defer client.Close()
+	go func() {
+		defer server.Close()
+		packet := make([]byte, marketproto.DirectPacketHeaderSize)
+		packet[1] = 1
+		binary.LittleEndian.PutUint32(packet[2:6], uint32(len(packet)))
+		_, _ = server.Write(packet)
+	}()
+
+	result := MarketDirectAuctionResult{Packets: []MarketDirectAuctionPacket{{
+		PacketID: 2,
+		Size:     uint32(maxDirectAuctionResponseBytes - 1),
+	}}}
+	if err := readDirectAuctionPackets(client, time.Now().Add(time.Second), &result, 0xff); err == nil {
+		t.Fatal("oversized aggregate direct auction response unexpectedly accepted")
+	}
+}
+
 func TestBuildDirectRegisterPacketPreservesEquipFields(t *testing.T) {
 	packet, err := buildDirectRegisterPacket(MarketDirectRegisterItemRequest{
 		CID:            90000001,

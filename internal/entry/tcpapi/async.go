@@ -1,6 +1,7 @@
 package tcpapi
 
 import (
+	"fmt"
 	"sync"
 
 	robotcap "robot/internal/capability/robot"
@@ -14,21 +15,45 @@ func queueRobotAction(manager *scheduler.RobotManager, name, scope string, fn fu
 	if _, loaded := asyncActions.LoadOrStore(name, true); loaded {
 		return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "running"}})
 	}
+	finish, ok := manager.BeginBackgroundWork()
+	if !ok {
+		asyncActions.Delete(name)
+		return wrapResult(map[string]interface{}{"ok": false, "error": "robot manager is shutting down"})
+	}
 	op := manager.BeginOperation(name, scope)
 	go func() {
 		defer asyncActions.Delete(name)
+		defer finish()
+		defer func() {
+			if rec := recover(); rec != nil {
+				err := fmt.Errorf("panic: %v", rec)
+				manager.CompleteOperation(op.ID, "", err)
+				logRobotActionf("[WebAction] %s panic err=%v\n", name, rec)
+			}
+		}()
 		summary, err := fn()
 		manager.CompleteOperation(op.ID, summary, err)
 	}()
 	return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "queued", "operation": op}})
 }
 
-func queueExclusiveAction(name string, fn func()) string {
+func queueExclusiveAction(manager *scheduler.RobotManager, name string, fn func()) string {
 	if _, loaded := asyncActions.LoadOrStore(name, true); loaded {
 		return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "running"}})
 	}
+	finish, ok := manager.BeginBackgroundWork()
+	if !ok {
+		asyncActions.Delete(name)
+		return wrapResult(map[string]interface{}{"ok": false, "error": "robot manager is shutting down"})
+	}
 	go func() {
 		defer asyncActions.Delete(name)
+		defer finish()
+		defer func() {
+			if rec := recover(); rec != nil {
+				logRobotActionf("[WebAction] %s panic err=%v\n", name, rec)
+			}
+		}()
 		fn()
 	}()
 	return wrapResult(map[string]interface{}{"ok": true, "result": map[string]interface{}{"state": "queued"}})

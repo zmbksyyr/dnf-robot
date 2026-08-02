@@ -4,11 +4,12 @@ func (a *App) price(base int32) int32 {
 	if base <= 0 {
 		base = 1
 	}
-	low, high := a.cfg.Restock.RandLow, a.cfg.Restock.RandHigh
+	cfg := a.configSnapshot()
+	low, high := cfg.Restock.RandLow, cfg.Restock.RandHigh
 	if low <= 0 || high <= 0 || low == high {
 		return base
 	}
-	v := float64(base) * (low + a.rand.Float64()*(high-low))
+	v := float64(base) * (low + a.randomFloat64()*(high-low))
 	if v < 1 {
 		return 1
 	}
@@ -23,6 +24,7 @@ func (a *App) auctionUnitPrice(base int32, isEquipment bool, batchInflate float6
 }
 
 func (a *App) auctionUnitPriceFor(itemID uint32, base int32, isEquipment bool, batchInflate float64, upgrade int) int32 {
+	cfg := a.configSnapshot()
 	if itemID > 0 {
 		if priceRange, ok := a.customPriceRange(itemID); ok {
 			return a.randomPriceInRange(priceRange.MinPrice, priceRange.MaxPrice)
@@ -38,13 +40,13 @@ func (a *App) auctionUnitPriceFor(itemID uint32, base int32, isEquipment bool, b
 		batchInflate = 1
 	}
 	price := float64(base) * batchInflate
-	price *= 1 + float64(upgrade)*a.cfg.Restock.UpgradePriceRate
-	low, high := a.cfg.Restock.RandLow, a.cfg.Restock.RandHigh
+	price *= 1 + float64(upgrade)*cfg.Restock.UpgradePriceRate
+	low, high := cfg.Restock.RandLow, cfg.Restock.RandHigh
 	if low > 0 && high > 0 && low != high {
 		if high < low {
 			high = low
 		}
-		price *= low + a.rand.Float64()*(high-low)
+		price *= low + a.randomFloat64()*(high-low)
 	}
 	if price < 1 {
 		return 1
@@ -67,7 +69,7 @@ func (a *App) randomPriceInRange(low, high int32) int32 {
 	if span <= 1 {
 		return low
 	}
-	return int32(int64(low) + a.rand.Int63n(span))
+	return int32(int64(low) + a.randomInt63n(span))
 }
 
 func (a *App) auctionPriceBounds(item catalogItem) (int32, int32) {
@@ -75,7 +77,8 @@ func (a *App) auctionPriceBounds(item catalogItem) (int32, int32) {
 		return priceRange.MinPrice, priceRange.MaxPrice
 	}
 	base := float64(marketBasePrice(item))
-	lowRand, highRand := a.cfg.Restock.RandLow, a.cfg.Restock.RandHigh
+	cfg := a.configSnapshot()
+	lowRand, highRand := cfg.Restock.RandLow, cfg.Restock.RandHigh
 	if lowRand <= 0 {
 		lowRand = 1
 	}
@@ -84,11 +87,11 @@ func (a *App) auctionPriceBounds(item catalogItem) (int32, int32) {
 	}
 	low, high := base*lowRand, base*highRand
 	if item.Kind == "equipment" {
-		low = base * float64(a.cfg.Restock.EquipInflateMin) * lowRand
-		high = base * float64(a.cfg.Restock.EquipInflateMax) * highRand
+		low = base * float64(cfg.Restock.EquipInflateMin) * lowRand
+		high = base * float64(cfg.Restock.EquipInflateMax) * highRand
 		if specialAuctionKind(item) == "" {
-			low *= 1 + float64(a.cfg.Restock.UpgradeMin)*a.cfg.Restock.UpgradePriceRate
-			high *= 1 + float64(a.cfg.Restock.UpgradeMax)*a.cfg.Restock.UpgradePriceRate
+			low *= 1 + float64(cfg.Restock.UpgradeMin)*cfg.Restock.UpgradePriceRate
+			high *= 1 + float64(cfg.Restock.UpgradeMax)*cfg.Restock.UpgradePriceRate
 		}
 	}
 	return boundedAuctionPrice(low), boundedAuctionPrice(high)
@@ -117,8 +120,9 @@ func marketBasePrice(item catalogItem) int32 {
 }
 
 func (a *App) pickOwner(occ map[uint32]int) uint32 {
-	owner := a.cfg.SystemOwner.IDBase
-	for occ[owner] >= a.cfg.SystemOwner.RotateEvery {
+	cfg := a.configSnapshot()
+	owner := cfg.SystemOwner.IDBase
+	for occ[owner] >= cfg.SystemOwner.RotateEvery {
 		owner++
 	}
 	occ[owner]++
@@ -126,12 +130,13 @@ func (a *App) pickOwner(occ map[uint32]int) uint32 {
 }
 
 func (a *App) nextSpecialAddInfo() int32 {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
+	cfg := a.configSnapshot()
+	a.addInfoMu.Lock()
+	defer a.addInfoMu.Unlock()
 	if a.specialAddInfo < specialAddInfoBase {
 		a.specialAddInfo = specialAddInfoBase
 		if a.repository != nil {
-			if max, err := a.repository.LoadMaxAddInfo(a.cfg.AuctionDB, specialAddInfoBase); err == nil && max >= a.specialAddInfo && max < maxInt32 {
+			if max, err := a.repository.LoadMaxAddInfo(cfg.AuctionDB, specialAddInfoBase); err == nil && max >= a.specialAddInfo && max < maxInt32 {
 				a.specialAddInfo = max + 1
 			}
 		}

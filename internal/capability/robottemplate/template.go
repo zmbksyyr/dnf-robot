@@ -1,7 +1,6 @@
 package robottemplate
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,6 +28,14 @@ type NameTemplates struct {
 
 func CloneShoutTemplates(t ShoutTemplates) ShoutTemplates {
 	t.Messages = append([]string(nil), t.Messages...)
+	return t
+}
+
+func CloneNameTemplates(t NameTemplates) NameTemplates {
+	t.Names = append([]string(nil), t.Names...)
+	t.Prefixes = append([]string(nil), t.Prefixes...)
+	t.Middles = append([]string(nil), t.Middles...)
+	t.Suffixes = append([]string(nil), t.Suffixes...)
 	return t
 }
 
@@ -61,41 +68,6 @@ func PrepareShout(msg string, world bool) (int, string, string) {
 		return 11, "world", msg
 	}
 	return 3, "local", msg
-}
-
-func ParseStringListJSON(data []byte) []string {
-	var list []string
-	if json.Unmarshal(data, &list) == nil {
-		return DedupeStrings(list)
-	}
-	var obj struct {
-		Names    []string `json:"names"`
-		Messages []string `json:"messages"`
-	}
-	if json.Unmarshal(data, &obj) == nil {
-		if len(obj.Names) > 0 {
-			return DedupeStrings(obj.Names)
-		}
-		return DedupeStrings(obj.Messages)
-	}
-	return nil
-}
-
-func DedupeStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
 }
 
 func RenderName(t NameTemplates, uid, attempt int, randomString func([]string, string) string, randBetween func(int, int) int) string {

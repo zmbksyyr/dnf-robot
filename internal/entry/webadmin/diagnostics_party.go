@@ -1,9 +1,8 @@
 package webadmin
 
 import (
-	"path/filepath"
-
 	"robot/internal/capability/robotconfig"
+	"robot/internal/foundation/layout"
 )
 
 func (b *diagnosticsBuilder) addPartySection() {
@@ -25,12 +24,11 @@ func (b *diagnosticsBuilder) addPartySection() {
 		portDialCheck("relay service", "127.0.0.1", b.cfg.RelayPort),
 		udpListeningCheck("party route0 UDP", b.cfg.PartyRoute0Port),
 	}
-	checks = append(checks, partyAccountRangeCheck(b.cfg.ConfigDir, status.AccountStart, status.AccountEnd))
+	checks = append(checks, partyAccountRangeCheck(layout.New(b.cfg.ConfigDir).RobotConfig(), status.AccountStart, status.AccountEnd))
 	b.addSection("Party", checks...)
 }
 
-func partyAccountRangeCheck(configDir string, patchStart, patchEnd uint32) diagnosticsCheck {
-	path := filepath.Join(configDir, "robot_config.ini")
+func partyAccountRangeCheck(path string, patchStart, patchEnd uint32) diagnosticsCheck {
 	rc, err := robotconfig.LoadFile(path)
 	if err != nil {
 		return diagnosticsCheck{

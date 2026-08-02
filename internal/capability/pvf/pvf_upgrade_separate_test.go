@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,12 +13,13 @@ import (
 func TestPatchPVFUpgradeSeparateNoChangeDoesNotCreateBackup(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Script.pvf")
+	backupPath := filepath.Join(dir, "config", "state", "backups", "pvf_upgrade_separate", "root", "game", "Script.pvf")
 	original := buildUpgradeSeparateTestPVF(t, 7)
 	if err := os.WriteFile(path, original, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := PatchPVFUpgradeSeparate(path, 7)
+	result, err := PatchPVFUpgradeSeparate(path, backupPath, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +33,7 @@ func TestPatchPVFUpgradeSeparateNoChangeDoesNotCreateBackup(t *testing.T) {
 	if !bytes.Equal(got, original) {
 		t.Fatal("no-op patch changed the PVF")
 	}
-	backups, err := filepath.Glob(path + ".bak_upgrade_separate.*")
+	backups, err := filepath.Glob(backupPath + "*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,20 +42,39 @@ func TestPatchPVFUpgradeSeparateNoChangeDoesNotCreateBackup(t *testing.T) {
 	}
 }
 
+func TestPatchPVFUpgradeSeparateRequiresRecoveryDestination(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Script.pvf")
+	original := buildUpgradeSeparateTestPVF(t, 20)
+	if err := os.WriteFile(path, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PatchPVFUpgradeSeparate(path, "", 7); err == nil {
+		t.Fatal("patch without recovery destination succeeded")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatal("failed backup requirement changed the PVF")
+	}
+}
+
 func TestPatchPVFUpgradeSeparateRotatesBoundedBackups(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Script.pvf")
+	backupPath := filepath.Join(dir, "config", "state", "backups", "pvf_upgrade_separate", "root", "game", "Script.pvf")
 	originals := make([][]byte, upgradeSeparateBackupCount+2)
 	for i := range originals {
 		originals[i] = buildUpgradeSeparateTestPVF(t, 20+i)
 		if err := os.WriteFile(path, originals[i], 0640); err != nil {
 			t.Fatal(err)
 		}
-		result, err := PatchPVFUpgradeSeparate(path, 7)
+		result, err := PatchPVFUpgradeSeparate(path, backupPath, 7)
 		if err != nil {
 			t.Fatalf("patch round %d: %v", i, err)
 		}
-		if !result.Patched || result.Before != 20+i || result.After != 7 || result.BackupPath != upgradeSeparateBackupPath(path, 1) {
+		if !result.Patched || result.Before != 20+i || result.After != 7 || result.BackupPath != backupPath {
 			t.Fatalf("patch round %d result = %+v", i, result)
 		}
 		status, err := InspectPVFUpgradeSeparate(path)
@@ -62,7 +83,7 @@ func TestPatchPVFUpgradeSeparateRotatesBoundedBackups(t *testing.T) {
 		}
 	}
 
-	backups, err := filepath.Glob(path + ".bak_upgrade_separate.*")
+	backups, err := filepath.Glob(backupPath + "*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +92,11 @@ func TestPatchPVFUpgradeSeparateRotatesBoundedBackups(t *testing.T) {
 	}
 	last := len(originals) - 1
 	for index := 1; index <= upgradeSeparateBackupCount; index++ {
-		got, err := os.ReadFile(upgradeSeparateBackupPath(path, index))
+		name := backupPath
+		if index > 1 {
+			name = fmt.Sprintf("%s.%d", backupPath, index-1)
+		}
+		got, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}

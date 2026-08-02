@@ -41,3 +41,13 @@ func TestServerScriptButtonsRemainAvailableAfterDispatch(t *testing.T) {
 		t.Fatal("server script dialog does not report the last submitted command")
 	}
 }
+
+func TestStopServerScriptCancelsCurrentDispatcherOnce(t *testing.T) {
+	canceled := 0
+	s := &Server{serverScriptCancel: func() { canceled++ }}
+	s.stopServerScript()
+	s.stopServerScript()
+	if canceled != 1 {
+		t.Fatalf("dispatcher canceled %d times, want 1", canceled)
+	}
+}

@@ -1,6 +1,7 @@
 package marketapp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ func TestExecuteActionsAllowsCeraSuccessWithoutAuctionID(t *testing.T) {
 	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
 	job := &JobSummary{}
 
-	failed, entries, err := app.executeActions("test", []Action{{
+	failed, entries, err := app.executeActions(context.Background(), "test", []Action{{
 		Market: marketNameCera,
 		ItemID: 2675345,
 	}}, 1, true, job)
@@ -27,7 +28,7 @@ func TestExecuteActionsUsesGenericReasonForCeraRejectWithoutAuctionID(t *testing
 	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
 	job := &JobSummary{}
 
-	failed, entries, err := app.executeActions("test", []Action{{
+	failed, entries, err := app.executeActions(context.Background(), "test", []Action{{
 		Market: marketNameCera,
 		ItemID: 2675345,
 	}}, 1, true, job)
@@ -53,7 +54,7 @@ func TestExecuteActionsAllowsAuctionSuccessWithZeroSequenceID(t *testing.T) {
 	app.executors = fixedActionExecutorFactory{result: ActionExecutionResult{ResultOK: &ok}}
 	job := &JobSummary{}
 
-	failed, entries, err := app.executeActions("test", []Action{{
+	failed, entries, err := app.executeActions(context.Background(), "test", []Action{{
 		Market: marketNameAuction,
 		ItemID: 1001,
 	}}, 1, true, job)
@@ -74,7 +75,7 @@ func TestExecuteActionsRejectsAuctionRegisterOnExecutorError(t *testing.T) {
 	app.executors = fixedActionExecutorFactory{err: fmt.Errorf("register timeout")}
 	job := &JobSummary{}
 
-	failed, entries, err := app.executeActions("test", []Action{{
+	failed, entries, err := app.executeActions(context.Background(), "test", []Action{{
 		Market: marketNameAuction,
 		ItemID: 1001,
 	}}, 1, true, job)
@@ -103,7 +104,7 @@ type fixedActionExecutor struct {
 	err    error
 }
 
-func (e fixedActionExecutor) Execute(Action) (ActionExecutionResult, error) {
+func (e fixedActionExecutor) Execute(context.Context, Action) (ActionExecutionResult, error) {
 	return e.result, e.err
 }
 

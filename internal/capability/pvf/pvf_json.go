@@ -2,7 +2,10 @@ package pvf
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
+
+	"robot/internal/foundation/atomicfile"
 )
 
 func WriteJSON(path string, v interface{}) error {
@@ -11,5 +14,9 @@ func WriteJSON(path string, v interface{}) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0644)
+	return writeFileAtomic(path, data, 0644)
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	return atomicfile.WriteFile(path, data, fs.FileMode(mode))
 }

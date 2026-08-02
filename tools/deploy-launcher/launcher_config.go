@@ -11,20 +11,18 @@ import (
 const launcherConfigName = "deploy-launcher.ini"
 
 type launcherConfig struct {
-	Host         string
-	Port         string
-	User         string
-	Password     string
-	FreshInstall bool
+	Host     string
+	Port     string
+	User     string
+	Password string
 }
 
 func defaultLauncherConfig() launcherConfig {
 	return launcherConfig{
-		Host:         "192.168.200.131",
-		Port:         "22",
-		User:         "root",
-		Password:     "123456",
-		FreshInstall: true,
+		Host:     "192.168.200.131",
+		Port:     "22",
+		User:     "root",
+		Password: "123456",
 	}
 }
 
@@ -75,10 +73,6 @@ func loadLauncherConfig(path string) (launcherConfig, error) {
 			case "password":
 				config.Password = value
 			}
-		case strings.EqualFold(section, "deploy") && key == "fresh_install":
-			// Invalid explicit values preserve the remote configuration. This is
-			// safer than turning a typo into a destructive fresh deployment.
-			config.FreshInstall = value == "1"
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -88,9 +82,5 @@ func loadLauncherConfig(path string) (launcherConfig, error) {
 }
 
 func formatLauncherConfig(config launcherConfig) []byte {
-	freshInstall := 0
-	if config.FreshInstall {
-		freshInstall = 1
-	}
-	return []byte(fmt.Sprintf("[ssh]\nhost = %s\nport = %s\nuser = %s\npassword = %s\n\n[deploy]\n# 1 = fresh config, 0 = keep existing config\nfresh_install = %d\n", config.Host, config.Port, config.User, config.Password, freshInstall))
+	return []byte(fmt.Sprintf("[ssh]\nhost = %s\nport = %s\nuser = %s\npassword = %s\n", config.Host, config.Port, config.User, config.Password))
 }

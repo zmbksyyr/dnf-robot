@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"robot/internal/foundation/charset"
+	"robot/internal/foundation/filebackup"
 )
 
 const upgradeSeparatePath = "etc/upgrade_separate.etc"
@@ -74,7 +75,7 @@ func InspectPVFUpgradeSeparate(path string) (PVFUpgradeSeparateStatus, error) {
 	return status, nil
 }
 
-func PatchPVFUpgradeSeparate(path string, target int) (PVFUpgradeSeparatePatchResult, error) {
+func PatchPVFUpgradeSeparate(path, backupPath string, target int) (PVFUpgradeSeparatePatchResult, error) {
 	path = cleanPVFFilePath(path)
 	if target <= 0 {
 		target = 7
@@ -120,8 +121,7 @@ func PatchPVFUpgradeSeparate(path string, target int) (PVFUpgradeSeparatePatchRe
 	if err != nil {
 		return result, err
 	}
-	backupPath, err := rotateUpgradeSeparateBackups(path, raw, info.Mode())
-	if err != nil {
+	if err := filebackup.Save(backupPath, raw, info.Mode(), upgradeSeparateBackupCount); err != nil {
 		return result, fmt.Errorf("backup pvf: %w", err)
 	}
 	result.BackupPath = backupPath
@@ -322,36 +322,6 @@ func cleanPVFFilePath(path string) string {
 		return path
 	}
 	return filepath.Clean(path)
-}
-
-func rotateUpgradeSeparateBackups(path string, original []byte, mode os.FileMode) (string, error) {
-	dir := filepath.Dir(path)
-	temp, err := writeTempFile(dir, "."+filepath.Base(path)+".backup-*", original, mode)
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(temp)
-
-	oldest := upgradeSeparateBackupPath(path, upgradeSeparateBackupCount)
-	if err := os.Remove(oldest); err != nil && !os.IsNotExist(err) {
-		return "", err
-	}
-	for index := upgradeSeparateBackupCount - 1; index >= 1; index-- {
-		from := upgradeSeparateBackupPath(path, index)
-		to := upgradeSeparateBackupPath(path, index+1)
-		if err := os.Rename(from, to); err != nil && !os.IsNotExist(err) {
-			return "", err
-		}
-	}
-	backup := upgradeSeparateBackupPath(path, 1)
-	if err := os.Rename(temp, backup); err != nil {
-		return "", err
-	}
-	return backup, nil
-}
-
-func upgradeSeparateBackupPath(path string, index int) string {
-	return fmt.Sprintf("%s.bak_upgrade_separate.%d", path, index)
 }
 
 func replaceFileAtomically(path string, data []byte, mode os.FileMode, rename func(string, string) error) error {

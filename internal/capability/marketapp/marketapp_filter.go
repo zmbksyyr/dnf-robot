@@ -17,7 +17,15 @@ func (a *App) marketCandidate(item catalogItem) bool {
 }
 
 func (a *App) qualityFilterEnabled() bool {
-	return a == nil || a.cfg.Restock.QualityFilter == nil || *a.cfg.Restock.QualityFilter
+	if a == nil {
+		return true
+	}
+	return qualityFilterEnabled(a.configSnapshot())
+}
+
+func qualityFilterEnabled(cfg Config) bool {
+	qualityFilter := cfg.Restock.QualityFilter
+	return qualityFilter == nil || *qualityFilter
 }
 
 func marketRarityAllowed(item catalogItem) bool {

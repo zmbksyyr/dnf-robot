@@ -33,7 +33,9 @@ func TestDangerousDeleteTokenIsSingleUse(t *testing.T) {
 
 func TestDangerousDeleteTokenRejectsExpiredValue(t *testing.T) {
 	token := "expired-test-token"
-	dangerousDeleteTokens.Store(token, dangerousDeleteToken{Expires: time.Now().Add(-time.Second), ClientIP: "127.0.0.1"})
+	dangerousDeleteTokens.access.Lock()
+	dangerousDeleteTokens.values[token] = dangerousDeleteToken{Expires: time.Now().Add(-time.Second), ClientIP: "127.0.0.1"}
+	dangerousDeleteTokens.access.Unlock()
 	if consumeDangerousDeleteToken(token, "127.0.0.1", time.Now()) {
 		t.Fatal("expired token should be rejected")
 	}
@@ -65,5 +67,28 @@ func TestLoopbackClientIP(t *testing.T) {
 		if gotIP != tt.wantIP || gotOK != tt.wantOK {
 			t.Fatalf("loopbackClientIP(%q) = (%q, %v), want (%q, %v)", tt.clientID, gotIP, gotOK, tt.wantIP, tt.wantOK)
 		}
+	}
+}
+
+func TestDangerousDeleteTokensStayBounded(t *testing.T) {
+	dangerousDeleteTokens.access.Lock()
+	clear(dangerousDeleteTokens.values)
+	dangerousDeleteTokens.access.Unlock()
+	t.Cleanup(func() {
+		dangerousDeleteTokens.access.Lock()
+		clear(dangerousDeleteTokens.values)
+		dangerousDeleteTokens.access.Unlock()
+	})
+
+	for i := 0; i < maxDangerousDeleteTokens+10; i++ {
+		if _, err := issueDangerousDeleteToken("127.0.0.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dangerousDeleteTokens.access.Lock()
+	count := len(dangerousDeleteTokens.values)
+	dangerousDeleteTokens.access.Unlock()
+	if count != maxDangerousDeleteTokens {
+		t.Fatalf("dangerous token count got %d want %d", count, maxDangerousDeleteTokens)
 	}
 }

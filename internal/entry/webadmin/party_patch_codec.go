@@ -39,11 +39,6 @@ type partyCompatLayout struct {
 	rawSendSignature    []byte
 }
 
-type memoryReadWriter interface {
-	io.ReaderAt
-	io.WriterAt
-}
-
 func inspectPartyCompatMemory(mem io.ReaderAt, layout partyCompatLayout) (bool, uint32, uint32, error) {
 	if err := validatePartyCompatTarget(mem, layout); err != nil {
 		return false, 0, 0, err
@@ -132,19 +127,23 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 			return false, nil
 		}
 		if err := writeMemoryVerified(mem, layout.cave, desiredCave); err != nil {
-			_ = writeMemoryVerified(mem, layout.cave, caveBefore)
-			return false, err
+			rollbackErr := restoreMemoryVerified(mem, memoryRestore{address: layout.cave, value: caveBefore})
+			return false, memoryPatchError("write party compatibility code cave", err, rollbackErr)
 		}
 		if err := writeMemoryVerified(mem, layout.rewardTimerSite, partyCompatPatchedRewardTimer); err != nil {
-			_ = writeMemoryVerified(mem, layout.rewardTimerSite, rewardTimerBefore)
-			_ = writeMemoryVerified(mem, layout.cave, caveBefore)
-			return false, err
+			rollbackErr := restoreMemoryVerified(mem,
+				memoryRestore{address: layout.rewardTimerSite, value: rewardTimerBefore},
+				memoryRestore{address: layout.cave, value: caveBefore},
+			)
+			return false, memoryPatchError("write party compatibility reward timer", err, rollbackErr)
 		}
 		if err := writeMemoryVerified(mem, layout.site, patchedSite); err != nil {
-			_ = writeMemoryVerified(mem, layout.site, siteBefore)
-			_ = writeMemoryVerified(mem, layout.rewardTimerSite, rewardTimerBefore)
-			_ = writeMemoryVerified(mem, layout.cave, caveBefore)
-			return false, err
+			rollbackErr := restoreMemoryVerified(mem,
+				memoryRestore{address: layout.site, value: siteBefore},
+				memoryRestore{address: layout.rewardTimerSite, value: rewardTimerBefore},
+				memoryRestore{address: layout.cave, value: caveBefore},
+			)
+			return false, memoryPatchError("write party compatibility branch", err, rollbackErr)
 		}
 		return true, nil
 	}
@@ -165,8 +164,11 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 			return true, nil
 		}
 		if err := writeMemoryVerified(mem, layout.cave, partyCompatZeroCave); err != nil {
-			_ = writeMemoryVerified(mem, layout.rewardTimerSite, rewardTimerBefore)
-			return false, fmt.Errorf("patch disable failed during code cave cleanup: %w", err)
+			rollbackErr := restoreMemoryVerified(mem,
+				memoryRestore{address: layout.cave, value: caveBefore},
+				memoryRestore{address: layout.rewardTimerSite, value: rewardTimerBefore},
+			)
+			return false, memoryPatchError("disable party compatibility code cave", err, rollbackErr)
 		}
 		return true, nil
 	}
@@ -177,16 +179,23 @@ func setPartyCompatMemory(mem memoryReadWriter, layout partyCompatLayout, start,
 		return false, fmt.Errorf("party compatibility code cave is invalid")
 	}
 	if err := writeMemoryVerified(mem, layout.site, partyCompatOriginalSite); err != nil {
-		return false, err
+		rollbackErr := restoreMemoryVerified(mem, memoryRestore{address: layout.site, value: siteBefore})
+		return false, memoryPatchError("restore party compatibility branch", err, rollbackErr)
 	}
 	if err := writeMemoryVerified(mem, layout.rewardTimerSite, partyCompatOriginalRewardTimer); err != nil {
-		_ = writeMemoryVerified(mem, layout.site, siteBefore)
-		return false, err
+		rollbackErr := restoreMemoryVerified(mem,
+			memoryRestore{address: layout.rewardTimerSite, value: rewardTimerBefore},
+			memoryRestore{address: layout.site, value: siteBefore},
+		)
+		return false, memoryPatchError("restore party compatibility reward timer", err, rollbackErr)
 	}
 	if err := writeMemoryVerified(mem, layout.cave, partyCompatZeroCave); err != nil {
-		_ = writeMemoryVerified(mem, layout.rewardTimerSite, rewardTimerBefore)
-		_ = writeMemoryVerified(mem, layout.site, siteBefore)
-		return false, fmt.Errorf("patch disable failed during code cave cleanup: %w", err)
+		rollbackErr := restoreMemoryVerified(mem,
+			memoryRestore{address: layout.cave, value: caveBefore},
+			memoryRestore{address: layout.rewardTimerSite, value: rewardTimerBefore},
+			memoryRestore{address: layout.site, value: siteBefore},
+		)
+		return false, memoryPatchError("disable party compatibility code cave", err, rollbackErr)
 	}
 	return true, nil
 }

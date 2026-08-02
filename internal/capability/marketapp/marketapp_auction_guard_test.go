@@ -2,8 +2,12 @@ package marketapp
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"robot/internal/foundation/layout"
 )
 
 const auctionGuardFixture = `
@@ -112,5 +116,46 @@ func TestUpsertAuctionSearchGuardRejectsBrokenMarkers(t *testing.T) {
 		if _, _, err := upsertAuctionSearchGuard([]byte(source)); err == nil {
 			t.Fatalf("expected marker error for %q", source)
 		}
+	}
+}
+
+func TestInstallAuctionSearchGuardStoresRecoveryCopyUnderConfig(t *testing.T) {
+	configDir := filepath.Join(t.TempDir(), "config")
+	if err := layout.New(configDir).Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	targetDir := t.TempDir()
+	target := filepath.Join(targetDir, "df_game_r.js")
+	original := []byte(auctionGuardFixture)
+	if err := os.WriteFile(target, original, 0640); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &App{configDir: configDir}
+	defer app.Shutdown()
+	result, err := app.InstallAuctionSearchGuard(AuctionSearchGuardRequest{Path: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBackup, err := layout.New(configDir).AuctionGuardBackup(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Backup != wantBackup || !result.Changed || !result.Installed {
+		t.Fatalf("result = %+v, want backup %s", result, wantBackup)
+	}
+	backup, err := os.ReadFile(wantBackup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(backup, original) {
+		t.Fatal("backup does not contain the pre-patch script")
+	}
+	adjacent, err := filepath.Glob(target + ".bak*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(adjacent) != 0 {
+		t.Fatalf("external backup artifacts remain beside target: %v", adjacent)
 	}
 }

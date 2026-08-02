@@ -57,34 +57,50 @@ func (m *RobotManager) stopAutoActions() error {
 }
 
 func (m *RobotManager) Shutdown() error {
-	autoErr := m.stopAutoActions()
-	m.waitMailNotifications()
-	m.flushStorePointCache()
-	if m.positionWrites == nil {
-		return autoErr
+	if m == nil {
+		return nil
 	}
-	return errors.Join(autoErr, m.positionWrites.Close())
+	m.shutdownOnce.Do(func() {
+		m.stopAndWaitBackgroundWork()
+		autoErr := m.stopAutoActions()
+		m.waitMailNotifications()
+		m.flushStorePointCache()
+		if m.positionWrites == nil {
+			m.shutdownErr = autoErr
+			return
+		}
+		m.shutdownErr = errors.Join(autoErr, m.positionWrites.Close())
+	})
+	return m.shutdownErr
 }
 
-func (m *RobotManager) SetAutoEnabled(enabled bool) robotcap.AutoStatus {
-	_ = m.writeRobotConfigValues(map[string]string{
+func (m *RobotManager) SetAutoEnabled(enabled bool) (robotcap.AutoStatus, error) {
+	if err := m.writeRobotConfigValues(map[string]string{
 		"auto.auto_actions": strconv.FormatBool(enabled),
-	})
+	}); err != nil {
+		return m.AutoStatus(), err
+	}
 	m.autoMu.Lock()
 	supervisor := m.supervisor
 	m.autoEnabled = enabled
 	m.autoMu.Unlock()
-	if !enabled && supervisor != nil {
-		end := m.beginActorContainerOp("auto_stop")
-		defer end()
-		rc := m.loadRobotConfig()
-		supervisor.stopAutoActors()
-		summary := robotcap.SummarizeRuntimeStatusMap(m.runtimeStatusMap())
-		m.updateAutoSnapshot(rc, summary)
-		m.updateAutoActorSnapshot(supervisor.actorCounts(time.Now(), rc))
-		m.updateSchedulerStatus(rc, m.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyManual, Reason: schedulerReasonAutoDisabled})
+	if !enabled {
+		m.stopAutoActorsForDisabledConfig(supervisor, m.loadRobotConfig())
 	}
-	return m.AutoStatus()
+	return m.AutoStatus(), nil
+}
+
+func (m *RobotManager) stopAutoActorsForDisabledConfig(supervisor *RobotSupervisor, rc robotconfig.RuntimeConfig) {
+	if supervisor == nil {
+		return
+	}
+	end := m.beginActorContainerOp("auto_stop")
+	defer end()
+	supervisor.stopAutoActors()
+	summary := robotcap.SummarizeRuntimeStatusMap(m.runtimeStatusMap())
+	m.updateAutoSnapshot(rc, summary)
+	m.updateAutoActorSnapshot(supervisor.actorCounts(time.Now(), rc))
+	m.updateSchedulerStatus(rc, m.adaptiveSchedulerSignals(), schedulerPolicyDecision{Mode: schedulerPolicyManual, Reason: schedulerReasonAutoDisabled})
 }
 
 func (m *RobotManager) AutoStatus() robotcap.AutoStatus {

@@ -319,13 +319,14 @@ func (a *App) recordMarketPolicyJob(market string, job JobSummary) {
 }
 
 func (a *App) currentMarketKinds(market string) (int, error) {
+	cfg := a.configSnapshot()
 	occ := map[uint32]int{}
 	switch normalizeMarketName(market) {
 	case marketNameAuction:
-		have, err := a.repository.LoadMarketStock(a.cfg.AuctionDB, a.cfg.SystemOwner.IDBase, occ)
+		have, err := a.repository.LoadMarketStock(cfg.AuctionDB, cfg.SystemOwner.IDBase, occ)
 		return len(have), err
 	case marketNameCera:
-		have, err := a.repository.LoadMarketStock(a.cfg.CeraDB, a.cfg.SystemOwner.IDBase, occ)
+		have, err := a.repository.LoadMarketStock(cfg.CeraDB, cfg.SystemOwner.IDBase, occ)
 		return len(have), err
 	default:
 		return 0, nil

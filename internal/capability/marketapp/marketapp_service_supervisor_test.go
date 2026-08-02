@@ -81,6 +81,18 @@ func TestWaitForMarketServiceStabilityRequiresConsecutiveSamples(t *testing.T) {
 	}
 }
 
+func TestRunMarketServiceCallRecoversPanic(t *testing.T) {
+	err := runMarketServiceCall("auction", "refresh", func() error {
+		panic("broken probe")
+	})
+	if err == nil || !strings.Contains(err.Error(), "auction refresh panic: broken probe") {
+		t.Fatalf("panic error = %v", err)
+	}
+	if err := runMarketServiceCall("auction", "refresh", func() error { return nil }); err != nil {
+		t.Fatalf("subsequent call failed: %v", err)
+	}
+}
+
 func TestMarketServiceLaunchUsesRunScriptArguments(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "home", "neople")
 	auctionDir := filepath.Join(root, "auction")

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
 func newMailboxGuardMemory(t *testing.T) (*os.File, mailboxGuardLayout) {
@@ -44,19 +45,70 @@ func newMailboxGuardMemory(t *testing.T) (*os.File, mailboxGuardLayout) {
 	return file, layout
 }
 
-func TestMailboxGuardConfigDefaultsOff(t *testing.T) {
-	s := New(&config.SysConfig{ConfigDir: t.TempDir()}, "", "")
-	cfg, err := s.loadMailboxGuardConfig()
-	if err != nil {
+func TestMailboxGuardConfigRequiresReleasedFile(t *testing.T) {
+	dir := t.TempDir()
+	s := New(&config.SysConfig{ConfigDir: dir}, "", "")
+	if _, err := s.loadMailboxGuardConfig(); err == nil {
+		t.Fatal("missing mailbox guard config unexpectedly accepted")
+	}
+	if err := layout.New(dir).Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Enabled {
-		t.Fatal("mailbox guard defaulted on")
+	if err := os.WriteFile(s.mailboxGuardConfigPath(), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.loadMailboxGuardConfig(); err == nil {
+		t.Fatal("mailbox guard config without required switch unexpectedly accepted")
+	}
+	if err := os.WriteFile(s.mailboxGuardConfigPath(), []byte(`{"mailbox_bad_node_guard":false,"legacy":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.loadMailboxGuardConfig(); err == nil {
+		t.Fatal("mailbox guard config with unknown field unexpectedly accepted")
 	}
 }
 
-func TestMailboxGuardHandlerOnlySavesDesiredState(t *testing.T) {
+func TestMailboxGuardHandlerRejectsMissingUnknownAndTrailingJSON(t *testing.T) {
 	dir := t.TempDir()
+	if err := layout.New(dir).Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.New(dir).MailboxGuard(), []byte(`{"mailbox_bad_node_guard":false}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(&config.SysConfig{ConfigDir: dir, RobotGamePort: 65534}, "", "")
+	for _, body := range []string{
+		`{}`,
+		`{"mailbox_bad_node_guard":true,"legacy":1}`,
+		`{"mailbox_bad_node_guard":true}{"mailbox_bad_node_guard":false}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/compat", strings.NewReader(body))
+		recorder := httptest.NewRecorder()
+		s.handleCompat(recorder, req)
+		var response struct {
+			OK bool `json:"ok"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.OK {
+			t.Fatalf("invalid request unexpectedly accepted: body=%s response=%s", body, recorder.Body.String())
+		}
+	}
+	cfg, err := s.loadMailboxGuardConfig()
+	if err != nil || cfg.Enabled {
+		t.Fatalf("invalid request changed config=%+v err=%v", cfg, err)
+	}
+}
+
+func TestMailboxGuardHandlerAppliesOrQueuesDesiredState(t *testing.T) {
+	dir := t.TempDir()
+	if err := layout.New(dir).Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.New(dir).MailboxGuard(), []byte(`{"mailbox_bad_node_guard":false}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	s := New(&config.SysConfig{ConfigDir: dir, RobotGamePort: 65534}, "", "")
 	req := httptest.NewRequest(http.MethodPost, "/api/compat", strings.NewReader(`{"mailbox_bad_node_guard":true}`))
 	recorder := httptest.NewRecorder()
@@ -69,7 +121,7 @@ func TestMailboxGuardHandlerOnlySavesDesiredState(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.OK || !response.RestartRequired {
+	if !response.OK || response.RestartRequired {
 		t.Fatalf("response = %s", recorder.Body.String())
 	}
 	cfg, err := s.loadMailboxGuardConfig()

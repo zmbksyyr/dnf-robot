@@ -1,9 +1,11 @@
 package pvf
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"robot/internal/capability/catalog"
 	"robot/internal/shared"
@@ -80,12 +82,12 @@ func TestExtractPVFLevelExpStopsAtFirstDecrease(t *testing.T) {
 func TestPVFExportsCurrentInvalidatesOldSkillStateSchema(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string][]byte{
-		"pvf_equipment_catalog.json": []byte(`[{"item_type": 20}]`),
-		"pvf_stackable_catalog.json": []byte(`[{"id": 1}]`),
-		"pvf_map_catalog.json":       []byte(`[{"normal_eligible":true,"store_eligible":true}]`),
-		pvfSkillStateExportName:      []byte(`[{"job": 1}]`),
-		pvfLevelExpExportName:        []byte(`[0,0,1000]`),
-		pvfItemInfoExportName:        []byte("iteminfo"),
+		"equipment_catalog.json": []byte(`[{"item_type": 20}]`),
+		"stackable_catalog.json": []byte(`[{"id": 1}]`),
+		"map_catalog.json":       []byte(`[{"normal_eligible":true,"store_eligible":true}]`),
+		pvfSkillStateExportName:  []byte(`[{"job": 1}]`),
+		pvfLevelExpExportName:    []byte(`[0,0,1000]`),
+		pvfItemInfoExportName:    []byte("iteminfo"),
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
@@ -113,7 +115,7 @@ func TestPVFExportsCurrentInvalidatesOldSkillStateSchema(t *testing.T) {
 	}
 }
 
-func TestPVFExportsCurrentAcceptsMetadataMatchWithStoredMD5(t *testing.T) {
+func TestPVFExportsCurrentRequiresSourceMD5(t *testing.T) {
 	dir := t.TempDir()
 	writeCurrentPVFExportFiles(t, dir)
 
@@ -127,8 +129,8 @@ func TestPVFExportsCurrentAcceptsMetadataMatchWithStoredMD5(t *testing.T) {
 	}
 	want := got
 	want.MD5 = ""
-	if !pvfExportsCurrent(manifestPath, want, dir) {
-		t.Fatal("metadata-only match with stored md5 was not current")
+	if pvfExportsCurrent(manifestPath, want, dir) {
+		t.Fatal("metadata-only source identity was treated as current")
 	}
 
 	got.MD5 = ""
@@ -151,8 +153,10 @@ func TestEnsurePVFItemInfoDATReusesCurrentExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := buildPVFManifestMetadata(pvfPath, stat)
-	manifest.MD5 = "cached"
+	manifest, err := buildPVFManifest(pvfPath, stat)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := WriteJSON(filepath.Join(dir, "pvf_manifest.json"), manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -166,10 +170,124 @@ func TestEnsurePVFItemInfoDATReusesCurrentExport(t *testing.T) {
 	}
 }
 
+func TestPublishPVFDirectoryReplacesWholeSnapshot(t *testing.T) {
+	root := t.TempDir()
+	pvfDir := filepath.Join(root, "pvf")
+	tempDir := filepath.Join(root, "tmp")
+	stageDir := filepath.Join(tempDir, "stage")
+	if err := os.MkdirAll(pvfDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stageDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pvfDir, "old.json"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stageDir, "new.json"), []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := publishPVFDirectory(stageDir, pvfDir, tempDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(pvfDir, "old.json")); !os.IsNotExist(err) {
+		t.Fatalf("old snapshot survived publish: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(pvfDir, "new.json")); err != nil || string(data) != "new" {
+		t.Fatalf("published snapshot=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "pvf.previous")); !os.IsNotExist(err) {
+		t.Fatalf("previous snapshot was not cleaned: %v", err)
+	}
+}
+
+func TestRecoverPVFPublishRestoresInterruptedSnapshot(t *testing.T) {
+	root := t.TempDir()
+	pvfDir := filepath.Join(root, "pvf")
+	tempDir := filepath.Join(root, "tmp")
+	backupDir := filepath.Join(tempDir, "pvf.previous")
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "manifest.json"), []byte("previous"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := recoverPVFPublish(pvfDir, tempDir); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(pvfDir, "manifest.json")); err != nil || string(data) != "previous" {
+		t.Fatalf("restored snapshot=%q err=%v", data, err)
+	}
+}
+
+func TestRecoverPVFPublishRemovesInterruptedStagingDirectories(t *testing.T) {
+	root := t.TempDir()
+	pvfDir := filepath.Join(root, "pvf")
+	tempDir := filepath.Join(root, "tmp")
+	stageDir := filepath.Join(tempDir, "pvf-export-stale")
+	if err := os.MkdirAll(stageDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stageDir, "partial.json"), []byte("partial"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := recoverPVFPublish(pvfDir, tempDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stageDir); !os.IsNotExist(err) {
+		t.Fatalf("interrupted staging directory was not removed: %v", err)
+	}
+}
+
+func TestPVFExportsCurrentRejectsSameMetadataWithDifferentContent(t *testing.T) {
+	dir := t.TempDir()
+	pvfPath := filepath.Join(dir, "Script.pvf")
+	fixedTime := time.Unix(1_700_000_000, 0)
+	if err := os.WriteFile(pvfPath, []byte("first-content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(pvfPath, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
+	stat, err := os.Stat(pvfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := buildPVFManifest(pvfPath, stat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCurrentPVFExportFiles(t, dir)
+	if err := WriteJSON(filepath.Join(dir, pvfManifestName), manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(pvfPath, []byte("other-content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(pvfPath, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
+	stat, err = os.Stat(pvfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := buildPVFManifest(pvfPath, stat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pvfExportsCurrent(filepath.Join(dir, pvfManifestName), changed, dir) {
+		t.Fatal("same-size same-time replacement reused stale PVF exports")
+	}
+}
+
 func TestPVFExportsCurrentInvalidatesOldMapEligibilitySchema(t *testing.T) {
 	dir := t.TempDir()
 	writeCurrentPVFExportFiles(t, dir)
-	if err := os.WriteFile(filepath.Join(dir, "pvf_map_catalog.json"), []byte(`[{"village":1,"area":0,"use":true}]`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "map_catalog.json"), []byte(`[{"village":1,"area":0,"use":true}]`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	want := pvfManifest{
@@ -185,15 +303,65 @@ func TestPVFExportsCurrentInvalidatesOldMapEligibilitySchema(t *testing.T) {
 	}
 }
 
+func TestPVFExportMarkersCurrentHandlesChunkBoundaries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	marker := []byte(`"item_type": 20`)
+	data := append(bytes.Repeat([]byte{'x'}, pvfMarkerScanChunk-len(marker)+3), marker...)
+	data = append(data, bytes.Repeat([]byte{' '}, 32)...)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	scratch := make([]byte, pvfMarkerScanChunk+pvfMarkerScanOverlap)
+	if !pvfExportMarkersCurrent(path, pvfEquipmentMarkers, scratch) {
+		t.Fatal("marker spanning read chunks was not detected")
+	}
+	if err := os.WriteFile(path, append(data, []byte(`"source_path"`)...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if pvfExportMarkersCurrent(path, pvfEquipmentMarkers, scratch) {
+		t.Fatal("legacy source marker was not rejected")
+	}
+}
+
+func BenchmarkPVFExportsCurrentStreaming(b *testing.B) {
+	dir := b.TempDir()
+	large := bytes.Repeat([]byte{' '}, 2*1024*1024)
+	files := map[string][]byte{
+		pvfEquipmentExportName:  append([]byte(`{"item_type": 20}`), large...),
+		pvfStackableExportName:  append([]byte(`[{"id":1}]`), large...),
+		pvfMapExportName:        append([]byte(`{"normal_eligible":true,"store_eligible":true}`), large...),
+		pvfSkillStateExportName: []byte(`[{"job":1}]`),
+		pvfLevelExpExportName:   []byte(`[0,0,1000]`),
+		pvfItemInfoExportName:   []byte("iteminfo"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	want := pvfManifest{Version: pvfExportVersion, SkillStateVersion: pvfSkillStateExportVersion, Source: "/game/Script.pvf", Size: 100, ModTime: 200, MD5: "abc"}
+	if err := WriteJSON(filepath.Join(dir, pvfManifestName), want); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.SetBytes(6 * 1024 * 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !pvfExportsCurrent(filepath.Join(dir, pvfManifestName), want, dir) {
+			b.Fatal("exports unexpectedly invalid")
+		}
+	}
+}
+
 func writeCurrentPVFExportFiles(t *testing.T, dir string) {
 	t.Helper()
 	files := map[string][]byte{
-		"pvf_equipment_catalog.json": []byte(`[{"item_type": 20}]`),
-		"pvf_stackable_catalog.json": []byte(`[{"id": 1}]`),
-		"pvf_map_catalog.json":       []byte(`[{"normal_eligible":true,"store_eligible":true}]`),
-		pvfSkillStateExportName:      []byte(`[{"job": 1, "skill_index": 1, "state": 1}]`),
-		pvfLevelExpExportName:        []byte(`[0,0,1000]`),
-		pvfItemInfoExportName:        []byte("iteminfo"),
+		"equipment_catalog.json": []byte(`[{"item_type": 20}]`),
+		"stackable_catalog.json": []byte(`[{"id": 1}]`),
+		"map_catalog.json":       []byte(`[{"normal_eligible":true,"store_eligible":true}]`),
+		pvfSkillStateExportName:  []byte(`[{"job": 1, "skill_index": 1, "state": 1}]`),
+		pvfLevelExpExportName:    []byte(`[0,0,1000]`),
+		pvfItemInfoExportName:    []byte("iteminfo"),
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {

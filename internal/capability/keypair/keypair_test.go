@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
 func TestBuildKeypairStatusDerivesMissingPublicKey(t *testing.T) {
@@ -31,10 +32,10 @@ func TestBuildKeypairStatusDerivesMissingPublicKey(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(gameDir, "publickey.pem")); err != nil {
 		t.Fatalf("expected derived public key in game dir: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "privatekey.pem")); err != nil {
+	if _, err := os.Stat(layout.New(cfg.ConfigDir).PrivateKey()); err != nil {
 		t.Fatalf("expected private key copied to config dir: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "publickey.pem")); err != nil {
+	if _, err := os.Stat(layout.New(cfg.ConfigDir).PublicKey()); err != nil {
 		t.Fatalf("expected public key copied to config dir: %v", err)
 	}
 }

@@ -16,10 +16,10 @@ func TestLoadPartySkillsIndexesFilteredCatalog(t *testing.T) {
 	path := filepath.Join(dir, "party_skill_catalog.json")
 	data := []byte(`{
   "enabled": true,
-  "max_skill_level": 70,
+  "max_skill_level": 50,
   "skills": [
     {"job":6,"skill_index":3,"state":22,"level":5,"name":"ok","state_data":[3],"risk":1},
-    {"job":6,"skill_index":4,"state":23,"level":75,"name":"too_high","state_data":[0],"risk":1},
+    {"job":6,"skill_index":4,"state":23,"level":60,"name":"too_high","state_data":[0],"risk":1},
     {"job":6,"skill_index":5,"state":24,"level":10,"disabled":true,"state_data":[0],"risk":1},
     {"job":2,"skill_index":6,"state":25,"level":10,"state_data":[0],"risk":1}
   ]
@@ -41,7 +41,7 @@ func TestLoadPartySkillsIndexesFilteredCatalog(t *testing.T) {
 
 func TestLoadPartySkillsRejectsInvalidStateData(t *testing.T) {
 	dir := t.TempDir()
-	data := []byte(`{"enabled":true,"skills":[{"job":1,"skill_index":2,"state":3,"level":1,"state_data":[16777216]}]}`)
+	data := []byte(`{"enabled":true,"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":1,"state_data":[16777216]}]}`)
 	if err := os.WriteFile(filepath.Join(dir, "party_skill_catalog.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -50,10 +50,11 @@ func TestLoadPartySkillsRejectsInvalidStateData(t *testing.T) {
 	}
 }
 
-func TestLoadPartySkillsPublishesValidEntriesAlongsideInvalidStateData(t *testing.T) {
+func TestLoadPartySkillsRetainsPreviousSnapshotOnInvalidEntry(t *testing.T) {
 	dir := t.TempDir()
 	data := []byte(`{
   "enabled": true,
+  "max_skill_level": 70,
   "skills": [
     {"job":6,"skill_index":3,"state":22,"level":5,"state_data":[3]},
     {"job":6,"skill_index":4,"state":23,"level":10,"state_data":[16777216]},
@@ -64,6 +65,8 @@ func TestLoadPartySkillsPublishesValidEntriesAlongsideInvalidStateData(t *testin
 	if err := os.WriteFile(filepath.Join(dir, "party_skill_catalog.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
+	previous := []shared.PartySkillState{{Job: 6, SkillIndex: 99, State: 99, Level: 1}}
+	shared.SetPartySkillStates(previous)
 	t.Cleanup(func() { shared.SetPartySkillStates(nil) })
 
 	err := LoadPartySkills(dir)
@@ -75,11 +78,8 @@ func TestLoadPartySkillsPublishesValidEntriesAlongsideInvalidStateData(t *testin
 		t.Fatalf("validation error = %v", err)
 	}
 	got := shared.PartySkillStatesForJob(6)
-	if len(got) != 2 || got[0].SkillIndex != 3 || got[1].SkillIndex != 6 {
-		t.Fatalf("published entries = %+v", got)
-	}
-	if !bytes.Equal(got[1].StateData, []byte{4, 0, 0, 5, 0, 0}) {
-		t.Fatalf("second state data = %v", got[1].StateData)
+	if len(got) != 1 || got[0].SkillIndex != 99 {
+		t.Fatalf("invalid file replaced previous snapshot: %+v", got)
 	}
 }
 
@@ -100,7 +100,7 @@ func TestPartySkillValidationErrorSummarizesMultipleIssues(t *testing.T) {
 	}
 }
 
-func TestLoadPartySkillsCannotRaiseSafeLevelLimit(t *testing.T) {
+func TestLoadPartySkillsRejectsOutOfRangeMaxSkillLevel(t *testing.T) {
 	dir := t.TempDir()
 	data := []byte(`{
   "enabled": true,
@@ -113,42 +113,76 @@ func TestLoadPartySkillsCannotRaiseSafeLevelLimit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "party_skill_catalog.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	previous := shared.PartySkillStatesForJob(2)
-	t.Cleanup(func() { shared.SetPartySkillStates(previous) })
-
-	if err := LoadPartySkills(dir); err != nil {
-		t.Fatal(err)
-	}
-	got := shared.PartySkillStatesForJob(2)
-	if len(got) != 1 || got[0].SkillIndex != 6 || got[0].Level != maxSafePartySkillLevel {
-		t.Fatalf("safe-level catalog = %+v", got)
+	if err := LoadPartySkills(dir); err == nil {
+		t.Fatal("out-of-range max_skill_level unexpectedly loaded")
 	}
 }
 
-func TestLoadPartySkillsDefaultsDisabled(t *testing.T) {
+func TestLoadPartySkillsRequiresExplicitEnabled(t *testing.T) {
 	dir := t.TempDir()
-	data := []byte(`{"skills":[{"job":6,"skill_index":3,"state":22,"level":5,"state_data":[3]}]}`)
+	data := []byte(`{"max_skill_level":70,"skills":[{"job":6,"skill_index":3,"state":22,"level":5,"state_data":[3]}]}`)
 	if err := os.WriteFile(filepath.Join(dir, "party_skill_catalog.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	shared.SetPartySkillStates([]shared.PartySkillState{{Job: 6, SkillIndex: 99}})
-	t.Cleanup(func() { shared.SetPartySkillStates(nil) })
+	if err := LoadPartySkills(dir); err == nil {
+		t.Fatal("catalog without enabled unexpectedly loaded")
+	}
+}
 
-	if err := LoadPartySkills(dir); err != nil {
-		t.Fatal(err)
+func TestPartySkillCatalogRejectsUnknownMissingAndOutOfRangeFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "party_skill_catalog.json")
+	for _, data := range []string{
+		`{"enabled":false,"max_skill_level":70,"skills":[],"legacy":true}`,
+		`{"enabled":false,"skills":[]}`,
+		`{"enabled":false,"max_skill_level":0,"skills":[]}`,
+		`{"enabled":false,"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":1,"legacy":true}]}`,
+		`{"enabled":false,"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3}]}`,
+	} {
+		if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadPartySkillCatalog(path); err == nil {
+			t.Fatalf("invalid catalog unexpectedly decoded: %s", data)
+		}
 	}
-	report, err := ReadPartySkillCatalog(filepath.Join(dir, "party_skill_catalog.json"))
+
+	for _, data := range []string{
+		`{"enabled":false,"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":71}]}`,
+		`{"enabled":false,"max_skill_level":70,"skills":[{"job":1,"skill_index":2,"state":3,"level":1,"risk":3}]}`,
+	} {
+		if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+			t.Fatal(err)
+		}
+		report, err := ReadPartySkillCatalog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Issues) != 1 {
+			t.Fatalf("invalid disabled entry not rejected: report=%+v", report)
+		}
+	}
+}
+
+func TestReleasedRuntimeCatalogsUseCanonicalSchemas(t *testing.T) {
+	defaults := filepath.Join("..", "..", "bootstrap", "runtime", "defaults")
+	if _, err := ReadNameTemplates(filepath.Join(defaults, "robot_name_templates.json")); err != nil {
+		t.Fatalf("released name template rejected: %v", err)
+	}
+	if _, err := ReadShoutTemplates(filepath.Join(defaults, "robot_shout_templates.json")); err != nil {
+		t.Fatalf("released shout template rejected: %v", err)
+	}
+	report, err := ReadPartySkillCatalog(filepath.Join(defaults, "party_skill_catalog.json"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("released party skill catalog rejected: %v", err)
 	}
-	if report.Enabled || len(shared.PartySkillStatesForJob(6)) != 0 {
-		t.Fatalf("disabled catalog loaded skills: enabled=%t states=%+v", report.Enabled, shared.PartySkillStatesForJob(6))
+	if len(report.Issues) != 0 {
+		t.Fatalf("released party skill catalog issues: %v", (&PartySkillCatalogValidationError{Issues: report.Issues}).Error())
 	}
 }
 
 func TestSetPartySkillCatalogEnabledUpdatesTopLevelFlag(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "party_skill_catalog.json")
-	data := []byte(`{"max_skill_level":70,"skills":[{"job":6,"skill_index":3,"state":22,"level":5,"state_data":[3]}]}`)
+	data := []byte(`{"enabled":false,"max_skill_level":70,"skills":[{"job":6,"skill_index":3,"state":22,"level":5,"state_data":[3]}]}`)
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -171,5 +205,23 @@ func TestSetPartySkillCatalogEnabledUpdatesTopLevelFlag(t *testing.T) {
 	}
 	if report.Enabled || len(report.Entries) != 0 || report.SourceCount != 1 {
 		t.Fatalf("disabled catalog = %+v", report)
+	}
+}
+
+func TestSetPartySkillCatalogEnabledRejectsInvalidEnabledSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "party_skill_catalog.json")
+	data := []byte(`{"enabled":false,"max_skill_level":70,"skills":[{"job":6,"skill_index":0,"state":22,"level":5}]}`)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPartySkillCatalogEnabled(path, true); err == nil {
+		t.Fatal("invalid enabled snapshot unexpectedly saved")
+	}
+	report, err := ReadPartySkillCatalog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Enabled {
+		t.Fatal("failed enable changed the file")
 	}
 }

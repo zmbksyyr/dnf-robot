@@ -1,10 +1,12 @@
 package pvf
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +14,7 @@ import (
 	"strings"
 
 	"robot/internal/capability/catalog"
+	"robot/internal/foundation/lockhub"
 	"robot/internal/shared"
 )
 
@@ -29,18 +32,48 @@ const pvfExportVersion = 1
 
 const pvfSkillStateExportVersion = 2
 
-const pvfItemInfoExportName = "pvf_iteminfo.dat"
+const pvfItemInfoExportName = "iteminfo.dat"
 
-const pvfSkillStateExportName = "pvf_skill_state_catalog.json"
+const pvfEquipmentExportName = "equipment_catalog.json"
 
-const pvfLevelExpExportName = "pvf_level_exp_catalog.json"
+const pvfStackableExportName = "stackable_catalog.json"
 
-func EnsureExports(dfGameR, configDir string) error {
-	if configDir == "" {
+const pvfMapExportName = "map_catalog.json"
+
+const pvfSkillStateExportName = "skill_state_catalog.json"
+
+const pvfLevelExpExportName = "level_exp_catalog.json"
+
+const pvfManifestName = "pvf_manifest.json"
+
+const (
+	pvfMarkerScanChunk   = 64 * 1024
+	pvfMarkerScanOverlap = 64
+)
+
+var (
+	pvfLegacySourceMarker   = []byte(`"source_path"`)
+	pvfEquipmentMarkers     = [][]byte{[]byte(`"item_type": 20`)}
+	pvfMapEligibilityMarker = [][]byte{[]byte(`"normal_eligible"`), []byte(`"store_eligible"`)}
+)
+
+var exportMu lockhub.Locker
+
+func EnsureExports(dfGameR, pvfDir string, tempDirs ...string) error {
+	exportMu.Lock()
+	defer exportMu.Unlock()
+	return ensureExports(dfGameR, pvfDir, firstTempDir(pvfDir, tempDirs))
+}
+
+func ensureExports(dfGameR, pvfDir, tempDir string) error {
+	if pvfDir == "" {
 		return nil
 	}
-	skillCatalogPath := filepath.Join(configDir, pvfSkillStateExportName)
-	levelExpPath := filepath.Join(configDir, pvfLevelExpExportName)
+	if err := recoverPVFPublish(pvfDir, tempDir); err != nil {
+		return err
+	}
+	skillCatalogPath := filepath.Join(pvfDir, pvfSkillStateExportName)
+	levelExpPath := filepath.Join(pvfDir, pvfLevelExpExportName)
 	if dfGameR == "" {
 		_ = loadSkillStateCatalog(skillCatalogPath)
 		_ = loadLevelExpCatalog(levelExpPath)
@@ -53,19 +86,12 @@ func EnsureExports(dfGameR, configDir string) error {
 		_ = loadLevelExpCatalog(levelExpPath)
 		return nil
 	}
-	manifestPath := filepath.Join(configDir, "pvf_manifest.json")
-	metadata := buildPVFManifestMetadata(pvfPath, stat)
-	if pvfExportsCurrent(manifestPath, metadata, configDir) {
-		if err := loadSkillStateCatalog(skillCatalogPath); err == nil && loadLevelExpCatalog(levelExpPath) == nil {
-			return nil
-		}
-	}
-
+	manifestPath := filepath.Join(pvfDir, pvfManifestName)
 	manifest, err := buildPVFManifest(pvfPath, stat)
 	if err != nil {
 		return err
 	}
-	if pvfExportsCurrent(manifestPath, manifest, configDir) {
+	if pvfExportsCurrent(manifestPath, manifest, pvfDir) {
 		if err := loadSkillStateCatalog(skillCatalogPath); err == nil && loadLevelExpCatalog(levelExpPath) == nil {
 			return nil
 		}
@@ -80,31 +106,119 @@ func EnsureExports(dfGameR, configDir string) error {
 	if err != nil {
 		return err
 	}
-	removeObsoletePVFExports(configDir)
-	if err := WriteJSON(filepath.Join(configDir, "pvf_equipment_catalog.json"), equipment); err != nil {
+	stageDir, err := os.MkdirTemp(tempDir, "pvf-export-")
+	if err != nil {
+		return fmt.Errorf("create PVF export staging directory: %w", err)
+	}
+	defer os.RemoveAll(stageDir)
+	if err := WriteJSON(filepath.Join(stageDir, pvfEquipmentExportName), equipment); err != nil {
 		return err
 	}
-	if err := WriteJSON(filepath.Join(configDir, "pvf_stackable_catalog.json"), stackable); err != nil {
+	if err := WriteJSON(filepath.Join(stageDir, pvfStackableExportName), stackable); err != nil {
 		return err
 	}
-	if err := WriteJSON(filepath.Join(configDir, "pvf_map_catalog.json"), maps); err != nil {
+	if err := WriteJSON(filepath.Join(stageDir, pvfMapExportName), maps); err != nil {
 		return err
 	}
-	if err := WriteJSON(levelExpPath, levelExp); err != nil {
+	if err := WriteJSON(filepath.Join(stageDir, pvfLevelExpExportName), levelExp); err != nil {
 		return err
-	}
-	if err := catalog.SetLevelMinExpTable(levelExp); err != nil {
-		return fmt.Errorf("load PVF level experience: %w", err)
 	}
 	skillStates := extractSkillStateCatalog(archive)
-	if err := WriteJSON(filepath.Join(configDir, pvfSkillStateExportName), skillStates); err != nil {
+	if err := WriteJSON(filepath.Join(stageDir, pvfSkillStateExportName), skillStates); err != nil {
 		return err
 	}
-	setSkillStateCatalog(skillStates)
-	if err := writePVFItemInfoExports(configDir, archive, equipment, stackable); err != nil {
+	if err := writePVFItemInfoExports(stageDir, archive, equipment, stackable); err != nil {
 		return err
 	}
-	return WriteJSON(manifestPath, manifest)
+	if err := WriteJSON(filepath.Join(stageDir, pvfManifestName), manifest); err != nil {
+		return err
+	}
+	if err := publishPVFDirectory(stageDir, pvfDir, tempDir); err != nil {
+		return err
+	}
+	if err := loadSkillStateCatalog(skillCatalogPath); err != nil {
+		return fmt.Errorf("load published PVF skill states: %w", err)
+	}
+	if err := loadLevelExpCatalog(levelExpPath); err != nil {
+		return fmt.Errorf("load published PVF level experience: %w", err)
+	}
+	return nil
+}
+
+func firstTempDir(pvfDir string, tempDirs []string) string {
+	if len(tempDirs) > 0 && strings.TrimSpace(tempDirs[0]) != "" {
+		return tempDirs[0]
+	}
+	return filepath.Join(filepath.Dir(pvfDir), "tmp")
+}
+
+func recoverPVFPublish(pvfDir, tempDir string) error {
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return err
+	}
+	staleStages, err := filepath.Glob(filepath.Join(tempDir, "pvf-export-*"))
+	if err != nil {
+		return fmt.Errorf("find interrupted PVF staging directories: %w", err)
+	}
+	for _, stageDir := range staleStages {
+		if err := os.RemoveAll(stageDir); err != nil {
+			return fmt.Errorf("remove interrupted PVF staging directory %s: %w", stageDir, err)
+		}
+	}
+	backupDir := filepath.Join(tempDir, "pvf.previous")
+	_, outputErr := os.Stat(pvfDir)
+	_, backupErr := os.Stat(backupDir)
+	if os.IsNotExist(outputErr) && backupErr == nil {
+		if err := os.Rename(backupDir, pvfDir); err != nil {
+			return fmt.Errorf("restore interrupted PVF publish: %w", err)
+		}
+		return nil
+	}
+	if outputErr == nil && backupErr == nil {
+		if err := os.RemoveAll(backupDir); err != nil {
+			return fmt.Errorf("remove completed PVF publish backup: %w", err)
+		}
+	}
+	return nil
+}
+
+func publishPVFDirectory(stageDir, pvfDir, tempDir string) error {
+	if info, err := os.Stat(stageDir); err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("not a directory")
+		}
+		return fmt.Errorf("invalid PVF export staging directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pvfDir), 0755); err != nil {
+		return err
+	}
+	backupDir := filepath.Join(tempDir, "pvf.previous")
+	if err := os.RemoveAll(backupDir); err != nil {
+		return err
+	}
+	hadPrevious := false
+	if _, err := os.Stat(pvfDir); err == nil {
+		if err := os.Rename(pvfDir, backupDir); err != nil {
+			return fmt.Errorf("stage previous PVF export: %w", err)
+		}
+		hadPrevious = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(stageDir, pvfDir); err != nil {
+		if hadPrevious {
+			if restoreErr := os.Rename(backupDir, pvfDir); restoreErr != nil {
+				return fmt.Errorf("publish PVF export: %v; restore previous export: %w", err, restoreErr)
+			}
+		}
+		return fmt.Errorf("publish PVF export: %w", err)
+	}
+	if hadPrevious {
+		if err := os.RemoveAll(backupDir); err != nil {
+			return fmt.Errorf("remove previous PVF export: %w", err)
+		}
+	}
+	return nil
 }
 
 func buildPVFManifestMetadata(path string, stat os.FileInfo) pvfManifest {
@@ -118,58 +232,96 @@ func buildPVFManifestMetadata(path string, stat os.FileInfo) pvfManifest {
 }
 
 func buildPVFManifest(path string, stat os.FileInfo) (pvfManifest, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return pvfManifest{}, err
 	}
-	sum := md5.Sum(data)
+	defer file.Close()
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return pvfManifest{}, err
+	}
 	manifest := buildPVFManifestMetadata(path, stat)
-	manifest.MD5 = hex.EncodeToString(sum[:])
+	manifest.MD5 = hex.EncodeToString(hash.Sum(nil))
 	return manifest, nil
 }
 
 func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) bool {
-	for _, name := range []string{"pvf_equipment_catalog.json", "pvf_stackable_catalog.json", "pvf_map_catalog.json", pvfSkillStateExportName, pvfLevelExpExportName, pvfItemInfoExportName} {
-		path := filepath.Join(configDir, name)
-		stat, err := os.Stat(path)
-		if err != nil || stat.Size() <= 5 {
-			return false
-		}
-		if name == pvfItemInfoExportName {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil || strings.Contains(string(data), `"source_path"`) {
-			return false
-		}
-		if name == "pvf_equipment_catalog.json" && !strings.Contains(string(data), `"item_type": 20`) {
-			return false
-		}
-		if name == "pvf_map_catalog.json" && (!strings.Contains(string(data), `"normal_eligible"`) || !strings.Contains(string(data), `"store_eligible"`)) {
-			return false
-		}
-		if name == pvfLevelExpExportName {
-			var values []int
-			if json.Unmarshal(data, &values) != nil || len(values) < 2 {
-				return false
-			}
-		}
-	}
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return false
 	}
 	var got pvfManifest
-	if json.Unmarshal(data, &got) != nil {
+	if json.Unmarshal(data, &got) != nil || want.MD5 == "" || got.MD5 != want.MD5 || got.Version != want.Version || got.SkillStateVersion != want.SkillStateVersion || got.Source != want.Source || got.Size != want.Size || got.ModTime != want.ModTime {
 		return false
 	}
-	md5Matches := false
-	if want.MD5 == "" {
-		md5Matches = got.MD5 != ""
-	} else {
-		md5Matches = got.MD5 == want.MD5
+
+	markerScratch := make([]byte, pvfMarkerScanChunk+pvfMarkerScanOverlap)
+	for _, name := range []string{pvfEquipmentExportName, pvfStackableExportName, pvfMapExportName, pvfSkillStateExportName, pvfLevelExpExportName, pvfItemInfoExportName} {
+		path := filepath.Join(configDir, name)
+		stat, err := os.Stat(path)
+		if err != nil || stat.Size() <= 5 {
+			return false
+		}
+		if name == pvfItemInfoExportName || name == pvfSkillStateExportName || name == pvfLevelExpExportName {
+			continue
+		}
+		var required [][]byte
+		switch name {
+		case pvfEquipmentExportName:
+			required = pvfEquipmentMarkers
+		case pvfMapExportName:
+			required = pvfMapEligibilityMarker
+		}
+		if !pvfExportMarkersCurrent(path, required, markerScratch) {
+			return false
+		}
 	}
-	return got.Version == want.Version && got.SkillStateVersion == want.SkillStateVersion && got.Source == want.Source && got.Size == want.Size && got.ModTime == want.ModTime && md5Matches
+	return true
+}
+
+func pvfExportMarkersCurrent(path string, required [][]byte, scratch []byte) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	maxMarker := len(pvfLegacySourceMarker)
+	for _, marker := range required {
+		if len(marker) > maxMarker {
+			maxMarker = len(marker)
+		}
+	}
+	if len(required) > 64 || len(scratch) < pvfMarkerScanChunk+maxMarker {
+		return false
+	}
+	requiredMask := uint64(1)<<len(required) - 1
+	foundMask := uint64(0)
+	carry := 0
+	for {
+		n, readErr := file.Read(scratch[carry : carry+pvfMarkerScanChunk])
+		chunk := scratch[:carry+n]
+		if bytes.Contains(chunk, pvfLegacySourceMarker) {
+			return false
+		}
+		for index, marker := range required {
+			if foundMask&(uint64(1)<<index) == 0 && bytes.Contains(chunk, marker) {
+				foundMask |= uint64(1) << index
+			}
+		}
+		if readErr == io.EOF {
+			return foundMask == requiredMask
+		}
+		if readErr != nil {
+			return false
+		}
+		carry = maxMarker - 1
+		if carry > len(chunk) {
+			carry = len(chunk)
+		}
+		copy(scratch[:carry], chunk[len(chunk)-carry:])
+	}
 }
 
 func loadLevelExpCatalog(path string) error {
@@ -184,12 +336,6 @@ func loadLevelExpCatalog(path string) error {
 	return catalog.SetLevelMinExpTable(values)
 }
 
-func removeObsoletePVFExports(configDir string) {
-	for _, name := range []string{"equipment_catalog.json", "stackable_catalog.json", "map_catalog.json", "pvf_iteminfo_catalog.json"} {
-		_ = os.Remove(filepath.Join(configDir, name))
-	}
-}
-
 func writePVFItemInfoExports(configDir string, archive *pvfArchive, equipment, stackable []shared.EquipmentCatalogItem) error {
 	if archive == nil {
 		return nil
@@ -198,13 +344,19 @@ func writePVFItemInfoExports(configDir string, archive *pvfArchive, equipment, s
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	if err := os.WriteFile(filepath.Join(configDir, pvfItemInfoExportName), []byte(text), 0644); err != nil {
+	if err := writeFileAtomic(filepath.Join(configDir, pvfItemInfoExportName), []byte(text), 0644); err != nil {
 		return err
 	}
 	return nil
 }
 
 func ExportPVFItemInfoDAT(pvfPath, configDir string) (string, error) {
+	exportMu.Lock()
+	defer exportMu.Unlock()
+	return exportPVFItemInfoDAT(pvfPath, configDir)
+}
+
+func exportPVFItemInfoDAT(pvfPath, configDir string) (string, error) {
 	if strings.TrimSpace(pvfPath) == "" {
 		return "", fmt.Errorf("pvf path is empty")
 	}
@@ -223,6 +375,8 @@ func ExportPVFItemInfoDAT(pvfPath, configDir string) (string, error) {
 }
 
 func EnsurePVFItemInfoDAT(pvfPath, configDir string) (string, error) {
+	exportMu.Lock()
+	defer exportMu.Unlock()
 	if strings.TrimSpace(pvfPath) == "" {
 		return "", fmt.Errorf("pvf path is empty")
 	}
@@ -234,11 +388,15 @@ func EnsurePVFItemInfoDAT(pvfPath, configDir string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(configDir, pvfItemInfoExportName)
-	manifestPath := filepath.Join(configDir, "pvf_manifest.json")
-	if pvfExportsCurrent(manifestPath, buildPVFManifestMetadata(pvfPath, stat), configDir) {
+	manifestPath := filepath.Join(configDir, pvfManifestName)
+	manifest, err := buildPVFManifest(pvfPath, stat)
+	if err != nil {
+		return "", err
+	}
+	if pvfExportsCurrent(manifestPath, manifest, configDir) {
 		return path, nil
 	}
-	return ExportPVFItemInfoDAT(pvfPath, configDir)
+	return exportPVFItemInfoDAT(pvfPath, configDir)
 }
 
 func formatPVFItemInfoDAT(text string) string {

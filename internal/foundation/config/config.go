@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-)
 
-const configFile = "./config/config.ini"
+	"robot/internal/foundation/atomicfile"
+)
 
 const defaultDNFServiceRoot = "/home/neople"
 
@@ -48,8 +48,8 @@ type SysConfig struct {
 // LoadConfig reads config.ini and returns a populated SysConfig.
 // If the config file does not exist, a default one is generated first.
 func LoadConfig(path string) (*SysConfig, error) {
-	if path == "" {
-		path = configFile
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("empty config path")
 	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -62,69 +62,94 @@ func LoadConfig(path string) (*SysConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
+	return decodeSysConfig(ini)
+}
+
+// ParseConfig validates and decodes a complete main configuration before it
+// is published to disk.
+func ParseConfig(text string) (*SysConfig, error) {
+	ini, err := LoadFromString(text)
+	if err != nil {
+		return nil, err
+	}
+	return decodeSysConfig(ini)
+}
+
+func decodeSysConfig(ini *INIConfig) (*SysConfig, error) {
+	dec := NewDecoder(ini, "main config")
 
 	cfg := &SysConfig{}
 
 	// [Ports] section
-	cfg.RobotPort = validPort(ini.GetInt("Ports", "RobotAPI", 8111), 8111)
-	cfg.WebPort = validPort(ini.GetInt("Ports", "Web", 8112), 8112)
-	cfg.RobotGamePort = validPort(ini.GetInt("Ports", "Game", 10011), 10011)
-	cfg.MonitorPort = validPort(ini.GetInt("Ports", "Monitor", 30303), 30303)
-	cfg.AuctionPort = validPort(ini.GetInt("Ports", "Auction", 30803), 30803)
-	cfg.PointPort = validPort(ini.GetInt("Ports", "Point", 30603), 30603)
-	cfg.RelayPort = validPort(ini.GetInt("Ports", "Relay", 7200), 7200)
-	cfg.PartyRoute0Port = validPort(ini.GetInt("Ports", "PartyRoute0", 5063), 5063)
+	cfg.RobotPort = dec.Int("Ports", "RobotAPI", 8111)
+	cfg.WebPort = dec.Int("Ports", "Web", 8112)
+	cfg.RobotGamePort = dec.Int("Ports", "Game", 10011)
+	cfg.MonitorPort = dec.Int("Ports", "Monitor", 30303)
+	cfg.AuctionPort = dec.Int("Ports", "Auction", 30803)
+	cfg.PointPort = dec.Int("Ports", "Point", 30603)
+	cfg.RelayPort = dec.Int("Ports", "Relay", 7200)
+	cfg.PartyRoute0Port = dec.Int("Ports", "PartyRoute0", 5063)
 
 	// [Robot] section
-	cfg.DFGameR = ini.GetString("Robot", "DfGameR", "/home/neople/game/df_game_r")
-	cfg.ConfigDir = ini.GetString("Robot", "ConfigDir", "./config")
-	cfg.RobotInnerIP = ini.GetString("Robot", "RobotInnerIp", "")
-	if cfg.RobotInnerIP == "" {
-		cfg.RobotInnerIP = "10.0.0.1"
-	}
-	cfg.RobotConnectIP = ini.GetString("Robot", "RobotConnectIp", "")
-	cfg.GameServerGroup = ini.GetInt("Robot", "GameServerGroup", 3)
-	if cfg.GameServerGroup < 0 {
-		cfg.GameServerGroup = 3
-	}
+	cfg.DFGameR = dec.String("Robot", "DfGameR", "/home/neople/game/df_game_r")
+	cfg.RobotInnerIP = dec.String("Robot", "RobotInnerIp", "10.0.0.1")
+	cfg.RobotConnectIP = dec.String("Robot", "RobotConnectIp", "")
+	cfg.GameServerGroup = dec.Int("Robot", "GameServerGroup", 3)
 
 	// [Web] section
-	cfg.WebPassword = ini.GetString("Web", "WebPassword", "twadmin")
+	cfg.WebPassword = dec.String("Web", "WebPassword", "twadmin")
 
 	// [db] section
-	cfg.DBHost = ini.GetString("db", "db_host", "127.0.0.1")
-	cfg.DBUser = ini.GetString("db", "db_user_name", "game")
-	cfg.DBPassword = ini.GetString("db", "db_password", "uu5!^%jg")
-	cfg.DBName = ini.GetString("db", "db_database_name", "d_taiwan")
-	cfg.DBPort = ini.GetInt("db", "db_prot", 3306)
-	cfg.DBInitSize = ini.GetInt("db", "db_init_size", 4)
-	if cfg.DBInitSize <= 0 {
-		cfg.DBInitSize = 4
-	}
-	cfg.DBMaxSize = ini.GetInt("db", "db_max_Size", 64)
-	if cfg.DBMaxSize <= 0 {
-		cfg.DBMaxSize = 64
-	}
-	cfg.DBDialTimeoutSec = boundedInt(ini.GetInt("db", "db_dial_timeout_sec", 5), 5, 1, 30)
-	cfg.DBReadTimeoutSec = boundedInt(ini.GetInt("db", "db_read_timeout_sec", 30), 30, 1, 120)
-	cfg.DBWriteTimeoutSec = boundedInt(ini.GetInt("db", "db_write_timeout_sec", 30), 30, 1, 120)
-	cfg.DBConnMaxLifetimeSec = boundedInt(ini.GetInt("db", "db_conn_max_lifetime_sec", 1800), 1800, 60, 86400)
-	if cfg.DBMaxSize < cfg.DBInitSize {
-		cfg.DBMaxSize = cfg.DBInitSize
-	}
+	cfg.DBHost = dec.String("db", "db_host", "127.0.0.1")
+	cfg.DBUser = dec.String("db", "db_user_name", "game")
+	cfg.DBPassword = dec.String("db", "db_password", "uu5!^%jg")
+	cfg.DBName = dec.String("db", "db_database_name", "d_taiwan")
+	cfg.DBPort = dec.Int("db", "db_port", 3306)
+	cfg.DBInitSize = dec.Int("db", "db_init_size", 4)
+	cfg.DBMaxSize = dec.Int("db", "db_max_size", 64)
+	cfg.DBDialTimeoutSec = dec.Int("db", "db_dial_timeout_sec", 5)
+	cfg.DBReadTimeoutSec = dec.Int("db", "db_read_timeout_sec", 30)
+	cfg.DBWriteTimeoutSec = dec.Int("db", "db_write_timeout_sec", 30)
+	cfg.DBConnMaxLifetimeSec = dec.Int("db", "db_conn_max_lifetime_sec", 1800)
 
 	// [system] section
-	cfg.LogMaxSizeMB = ini.GetInt("system", "log_max_size_mb", 100)
-	if cfg.LogMaxSizeMB <= 0 {
-		cfg.LogMaxSizeMB = 100
+	cfg.LogMaxSizeMB = dec.Int("system", "log_max_size_mb", 100)
+	cfg.LogMaxBackups = dec.Int("system", "log_max_backups", 5)
+	cfg.MaxResponseBytes = dec.Int("system", "max_response_bytes", 4*1024*1024)
+
+	checkPort := func(section, key string, port int) {
+		dec.Check(section, key, port >= 1 && port <= 65535, "must be between 1 and 65535")
 	}
-	cfg.LogMaxBackups = ini.GetInt("system", "log_max_backups", 5)
-	if cfg.LogMaxBackups <= 0 {
-		cfg.LogMaxBackups = 5
-	}
-	cfg.MaxResponseBytes = ini.GetInt("system", "max_response_bytes", 4*1024*1024)
-	if cfg.MaxResponseBytes <= 0 {
-		cfg.MaxResponseBytes = 4 * 1024 * 1024
+	checkPort("Ports", "RobotAPI", cfg.RobotPort)
+	checkPort("Ports", "Web", cfg.WebPort)
+	// The cache invalidation UDP port is Game+1000, so Game must leave room
+	// below the upper TCP port boundary.
+	dec.Check("Ports", "Game", cfg.RobotGamePort >= 1 && cfg.RobotGamePort <= 64535, "must be between 1 and 64535")
+	checkPort("Ports", "Monitor", cfg.MonitorPort)
+	checkPort("Ports", "Auction", cfg.AuctionPort)
+	checkPort("Ports", "Point", cfg.PointPort)
+	checkPort("Ports", "Relay", cfg.RelayPort)
+	checkPort("Ports", "PartyRoute0", cfg.PartyRoute0Port)
+	dec.Check("Robot", "DfGameR", strings.TrimSpace(cfg.DFGameR) != "", "must not be empty")
+	dec.Check("Robot", "RobotInnerIp", strings.TrimSpace(cfg.RobotInnerIP) != "", "must not be empty")
+	dec.Check("Robot", "GameServerGroup", cfg.GameServerGroup >= 0 && uint64(cfg.GameServerGroup) <= uint64(^uint32(0)), "must be between 0 and 4294967295")
+	dec.Check("Web", "WebPassword", strings.TrimSpace(cfg.WebPassword) != "", "must not be empty")
+	dec.Check("db", "db_host", strings.TrimSpace(cfg.DBHost) != "", "must not be empty")
+	dec.Check("db", "db_user_name", strings.TrimSpace(cfg.DBUser) != "", "must not be empty")
+	dec.Check("db", "db_database_name", strings.TrimSpace(cfg.DBName) != "", "must not be empty")
+	checkPort("db", "db_port", cfg.DBPort)
+	dec.Check("db", "db_init_size", cfg.DBInitSize >= 1, "must be positive")
+	dec.Check("db", "db_max_size", cfg.DBMaxSize >= 1, "must be positive")
+	dec.Check("db", "db_max_size", cfg.DBMaxSize >= cfg.DBInitSize, "must be greater than or equal to db_init_size")
+	dec.Check("db", "db_dial_timeout_sec", cfg.DBDialTimeoutSec >= 1 && cfg.DBDialTimeoutSec <= 30, "must be between 1 and 30")
+	dec.Check("db", "db_read_timeout_sec", cfg.DBReadTimeoutSec >= 1 && cfg.DBReadTimeoutSec <= 120, "must be between 1 and 120")
+	dec.Check("db", "db_write_timeout_sec", cfg.DBWriteTimeoutSec >= 1 && cfg.DBWriteTimeoutSec <= 120, "must be between 1 and 120")
+	dec.Check("db", "db_conn_max_lifetime_sec", cfg.DBConnMaxLifetimeSec >= 60 && cfg.DBConnMaxLifetimeSec <= 86400, "must be between 60 and 86400")
+	dec.Check("system", "log_max_size_mb", cfg.LogMaxSizeMB >= 1, "must be positive")
+	dec.Check("system", "log_max_backups", cfg.LogMaxBackups >= 1, "must be positive")
+	dec.Check("system", "max_response_bytes", cfg.MaxResponseBytes >= 1, "must be positive")
+	if err := dec.Validate(); err != nil {
+		return nil, err
 	}
 
 	// auto-detect local IP
@@ -134,13 +159,6 @@ func LoadConfig(path string) (*SysConfig, error) {
 	}
 
 	return cfg, nil
-}
-
-func validPort(port, fallback int) int {
-	if port <= 0 || port > 65535 {
-		return fallback
-	}
-	return port
 }
 
 // DNFServiceRoot returns the common parent for sibling game, auction, and
@@ -157,19 +175,6 @@ func DNFServiceRoot(dfGameR string) string {
 	return root
 }
 
-func boundedInt(value, fallback, minimum, maximum int) int {
-	if value <= 0 {
-		return fallback
-	}
-	if minimum > 0 && value < minimum {
-		return minimum
-	}
-	if maximum > 0 && value > maximum {
-		return maximum
-	}
-	return value
-}
-
 func getLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
@@ -184,18 +189,7 @@ func getLocalIP() string {
 }
 
 func generateDefaultConfig(path string) error {
-	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = f.WriteString(strings.Join([]string{
+	data := strings.Join([]string{
 		"# robot main config. Restart robot after editing.",
 		"[Ports]",
 		"RobotAPI = 8111",
@@ -210,8 +204,6 @@ func generateDefaultConfig(path string) error {
 		"[Robot]",
 		"# df_game_r path, used for runtime self-check and PVF export.",
 		"DfGameR = /home/neople/game/df_game_r",
-		"# Runtime config directory for robot_config.ini, templates, PVF exports, and logs.",
-		"ConfigDir = ./config",
 		"# Inner game IP written into robot login data.",
 		"RobotInnerIp = 10.0.0.1",
 		"# IP used for game-port checks and robot game connection; leave empty to auto-detect local IP.",
@@ -229,9 +221,9 @@ func generateDefaultConfig(path string) error {
 		"db_user_name = game",
 		"db_password = uu5!^%jg",
 		"db_database_name = d_taiwan",
-		"db_prot = 3306",
+		"db_port = 3306",
 		"db_init_size = 4",
-		"db_max_Size = 64",
+		"db_max_size = 64",
 		"db_dial_timeout_sec = 5",
 		"db_read_timeout_sec = 30",
 		"db_write_timeout_sec = 30",
@@ -242,6 +234,7 @@ func generateDefaultConfig(path string) error {
 		"log_max_backups = 5",
 		"max_response_bytes = 4194304",
 		"",
-	}, "\n"))
+	}, "\n")
+	_, err := atomicfile.WriteFileIfMissing(path, []byte(data), 0600)
 	return err
 }

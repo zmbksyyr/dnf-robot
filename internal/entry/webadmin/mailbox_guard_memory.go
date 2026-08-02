@@ -143,29 +143,34 @@ func setMailboxGuardMemory(mem memoryReadWriter, layout mailboxGuardLayout, enab
 	}
 	if changeStreamListEmpty {
 		if err := writeMemoryVerified(mem, layout.streamListEmptySite, streamListEmptyDesired); err != nil {
-			return false, err
+			rollbackErr := restoreMemoryVerified(mem, memoryRestore{address: layout.streamListEmptySite, value: streamListEmptyBefore})
+			return false, memoryPatchError("write mailbox stream-list guard", err, rollbackErr)
 		}
 	}
 	if changeInvalidItemScan {
 		if err := writeMemoryVerified(mem, layout.invalidItemScanSite, invalidItemScanDesired); err != nil {
+			restores := []memoryRestore{{address: layout.invalidItemScanSite, value: invalidItemScanBefore}}
 			if changeStreamListEmpty {
-				_ = writeMemoryVerified(mem, layout.streamListEmptySite, streamListEmptyBefore)
+				restores = append(restores, memoryRestore{address: layout.streamListEmptySite, value: streamListEmptyBefore})
 			}
-			return false, err
+			rollbackErr := restoreMemoryVerified(mem, restores...)
+			return false, memoryPatchError("write mailbox invalid-item guard", err, rollbackErr)
 		}
 	}
 	actual, err := inspectMailboxGuardMemory(mem, layout)
 	if err != nil || actual != enable {
+		verificationErr := err
+		if verificationErr == nil {
+			verificationErr = fmt.Errorf("mailbox bad-node guard memory verification failed")
+		}
+		restores := make([]memoryRestore, 0, 2)
 		if changeInvalidItemScan {
-			_ = writeMemoryVerified(mem, layout.invalidItemScanSite, invalidItemScanBefore)
+			restores = append(restores, memoryRestore{address: layout.invalidItemScanSite, value: invalidItemScanBefore})
 		}
 		if changeStreamListEmpty {
-			_ = writeMemoryVerified(mem, layout.streamListEmptySite, streamListEmptyBefore)
+			restores = append(restores, memoryRestore{address: layout.streamListEmptySite, value: streamListEmptyBefore})
 		}
-		if err != nil {
-			return false, err
-		}
-		return false, fmt.Errorf("mailbox bad-node guard memory verification failed")
+		return false, memoryPatchError("verify mailbox bad-node guard", verificationErr, restoreMemoryVerified(mem, restores...))
 	}
 	return true, nil
 }

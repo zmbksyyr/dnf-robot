@@ -9,7 +9,14 @@ import (
 	"strings"
 	"time"
 
+	foundationnetwork "robot/internal/foundation/network"
 	marketproto "robot/internal/protocol/market"
+)
+
+const (
+	maxDirectAuctionPacketSize      uint32 = 1024 * 1024
+	maxDirectAuctionResponsePackets        = 256
+	maxDirectAuctionResponseBytes   uint64 = 4 * 1024 * 1024
 )
 
 func buildDirectRegisterPacket(req MarketDirectRegisterItemRequest) ([]byte, error) {
@@ -83,12 +90,23 @@ func buildDirectBidPacket(req MarketDirectBidRequest) ([]byte, error) {
 func readDirectAuctionPackets(conn net.Conn, deadline time.Time, result *MarketDirectAuctionResult, wantPacketID byte) error {
 	buf := make([]byte, 0, 4096)
 	tmp := make([]byte, 4096)
+	var responseBytes uint64
+	for _, packet := range result.Packets {
+		responseBytes += uint64(packet.Size)
+		if responseBytes > maxDirectAuctionResponseBytes {
+			return fmt.Errorf("direct auction response exceeds %d bytes", maxDirectAuctionResponseBytes)
+		}
+	}
 	for {
 		if len(result.Packets) > 0 && hasDirectPacket(result.Packets, wantPacketID) {
 			break
 		}
 		n, err := conn.Read(tmp)
 		if n > 0 {
+			if uint64(n) > maxDirectAuctionResponseBytes-responseBytes {
+				return fmt.Errorf("direct auction response exceeds %d bytes", maxDirectAuctionResponseBytes)
+			}
+			responseBytes += uint64(n)
 			buf = append(buf, tmp[:n]...)
 			for {
 				if len(buf) < marketproto.DirectPacketHeaderSize {
@@ -98,8 +116,14 @@ func readDirectAuctionPackets(conn net.Conn, deadline time.Time, result *MarketD
 				if size < marketproto.DirectPacketHeaderSize {
 					return fmt.Errorf("invalid direct auction packet size %d", size)
 				}
+				if size > maxDirectAuctionPacketSize {
+					return fmt.Errorf("direct auction packet size %d exceeds limit %d", size, maxDirectAuctionPacketSize)
+				}
 				if int(size) > len(buf) {
 					break
+				}
+				if len(result.Packets) >= maxDirectAuctionResponsePackets {
+					return fmt.Errorf("direct auction response exceeds %d packets", maxDirectAuctionResponsePackets)
 				}
 				raw := append([]byte(nil), buf[:size]...)
 				result.Packets = append(result.Packets, MarketDirectAuctionPacket{
@@ -124,6 +148,13 @@ func readDirectAuctionPackets(conn net.Conn, deadline time.Time, result *MarketD
 		}
 	}
 	return nil
+}
+
+func writeDirectAuctionPacket(conn net.Conn, packet []byte) error {
+	if conn == nil {
+		return fmt.Errorf("direct auction connection is nil")
+	}
+	return foundationnetwork.WriteFull(conn, packet)
 }
 
 func parseDirectResult(raw []byte, result *MarketDirectAuctionResult) {

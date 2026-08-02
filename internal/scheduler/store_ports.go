@@ -1,11 +1,10 @@
 package scheduler
 
 import (
-	"path/filepath"
-
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	storecap "robot/internal/capability/store"
+	"robot/internal/foundation/layout"
 	"robot/internal/shared"
 )
 
@@ -154,14 +153,15 @@ func (m *RobotManager) storePool(rc robotconfig.RuntimeConfig) *storecap.ItemPoo
 	return m.storeItemPool
 }
 
-func (m *RobotManager) storeTitle(uid int, rc robotconfig.RuntimeConfig) string {
-	path := rc.StoreTitleFile
-	if !filepath.IsAbs(path) {
-		configDir := "."
-		if m.cfg != nil && m.cfg.ConfigDir != "" {
-			configDir = m.cfg.ConfigDir
+func (m *RobotManager) storeTitle(uid int, _ robotconfig.RuntimeConfig) string {
+	path := ""
+	if m.cfg != nil && m.cfg.ConfigDir != "" {
+		path = layout.New(m.cfg.ConfigDir).StoreTitles()
+	}
+	if currentPath := m.storeTitlePathSnapshot.Load(); currentPath != nil && currentPath.path == path {
+		if titles := m.storeTitleSnapshot.Load(); titles != nil {
+			return titles.TitleForUID(uid)
 		}
-		path = filepath.Join(configDir, path)
 	}
 	m.storeTitleLock.Lock()
 	defer m.storeTitleLock.Unlock()
@@ -174,6 +174,8 @@ func (m *RobotManager) storeTitle(uid int, rc robotconfig.RuntimeConfig) string 
 		m.storeTitles = catalog
 		m.storeTitlePath = path
 		m.storeTitlesLoaded = true
+		m.storeTitleSnapshot.Store(catalog)
+		m.storeTitlePathSnapshot.Store(&storeTitlePathValue{path: path})
 		robotLogf("[StoreTitle] loaded path=%s titles=%d\n", path, catalog.Len())
 	}
 	return m.storeTitles.TitleForUID(uid)

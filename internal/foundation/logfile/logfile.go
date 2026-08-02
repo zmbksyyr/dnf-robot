@@ -124,6 +124,85 @@ func Append(path string, data []byte, maxBytes int64, backups int) error {
 	return closeErr
 }
 
+// Appender keeps one file descriptor open for a bursty producer. The caller
+// serializes Append and Close; unlike Append, it prepares and scans backups
+// only once when opened.
+type Appender struct {
+	path     string
+	maxBytes int64
+	backups  int
+	file     *os.File
+	size     int64
+}
+
+func OpenAppender(path string, maxBytes int64, backups int) (*Appender, error) {
+	if err := Prepare(path, maxBytes, backups); err != nil {
+		return nil, err
+	}
+	a := &Appender{path: path, maxBytes: maxBytes, backups: backups}
+	if err := a.open(); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+func (a *Appender) Append(data []byte) error {
+	if a == nil || a.file == nil {
+		return errors.New("log appender is closed")
+	}
+	if int64(len(data)) > a.maxBytes {
+		return fmt.Errorf("log record exceeds max bytes: %d > %d", len(data), a.maxBytes)
+	}
+	if a.size+int64(len(data)) > a.maxBytes {
+		if err := a.rotate(); err != nil {
+			return err
+		}
+	}
+	n, err := a.file.Write(data)
+	a.size += int64(n)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+func (a *Appender) Close() error {
+	if a == nil || a.file == nil {
+		return nil
+	}
+	err := a.file.Close()
+	a.file = nil
+	return err
+}
+
+func (a *Appender) open() error {
+	f, err := os.OpenFile(a.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	a.file = f
+	a.size = info.Size()
+	return nil
+}
+
+func (a *Appender) rotate() error {
+	if err := a.Close(); err != nil {
+		return err
+	}
+	if err := Rotate(a.path, a.backups); err != nil {
+		return err
+	}
+	return a.open()
+}
+
 // CopyRotating drains src for its full lifetime while keeping only bounded files.
 // Keeping the reader open after rotation is important for child processes whose
 // stdout pipe must not close when the log reaches its size limit.
@@ -328,10 +407,6 @@ func trimToTail(path string, maxBytes int64) error {
 	if closeInErr != nil {
 		_ = os.Remove(tmp)
 		return closeInErr
-	}
-	if err := os.Remove(path); err != nil {
-		_ = os.Remove(tmp)
-		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)

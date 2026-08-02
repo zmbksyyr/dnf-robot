@@ -1,9 +1,6 @@
 package marketapp
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 	app := testApp(t)
@@ -40,10 +37,10 @@ func TestLoadCatalogUsesPVFJSONOnly(t *testing.T) {
 	dir := t.TempDir()
 	app := testApp(t)
 	app.configDir = dir
-	mustWriteJSON(t, filepath.Join(dir, "pvf_stackable_catalog.json"), []map[string]interface{}{
+	mustWriteJSON(t, appPaths(app).PVFStackable(), []map[string]interface{}{
 		{"id": 4000, "price": 7, "stack_limit": 1000},
 	})
-	mustWriteJSON(t, filepath.Join(dir, "pvf_equipment_catalog.json"), []map[string]interface{}{
+	mustWriteJSON(t, appPaths(app).PVFEquipment(), []map[string]interface{}{
 		{"id": 31056, "price": 100, "attach": "trade", "slot": "weapon"},
 	})
 

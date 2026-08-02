@@ -1,6 +1,7 @@
 package marketapp
 
 func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[uint32]int, occ map[uint32]int, result *PlanResult) {
+	cfg := a.configSnapshot()
 	type pendingCera struct {
 		row  ceraRow
 		need int
@@ -44,7 +45,7 @@ func (a *App) planCera(rows []ceraRow, catalog map[uint32]catalogItem, have map[
 				UnitPrice:    price,
 				TotalPrice:   price,
 				OwnerID:      ownerID,
-				OwnerName:    a.cfg.SystemOwner.CeraName,
+				OwnerName:    cfg.SystemOwner.CeraName,
 				CountAddInfo: 1,
 				StartPrice:   -1,
 				InstantPrice: price,

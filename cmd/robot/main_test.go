@@ -1,10 +1,41 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"robot/internal/entry/tcpapi"
 )
+
+func TestLoadRequiredRobotConfigRejectsMissingOrInvalidFile(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "robot_config.ini")
+	if _, err := loadRequiredRobotConfig(missing); err == nil {
+		t.Fatal("missing robot config unexpectedly accepted")
+	}
+
+	invalid := filepath.Join(t.TempDir(), "robot_config.ini")
+	if err := os.WriteFile(invalid, []byte("[auto]\nauto_actions = enabled\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRequiredRobotConfig(invalid); err == nil {
+		t.Fatal("invalid robot config unexpectedly accepted")
+	}
+}
+
+func TestLoadRequiredRobotConfigAcceptsValidFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "robot_config.ini")
+	if err := os.WriteFile(path, []byte("[auto]\nauto_actions = false\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	rc, err := loadRequiredRobotConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.AutoActions {
+		t.Fatal("auto_actions setting was not loaded")
+	}
+}
 
 func TestRequiresValidKeypair(t *testing.T) {
 	blocked := []string{

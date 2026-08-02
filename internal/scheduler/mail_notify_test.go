@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -9,19 +10,28 @@ import (
 )
 
 type schedulerMailNotifier struct {
-	calls int
-	err   error
-	done  chan struct{}
-	block chan struct{}
+	calls        int
+	err          error
+	done         chan struct{}
+	block        chan struct{}
+	ignoreCancel bool
 }
 
-func (n *schedulerMailNotifier) PollOnce(time.Time) error {
+func (n *schedulerMailNotifier) PollOnce(ctx context.Context, _ time.Time) error {
 	n.calls++
 	if n.done != nil {
 		n.done <- struct{}{}
 	}
 	if n.block != nil {
-		<-n.block
+		if n.ignoreCancel {
+			<-n.block
+			return n.err
+		}
+		select {
+		case <-n.block:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	return n.err
 }
@@ -109,6 +119,45 @@ func TestMailNotifyDoesNotBlockSchedulerTick(t *testing.T) {
 	m.pollMailNotifications(started.Add(2*time.Second), rc)
 	if notifier.calls != 1 {
 		t.Fatalf("overlapping mail poll calls = %d, want 1", notifier.calls)
+	}
+	close(notifier.block)
+	waitMailIdle(t, m)
+}
+
+func TestWaitMailNotificationsCancelsRunningPoll(t *testing.T) {
+	notifier := &schedulerMailNotifier{done: make(chan struct{}, 1), block: make(chan struct{})}
+	m := &RobotManager{autoEnabled: true}
+	m.SetMailNotifier(notifier)
+	rc := robotconfig.RuntimeConfig{AutoActions: true, AutoMailNotify: true, SystemActorPollMS: 1000}
+	m.pollMailNotifications(time.Now(), rc)
+	waitMailPoll(t, notifier)
+
+	finished := make(chan struct{})
+	go func() {
+		m.waitMailNotifications()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("mail poll did not stop after cancellation")
+	}
+}
+
+func TestWaitMailNotificationsHasShutdownDeadline(t *testing.T) {
+	previousTimeout := mailNotifyShutdownTimeout
+	mailNotifyShutdownTimeout = 20 * time.Millisecond
+	defer func() { mailNotifyShutdownTimeout = previousTimeout }()
+	notifier := &schedulerMailNotifier{done: make(chan struct{}, 1), block: make(chan struct{}), ignoreCancel: true}
+	m := &RobotManager{autoEnabled: true}
+	m.SetMailNotifier(notifier)
+	rc := robotconfig.RuntimeConfig{AutoActions: true, AutoMailNotify: true, SystemActorPollMS: 1000}
+	m.pollMailNotifications(time.Now(), rc)
+	waitMailPoll(t, notifier)
+	started := time.Now()
+	m.waitMailNotifications()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("mail shutdown deadline took %s", elapsed)
 	}
 	close(notifier.block)
 	waitMailIdle(t, m)

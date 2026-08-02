@@ -1,11 +1,14 @@
 package scheduler
 
 import (
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
+	"robot/internal/foundation/layout"
 )
 
 func TestSchedulerPolicyReasonConstants(t *testing.T) {
@@ -28,6 +31,13 @@ func TestSchedulerPolicyReasonConstants(t *testing.T) {
 		if tt.got != tt.want {
 			t.Fatalf("scheduler policy reason constant got %q want %q", tt.got, tt.want)
 		}
+	}
+}
+
+func TestSetAutoEnabledReportsConfigPersistenceFailure(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	if _, err := m.SetAutoEnabled(false); err == nil {
+		t.Fatal("missing robot config did not report persistence failure")
 	}
 }
 
@@ -165,32 +175,40 @@ func TestLoadRobotConfigDoesNotAutoPatchEquipSlots(t *testing.T) {
 	assertIntSlice(t, rc.EquipSlots, []int{3, 4, 5})
 }
 
-func TestLoadRobotConfigSchedulerAdaptiveCaps(t *testing.T) {
-	m := testRobotManagerWithConfig(t, "[auto]\nauto_target_online_count = 2000\n[scheduler]\nonline_batch_size = 999\nonline_start_rate = 999\nonline_fill_timeout_sec = -1\nbreaker_abnormal_percent = 999\nbreaker_pause_sec = 9999\nbreaker_release_batch = 999\nbreaker_floor_percent = 999\nport_down_release_batch = 999\n")
-	rc := m.loadRobotConfig()
-	if rc.SchedulerOnlineBatchSize != 60 {
-		t.Fatalf("SchedulerOnlineBatchSize got %d want 60", rc.SchedulerOnlineBatchSize)
+func TestLoadRobotConfigRejectsOutOfRangeSchedulerEditAndKeepsSnapshot(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "[auto]\nauto_target_online_count = 600\n")
+	before := m.loadRobotConfig()
+	path := layout.New(m.cfg.ConfigDir).RobotConfig()
+	invalid := "[auto]\nauto_target_online_count = 600\n[scheduler]\nonline_batch_size = 999\nonline_start_rate = 999\nonline_fill_timeout_sec = -1\nbreaker_abnormal_percent = 999\nbreaker_pause_sec = 9999\nbreaker_release_batch = 999\nbreaker_floor_percent = 999\nport_down_release_batch = 999\n"
+	if err := os.WriteFile(path, []byte(invalid), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if rc.SchedulerOnlineStartRate != 25 {
-		t.Fatalf("SchedulerOnlineStartRate got %d want 25", rc.SchedulerOnlineStartRate)
+	if err := m.reloadRobotConfigFile(path); err == nil {
+		t.Fatal("out-of-range scheduler edit unexpectedly loaded")
 	}
-	if rc.SchedulerOnlineFillTimeout != 100 {
-		t.Fatalf("SchedulerOnlineFillTimeout got %d want 100", rc.SchedulerOnlineFillTimeout)
+	after := m.loadRobotConfig()
+	if after.AutoTargetOnlineCount != before.AutoTargetOnlineCount ||
+		after.SchedulerOnlineBatchSize != before.SchedulerOnlineBatchSize ||
+		after.SchedulerOnlineStartRate != before.SchedulerOnlineStartRate ||
+		after.SchedulerBreakerPauseSec != before.SchedulerBreakerPauseSec {
+		t.Fatalf("invalid scheduler edit replaced snapshot: before=%+v after=%+v", before, after)
 	}
-	if rc.SchedulerBreakerAbnormalPct != 30 {
-		t.Fatalf("SchedulerBreakerAbnormalPct got %d want 30", rc.SchedulerBreakerAbnormalPct)
+}
+
+func TestReloadRobotConfigRejectsOpenFileRequirementOverflow(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "[online]\nmax_online_robots = 1000\nmax_online_per_command = 1000\n")
+	before := m.loadRobotConfig()
+	path := layout.New(m.cfg.ConfigDir).RobotConfig()
+	text := fmt.Sprintf("[online]\nmax_online_robots = %d\nmax_online_per_command = 1000\n", int(^uint(0)>>1))
+	if err := os.WriteFile(path, []byte(text), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if rc.SchedulerBreakerPauseSec != 420 {
-		t.Fatalf("SchedulerBreakerPauseSec got %d want 420", rc.SchedulerBreakerPauseSec)
+	if err := m.reloadRobotConfigFile(path); err == nil {
+		t.Fatal("overflowing open-file requirement unexpectedly loaded")
 	}
-	if rc.SchedulerBreakerReleaseBatch != 33 {
-		t.Fatalf("SchedulerBreakerReleaseBatch got %d want 33", rc.SchedulerBreakerReleaseBatch)
-	}
-	if rc.SchedulerBreakerFloorPct != 70 {
-		t.Fatalf("SchedulerBreakerFloorPct got %d want 70", rc.SchedulerBreakerFloorPct)
-	}
-	if rc.SchedulerPortDownReleaseBatch != 40 {
-		t.Fatalf("SchedulerPortDownReleaseBatch got %d want 40", rc.SchedulerPortDownReleaseBatch)
+	after := m.loadRobotConfig()
+	if after.MaxOnlineRobots != before.MaxOnlineRobots {
+		t.Fatalf("rejected max_online_robots replaced snapshot: before=%d after=%d", before.MaxOnlineRobots, after.MaxOnlineRobots)
 	}
 }
 

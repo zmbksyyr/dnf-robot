@@ -83,14 +83,22 @@ func TestDefaultCeraRowsEnable3000W(t *testing.T) {
 	t.Fatal("3000w cera row not found")
 }
 
-func TestConfigDefaultsMigrate3000WEnabled(t *testing.T) {
+func TestConfigValidationPreservesExplicitlyDisabled3000W(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Cera.Items = []ceraRow{
 		{ItemID: 2675347, Label: "3000w_gold", RestockPrice: 6000, RestockQty: 20, Enabled: false},
 	}
-	cfg.applyDefaults()
-	if !cfg.Cera.Items[0].Enabled {
-		t.Fatalf("3000w row stayed disabled: %#v", cfg.Cera.Items[0])
+	if err := validateMarketConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Cera.Items[0].Enabled {
+		t.Fatalf("3000w row was unexpectedly re-enabled: %#v", cfg.Cera.Items[0])
+	}
+}
+
+func TestDecodeCeraItemsRejectsRemovedSixColumnShape(t *testing.T) {
+	if _, err := decodeCeraItems("2675347|3000w_gold|6000|20|0|true"); err == nil {
+		t.Fatal("legacy six-column cera row was accepted")
 	}
 }
 

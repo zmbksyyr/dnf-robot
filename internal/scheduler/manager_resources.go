@@ -5,6 +5,7 @@ import (
 	"net"
 	"robot/internal/capability/catalog"
 	robotcap "robot/internal/capability/robot"
+	"robot/internal/foundation/layout"
 	"robot/internal/shared"
 	"strconv"
 	"strings"
@@ -222,7 +223,7 @@ func (m *RobotManager) loadMapCatalog() []shared.MapCatalogItem {
 	if m.cfg == nil {
 		return nil
 	}
-	return catalog.ViewMaps(m.cfg.ConfigDir)
+	return catalog.ViewMaps(layout.New(m.cfg.ConfigDir).PVF)
 }
 
 func (m *RobotManager) robotConnectIP() string {

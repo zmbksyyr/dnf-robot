@@ -53,6 +53,7 @@ func (a *App) loadAuctionCatalog(needAuction bool) (map[uint32]catalogItem, bool
 }
 
 func (a *App) planAuctionMarket(req RestockRequest, catalog map[uint32]catalogItem, pvfReady bool, haveAuction map[uint32]int, occ map[uint32]int, decision *marketDecisionSnapshot, result *PlanResult) error {
+	cfg := a.configSnapshot()
 	decision.Auction = true
 	decision.observeAuctionInputs(a, catalog, pvfReady)
 	if err := a.appendRarityFilteredCollectActions(catalog, result); err != nil {
@@ -60,7 +61,7 @@ func (a *App) planAuctionMarket(req RestockRequest, catalog map[uint32]catalogIt
 	}
 	maxActions := req.MaxActions
 	if maxActions <= 0 {
-		maxActions = a.cfg.Restock.MaxActions
+		maxActions = cfg.Restock.MaxActions
 	}
 	decision.EffectiveMaxActions = maxActions
 	var rows []restockRow
@@ -87,22 +88,23 @@ func (a *App) planAuctionMarket(req RestockRequest, catalog map[uint32]catalogIt
 }
 
 func (a *App) planCeraMarket(haveCera map[uint32]int, occ map[uint32]int, decision *marketDecisionSnapshot, result *PlanResult) {
+	cfg := a.configSnapshot()
 	decision.Cera = true
 	if err := a.ceraItemInfoError(); err != "" {
 		decision.ItemInfoError = err
-		for _, row := range a.cfg.Cera.Items {
+		for _, row := range cfg.Cera.Items {
 			if row.ItemID > 0 && row.RestockQty > 0 && row.Enabled {
 				result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameCera, ItemID: row.ItemID, Name: row.Label, Reason: "missing_iteminfo"})
 			}
 		}
 		return
 	}
-	a.planCera(a.cfg.Cera.Items, nil, haveCera, occ, result)
+	a.planCera(cfg.Cera.Items, nil, haveCera, occ, result)
 }
 
 func (a *App) ceraItemInfoError() string {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
 	return a.itemInfo.Error
 }
 

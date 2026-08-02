@@ -1,19 +1,20 @@
 package webadmin
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"robot/internal/capability/robotconfig"
-	"robot/internal/foundation/config"
 	"runtime"
 	"strconv"
 	"strings"
+
+	"robot/internal/capability/robotconfig"
+	"robot/internal/foundation/atomicfile"
+	"robot/internal/foundation/config"
+	"robot/internal/foundation/layout"
 )
 
 func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +34,7 @@ func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
 			PointPort   int `json:"point_port"`
 			RelayPort   int `json:"relay_port"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		if err := config.DecodeJSONLimit(r.Body, 64*1024, &req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
@@ -46,7 +47,9 @@ func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		writeJSON(w, s.gameEndpointPayload(cfg, "saved; restart robot to apply"))
+		payload := s.gameEndpointPayload(cfg, "saved; restart robot to apply")
+		payload["restart_required"] = true
+		writeJSON(w, payload)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -125,23 +128,14 @@ func (s *Server) writeExternalPorts(game, monitor, auction, point, relay int) (*
 		"Ports.Point":   strconv.Itoa(point),
 		"Ports.Relay":   strconv.Itoa(relay),
 	})
-	if _, err := config.LoadFromString(text); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(path, []byte(text), 0644); err != nil {
-		return nil, err
-	}
-	cfg, err := config.LoadConfig(path)
+	cfg, err := config.ParseConfig(text)
 	if err != nil {
 		return nil, err
 	}
+	if err := atomicfile.WriteFile(path, []byte(text), 0600); err != nil {
+		return nil, err
+	}
 	cfg.ConfigDir = s.cfg.ConfigDir
-	s.cfg.RobotGamePort = cfg.RobotGamePort
-	s.cfg.MonitorPort = cfg.MonitorPort
-	s.cfg.AuctionPort = cfg.AuctionPort
-	s.cfg.PointPort = cfg.PointPort
-	s.cfg.RelayPort = cfg.RelayPort
-	s.cfg.RobotConnectIP = cfg.RobotConnectIP
 	return cfg, nil
 }
 
@@ -156,9 +150,9 @@ func validateExternalPorts(ports ...int) error {
 
 func (s *Server) configPath() string {
 	if s == nil || s.cfg == nil || strings.TrimSpace(s.cfg.ConfigDir) == "" {
-		return filepath.Join("config", "config.ini")
+		return ""
 	}
-	return filepath.Join(s.cfg.ConfigDir, "config.ini")
+	return layout.New(s.cfg.ConfigDir).MainConfig()
 }
 
 func startRobotRestartHelper(exe, configDir string) error {
@@ -176,8 +170,9 @@ func startRobotRestartHelper(exe, configDir string) error {
 }
 
 func buildRobotRestartScript(exe, configDir string) string {
-	logPath := filepath.Join(configDir, "robot_stdout.log")
-	errPath := filepath.Join(configDir, "robot_start_error.log")
+	paths := layout.New(configDir)
+	logPath := paths.StdoutLog()
+	errPath := paths.StartErrorLog()
 	workDir := filepath.Dir(exe)
 	return fmt.Sprintf(`(
 sleep 1

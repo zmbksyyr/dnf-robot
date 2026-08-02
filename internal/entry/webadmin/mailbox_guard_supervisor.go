@@ -12,16 +12,7 @@ const mailboxGuardReconcileInterval = 5 * time.Second
 func (s *Server) startMailboxGuardSupervisor() func() {
 	stop := make(chan struct{})
 	done := make(chan struct{})
-	cfg, err := s.loadMailboxGuardConfig()
-	if err != nil {
-		foundationlog.Robotf("[MAILBOX_GUARD] config_error err=%v\n", err)
-		close(done)
-		return func() {
-			close(stop)
-			<-done
-		}
-	}
-	go func(startupConfig mailboxGuardConfig) {
+	go func() {
 		defer close(done)
 		delay := time.Duration(0)
 		for {
@@ -30,15 +21,33 @@ func (s *Server) startMailboxGuardSupervisor() func() {
 			case <-stop:
 				timer.Stop()
 				return
+			case <-s.mailboxGuardWake:
+				timer.Stop()
 			case <-timer.C:
 			}
-			s.reconcileMailboxGuard(startupConfig)
-			delay = mailboxGuardReconcileInterval
+			delay = runBackgroundSupervisorStep("MAILBOX_GUARD", mailboxGuardReconcileInterval, s.reconcileMailboxGuardOnce)
 		}
-	}(cfg)
-	return func() {
-		close(stop)
-		<-done
+	}()
+	return stopBackgroundSupervisor(stop, done)
+}
+
+func (s *Server) reconcileMailboxGuardOnce() time.Duration {
+	cfg, err := s.loadMailboxGuardConfig()
+	if err != nil {
+		foundationlog.Robotf("[MAILBOX_GUARD] config_error err=%v\n", err)
+		return mailboxGuardReconcileInterval
+	}
+	s.reconcileMailboxGuard(cfg)
+	return mailboxGuardReconcileInterval
+}
+
+func (s *Server) wakeMailboxGuardSupervisor() {
+	if s == nil || s.mailboxGuardWake == nil {
+		return
+	}
+	select {
+	case s.mailboxGuardWake <- struct{}{}:
+	default:
 	}
 }
 

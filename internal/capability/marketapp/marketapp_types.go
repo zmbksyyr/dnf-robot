@@ -3,20 +3,19 @@ package marketapp
 import "time"
 
 type Config struct {
-	GameDB             string       `json:"game_db"`
-	AuctionDB          string       `json:"auction_db"`
-	CeraDB             string       `json:"cera_db"`
-	AuctionHost        string       `json:"auction_host"`
-	AuctionPort        int          `json:"auction_port"`
-	CeraHost           string       `json:"cera_host"`
-	CeraPort           int          `json:"cera_port"`
-	ItemInfoSourcePath string       `json:"iteminfo_source_path"`
-	ItemInfoTargets    []string     `json:"iteminfo_targets"`
-	SystemOwner        SystemOwner  `json:"system_owner"`
-	Collector          CollectorCfg `json:"collector"`
-	Restock            RestockCfg   `json:"restock"`
-	Cera               CeraCfg      `json:"cera"`
-	Auto               AutoCfg      `json:"auto"`
+	GameDB          string       `json:"game_db"`
+	AuctionDB       string       `json:"auction_db"`
+	CeraDB          string       `json:"cera_db"`
+	AuctionHost     string       `json:"auction_host"`
+	AuctionPort     int          `json:"auction_port"`
+	CeraHost        string       `json:"cera_host"`
+	CeraPort        int          `json:"cera_port"`
+	ItemInfoTargets []string     `json:"iteminfo_targets"`
+	SystemOwner     SystemOwner  `json:"system_owner"`
+	Collector       CollectorCfg `json:"collector"`
+	Restock         RestockCfg   `json:"restock"`
+	Cera            CeraCfg      `json:"cera"`
+	Auto            AutoCfg      `json:"auto"`
 }
 
 type SystemOwner struct {
@@ -43,7 +42,6 @@ type RestockCfg struct {
 	RandLow            float64           `json:"rand_low"`
 	RandHigh           float64           `json:"rand_high"`
 	CustomPriceEnabled bool              `json:"custom_price_enabled"`
-	CustomPriceFile    string            `json:"custom_price_file"`
 	MaxActions         int               `json:"max_actions"`
 	MaxConcurrent      int               `json:"max_concurrent"`
 	MaxResultActions   int               `json:"max_result_actions"`
@@ -148,10 +146,8 @@ type ConfigUpdateRequest struct {
 	AutoEnabled            *bool    `json:"auto_enabled,omitempty"`
 	CollectorEnabled       *bool    `json:"collector_enabled,omitempty"`
 	QualityFilter          *bool    `json:"quality_filter,omitempty"`
-	IntervalMS             int      `json:"interval_ms,omitempty"`
+	IntervalMS             *int     `json:"interval_ms,omitempty"`
 	InitialDelayMS         *int     `json:"initial_delay_ms,omitempty"`
-	MaxActions             *int     `json:"max_actions,omitempty"`
-	MaxConcurrent          *int     `json:"max_concurrent,omitempty"`
 	AutoMaxActions         *int     `json:"auto_max_actions,omitempty"`
 	AutoMaxConcurrent      *int     `json:"auto_max_concurrent,omitempty"`
 	RestockMaxActions      *int     `json:"restock_max_actions,omitempty"`
@@ -173,7 +169,6 @@ type ConfigUpdateRequest struct {
 	RandLow                *float64 `json:"rand_low,omitempty"`
 	RandHigh               *float64 `json:"rand_high,omitempty"`
 	CustomPriceEnabled     *bool    `json:"custom_price_enabled,omitempty"`
-	CustomPriceFile        *string  `json:"custom_price_file,omitempty"`
 	PriceRangeEnabled      *bool    `json:"price_range_enabled,omitempty"`
 	InRangeProbability     *float64 `json:"in_range_probability,omitempty"`
 	OutRangeProbability    *float64 `json:"out_of_range_probability,omitempty"`
@@ -293,6 +288,7 @@ const (
 	MarketJobStatusPlanned       = "planned"
 	MarketJobStatusPartialFailed = "partial_failed"
 	MarketJobStatusSuccess       = "success"
+	MarketJobStatusCancelled     = "cancelled"
 )
 
 const (

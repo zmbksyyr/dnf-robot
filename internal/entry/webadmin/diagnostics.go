@@ -3,6 +3,7 @@ package webadmin
 import (
 	"bufio"
 	"bytes"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"robot/internal/capability/marketapp"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/dbstatus"
+	"robot/internal/foundation/layout"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -214,6 +216,7 @@ func (b *diagnosticsBuilder) addDatabaseSection() {
 
 func (b *diagnosticsBuilder) addFileSection() {
 	configDir := b.cfg.ConfigDir
+	runtimePaths := layout.New(configDir)
 	gameDir := filepath.Dir(b.cfg.DFGameR)
 	serviceRoot := config.DNFServiceRoot(b.cfg.DFGameR)
 	auctionItemInfo := filepath.Join(serviceRoot, "auction", "iteminfo.dat")
@@ -223,16 +226,16 @@ func (b *diagnosticsBuilder) addFileSection() {
 		path     string
 		required bool
 	}{
-		{"config.ini", filepath.Join(configDir, "config.ini"), true},
-		{"robot_config.ini", filepath.Join(configDir, "robot_config.ini"), true},
+		{"config.ini", runtimePaths.MainConfig(), true},
+		{"robot_config.ini", runtimePaths.RobotConfig(), true},
 		{"Script.pvf", filepath.Join(gameDir, "Script.pvf"), true},
-		{"pvf_manifest.json", filepath.Join(configDir, "pvf_manifest.json"), true},
-		{"pvf_equipment_catalog.json", filepath.Join(configDir, "pvf_equipment_catalog.json"), true},
-		{"pvf_stackable_catalog.json", filepath.Join(configDir, "pvf_stackable_catalog.json"), true},
-		{"pvf_map_catalog.json", filepath.Join(configDir, "pvf_map_catalog.json"), true},
-		{"pvf_skill_state_catalog.json", filepath.Join(configDir, "pvf_skill_state_catalog.json"), true},
-		{"pvf_level_exp_catalog.json", filepath.Join(configDir, "pvf_level_exp_catalog.json"), true},
-		{"pvf_iteminfo.dat", filepath.Join(configDir, "pvf_iteminfo.dat"), true},
+		{"pvf_manifest.json", runtimePaths.PVFManifest(), true},
+		{"equipment_catalog.json", runtimePaths.PVFEquipment(), true},
+		{"stackable_catalog.json", runtimePaths.PVFStackable(), true},
+		{"map_catalog.json", runtimePaths.PVFMaps(), true},
+		{"skill_state_catalog.json", runtimePaths.PVFSkillStates(), true},
+		{"level_exp_catalog.json", runtimePaths.PVFLevelExp(), true},
+		{"iteminfo.dat", runtimePaths.PVFItemInfo(), true},
 		{"auction iteminfo.dat", auctionItemInfo, true},
 		{"point iteminfo.dat", pointItemInfo, true},
 	}
@@ -241,8 +244,8 @@ func (b *diagnosticsBuilder) addFileSection() {
 		checks = append(checks, fileCheck(p.name, p.path, p.required))
 	}
 	checks = append(checks, b.pvfManifestCheck())
-	checks = append(checks, compareFileHashCheck("auction iteminfo matches pvf export", filepath.Join(configDir, "pvf_iteminfo.dat"), auctionItemInfo))
-	checks = append(checks, compareFileHashCheck("point iteminfo matches pvf export", filepath.Join(configDir, "pvf_iteminfo.dat"), pointItemInfo))
+	checks = append(checks, compareFileHashCheck("auction iteminfo matches pvf export", runtimePaths.PVFItemInfo(), auctionItemInfo))
+	checks = append(checks, compareFileHashCheck("point iteminfo matches pvf export", runtimePaths.PVFItemInfo(), pointItemInfo))
 	b.addSection("Files / PVF / ItemInfo", checks...)
 }
 
@@ -266,15 +269,13 @@ func (b *diagnosticsBuilder) addLogSection() {
 		limit = 100 * 1024 * 1024
 	}
 	checks := []diagnosticsCheck{}
+	runtimePaths := layout.New(b.cfg.ConfigDir)
 	for _, path := range []string{
-		filepath.Join(b.cfg.ConfigDir, "log_robot"),
-		filepath.Join(b.cfg.ConfigDir, "robot_stdout.log"),
-		filepath.Join(b.cfg.ConfigDir, "robot_start_error.log"),
-		filepath.Join(b.cfg.ConfigDir, "market_log.jsonl"),
+		runtimePaths.RobotLog(), runtimePaths.StdoutLog(), runtimePaths.StartErrorLog(), runtimePaths.MarketLog(),
 	} {
 		checks = append(checks, logSizeCheck(path, limit))
 	}
-	checks = append(checks, recentLogPatternCheck("recent fatal log keywords", filepath.Join(b.cfg.ConfigDir, "log_robot"), []string{"panic", "fatal", "too many open files", "cannot assign requested address", "message_queue_full", "timer_queue_overflow"}))
+	checks = append(checks, recentLogPatternCheck("recent fatal log keywords", runtimePaths.RobotLog(), []string{"panic", "fatal", "too many open files", "cannot assign requested address", "message_queue_full", "timer_queue_overflow"}))
 	b.addSection("Logs", checks...)
 }
 
@@ -463,7 +464,7 @@ func fileSHA256(path string) (string, os.FileInfo, error) {
 }
 
 func (b *diagnosticsBuilder) pvfManifestCheck() diagnosticsCheck {
-	manifestPath := filepath.Join(b.cfg.ConfigDir, "pvf_manifest.json")
+	manifestPath := layout.New(b.cfg.ConfigDir).PVFManifest()
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return diagnosticsCheck{Name: "pvf manifest freshness", Status: diagError, Message: err.Error(), Expected: manifestPath}
@@ -482,13 +483,33 @@ func (b *diagnosticsBuilder) pvfManifestCheck() diagnosticsCheck {
 	if err != nil {
 		return diagnosticsCheck{Name: "pvf manifest freshness", Status: diagError, Message: err.Error(), Observed: manifest}
 	}
-	status := diagOK
-	msg := "PVF export matches source metadata"
-	if info.Size() != manifest.Size || info.ModTime().Unix() != manifest.ModTime {
-		status = diagWarn
-		msg = "PVF source metadata changed; export may be stale"
+	if manifest.MD5 == "" {
+		return diagnosticsCheck{Name: "pvf manifest freshness", Status: diagError, Message: "PVF manifest has no source digest", Observed: manifest}
 	}
-	return diagnosticsCheck{Name: "pvf manifest freshness", Status: status, Message: msg, Observed: manifest, Details: map[string]interface{}{"source_size": info.Size(), "source_mod_time": info.ModTime().Format(time.RFC3339)}}
+	sourceMD5, err := md5File(manifest.Source)
+	if err != nil {
+		return diagnosticsCheck{Name: "pvf manifest freshness", Status: diagError, Message: err.Error(), Observed: manifest}
+	}
+	status := diagOK
+	msg := "PVF export matches source content"
+	if info.Size() != manifest.Size || info.ModTime().Unix() != manifest.ModTime || sourceMD5 != manifest.MD5 {
+		status = diagWarn
+		msg = "PVF source content changed; export is stale"
+	}
+	return diagnosticsCheck{Name: "pvf manifest freshness", Status: status, Message: msg, Observed: manifest, Details: map[string]interface{}{"source_size": info.Size(), "source_mod_time": info.ModTime().Format(time.RFC3339), "source_md5": sourceMD5}}
+}
+
+func md5File(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func marketStatusChecks(status interface{}) []diagnosticsCheck {

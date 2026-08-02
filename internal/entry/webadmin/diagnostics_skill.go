@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"robot/internal/capability/catalog"
+	"robot/internal/foundation/layout"
 	"robot/internal/shared"
 )
 
@@ -19,14 +20,16 @@ var partySkillErrorLogPatterns = []string{
 
 func (b *diagnosticsBuilder) addSkillSection() {
 	configDir := b.cfg.ConfigDir
+	runtimePaths := layout.New(configDir)
 	checks := skillDiagnosticsChecks(configDir)
-	checks = append(checks, recentLogPatternCheck("recent party skill errors", filepath.Join(configDir, "log_robot"), partySkillErrorLogPatterns))
+	checks = append(checks, recentLogPatternCheck("recent party skill errors", runtimePaths.RobotLog(), partySkillErrorLogPatterns))
 	b.addSection("Skill", checks...)
 }
 
 func skillDiagnosticsChecks(configDir string) []diagnosticsCheck {
-	whitelistPath := filepath.Join(configDir, "party_skill_catalog.json")
-	pvfPath := filepath.Join(configDir, "pvf_skill_state_catalog.json")
+	runtimePaths := layout.New(configDir)
+	whitelistPath := runtimePaths.PartySkills()
+	pvfPath := runtimePaths.PVFSkillStates()
 
 	whitelist, whitelistErr := catalog.ReadPartySkillCatalog(whitelistPath)
 	whitelistCheck := partySkillWhitelistCheck(whitelistPath, whitelist, whitelistErr)

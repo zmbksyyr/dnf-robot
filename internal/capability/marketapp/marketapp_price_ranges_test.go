@@ -1,15 +1,13 @@
 package marketapp
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 func TestCustomPriceRangeOverridesFullEquipmentFormula(t *testing.T) {
 	app := testApp(t)
 	app.cfg.Restock.CustomPriceEnabled = true
-	app.cfg.Restock.CustomPriceFile = "prices.json"
-	mustWriteJSON(t, filepath.Join(app.configDir, "prices.json"), customPriceRangeFile{Version: 1, Items: []customPriceRange{{ItemID: 31056, MinPrice: 700000, MaxPrice: 700000, Enabled: true}}})
+	mustWriteJSON(t, appPaths(app).MarketPrices(), customPriceRangeFile{Version: 1, Items: []customPriceRange{{ItemID: 31056, MinPrice: 700000, MaxPrice: 700000, Enabled: true}}})
 	app.refreshCustomPriceRanges()
 
 	price := app.auctionUnitPriceFor(31056, 1000, true, 8, 13)
@@ -44,8 +42,7 @@ func TestCollectPricePolicyUsesHighAndLowProbabilities(t *testing.T) {
 	app.cfg.Collector.InRangeProbability = 1
 	app.cfg.Collector.OutRangeProbability = 0
 	app.cfg.Restock.CustomPriceEnabled = true
-	app.cfg.Restock.CustomPriceFile = "prices.json"
-	mustWriteJSON(t, filepath.Join(app.configDir, "prices.json"), customPriceRangeFile{Version: 1, Items: []customPriceRange{{ItemID: 3037, MinPrice: 80, MaxPrice: 120, Enabled: true}}})
+	mustWriteJSON(t, appPaths(app).MarketPrices(), customPriceRangeFile{Version: 1, Items: []customPriceRange{{ItemID: 3037, MinPrice: 80, MaxPrice: 120, Enabled: true}}})
 	app.repository = &clearStockRepository{collectRows: map[string][]collectRow{
 		app.cfg.AuctionDB: {
 			{Market: marketNameAuction, AuctionID: 1, ItemID: 3037, Count: 10, StartPrice: -1, InstantPrice: 1000},
@@ -65,8 +62,7 @@ func TestCollectPricePolicyUsesHighAndLowProbabilities(t *testing.T) {
 func TestInvalidCustomPriceFileFallsBackToFormula(t *testing.T) {
 	app := testApp(t)
 	app.cfg.Restock.CustomPriceEnabled = true
-	app.cfg.Restock.CustomPriceFile = "prices.json"
-	mustWriteText(t, filepath.Join(app.configDir, "prices.json"), "{broken")
+	mustWriteText(t, appPaths(app).MarketPrices(), "{broken")
 	app.refreshCustomPriceRanges()
 
 	if app.priceRangeStatus.Error == "" {
