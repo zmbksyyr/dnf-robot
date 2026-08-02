@@ -386,7 +386,7 @@ Web 使用密码登录和带过期时间的内存会话。主要能力：
 - `Max` 修改所有 df_game_r cfg 中的 `max_user_num`。
 - `Ports` 修改服务端口，重启后生效。
 - `Script` 执行受限的 `/root/run`、`/root/stop` 服务控制。
-- `Market` 查看服务、策略、补货、回收、iteminfo 和补丁。
+- `Market` 查看服务和策略，直接调整自动周期、市场范围、装备等级/稀有度过滤、装备生成、价格公式、补货限制与虚拟回收概率；自动、补货和回收分别保存动作数及并发限制。窗口不编辑单品价格 JSON，仍提供补货、回收、iteminfo 和补丁操作。
 - `Party` 管理组队兼容补丁及技能开关。
 - 右上角 `Compat` 管理 mailbox bad-node guard。
 - `Diag` 汇总文件、进程、端口、数据库、PVF、密钥、市场、补丁和日志检查。

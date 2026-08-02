@@ -261,21 +261,48 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if req.InitialDelayMS != nil && *req.InitialDelayMS >= 0 {
 		a.cfg.Auto.InitialDelayMS = *req.InitialDelayMS
 	}
-	if req.MaxActions >= 0 {
-		a.cfg.Auto.MaxActions = req.MaxActions
-		a.cfg.Collector.MaxActions = req.MaxActions
-		a.cfg.Restock.MaxActions = req.MaxActions
+	if req.MaxActions != nil && *req.MaxActions >= 0 {
+		a.cfg.Auto.MaxActions = *req.MaxActions
+		a.cfg.Collector.MaxActions = *req.MaxActions
+		a.cfg.Restock.MaxActions = *req.MaxActions
 	}
-	if req.MaxConcurrent > 0 {
-		a.cfg.Auto.MaxConcurrent = req.MaxConcurrent
-		a.cfg.Collector.MaxConcurrent = req.MaxConcurrent
-		a.cfg.Restock.MaxConcurrent = req.MaxConcurrent
+	if req.MaxConcurrent != nil && *req.MaxConcurrent > 0 {
+		a.cfg.Auto.MaxConcurrent = *req.MaxConcurrent
+		a.cfg.Collector.MaxConcurrent = *req.MaxConcurrent
+		a.cfg.Restock.MaxConcurrent = *req.MaxConcurrent
+	}
+	if req.AutoMaxActions != nil && *req.AutoMaxActions >= 0 {
+		a.cfg.Auto.MaxActions = *req.AutoMaxActions
+	}
+	if req.AutoMaxConcurrent != nil && *req.AutoMaxConcurrent > 0 {
+		a.cfg.Auto.MaxConcurrent = *req.AutoMaxConcurrent
+	}
+	if req.RestockMaxActions != nil && *req.RestockMaxActions >= 0 {
+		a.cfg.Restock.MaxActions = *req.RestockMaxActions
+	}
+	if req.RestockMaxConcurrent != nil && *req.RestockMaxConcurrent > 0 {
+		a.cfg.Restock.MaxConcurrent = *req.RestockMaxConcurrent
+	}
+	if req.CollectorMaxActions != nil && *req.CollectorMaxActions >= 0 {
+		a.cfg.Collector.MaxActions = *req.CollectorMaxActions
+	}
+	if req.CollectorMaxConcurrent != nil && *req.CollectorMaxConcurrent > 0 {
+		a.cfg.Collector.MaxConcurrent = *req.CollectorMaxConcurrent
 	}
 	if req.ContinueOnError != nil {
 		a.cfg.Auto.ContinueOnError = *req.ContinueOnError
 	}
 	if len(req.Markets) > 0 {
 		a.cfg.Auto.Markets = req.Markets
+	}
+	if len(req.StackSizes) > 0 {
+		a.cfg.Restock.StackSizes = append([]int(nil), req.StackSizes...)
+	}
+	if req.EquipmentQtyMin != nil {
+		a.cfg.Restock.EquipmentQtyMin = *req.EquipmentQtyMin
+	}
+	if req.EquipmentQtyMax != nil {
+		a.cfg.Restock.EquipmentQtyMax = *req.EquipmentQtyMax
 	}
 	if req.EquipInflateMin != nil {
 		a.cfg.Restock.EquipInflateMin = *req.EquipInflateMin
@@ -318,6 +345,9 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	}
 	if req.OutRangeProbability != nil {
 		a.cfg.Collector.OutRangeProbability = *req.OutRangeProbability
+	}
+	if req.RestockPerItemDelayMS != nil {
+		a.cfg.Restock.PerItemDelayMS = *req.RestockPerItemDelayMS
 	}
 	a.cfg.applyDefaults()
 	cfg := a.cfg
