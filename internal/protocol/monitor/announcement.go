@@ -8,6 +8,7 @@ import (
 
 	"robot/internal/foundation/charset"
 	"robot/internal/foundation/lockhub"
+	foundationnetwork "robot/internal/foundation/network"
 )
 
 const (
@@ -59,14 +60,9 @@ func (c *Client) send(packet []byte, kind string) error {
 	if c == nil {
 		return fmt.Errorf("monitor client is nil")
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := time.Now()
-	if c.now != nil {
-		now = c.now()
-	}
-	if now.Before(c.retryAt) {
-		return fmt.Errorf("monitor %s retry is backed off for %s", kind, c.retryAt.Sub(now).Round(time.Millisecond))
+	now := c.currentTime()
+	if err := c.backoffError(kind, now); err != nil {
+		return err
 	}
 
 	addr := c.Address
@@ -79,21 +75,49 @@ func (c *Client) send(packet []byte, kind string) error {
 	}
 	conn, err := dial("tcp", addr, 3*time.Second)
 	if err != nil {
-		c.recordFailure(now)
+		c.recordFailure(c.currentTime())
 		return fmt.Errorf("connect monitor %s: %w", kind, err)
 	}
 	defer conn.Close()
-	_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
-	if _, err := conn.Write(packet); err != nil {
-		c.recordFailure(now)
+	if err := conn.SetWriteDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		c.recordFailure(c.currentTime())
+		return fmt.Errorf("set monitor %s write deadline: %w", kind, err)
+	}
+	if err := foundationnetwork.WriteFull(conn, packet); err != nil {
+		c.recordFailure(c.currentTime())
 		return fmt.Errorf("send monitor %s: %w", kind, err)
 	}
-	c.failures = 0
-	c.retryAt = time.Time{}
+	c.recordSuccess()
 	return nil
 }
 
+func (c *Client) backoffError(kind string, now time.Time) error {
+	c.mu.Lock()
+	retryAt := c.retryAt
+	c.mu.Unlock()
+	if now.Before(retryAt) {
+		return fmt.Errorf("monitor %s retry is backed off for %s", kind, retryAt.Sub(now).Round(time.Millisecond))
+	}
+	return nil
+}
+
+func (c *Client) recordSuccess() {
+	c.mu.Lock()
+	c.failures = 0
+	c.retryAt = time.Time{}
+	c.mu.Unlock()
+}
+
+func (c *Client) currentTime() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
 func (c *Client) recordFailure(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.failures++
 	delay := monitorRetryMin
 	for i := 1; i < c.failures && delay < monitorRetryMax; i++ {

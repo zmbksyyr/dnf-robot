@@ -76,6 +76,13 @@ func (s *RobotSupervisor) cleanupBlockedUIDs(limit int) {
 			robotLogf("[RobotSupervisor] blocked_cleanup_deferred uid=%d reason=actor_still_attached\n", uid)
 			continue
 		}
+		if s.runtime != nil && s.runtime.IsActive(uid) {
+			closer, ok := s.runtime.(actorRuntimeForceCloser)
+			if !ok || !closer.ForceClose(uid) {
+				robotLogf("[RobotSupervisor] blocked_cleanup_deferred uid=%d reason=runtime_still_active\n", uid)
+				continue
+			}
+		}
 		s.cleanupBrokenUID(uid)
 	}
 }

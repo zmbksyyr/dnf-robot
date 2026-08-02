@@ -3,7 +3,9 @@ package dnf
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
+	"math"
 	"math/bits"
 	"time"
 )
@@ -100,6 +102,14 @@ func splitPartyTransportFrames(payload []byte) ([][]byte, bool) {
 }
 
 func buildPartyUnreliablePacket(sequence uint32, senderSlot, flags byte, body []byte) []byte {
+	payload, _ := buildPartyUnreliablePacketChecked(sequence, senderSlot, flags, body)
+	return payload
+}
+
+func buildPartyUnreliablePacketChecked(sequence uint32, senderSlot, flags byte, body []byte) ([]byte, error) {
+	if len(body) > math.MaxUint16 {
+		return nil, fmt.Errorf("party unreliable body size %d exceeds uint16", len(body))
+	}
 	payload := make([]byte, 9+len(body))
 	payload[0] = 0x02
 	binary.LittleEndian.PutUint32(payload[1:5], sequence)
@@ -107,12 +117,20 @@ func buildPartyUnreliablePacket(sequence uint32, senderSlot, flags byte, body []
 	payload[7] = senderSlot
 	payload[8] = flags
 	copy(payload[9:], body)
-	return payload
+	return payload, nil
 }
 
 func buildPartyReliablePacket(sequence uint32, senderSlot, flags byte, records [][]byte) []byte {
+	payload, _ := buildPartyReliablePacketChecked(sequence, senderSlot, flags, records)
+	return payload
+}
+
+func buildPartyReliablePacketChecked(sequence uint32, senderSlot, flags byte, records [][]byte) ([]byte, error) {
 	bodySize := 0
 	for _, record := range records {
+		if len(record) > math.MaxUint16 || bodySize > math.MaxUint16-2-len(record) {
+			return nil, fmt.Errorf("party reliable body exceeds uint16")
+		}
 		bodySize += 2 + len(record)
 	}
 	payload := make([]byte, 9, 9+bodySize)
@@ -127,7 +145,7 @@ func buildPartyReliablePacket(sequence uint32, senderSlot, flags byte, records [
 		binary.LittleEndian.PutUint16(payload[sizeOffset:], uint16(len(record)))
 		payload = append(payload, record...)
 	}
-	return payload
+	return payload, nil
 }
 
 func parsePartyTQOSPacketWithCodec(payload []byte, expectedRoute byte, preferred *partyTQOSCodec) (partyTQOSPacket, bool) {

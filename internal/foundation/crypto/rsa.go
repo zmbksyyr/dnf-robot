@@ -28,8 +28,8 @@ func RSAPrivateEncrypt(key *rsa.PrivateKey, data []byte) ([]byte, error) {
 func GetLoginKey(uid uint32, key *rsa.PrivateKey) (string, error) {
 	swapped := swapByte32(uid)
 
-	// [C++->Go] Token鏍煎紡: 4瀛楄妭swappedUID + 32瀛楄妭0x01濉厖 + 4瀛楄妭鍥哄畾榄旀暟 + 6瀛楄妭鍚庣紑, 鍏?6瀛楄妭
-	// C++: char srcToken[46] = {0,0,0,0, 0x01脳32, 0x55,0x91,0x45,0x10, 0x01,0x04,0x03,0x03,0x01,0x01}
+	// Token layout: 4-byte swapped UID, a 32-byte NUL-padded decimal UID,
+	// a 4-byte fixed magic value, and a 6-byte suffix (46 bytes total).
 	token := make([]byte, 46)
 
 	// bytes 0-3: swapped UID

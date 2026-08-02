@@ -3,6 +3,7 @@ package dnf
 import (
 	"fmt"
 	"robot/internal/foundation/lockhub"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -60,6 +61,11 @@ func (t *RobotDnfTask) dispatchLoop(shard *messageDispatchShard) {
 }
 
 func (t *RobotDnfTask) handleMessage(msg MsgQueueData) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Printf("[RobotDnfTask] message_panic type=%s err=%v\n%s", msg.Type, rec, debug.Stack())
+		}
+	}()
 	handler, ok := t.keyToHandle[msg.Type]
 	if !ok {
 		return
@@ -242,6 +248,11 @@ func oldestEvictableMessage(queue []MsgQueueData) int {
 }
 
 func (t *RobotDnfTask) AddMessageDelay(typ string, data interface{}, sleepVal int) {
+	select {
+	case <-t.done:
+		return
+	default:
+	}
 	now := uint32(time.Now().Unix())
 	var runAt uint32
 	if sleepVal <= 0 {
@@ -259,6 +270,12 @@ func (t *RobotDnfTask) AddMessageDelay(typ string, data interface{}, sleepVal in
 	}
 	msg := MsgQueueData{Type: typ, Data: data, RunStartTime: runAt}
 	t.timerMutex.Lock()
+	select {
+	case <-t.done:
+		t.timerMutex.Unlock()
+		return
+	default:
+	}
 	if len(t.messageTimerQueue) >= maxMessageTimerQueueSize {
 		fmt.Printf("[RobotDnfTask] timer_queue_overflow drop_oldest type=%s len=%d\n", typ, len(t.messageTimerQueue))
 		t.messageTimerQueue = t.messageTimerQueue[1:]

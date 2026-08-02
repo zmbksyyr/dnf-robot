@@ -9,6 +9,31 @@ import (
 	robotcap "robot/internal/capability/robot"
 )
 
+func TestSupervisorStopBeforeStartReturns(t *testing.T) {
+	manager := testRobotManagerWithConfig(t, "")
+	supervisor := NewRobotSupervisor(manager, actorTestRuntime{})
+	done := make(chan error, 1)
+	go func() { done <- supervisor.StopWithError() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stop before start blocked")
+	}
+}
+
+func TestSupervisorStartIsIdempotent(t *testing.T) {
+	manager := testRobotManagerWithConfig(t, "")
+	supervisor := NewRobotSupervisor(manager, actorTestRuntime{})
+	supervisor.Start()
+	supervisor.Start()
+	if err := supervisor.StopWithError(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSupervisorStopReapsActorsThatExitAfterTimeout(t *testing.T) {
 	release := make(chan struct{})
 	runtime := &blockingActorStopRuntime{

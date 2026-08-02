@@ -55,6 +55,26 @@ func TestLoginRepairCapabilityCacheRetriesFailure(t *testing.T) {
 	}
 }
 
+func TestLoginRepairCapabilityCacheInvalidatesReplacedDatabase(t *testing.T) {
+	var cache loginRepairCapabilityCache
+	db := new(sql.DB)
+	calls := 0
+	load := func(*sql.DB) (loginRepairCapabilities, error) {
+		calls++
+		return loginRepairCapabilities{memberPunishInfo: true}, nil
+	}
+	if _, err := cache.get(context.Background(), db, load); err != nil {
+		t.Fatal(err)
+	}
+	cache.invalidateDB(db)
+	if _, err := cache.get(context.Background(), db, load); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("loader calls = %d, want 2", calls)
+	}
+}
+
 func TestLoginRepairCapabilityCacheWaitHonorsContext(t *testing.T) {
 	var cache loginRepairCapabilityCache
 	db := new(sql.DB)
@@ -97,5 +117,21 @@ func TestLoginRepairCapabilityTableOrder(t *testing.T) {
 	}
 	if got, want := capabilities.memberSecurityGradeTables(), []string{"d_taiwan.member_security_grade", "d_taiwan_secu.member_security_grade"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("security grade tables=%v want %v", got, want)
+	}
+}
+
+func TestLoginRepairCapabilityPanicDoesNotPoisonCache(t *testing.T) {
+	var cache loginRepairCapabilityCache
+	db := new(sql.DB)
+	if _, err := cache.get(context.Background(), db, func(*sql.DB) (loginRepairCapabilities, error) {
+		panic("bad capability load")
+	}); err == nil {
+		t.Fatal("panicking capability load returned nil error")
+	}
+	capabilities, err := cache.get(context.Background(), db, func(*sql.DB) (loginRepairCapabilities, error) {
+		return loginRepairCapabilities{memberPunishInfo: true}, nil
+	})
+	if err != nil || !capabilities.memberPunishInfo {
+		t.Fatalf("capability cache did not retry after panic: capabilities=%+v err=%v", capabilities, err)
 	}
 }

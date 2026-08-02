@@ -1,7 +1,10 @@
 package tcpapi
 
 import (
+	"strings"
+
 	robotcap "robot/internal/capability/robot"
+	"robot/internal/scheduler"
 	"testing"
 )
 
@@ -36,5 +39,28 @@ func TestCleanupRequiresAsync(t *testing.T) {
 	}
 	if cleanupRequiresAsync(robotcap.CleanupRequest{Force: true, MinUID: 1, MaxUID: 10}) {
 		t.Fatal("scoped range cleanup should remain synchronous")
+	}
+}
+
+func TestDecodePayloadRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
+	tests := []string{
+		`<tw><json>{"count":1,"unknown":2}</json></tw>`,
+		`<tw><json>{"count":1,"count":2}</json></tw>`,
+		`<tw><json>{"count":1}{"count":2}</json></tw>`,
+	}
+	for _, packet := range tests {
+		var target struct {
+			Count int `json:"count"`
+		}
+		if err := decodePayload(packet, &target); err == nil {
+			t.Fatalf("decodePayload accepted %s", packet)
+		}
+	}
+}
+
+func TestHandlePacketReturnsErrorAfterPanic(t *testing.T) {
+	response := HandlePacket("test", `<tw><c>autoStatus</c></tw>`, (*scheduler.RobotManager)(nil))
+	if !strings.Contains(response, "internal robot command failure") {
+		t.Fatalf("panic response = %q", response)
 	}
 }

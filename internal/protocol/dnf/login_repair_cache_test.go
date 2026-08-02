@@ -63,6 +63,27 @@ func TestLoginStaticRepairCacheExpiresSuccess(t *testing.T) {
 	}
 }
 
+func TestLoginStaticRepairCachePrunesExpiredUIDs(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1000, 0)
+	cache := loginStaticRepairCache{
+		ttl: time.Minute,
+		now: func() time.Time { return now },
+	}
+	db := &sql.DB{}
+	repair := func(context.Context) bool { return true }
+	if !cache.ensure(ctx, db, 101, repair) || !cache.ensure(ctx, db, 102, repair) {
+		t.Fatal("initial repairs failed")
+	}
+	now = now.Add(2 * time.Minute)
+	if !cache.ensure(ctx, db, 103, repair) {
+		t.Fatal("repair after expiry failed")
+	}
+	if got := len(cache.entries); got != 1 {
+		t.Fatalf("cache retained %d entries, want only the fresh UID", got)
+	}
+}
+
 func TestLoginStaticRepairCacheRetriesFailure(t *testing.T) {
 	var cache loginStaticRepairCache
 	ctx := context.Background()
@@ -105,6 +126,26 @@ func TestLoginStaticRepairCacheInvalidatesRecreatedUID(t *testing.T) {
 	}
 	if calls != 3 {
 		t.Fatalf("repair calls got %d want 3", calls)
+	}
+}
+
+func TestLoginStaticRepairCacheInvalidatesReplacedDatabase(t *testing.T) {
+	var cache loginStaticRepairCache
+	db := &sql.DB{}
+	calls := 0
+	repair := func(context.Context) bool {
+		calls++
+		return true
+	}
+	if !cache.ensure(context.Background(), db, 101, repair) {
+		t.Fatal("initial repair failed")
+	}
+	cache.invalidateDB(db)
+	if !cache.ensure(context.Background(), db, 101, repair) {
+		t.Fatal("repair after database invalidation failed")
+	}
+	if calls != 2 {
+		t.Fatalf("repair calls = %d, want 2", calls)
 	}
 }
 
@@ -205,5 +246,16 @@ func TestLoginStaticRepairCacheWaitHonorsContext(t *testing.T) {
 	close(release)
 	if !<-done {
 		t.Fatal("shared repair unexpectedly failed")
+	}
+}
+
+func TestLoginStaticRepairPanicDoesNotPoisonCache(t *testing.T) {
+	var cache loginStaticRepairCache
+	db := new(sql.DB)
+	if cache.ensure(context.Background(), db, 101, func(context.Context) bool { panic("bad repair") }) {
+		t.Fatal("panicking repair unexpectedly succeeded")
+	}
+	if !cache.ensure(context.Background(), db, 101, func(context.Context) bool { return true }) {
+		t.Fatal("repair cache did not retry after panic")
 	}
 }

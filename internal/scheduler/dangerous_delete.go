@@ -25,7 +25,10 @@ func (m *RobotManager) DangerousDelete(req robotcap.DangerousDeleteRequest) (rob
 		finishOperation(fmt.Sprintf("accounts=%d characters=%d registry=%d deleted=%v", result.AccountCount, result.CharacterCount, result.RegistryCount, result.Deleted), opErr)
 	}()
 	if len(plan.RegistryUIDs) > 0 {
-		m.SetAutoEnabled(false)
+		if _, err := m.SetAutoEnabled(false); err != nil {
+			opErr = fmt.Errorf("disable automatic actions before dangerous delete: %w", err)
+			return result, opErr
+		}
 		finishDelete := (lifecycleCleanupEnv{manager: m}).PrepareDelete(plan.RegistryUIDs)
 		if finishDelete != nil {
 			defer finishDelete()

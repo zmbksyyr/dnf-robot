@@ -11,6 +11,7 @@ import (
 	storecap "robot/internal/capability/store"
 	"robot/internal/foundation/lockhub"
 	"robot/internal/shared"
+	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -474,12 +475,18 @@ func (r *RobotRuntime) cleanupStoreSession(info robotcap.Info, rc robotconfig.Ru
 	return recovered
 }
 
-func (r *RobotRuntime) run(uid int, fn func() robotcap.ActionResult) robotcap.ActionResult {
+func (r *RobotRuntime) run(uid int, fn func() robotcap.ActionResult) (result robotcap.ActionResult) {
 	lock := r.uidLocks.Acquire(uid)
 	defer r.uidLocks.Release(uid, lock)
 	defer func() {
 		if rec := recover(); rec != nil {
-			robotLogf("[RobotRuntime] panic uid=%d err=%v\n", uid, rec)
+			robotLogf("[RobotRuntime] panic uid=%d err=%v stack=%s\n", uid, rec, debug.Stack())
+			result = robotcap.ActionResult{
+				UID:     uid,
+				OK:      false,
+				State:   robotcap.ActionStateFailed,
+				Message: "runtime panic",
+			}
 		}
 	}()
 	return fn()

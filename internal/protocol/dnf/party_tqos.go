@@ -384,7 +384,9 @@ func (r *RobotVo) partyRouteForPeerUnsafe(peerSlot byte) byte {
 	now := time.Now()
 	if peerSlot < byte(len(r.partyPeerRoute)) && !r.partyPeerRouteAt[peerSlot].IsZero() {
 		route := r.partyPeerRoute[peerSlot]
-		if (!isPartyRobotAccount(peer.accID) || r.partyRobotRouteReady[peerSlot][route]) && r.partyRouteEligibleUnsafe(peer, route, now) {
+		if (route == 1 || route == 2) &&
+			(!isPartyRobotAccount(peer.accID) || r.partyRobotRouteReady[peerSlot][route]) &&
+			r.partyRouteEligibleUnsafe(peer, route, now) {
 			return route
 		}
 	}

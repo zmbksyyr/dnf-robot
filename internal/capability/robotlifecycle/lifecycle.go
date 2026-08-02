@@ -6,6 +6,7 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	robotspawn "robot/internal/capability/robotspawn"
+	foundationlog "robot/internal/foundation/log"
 	"robot/internal/shared"
 )
 
@@ -151,7 +152,9 @@ func (c Creator) createRobot(info robotcap.Info, rc robotconfig.RuntimeConfig, c
 	if err := env.CreateBaseCharacter(info, rc); err != nil {
 		return err
 	}
-	_ = env.CopyTemplateDefaults(info.CID)
+	if err := env.CopyTemplateDefaults(info.CID); err != nil {
+		foundationlog.Robotf("[RobotCreate] optional template defaults skipped cid=%d err=%v\n", info.CID, err)
+	}
 	if err := env.EquipFromCatalog(info.CID, info.Level, info.Job, rc, catalogs.Equipment); err != nil {
 		return err
 	}

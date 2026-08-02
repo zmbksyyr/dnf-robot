@@ -220,12 +220,20 @@ func parsePartyIPInfoSnapshot(packet []byte, selfAccID uint32) (partyIPPeer, []p
 }
 
 func inflatePartyInfo(data []byte) ([]byte, error) {
+	const maxPartyInfoInflatedSize = 1024 * 1024
 	zr, err := zlib.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	defer zr.Close()
-	return io.ReadAll(zr)
+	inflated, err := io.ReadAll(io.LimitReader(zr, maxPartyInfoInflatedSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(inflated) > maxPartyInfoInflatedSize {
+		return nil, fmt.Errorf("party info exceeds %d-byte decompression limit", maxPartyInfoInflatedSize)
+	}
+	return inflated, nil
 }
 
 func partyInfoClearsParty(data []byte) bool {

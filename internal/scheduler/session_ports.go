@@ -61,14 +61,17 @@ func (m *RobotManager) sessionReleaseRemaining(uid int) time.Duration {
 	delay += sessionWriteSafetyMargin
 	m.sessionMu.Lock()
 	lastLogout := m.sessionLastLogout[uid]
-	m.sessionMu.Unlock()
 	if lastLogout.IsZero() {
+		m.sessionMu.Unlock()
 		return 0
 	}
 	remaining := delay - time.Since(lastLogout)
 	if remaining > 0 {
+		m.sessionMu.Unlock()
 		return remaining
 	}
+	delete(m.sessionLastLogout, uid)
+	m.sessionMu.Unlock()
 	return 0
 }
 
@@ -145,6 +148,16 @@ func (m *RobotManager) markSessionLogout(uid int, at time.Time) {
 	m.sessionMu.Lock()
 	if m.sessionLastLogout == nil {
 		m.sessionLastLogout = make(map[int]time.Time)
+	}
+	retention := m.sessionReloginDelay + sessionWriteSafetyMargin
+	if retention <= sessionWriteSafetyMargin {
+		retention = 15*time.Second + sessionWriteSafetyMargin
+	}
+	cutoff := time.Now().Add(-retention)
+	for existingUID, lastLogout := range m.sessionLastLogout {
+		if !lastLogout.After(cutoff) {
+			delete(m.sessionLastLogout, existingUID)
+		}
 	}
 	m.sessionLastLogout[uid] = at
 	m.sessionMu.Unlock()

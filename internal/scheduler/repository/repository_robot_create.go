@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,9 +30,6 @@ func (r *SQLRepository) EnsureAccount(uid int, innerIP string) error {
 		}
 	}
 	r.invalidateTableExists("d_taiwan.member_info_bot_backup")
-	if _, err := r.ClearTradePunish(uid); err != nil {
-		return err
-	}
 	if err := r.InsertIgnore("d_taiwan.accounts", map[string]interface{}{
 		"UID": uid, "accountname": account, "password": "e10adc3949ba59abbe56e057f20f883e",
 		"qq": "123456", "VIP": "", "ip": innerIP, "login_IP": "", "login_Mac": "",
@@ -45,6 +43,9 @@ func (r *SQLRepository) EnsureAccount(uid int, innerIP string) error {
 	}
 	if existingAccount != account {
 		return fmt.Errorf("robot uid %d is occupied by account %q", uid, existingAccount)
+	}
+	if _, err := r.ClearTradePunish(uid); err != nil {
+		return err
 	}
 	upserts := []struct {
 		table string
@@ -85,9 +86,30 @@ func (r *SQLRepository) EnsureAccount(uid int, innerIP string) error {
 	if err != nil {
 		return err
 	}
-	_, _ = r.Exec("INSERT IGNORE INTO taiwan_login.member_game_option VALUES (?,0x48000000789C63646064F85FCFCC90028408F0BF9E9181112C038023042210009AC0C9B,'','',0x10020000789C636018058319686115D5C62AAA83555417ABA81E56517D06003C02010C)", uid)
-	_, _ = r.Exec("INSERT IGNORE INTO taiwan_login_play.member_key_option (m_id,key_type,key_option) VALUES (?,0,UNHEX(''))", uid)
+	if err := r.execIfTableExists(
+		"taiwan_login.member_game_option",
+		"INSERT IGNORE INTO taiwan_login.member_game_option VALUES (?,0x48000000789C63646064F85FCFCC90028408F0BF9E9181112C038023042210009AC0C9B,'','',0x10020000789C636018058319686115D5C62AAA83555417ABA81E56517D06003C02010C)",
+		uid,
+	); err != nil {
+		return fmt.Errorf("initialize member_game_option uid=%d: %w", uid, err)
+	}
+	if err := r.execIfTableExists(
+		"taiwan_login_play.member_key_option",
+		"INSERT IGNORE INTO taiwan_login_play.member_key_option (m_id,key_type,key_option) VALUES (?,0,UNHEX(''))",
+		uid,
+	); err != nil {
+		return fmt.Errorf("initialize member_key_option uid=%d: %w", uid, err)
+	}
 	return nil
+}
+
+func (r *SQLRepository) execIfTableExists(table, query string, args ...interface{}) error {
+	exists, err := r.TableExists(table)
+	if err != nil || !exists {
+		return err
+	}
+	_, err = r.Exec(query, args...)
+	return err
 }
 
 func (r *SQLRepository) ClearTradePunish(uid int) (int64, error) {
@@ -101,7 +123,7 @@ func (r *SQLRepository) ClearTradePunish(uid int) (int64, error) {
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
-		return 0, nil
+		return 0, err
 	}
 	return rows, nil
 }
@@ -117,30 +139,58 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 		return fmt.Errorf("read charac_info columns: %w", err)
 	}
 	infoQuery, infoArgs := createCharacterInfoInsert(info, exp, dbName, columns)
-	if _, err := r.Exec(infoQuery, infoArgs...); err != nil {
+	statQuery, statArgs := createCharacterStatInsert(info.CID, exp, info.Village)
+	type characterInitializer struct {
+		table    string
+		query    string
+		args     []interface{}
+		required bool
+	}
+	initializers := []characterInitializer{
+		{table: "taiwan_cain.charac_kill_monster_info", query: "INSERT IGNORE INTO taiwan_cain.charac_kill_monster_info (charac_no) VALUES (?)", args: []interface{}{info.CID}},
+		{table: "taiwan_cain.charac_link_message", query: "INSERT IGNORE INTO taiwan_cain.charac_link_message (m_id) VALUES (?)", args: []interface{}{info.UID}},
+		{table: "taiwan_cain.charac_npc", query: "INSERT IGNORE INTO taiwan_cain.charac_npc (charac_no) VALUES (?)", args: []interface{}{info.CID}},
+		{table: "taiwan_cain.member_dungeon", query: "INSERT IGNORE INTO taiwan_cain.member_dungeon (m_id) VALUES (?)", args: []interface{}{info.UID}},
+		{table: "taiwan_cain.new_charac_quest", query: "INSERT IGNORE INTO taiwan_cain.new_charac_quest (charac_no,play_1) VALUES (?,?)", args: []interface{}{info.CID, "1016"}},
+		{table: "taiwan_cain.pvp_result", query: "INSERT IGNORE INTO taiwan_cain.pvp_result (charac_no) VALUES (?)", args: []interface{}{info.CID}},
+		{table: "taiwan_cain_2nd.charac_inven_expand", query: "INSERT IGNORE INTO taiwan_cain_2nd.charac_inven_expand (charac_no) VALUES (?)", args: []interface{}{info.CID}},
+		{table: "taiwan_cain_2nd.inventory", query: "INSERT IGNORE INTO taiwan_cain_2nd.inventory (charac_no,money,coin,inventory_capacity,inventory,equipslot) VALUES (?,?,?,?,?,?)", args: []interface{}{info.CID, rc.DefaultMoney, rc.DefaultCoin, rc.InventoryCapacity, equipcap.CompressedZeros(249 * 61), equipcap.CompressedZeros(12 * 61)}, required: true},
+		{table: "taiwan_cain_2nd.skill", query: "INSERT IGNORE INTO taiwan_cain_2nd.skill (charac_no) VALUES (?)", args: []interface{}{info.CID}, required: true},
+		{table: "taiwan_game_event.event_1306_account_reward", query: "INSERT IGNORE INTO taiwan_game_event.event_1306_account_reward (m_id,charac_no,occ_date) VALUES (?,?,NOW())", args: []interface{}{info.UID, info.CID}},
+	}
+	activeInitializers := make([]characterInitializer, 0, len(initializers))
+	for _, initializer := range initializers {
+		exists, err := r.TableExists(initializer.table)
+		if err != nil {
+			return fmt.Errorf("check character table %s: %w", initializer.table, err)
+		}
+		if !exists {
+			if initializer.required {
+				return fmt.Errorf("required character table %s does not exist", initializer.table)
+			}
+			continue
+		}
+		activeInitializers = append(activeInitializers, initializer)
+	}
+
+	tx, err := r.Begin()
+	if err != nil {
+		return fmt.Errorf("begin character creation uid=%d cid=%d: %w", info.UID, info.CID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(infoQuery, infoArgs...); err != nil {
 		return fmt.Errorf("insert charac_info uid=%d cid=%d: %w", info.UID, info.CID, err)
 	}
-	statQuery, statArgs := createCharacterStatInsert(info.CID, exp, info.Village)
-	if _, err := r.Exec(statQuery, statArgs...); err != nil {
+	if _, err := tx.Exec(statQuery, statArgs...); err != nil {
 		return fmt.Errorf("insert charac_stat cid=%d: %w", info.CID, err)
 	}
-	optional := []struct {
-		query string
-		args  []interface{}
-	}{
-		{"INSERT IGNORE INTO taiwan_cain.charac_kill_monster_info (charac_no) VALUES (?)", []interface{}{info.CID}},
-		{"INSERT IGNORE INTO taiwan_cain.charac_link_message (m_id) VALUES (?)", []interface{}{info.UID}},
-		{"INSERT IGNORE INTO taiwan_cain.charac_npc (charac_no) VALUES (?)", []interface{}{info.CID}},
-		{"INSERT IGNORE INTO taiwan_cain.member_dungeon (m_id) VALUES (?)", []interface{}{info.UID}},
-		{"INSERT IGNORE INTO taiwan_cain.new_charac_quest (charac_no,play_1) VALUES (?,?)", []interface{}{info.CID, "1016"}},
-		{"INSERT IGNORE INTO taiwan_cain.pvp_result (charac_no) VALUES (?)", []interface{}{info.CID}},
-		{"INSERT IGNORE INTO taiwan_cain_2nd.charac_inven_expand (charac_no) VALUES (?)", []interface{}{info.CID}},
-		{"INSERT IGNORE INTO taiwan_cain_2nd.inventory (charac_no,money,coin,inventory_capacity,inventory,equipslot) VALUES (?,?,?,?,?,?)", []interface{}{info.CID, rc.DefaultMoney, rc.DefaultCoin, rc.InventoryCapacity, equipcap.CompressedZeros(249 * 61), equipcap.CompressedZeros(12 * 61)}},
-		{"INSERT IGNORE INTO taiwan_cain_2nd.skill (charac_no) VALUES (?)", []interface{}{info.CID}},
-		{"INSERT IGNORE INTO taiwan_game_event.event_1306_account_reward (m_id,charac_no,occ_date) VALUES (?,?,NOW())", []interface{}{info.UID, info.CID}},
+	for _, initializer := range activeInitializers {
+		if _, err := tx.Exec(initializer.query, initializer.args...); err != nil {
+			return fmt.Errorf("initialize character table %s uid=%d cid=%d: %w", initializer.table, info.UID, info.CID, err)
+		}
 	}
-	for _, q := range optional {
-		_, _ = r.Exec(q.query, q.args...)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit character creation uid=%d cid=%d: %w", info.UID, info.CID, err)
 	}
 	return nil
 }
@@ -188,11 +238,26 @@ func (r *SQLRepository) SaveEquipmentSlots(cid int, raw []byte) error {
 }
 
 func (r *SQLRepository) ReplaceAvatarItems(cid int, selected map[int]shared.EquipmentCatalogItem) error {
-	_, _ = r.Exec("DELETE FROM taiwan_cain_2nd.user_items WHERE charac_no=? AND slot<=9", cid)
-	for slot, item := range selected {
-		_, _ = r.Exec("INSERT INTO taiwan_cain_2nd.user_items (charac_no,slot,it_id,expire_date,reg_date,obtain_from,hidden_option) VALUES (?,?,?,'9999-12-31 23:59:59',NOW(),0,1)", cid, slot, item.ID)
+	tx, err := r.Begin()
+	if err != nil {
+		return err
 	}
-	return nil
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM taiwan_cain_2nd.user_items WHERE charac_no=? AND slot<=9", cid); err != nil {
+		return err
+	}
+	slots := make([]int, 0, len(selected))
+	for slot := range selected {
+		slots = append(slots, slot)
+	}
+	sort.Ints(slots)
+	for _, slot := range slots {
+		item := selected[slot]
+		if _, err := tx.Exec("INSERT INTO taiwan_cain_2nd.user_items (charac_no,slot,it_id,expire_date,reg_date,obtain_from,hidden_option) VALUES (?,?,?,'9999-12-31 23:59:59',NOW(),0,1)", cid, slot, item.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *SQLRepository) UpsertDummy(info robotcap.Info, innerIP string) error {
@@ -226,6 +291,9 @@ func (r *SQLRepository) RebuildCharacView(uid int) error {
 		}
 		chars = append(chars, c)
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	raw := make([]byte, 36*148)
 	for slot, c := range chars {
 		if slot >= 36 {
@@ -244,11 +312,18 @@ func (r *SQLRepository) RebuildCharacView(uid int) error {
 	}
 	var compressed bytes.Buffer
 	zw := zlib.NewWriter(&compressed)
-	_, _ = zw.Write(raw)
-	_ = zw.Close()
+	if _, err := zw.Write(raw); err != nil {
+		_ = zw.Close()
+		return err
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
 	blob := append(make([]byte, 4), compressed.Bytes()...)
 	binary.LittleEndian.PutUint32(blob[0:4], uint32(len(raw)))
-	_, _ = r.Exec("INSERT IGNORE INTO taiwan_cain.charac_view (m_id) VALUES (?)", uid)
+	if _, err := r.Exec("INSERT IGNORE INTO taiwan_cain.charac_view (m_id) VALUES (?)", uid); err != nil {
+		return err
+	}
 	_, err = r.Exec("UPDATE taiwan_cain.charac_view SET info=?,slot_effect_count=18,charac_slot_limit=18,hash_key='',charac_count=? WHERE m_id=?", blob, len(chars), uid)
 	return err
 }
@@ -258,8 +333,15 @@ func (r *SQLRepository) CopyTemplateDefaults(cid int) error {
 	if err := r.QueryRow("SELECT charac_no FROM taiwan_cain.charac_info WHERE charac_no<>? ORDER BY lev DESC,charac_no LIMIT 1", cid).Scan(&src); err != nil {
 		return err
 	}
-	_, _ = r.Exec("UPDATE taiwan_cain.charac_info dst JOIN taiwan_cain.charac_info src SET dst.element_resist=src.element_resist,dst.spec_property=src.spec_property,dst.VIP=src.VIP,dst.create_time=src.create_time WHERE dst.charac_no=? AND src.charac_no=?", cid, src)
-	_, _ = r.Exec("UPDATE taiwan_cain.charac_stat dst JOIN taiwan_cain.charac_stat src SET dst.tutorial_flag=src.tutorial_flag,dst.escalade_tutorial_flag=src.escalade_tutorial_flag,dst.open_flag=src.open_flag,dst.luck_point=src.luck_point WHERE dst.charac_no=? AND src.charac_no=?", cid, src)
-	_, _ = r.Exec("UPDATE taiwan_cain_2nd.skill dst JOIN taiwan_cain_2nd.skill src SET dst.skill_slot=src.skill_slot,dst.skill_slot_2nd=src.skill_slot_2nd,dst.skill_command=src.skill_command,dst.script_version=src.script_version WHERE dst.charac_no=? AND src.charac_no=?", cid, src)
+	queries := []string{
+		"UPDATE taiwan_cain.charac_info dst JOIN taiwan_cain.charac_info src SET dst.element_resist=src.element_resist,dst.spec_property=src.spec_property,dst.VIP=src.VIP,dst.create_time=src.create_time WHERE dst.charac_no=? AND src.charac_no=?",
+		"UPDATE taiwan_cain.charac_stat dst JOIN taiwan_cain.charac_stat src SET dst.tutorial_flag=src.tutorial_flag,dst.escalade_tutorial_flag=src.escalade_tutorial_flag,dst.open_flag=src.open_flag,dst.luck_point=src.luck_point WHERE dst.charac_no=? AND src.charac_no=?",
+		"UPDATE taiwan_cain_2nd.skill dst JOIN taiwan_cain_2nd.skill src SET dst.skill_slot=src.skill_slot,dst.skill_slot_2nd=src.skill_slot_2nd,dst.skill_command=src.skill_command,dst.script_version=src.script_version WHERE dst.charac_no=? AND src.charac_no=?",
+	}
+	for _, query := range queries {
+		if _, err := r.Exec(query, cid, src); err != nil {
+			return err
+		}
+	}
 	return nil
 }

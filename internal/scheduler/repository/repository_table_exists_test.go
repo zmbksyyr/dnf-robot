@@ -71,3 +71,14 @@ func TestCachedTableExistsRetriesFailureAndSupportsInvalidation(t *testing.T) {
 		t.Fatalf("table loads after invalidation got %d want 3", calls)
 	}
 }
+
+func TestCachedTableExistsPanicDoesNotPoisonCache(t *testing.T) {
+	repository := &SQLRepository{}
+	if _, err := repository.cachedTableExists("db.table", func() (bool, error) { panic("bad lookup") }); err == nil {
+		t.Fatal("panicking table lookup returned nil error")
+	}
+	exists, err := repository.cachedTableExists("db.table", func() (bool, error) { return true, nil })
+	if err != nil || !exists {
+		t.Fatalf("table cache did not retry after panic: exists=%t err=%v", exists, err)
+	}
+}

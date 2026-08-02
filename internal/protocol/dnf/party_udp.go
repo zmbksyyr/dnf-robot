@@ -124,7 +124,12 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 		}
 		payload := append([]byte(nil), buf[:n]...)
 		if shouldReplyPartyUDP(conn, remote) {
-			for _, reply := range groupPartyTransportFrames(r.buildPartyUDPAcks(payload, remote), partyDefaultUDPMTU) {
+			replies, groupErr := groupPartyTransportFrames(r.buildPartyUDPAcks(payload, remote), partyDefaultUDPMTU)
+			if groupErr != nil {
+				fmt.Printf("[PARTY_UDP_ACK_ERROR] uid=%d remote=%s err=%v\n", uid, remote.String(), groupErr)
+				continue
+			}
+			for _, reply := range replies {
 				writePartyUDPReply(conn, reply, remote, uid)
 			}
 		}

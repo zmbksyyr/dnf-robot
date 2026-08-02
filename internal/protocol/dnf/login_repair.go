@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"robot/internal/foundation/lockhub"
+	foundationlog "robot/internal/foundation/log"
 )
 
 type loginStaticRepairKey struct {
@@ -21,10 +22,11 @@ type loginStaticRepairEntry struct {
 }
 
 type loginStaticRepairCache struct {
-	access  lockhub.Locker
-	entries map[loginStaticRepairKey]*loginStaticRepairEntry
-	ttl     time.Duration
-	now     func() time.Time
+	access    lockhub.Locker
+	entries   map[loginStaticRepairKey]*loginStaticRepairEntry
+	ttl       time.Duration
+	now       func() time.Time
+	lastPrune time.Time
 }
 
 const (
@@ -54,7 +56,9 @@ func (c *loginStaticRepairCache) ensure(ctx context.Context, db *sql.DB, uid int
 		ctx = context.Background()
 	}
 	key := loginStaticRepairKey{db: db, uid: uid}
+	now := c.currentTime()
 	c.access.Lock()
+	c.pruneExpiredLocked(now)
 	if entry := c.entries[key]; entry != nil {
 		c.access.Unlock()
 		select {
@@ -79,7 +83,7 @@ func (c *loginStaticRepairCache) ensure(ctx context.Context, db *sql.DB, uid int
 	c.entries[key] = entry
 	c.access.Unlock()
 
-	ok := repair(ctx)
+	ok := callLoginStaticRepair(ctx, uid, repair)
 	c.access.Lock()
 	entry.ok = ok
 	if ok {
@@ -91,6 +95,28 @@ func (c *loginStaticRepairCache) ensure(ctx context.Context, db *sql.DB, uid int
 	close(entry.done)
 	c.access.Unlock()
 	return ok
+}
+
+func callLoginStaticRepair(ctx context.Context, uid int, repair func(context.Context) bool) (ok bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			foundationlog.Robotf("[LOGIN_REPAIR] panic uid=%d err=%v\n", uid, rec)
+			ok = false
+		}
+	}()
+	return repair(ctx)
+}
+
+func (c *loginStaticRepairCache) pruneExpiredLocked(now time.Time) {
+	if !c.lastPrune.IsZero() && now.Sub(c.lastPrune) < time.Minute {
+		return
+	}
+	c.lastPrune = now
+	for key, entry := range c.entries {
+		if entry != nil && entry.ok && !entry.expiresAt.IsZero() && !now.Before(entry.expiresAt) {
+			delete(c.entries, key)
+		}
+	}
 }
 
 func (c *loginStaticRepairCache) invalidateUIDs(uids []int) {
@@ -109,6 +135,19 @@ func (c *loginStaticRepairCache) invalidateUIDs(uids []int) {
 	c.access.Lock()
 	for key := range c.entries {
 		if _, ok := invalid[key.uid]; ok {
+			delete(c.entries, key)
+		}
+	}
+	c.access.Unlock()
+}
+
+func (c *loginStaticRepairCache) invalidateDB(db *sql.DB) {
+	if db == nil {
+		return
+	}
+	c.access.Lock()
+	for key := range c.entries {
+		if key.db == db {
 			delete(c.entries, key)
 		}
 	}

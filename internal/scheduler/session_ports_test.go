@@ -114,6 +114,22 @@ func TestClosedSessionInvalidationFailureKeepsLogoutSafetyWindow(t *testing.T) {
 	}
 }
 
+func TestMarkSessionLogoutPrunesExpiredEntries(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	m.sessionReloginDelay = time.Second
+	m.sessionLastLogout[17000001] = time.Now().Add(-time.Hour)
+	m.markSessionLogout(17000002, time.Now())
+
+	m.sessionMu.Lock()
+	defer m.sessionMu.Unlock()
+	if _, ok := m.sessionLastLogout[17000001]; ok {
+		t.Fatal("expired logout entry was not pruned")
+	}
+	if _, ok := m.sessionLastLogout[17000002]; !ok {
+		t.Fatal("current logout entry was not retained")
+	}
+}
+
 func TestWaitAccountOfflineCompletesDelayedNoCacheBoundary(t *testing.T) {
 	repo := &offlineSessionRepository{}
 	m := testRobotManagerWithConfig(t, "")

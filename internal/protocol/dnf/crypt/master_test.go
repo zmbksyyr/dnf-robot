@@ -34,6 +34,21 @@ func TestDecryptAntiSupportsProtocolCryptoTypes(t *testing.T) {
 	}
 }
 
+func TestInitializeRequiresCompleteProtocolKey(t *testing.T) {
+	cipher := NewDNFCipher()
+	for _, size := range []int{0, cipher.KeySize() - 1, cipher.KeySize() + 1} {
+		if err := cipher.Initialize(make([]byte, size)); err != ErrInvalidKeySize {
+			t.Fatalf("Initialize(%d) error = %v, want %v", size, err, ErrInvalidKeySize)
+		}
+	}
+	if _, err := cipher.Encrypt(0, make([]byte, 8)); err != ErrNotInitialized {
+		t.Fatalf("Encrypt before Initialize error = %v, want %v", err, ErrNotInitialized)
+	}
+	if err := cipher.Initialize(make([]byte, cipher.KeySize())); err != nil {
+		t.Fatalf("Initialize complete key: %v", err)
+	}
+}
+
 func TestDecryptAntiAllocations(t *testing.T) {
 	packet, _ := antiTestPacket(binary.BigEndian, 18)
 	cipher := new(DNFCipher)

@@ -116,7 +116,7 @@ func (r *SQLRepository) cachedTableExists(table string, load func() (bool, error
 	r.tableExistsCache[table] = entry
 	r.tableExistsMu.Unlock()
 
-	entry.exists, entry.err = load()
+	entry.exists, entry.err = loadTableExistsSafely(load)
 	r.tableExistsMu.Lock()
 	if entry.err != nil && r.tableExistsCache[table] == entry {
 		delete(r.tableExistsCache, table)
@@ -124,6 +124,15 @@ func (r *SQLRepository) cachedTableExists(table string, load func() (bool, error
 	close(entry.done)
 	r.tableExistsMu.Unlock()
 	return entry.exists, entry.err
+}
+
+func loadTableExistsSafely(load func() (bool, error)) (exists bool, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("table existence lookup panic: %v", rec)
+		}
+	}()
+	return load()
 }
 
 func (r *SQLRepository) invalidateTableExists(tables ...string) {

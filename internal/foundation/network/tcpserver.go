@@ -2,6 +2,7 @@ package network
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -20,17 +21,28 @@ const (
 	defaultWriteTimeout       = 15 * time.Second
 	defaultFirstPacketTimeout = 5 * time.Second
 	defaultMaxPendingPerIP    = 512
+	defaultMaxPending         = 512
+)
+
+var (
+	ErrTCPServerRunning = errors.New("TCP server is already running")
+	ErrTCPServerClosed  = errors.New("TCP server is closed")
 )
 
 type tcpClient struct {
-	conn net.Conn
+	conn    net.Conn
+	writeMu lockhub.Locker
 }
 
 type TCPServer struct {
+	lifecycleMu  lockhub.Locker
+	closed       bool
+	closeDone    chan struct{}
 	listener     net.Listener
 	addr         string
 	clients      map[string]*tcpClient
 	connCount    int
+	pendingCount int
 	pendingByIP  map[string]int
 	clientsMu    lockhub.RWLocker
 	onMessage    func(clientID string, data []byte)
@@ -40,6 +52,7 @@ type TCPServer struct {
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 	firstTimeout time.Duration
+	maxPending   int
 	maxPendingIP int
 }
 
@@ -49,12 +62,14 @@ func NewTCPServer(addr string) *TCPServer {
 	}
 	return &TCPServer{
 		addr:         addr,
+		closeDone:    make(chan struct{}),
 		clients:      make(map[string]*tcpClient),
 		pendingByIP:  make(map[string]int),
 		maxClients:   defaultMaxClients,
 		readTimeout:  defaultReadTimeout,
 		writeTimeout: defaultWriteTimeout,
 		firstTimeout: defaultFirstPacketTimeout,
+		maxPending:   defaultMaxPending,
 		maxPendingIP: defaultMaxPendingPerIP,
 	}
 }
@@ -76,6 +91,20 @@ func (s *TCPServer) OnMessage(callback func(clientID string, data []byte)) {
 }
 
 func (s *TCPServer) Start() error {
+	if s == nil {
+		return ErrTCPServerClosed
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closeDone == nil {
+		s.closeDone = make(chan struct{})
+	}
+	if s.closed {
+		return ErrTCPServerClosed
+	}
+	if s.running.Load() {
+		return ErrTCPServerRunning
+	}
 	listener, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return fmt.Errorf("TCPServer listen %s: %w", s.addr, err)
@@ -111,14 +140,14 @@ func (s *TCPServer) acceptLoop() {
 			_ = conn.Close()
 			return
 		}
-		if s.maxPendingIP > 0 && s.pendingByIP[clientIP] >= s.maxPendingIP {
+		if s.pendingLimitReachedLocked(clientIP) {
 			s.clientsMu.Unlock()
 			_ = conn.Close()
 			continue
 		}
 		client := &tcpClient{conn: conn}
 		s.clients[clientID] = client
-		s.pendingByIP[clientIP]++
+		s.addPendingLocked(clientIP)
 		s.clientsMu.Unlock()
 
 		s.wg.Add(1)
@@ -132,16 +161,7 @@ func (s *TCPServer) handleClient(clientID, clientIP string, client *tcpClient) {
 	registered := false
 	defer func() {
 		s.clientsMu.Lock()
-		delete(s.clients, clientID)
-		if registered {
-			s.connCount--
-		}
-		if !firstPacketSeen && s.pendingByIP[clientIP] > 0 {
-			s.pendingByIP[clientIP]--
-			if s.pendingByIP[clientIP] == 0 {
-				delete(s.pendingByIP, clientIP)
-			}
-		}
+		s.releaseClientLocked(clientID, clientIP, client, registered, firstPacketSeen)
 		s.clientsMu.Unlock()
 		_ = client.conn.Close()
 	}()
@@ -171,6 +191,9 @@ func (s *TCPServer) handleClient(clientID, clientIP string, client *tcpClient) {
 			if !ok {
 				break
 			}
+			if len(data) > maxReceiveBufferSize {
+				return
+			}
 			recvBuf = remaining
 			if !firstPacketSeen {
 				if !s.registerFirstPacket(clientIP) {
@@ -180,13 +203,22 @@ func (s *TCPServer) handleClient(clientID, clientIP string, client *tcpClient) {
 				firstPacketSeen = true
 			}
 			if s.onMessage != nil {
-				s.onMessage(clientID, data)
+				s.dispatchMessage(clientID, data)
 			}
 		}
 		if len(recvBuf) > maxReceiveBufferSize {
 			return
 		}
 	}
+}
+
+func (s *TCPServer) dispatchMessage(clientID string, data []byte) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Printf("[TCPServer] message_handler_panic client=%s err=%v\n", clientID, rec)
+		}
+	}()
+	s.onMessage(clientID, data)
 }
 
 func tryExtractXMLPacket(buf []byte) (packet []byte, remaining []byte, ok bool) {
@@ -227,14 +259,45 @@ func (s *TCPServer) registerFirstPacket(clientIP string) bool {
 	if s.maxClients > 0 && s.connCount >= s.maxClients {
 		return false
 	}
-	if s.pendingByIP[clientIP] > 0 {
-		s.pendingByIP[clientIP]--
-		if s.pendingByIP[clientIP] == 0 {
-			delete(s.pendingByIP, clientIP)
-		}
-	}
+	s.removePendingLocked(clientIP)
 	s.connCount++
 	return true
+}
+
+func (s *TCPServer) pendingLimitReachedLocked(clientIP string) bool {
+	return s.maxPending > 0 && s.pendingCount >= s.maxPending ||
+		s.maxPendingIP > 0 && s.pendingByIP[clientIP] >= s.maxPendingIP
+}
+
+func (s *TCPServer) addPendingLocked(clientIP string) {
+	s.pendingCount++
+	s.pendingByIP[clientIP]++
+}
+
+func (s *TCPServer) removePendingLocked(clientIP string) {
+	if s.pendingCount > 0 {
+		s.pendingCount--
+	}
+	if s.pendingByIP[clientIP] <= 1 {
+		delete(s.pendingByIP, clientIP)
+		return
+	}
+	s.pendingByIP[clientIP]--
+}
+
+func (s *TCPServer) releaseClientLocked(clientID, clientIP string, client *tcpClient, registered, firstPacketSeen bool) {
+	// A remote address can be reused after a fast disconnect. Only remove this
+	// handler's own map entry so an older defer cannot evict a newer connection
+	// that happens to receive the same client ID.
+	if s.clients[clientID] == client {
+		delete(s.clients, clientID)
+	}
+	if registered && s.connCount > 0 {
+		s.connCount--
+	}
+	if !firstPacketSeen {
+		s.removePendingLocked(clientIP)
+	}
 }
 
 func remoteIP(addr net.Addr) string {
@@ -255,19 +318,40 @@ func (s *TCPServer) SendTo(clientID string, data []byte) error {
 	if !ok {
 		return fmt.Errorf("client %s not found", clientID)
 	}
+	client.writeMu.Lock()
+	defer client.writeMu.Unlock()
 	if s.writeTimeout > 0 {
-		_ = client.conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+		if err := client.conn.SetWriteDeadline(time.Now().Add(s.writeTimeout)); err != nil {
+			return fmt.Errorf("set client %s write deadline: %w", clientID, err)
+		}
 	}
-	_, err := client.conn.Write(data)
-	return err
+	if err := WriteFull(client.conn, data); err != nil {
+		return fmt.Errorf("write client %s: %w", clientID, err)
+	}
+	return nil
 }
 
 func (s *TCPServer) Close() error {
-	if !s.running.Swap(false) {
+	if s == nil {
 		return nil
 	}
-	if s.listener != nil {
-		_ = s.listener.Close()
+	s.lifecycleMu.Lock()
+	if s.closeDone == nil {
+		s.closeDone = make(chan struct{})
+	}
+	if s.closed {
+		done := s.closeDone
+		s.lifecycleMu.Unlock()
+		<-done
+		return nil
+	}
+	s.closed = true
+	s.running.Store(false)
+	listener := s.listener
+	s.lifecycleMu.Unlock()
+
+	if listener != nil {
+		_ = listener.Close()
 	}
 	s.clientsMu.Lock()
 	for _, client := range s.clients {
@@ -276,5 +360,6 @@ func (s *TCPServer) Close() error {
 	s.clients = make(map[string]*tcpClient)
 	s.clientsMu.Unlock()
 	s.wg.Wait()
+	close(s.closeDone)
 	return nil
 }

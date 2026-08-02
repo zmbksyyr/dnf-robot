@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"strconv"
 
 	sqlpkg "robot/internal/foundation/sql"
@@ -56,7 +57,7 @@ func (r *RobotVo) queueTradeQuoteRefreshUnsafe() {
 		return
 	}
 	r.tradeQuoteLoading = true
-	go r.refreshTradeQuote()
+	startRobotRoutine("trade_quote", r.UID, r.refreshTradeQuote)
 }
 
 func (r *RobotVo) invalidateTradeQuoteUnsafe() {
@@ -81,6 +82,15 @@ func (r *RobotVo) tradeQuoteSnapshotUnsafe() (tradeQuoteSnapshot, bool) {
 }
 
 func (r *RobotVo) refreshTradeQuote() {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.mu.Lock()
+			r.tradeQuoteLoading = false
+			r.tradeQuotePending = false
+			r.mu.Unlock()
+			fmt.Printf("[TRADE_QUOTE_PANIC] uid=%d err=%v\n", r.UID, rec)
+		}
+	}()
 	for {
 		r.mu.Lock()
 		snapshot, ok := r.tradeQuoteSnapshotUnsafe()
@@ -121,7 +131,7 @@ func (r *RobotVo) refreshTradeQuote() {
 }
 
 func calculateTradeQuote(snapshot tradeQuoteSnapshot, prices map[int]ShopVo) uint32 {
-	var money uint32
+	var money uint64
 	for index, transaction := range snapshot.transactions {
 		if !snapshot.active[index] || transaction.ItemNum <= 0 {
 			continue
@@ -130,9 +140,12 @@ func calculateTradeQuote(snapshot tradeQuoteSnapshot, prices map[int]ShopVo) uin
 		if !ok || price.Price <= 0 {
 			continue
 		}
-		money += uint32(transaction.ItemNum) * uint32(price.Price)
+		money += uint64(transaction.ItemNum) * uint64(price.Price)
+		if money >= math.MaxUint32 {
+			return math.MaxUint32
+		}
 	}
-	return money
+	return uint32(money)
 }
 
 func (r *RobotVo) applyTradeQuoteUnsafe(money uint32) {

@@ -121,7 +121,9 @@ func (r *RobotVo) sendSelectCharacUnsafe(_ string) bool {
 	if r.State != StateLogin || r.SelectCharacSent {
 		return false
 	}
-	r.selectCharac[0] = byte(r.CID)
+	// CMD 4/12 selects a character-list slot. The database charac_no stored in
+	// CID is runtime identity and must never be narrowed into this byte.
+	r.selectCharac[0] = r.CharacterSlot
 	pkt, err := buildSendPacket(4, 12, r.selectCharac[:], r.Cipher)
 	if err != nil {
 		return false

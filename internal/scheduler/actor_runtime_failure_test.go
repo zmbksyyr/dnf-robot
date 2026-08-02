@@ -48,3 +48,13 @@ func TestRobotRuntimeCountsAutomaticTransportFailures(t *testing.T) {
 		t.Fatalf("local shout stats = %d/%d", stats.ShoutLocalSuccess, stats.ShoutLocalFailed)
 	}
 }
+
+func TestRobotRuntimeReturnsFailureWhenActionPanics(t *testing.T) {
+	runtime := NewRobotRuntime(nil)
+	result := runtime.run(17000001, func() robotcap.ActionResult {
+		panic("boom")
+	})
+	if result.UID != 17000001 || result.OK || result.State != robotcap.ActionStateFailed || result.Message != "runtime panic" {
+		t.Fatalf("panic result = %+v", result)
+	}
+}

@@ -6,10 +6,11 @@ import (
 	"robot/internal/scheduler"
 )
 
-func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) string {
+func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) (response string) {
 	defer func() {
 		if r := recover(); r != nil {
 			logRobotActionf("[handlePacket] panic recovered client=%s err=%v\n", clientID, r)
+			response = wrapResult(map[string]interface{}{"ok": false, "error": "internal robot command failure"})
 		}
 	}()
 

@@ -5,9 +5,14 @@ import (
 	"time"
 )
 
-const connectLaunchInterval = 35 * time.Millisecond
+const (
+	connectLaunchInterval = 35 * time.Millisecond
+	maxConcurrentConnects = 32
+)
 
 func (t *RobotDnfTask) connectLoop() {
+	ticker := time.NewTicker(connectLaunchInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-t.done:
@@ -23,9 +28,28 @@ func (t *RobotDnfTask) connectLoop() {
 			select {
 			case <-t.done:
 				return
-			case <-time.After(connectLaunchInterval):
-				go vo.Connect()
+			case <-ticker.C:
 			}
+			select {
+			case <-t.done:
+				return
+			case t.connectSlots <- struct{}{}:
+			}
+			t.workers.Add(1)
+			go func(vo *RobotVo) {
+				defer t.workers.Done()
+				defer func() { <-t.connectSlots }()
+				defer func() {
+					if rec := recover(); rec != nil {
+						fmt.Printf("[RobotDnfTask] connect_panic uid=%d err=%v\n", vo.UID, rec)
+						func() {
+							defer func() { _ = recover() }()
+							vo.CloseOut()
+						}()
+					}
+				}()
+				vo.Connect()
+			}(vo)
 		}
 	}
 }
@@ -36,6 +60,11 @@ func (t *RobotDnfTask) replaceCurrent(uid uint32, current, replacement *RobotVo)
 	}
 	t.robotVoMutex.Lock()
 	defer t.robotVoMutex.Unlock()
+	select {
+	case <-t.done:
+		return false
+	default:
+	}
 	if t.robotVoMap[int(uid)] != current {
 		return false
 	}
@@ -80,6 +109,12 @@ func (t *RobotDnfTask) enqueueConnect(vo *RobotVo) bool {
 		return false
 	}
 	t.connectMu.Lock()
+	select {
+	case <-t.done:
+		t.connectMu.Unlock()
+		return false
+	default:
+	}
 	if queued := t.connectQueued[vo.UID]; queued == vo {
 		t.connectMu.Unlock()
 		return true

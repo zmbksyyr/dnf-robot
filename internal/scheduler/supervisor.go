@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -14,9 +16,10 @@ type RobotSupervisor struct {
 
 	ledger actormodel.Ledger
 
-	stop chan struct{}
-	done chan struct{}
-	once sync.Once
+	stop  chan struct{}
+	done  chan struct{}
+	start sync.Once
+	once  sync.Once
 
 	shutdownMu         lockhub.Locker
 	shutdownErr        error
@@ -46,7 +49,7 @@ func NewRobotSupervisor(manager *RobotManager, runtime actormodel.RobotRuntime) 
 }
 
 func (s *RobotSupervisor) Start() {
-	go s.loop()
+	s.start.Do(func() { go s.loop() })
 }
 
 func (s *RobotSupervisor) Stop() {
@@ -56,6 +59,7 @@ func (s *RobotSupervisor) Stop() {
 }
 
 func (s *RobotSupervisor) StopWithError() error {
+	s.Start()
 	s.once.Do(func() { close(s.stop) })
 	<-s.done
 	_, err := s.stoppedResult()
@@ -70,13 +74,34 @@ func (s *RobotSupervisor) loop() {
 		select {
 		case <-s.stop:
 			s.shutdownMu.Lock()
-			s.shutdownErr = s.shutdownActors()
+			s.shutdownErr = s.shutdownActorsSafely()
 			s.shutdownMu.Unlock()
 			return
 		case now := <-ticker.C:
-			s.tick(now)
+			s.runSafely("tick", func() { s.tick(now) })
 		}
 	}
+}
+
+func (s *RobotSupervisor) runSafely(operation string, fn func()) (ok bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			robotLogf("[RobotSupervisor] panic operation=%s err=%v\n%s", operation, rec, debug.Stack())
+			ok = false
+		}
+	}()
+	fn()
+	return true
+}
+
+func (s *RobotSupervisor) shutdownActorsSafely() (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			robotLogf("[RobotSupervisor] panic operation=shutdown err=%v\n%s", rec, debug.Stack())
+			err = fmt.Errorf("supervisor shutdown panic: %v", rec)
+		}
+	}()
+	return s.shutdownActors()
 }
 
 func (s *RobotSupervisor) tick(now time.Time) {

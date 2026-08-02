@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
@@ -19,6 +20,7 @@ const (
 )
 
 type robotDialFunc func(gameIP string, gamePort int, localIP string) (net.Conn, error)
+type robotDialContextFunc func(ctx context.Context, gameIP string, gamePort int, localIP string) (net.Conn, error)
 
 type ClientState int
 
@@ -63,27 +65,29 @@ const (
 )
 
 type UserLoginInfo struct {
-	IP        string
-	Port      int
-	Token     [512]byte
-	TokenSize uint32
-	UID       uint32
-	CID       int
-	MaxReConn uint32
-	ReDelay   uint32
-	BirthPos  [4]uint32
-	GateArea  uint32
+	IP            string
+	Port          int
+	Token         [512]byte
+	TokenSize     uint32
+	UID           uint32
+	CID           int
+	CharacterSlot uint8
+	MaxReConn     uint32
+	ReDelay       uint32
+	BirthPos      [4]uint32
+	GateArea      uint32
 }
 
 type RobotVo struct {
-	UID       uint32
-	CID       int
-	LoginIP   string
-	LocalIP   string
-	Conn      net.Conn
-	Cipher    *crypt.DNFCipher
-	State     ClientState
-	LastError ClientError
+	UID           uint32
+	CID           int
+	CharacterSlot uint8
+	LoginIP       string
+	LocalIP       string
+	Conn          net.Conn
+	Cipher        *crypt.DNFCipher
+	State         ClientState
+	LastError     ClientError
 
 	Token                [512]byte
 	TokenSize            uint32
@@ -359,6 +363,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.Port = info.Port
 	r.UID = info.UID
 	r.CID = info.CID
+	r.CharacterSlot = info.CharacterSlot
 	r.MaxReConn = info.MaxReConn
 	r.ReDelay = info.ReDelay
 	r.TokenSize = info.TokenSize
@@ -471,12 +476,36 @@ func (r *RobotVo) readyToConnect() bool {
 }
 
 func (r *RobotVo) Connect() {
-	r.connect(dialRobot)
+	r.mu.Lock()
+	controller := r.Controller
+	r.mu.Unlock()
+	ctx := context.Background()
+	if controller != nil {
+		ctx = controller.context()
+	}
+	r.connectContext(ctx, dialRobotContext)
 }
 
 func (r *RobotVo) connect(dial robotDialFunc) {
 	if dial == nil {
 		return
+	}
+	r.connectContext(context.Background(), func(_ context.Context, gameIP string, gamePort int, localIP string) (net.Conn, error) {
+		return dial(gameIP, gamePort, localIP)
+	})
+}
+
+func (r *RobotVo) connectContext(ctx context.Context, dial robotDialContextFunc) {
+	if dial == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return
+	default:
 	}
 	r.mu.Lock()
 	if r.State != StateInit || r.connectInFlight {
@@ -499,14 +528,27 @@ func (r *RobotVo) connect(dial robotDialFunc) {
 		gameIP = "10.0.0.1"
 	}
 
-	conn, err := dial(gameIP, gamePort, localIP)
+	conn, err := dial(ctx, gameIP, gamePort, localIP)
 	addr := net.JoinHostPort(gameIP, strconv.Itoa(gamePort))
 	if err != nil {
+		if ctx.Err() != nil {
+			r.mu.Lock()
+			r.connectInFlight = false
+			r.mu.Unlock()
+			return
+		}
 		fmt.Printf("[RobotVo] connect failed uid=%d addr=%s err=%v\n", r.UID, addr, err)
 		r.mu.Lock()
 		r.connectInFlight = false
 		r.mu.Unlock()
 		r.RefishConnect()
+		return
+	}
+	if ctx.Err() != nil {
+		r.mu.Lock()
+		r.connectInFlight = false
+		r.mu.Unlock()
+		_ = conn.Close()
 		return
 	}
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
@@ -538,6 +580,10 @@ func (r *RobotVo) connect(dial robotDialFunc) {
 }
 
 func dialRobot(gameIP string, gamePort int, _ string) (net.Conn, error) {
+	return dialRobotContext(context.Background(), gameIP, gamePort, "")
+}
+
+func dialRobotContext(ctx context.Context, gameIP string, gamePort int, _ string) (net.Conn, error) {
 	addr := net.JoinHostPort(gameIP, strconv.Itoa(gamePort))
 	var d net.Dialer
 	d.Timeout = 10 * time.Second
@@ -547,7 +593,7 @@ func dialRobot(gameIP string, gamePort int, _ string) (net.Conn, error) {
 			d.LocalAddr = tcpAddr
 		}
 	}
-	return d.Dial("tcp", addr)
+	return d.DialContext(ctx, "tcp", addr)
 }
 
 func localIPAvailable(ip string) bool {
@@ -572,14 +618,7 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 		if rec := recover(); rec != nil {
 			fmt.Printf("[RobotVo] readLoop panic uid=%d err=%v\n", r.UID, rec)
 		}
-		r.mu.Lock()
-		r.stopPartySupervisorUnsafe()
-		r.closePartyUDPUnsafe()
-		r.closePartyRelayUnsafe()
-		if r.State != StateStop {
-			r.State = StateStop
-		}
-		r.mu.Unlock()
+		r.finishReadLoop(conn)
 	}()
 	buf := make([]byte, robotSocketReadBufferSize)
 	for {
@@ -591,30 +630,33 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 				return
 			}
 			r.LastError = StartRecvError
-			r.stopPartySupervisorUnsafe()
-			if r.Conn != nil {
-				r.Conn.Close()
-				r.Conn = nil
-			}
-			r.closePartyUDPUnsafe()
-			r.closePartyRelayUnsafe()
 			shouldReconnect := r.Controller != nil && r.ConnCount < r.MaxReConn
-			if !shouldReconnect {
-				r.State = StateStop
-				controller := r.Controller
-				r.mu.Unlock()
-				if controller != nil {
-					controller.DeleteIf(r.UID, r)
-				}
-				return
-			}
 			r.mu.Unlock()
-			r.RefishConnect()
+			if shouldReconnect {
+				r.RefishConnect()
+			}
 			return
 		}
 		if n > 0 {
 			r.onRecvData(buf[:n])
 		}
+	}
+}
+
+func (r *RobotVo) finishReadLoop(conn net.Conn) {
+	r.mu.Lock()
+	controller := r.Controller
+	uid := r.UID
+	r.closeOutUnsafe()
+	r.mu.Unlock()
+
+	// closeOutUnsafe closes the registered connection. Close the loop-local
+	// handle as well so a panic before registration cannot leak a socket.
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if controller != nil {
+		controller.DeleteIf(uid, r)
 	}
 }
 

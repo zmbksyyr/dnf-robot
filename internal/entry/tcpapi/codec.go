@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	foundationconfig "robot/internal/foundation/config"
 )
 
 func decodePayload(pkt string, dst interface{}) error {
@@ -11,7 +13,7 @@ func decodePayload(pkt string, dst interface{}) error {
 	if payload == "" {
 		payload = "{}"
 	}
-	if err := json.Unmarshal([]byte(payload), dst); err != nil {
+	if err := foundationconfig.DecodeJSONBytes([]byte(payload), dst); err != nil {
 		return fmt.Errorf("invalid json payload: %w", err)
 	}
 	return nil

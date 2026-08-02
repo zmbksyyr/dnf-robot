@@ -66,7 +66,7 @@ func (r *RobotVo) runDisjointAfterLoginUnsafe() {
 	cost := r.AfterRunDisjointCost
 	r.AfterRunDisjointCost = 0
 	if cost > 0 {
-		go r.OpenDisjointStore(cost)
+		startRobotRoutine("disjoint_store", r.UID, func() { r.OpenDisjointStore(cost) })
 	}
 }
 

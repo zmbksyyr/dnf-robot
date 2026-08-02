@@ -23,8 +23,22 @@ type recordingDriver struct {
 	mu       lockhub.Locker
 	calls    []recordedCommand
 	notify   chan struct{}
+	entered  chan struct{}
 	release  <-chan struct{}
 	shutdown int
+}
+
+type panicOnlineDriver struct {
+	recordingDriver
+	panicOnce bool
+}
+
+func (d *panicOnlineDriver) DispatchOnline(users []shared.RuntimeOnlineUser) dnf.DnfTableTaskResult {
+	if d.panicOnce {
+		d.panicOnce = false
+		panic("dispatch failed")
+	}
+	return d.recordingDriver.DispatchOnline(users)
 }
 
 func (d *recordingDriver) DispatchLogout(uid int) dnf.DnfTableTaskResult {
@@ -38,11 +52,136 @@ func (d *recordingDriver) DispatchMove(command shared.RuntimeMoveCommand) dnf.Dn
 }
 
 func (d *recordingDriver) DispatchOnline(users []shared.RuntimeOnlineUser) dnf.DnfTableTaskResult {
+	if d.entered != nil {
+		d.entered <- struct{}{}
+	}
 	if d.release != nil {
 		<-d.release
 	}
 	d.record(recordedCommand{typ: robotCommandOnline, online: append([]shared.RuntimeOnlineUser(nil), users...)})
 	return dnf.DnfTableTaskResult{Code: 200}
+}
+
+func TestRobotServiceRejectsDisjointOnlineAfterShutdown(t *testing.T) {
+	service := newRobotService(&recordingDriver{})
+	service.Shutdown()
+	err := service.Online([]shared.RuntimeOnlineUser{{UID: 17000001, DisjointCost: 500}})
+	if !errors.Is(err, ErrRuntimeStopped) {
+		t.Fatalf("disjoint online after shutdown error=%v, want %v", err, ErrRuntimeStopped)
+	}
+}
+
+func TestRobotServiceDisjointPanicDoesNotPoisonDispatchLock(t *testing.T) {
+	driver := &panicOnlineDriver{panicOnce: true}
+	service := newRobotService(driver)
+	defer service.Shutdown()
+	users := []shared.RuntimeOnlineUser{{UID: 17000001, DisjointCost: 500}}
+	if err := service.Online(users); err == nil {
+		t.Fatal("panic dispatch returned nil error")
+	}
+	if err := service.Online(users); err != nil {
+		t.Fatalf("dispatch lock remained poisoned: %v", err)
+	}
+}
+
+func TestRobotServiceShutdownWaitsForDirectDisjointDispatch(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	driver := &recordingDriver{entered: entered, release: release}
+	service := newRobotService(driver)
+	onlineDone := make(chan error, 1)
+	go func() {
+		onlineDone <- service.Online([]shared.RuntimeOnlineUser{{UID: 17000001, DisjointCost: 500}})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("direct dispatch did not start")
+	}
+	shutdownDone := make(chan struct{})
+	go func() {
+		service.Shutdown()
+		close(shutdownDone)
+	}()
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown completed while direct dispatch was active")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-onlineDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-shutdownDone:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not finish after direct dispatch")
+	}
+	_, shutdown := driver.snapshot()
+	if shutdown != 1 {
+		t.Fatalf("driver shutdown calls=%d, want 1", shutdown)
+	}
+}
+
+func TestRobotServiceShutdownDiscardsQueuedCommands(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	driver := &recordingDriver{entered: entered, release: release}
+	service := newRobotService(driver)
+	if err := service.Online([]shared.RuntimeOnlineUser{{UID: 17000001}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("online dispatch did not start")
+	}
+	for index := 0; index < 100; index++ {
+		if err := service.Move(shared.RuntimeMoveCommand{UID: 18000000 + index}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		service.Shutdown()
+		close(shutdownDone)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		service.mu.Lock()
+		stopped := !service.running
+		service.mu.Unlock()
+		if stopped {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("shutdown did not close the command queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+	select {
+	case <-shutdownDone:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not finish after active dispatch returned")
+	}
+	calls, _ := driver.snapshot()
+	if len(calls) != 1 || calls[0].typ != robotCommandOnline {
+		t.Fatalf("shutdown dispatched stale queue: %+v", calls)
+	}
+}
+
+func TestWaitStoreDelayStopsPromptly(t *testing.T) {
+	stop := make(chan struct{})
+	close(stop)
+	started := time.Now()
+	if waitStoreDelay(stop, time.Second) {
+		t.Fatal("closed stop channel reported delay completion")
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("cancellation took %s", elapsed)
+	}
 }
 
 func (d *recordingDriver) DispatchShout(command shared.RuntimeShoutCommand) dnf.DnfTableTaskResult {

@@ -2,7 +2,9 @@ package nocache
 
 import (
 	"encoding/binary"
+	"math"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -46,6 +48,18 @@ func TestNewClientDerivesNativeEndpoints(t *testing.T) {
 	}
 	if client.GameAddress != "192.168.200.131:11011" || client.ServerGroup != 3 {
 		t.Fatalf("endpoint=%s server_group=%d", client.GameAddress, client.ServerGroup)
+	}
+}
+
+func TestNewClientRejectsServerGroupOutsideProtocolRange(t *testing.T) {
+	if _, err := NewClient("127.0.0.1", 10011, -1); err == nil {
+		t.Fatal("negative server group unexpectedly accepted")
+	}
+	if strconv.IntSize == 64 {
+		tooLarge := uint64(math.MaxUint32) + 1
+		if _, err := NewClient("127.0.0.1", 10011, int(tooLarge)); err == nil {
+			t.Fatal("server group above uint32 unexpectedly accepted")
+		}
 	}
 }
 

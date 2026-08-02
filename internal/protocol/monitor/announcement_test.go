@@ -1,12 +1,33 @@
 package monitor
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
+
+type partialMonitorConn struct {
+	bytes.Buffer
+}
+
+func (c *partialMonitorConn) Read([]byte) (int, error)         { return 0, io.EOF }
+func (c *partialMonitorConn) Close() error                     { return nil }
+func (c *partialMonitorConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (c *partialMonitorConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (c *partialMonitorConn) SetDeadline(time.Time) error      { return nil }
+func (c *partialMonitorConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *partialMonitorConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *partialMonitorConn) Write(data []byte) (int, error) {
+	if len(data) > 3 {
+		data = data[:3]
+	}
+	return c.Buffer.Write(data)
+}
 
 func TestBuildMegaphonePacket(t *testing.T) {
 	packet, err := BuildAnnouncementPacket(KindMegaphone, "hello", "robot", 7)
@@ -55,6 +76,52 @@ func TestClientBacksOffSharedMonitorFailures(t *testing.T) {
 	if got := client.retryAt.Sub(now); got != 2*monitorRetryMin {
 		t.Fatalf("second retry delay = %s, want %s", got, 2*monitorRetryMin)
 	}
+}
+
+func TestClientCompletesPartialMonitorWrites(t *testing.T) {
+	conn := &partialMonitorConn{}
+	client := &Client{dial: func(string, string, time.Duration) (net.Conn, error) { return conn, nil }}
+	packet, err := BuildAnnouncementPacket(KindMegaphone, "hello", "robot", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SendWorldShout("hello", "robot", 1); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(conn.Bytes(), packet) {
+		t.Fatalf("monitor wrote %d bytes, want %d", conn.Len(), len(packet))
+	}
+}
+
+func TestClientDoesNotHoldStateLockAcrossNetworkIO(t *testing.T) {
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	client := &Client{dial: func(string, string, time.Duration) (net.Conn, error) {
+		started <- struct{}{}
+		<-release
+		return &partialMonitorConn{}, nil
+	}}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for range 2 {
+		go func() {
+			defer wg.Done()
+			if err := client.SendWorldShout("hello", "robot", 1); err != nil {
+				t.Errorf("SendWorldShout: %v", err)
+			}
+		}()
+	}
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("monitor sends were serialized behind the state lock")
+		}
+	}
+	close(release)
+	wg.Wait()
 }
 
 func TestBuildWebNoticePacket(t *testing.T) {

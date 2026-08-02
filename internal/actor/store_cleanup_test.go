@@ -5,6 +5,7 @@ import (
 	"time"
 
 	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
 )
 
 type storeCleanupCall struct {
@@ -29,6 +30,19 @@ func (r *failedReleaseRuntime) Logout(uid int) robotcap.ActionResult {
 type forceReleaseRuntime struct {
 	*failedReleaseRuntime
 	forceCalls int
+}
+
+type panicCommandRuntime struct {
+	*partyWaitRuntime
+	panicMove bool
+}
+
+func (r *panicCommandRuntime) Move(uid int) robotcap.ActionResult {
+	if r.panicMove {
+		r.panicMove = false
+		panic("move failed unexpectedly")
+	}
+	return r.partyWaitRuntime.Move(uid)
 }
 
 func (r *forceReleaseRuntime) ForceClose(int) bool {
@@ -125,5 +139,60 @@ func TestReleaseForceClosesBeforeDroppingUID(t *testing.T) {
 	}
 	if snap := a.Snapshot(); snap.UID != 0 || snap.State != StateIdle {
 		t.Fatalf("released snapshot = %+v", snap)
+	}
+}
+
+func TestAssignDoesNotReplaceUIDUntilPreviousRuntimeCloses(t *testing.T) {
+	runtime := &failedReleaseRuntime{partyWaitRuntime: &partyWaitRuntime{
+		status: robotcap.RuntimeStatus{UID: 101, StateName: robotcap.RuntimeStateRunning},
+	}}
+	a := NewActor(1, ModeAuto, runtime)
+	a.resetForUID(101)
+
+	res := a.handleControl(control{kind: controlAssign, uid: 202})
+	if res.ok || res.uid != 101 {
+		t.Fatalf("assign result = %+v, want previous uid retained", res)
+	}
+	if snap := a.Snapshot(); snap.UID != 101 || snap.State != StateReleasing {
+		t.Fatalf("assign after failed release snapshot = %+v", snap)
+	}
+}
+
+func TestActorCommandPanicReleasesUIDAndKeepsLoopUsable(t *testing.T) {
+	runtime := &panicCommandRuntime{
+		partyWaitRuntime: &partyWaitRuntime{
+			config: robotconfig.RuntimeConfig{SystemActorPollMS: 100},
+			status: robotcap.RuntimeStatus{UID: 101, StateName: robotcap.RuntimeStateRunning},
+		},
+		panicMove: true,
+	}
+	a := NewActor(1, ModeAuto, runtime)
+	a.Start()
+	defer func() {
+		a.RequestStop()
+		select {
+		case <-a.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("actor did not stop")
+		}
+	}()
+
+	if !a.AssignAndWait(101, time.Second) {
+		t.Fatal("initial uid assignment failed")
+	}
+	result, accepted := a.Enqueue(CommandMove, time.Second)
+	if !accepted || result.OK || result.State != robotcap.ActionStateFailed {
+		t.Fatalf("panic command result = %+v accepted=%t", result, accepted)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for a.UIDValue() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if snap := a.Snapshot(); snap.UID != 0 || snap.State != StateIdle {
+		t.Fatalf("panic cleanup snapshot = %+v", snap)
+	}
+	if !a.AssignAndWait(202, time.Second) {
+		t.Fatal("actor loop was not usable after panic cleanup")
 	}
 }

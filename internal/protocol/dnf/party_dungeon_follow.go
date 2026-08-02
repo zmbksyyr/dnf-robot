@@ -100,8 +100,12 @@ func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time
 				if !ok {
 					err = errPartyReliableBackpressure
 				} else {
-					payload := buildPartyUnreliablePacket(sequence, r.partySelfPeer.slot, pending.flags, pending.body)
-					_, err = r.sendPartyTransportUnsafe(conn, peer, route, payload)
+					payload, buildErr := buildPartyUnreliablePacketChecked(sequence, r.partySelfPeer.slot, pending.flags, pending.body)
+					if buildErr != nil {
+						err = buildErr
+					} else {
+						_, err = r.sendPartyTransportUnsafe(conn, peer, route, payload)
+					}
 				}
 			}
 		}

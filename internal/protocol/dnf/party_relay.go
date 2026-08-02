@@ -3,10 +3,12 @@ package dnf
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
+	"math"
 	"net"
 	"strconv"
 	"time"
+
+	foundationnetwork "robot/internal/foundation/network"
 )
 
 const (
@@ -52,7 +54,13 @@ func (r *RobotVo) connectPartyRelay(generation uint64, uid uint32, relayAddr str
 		fmt.Printf("[PARTY_RELAY_CONNECT_ERROR] uid=%d addr=%s err=%v\n", uid, relayAddr, err)
 		return
 	}
-	auth := buildPartyRelayPacket(0, uid, 0, nil)
+	auth, err := buildPartyRelayPacket(0, uid, 0, nil)
+	if err != nil {
+		_ = conn.Close()
+		r.finishPartyRelayConnect(generation, nil)
+		fmt.Printf("[PARTY_RELAY_AUTH_ERROR] uid=%d err=%v\n", uid, err)
+		return
+	}
 	if err := r.writePartyRelayConn(conn, auth); err != nil {
 		_ = conn.Close()
 		r.finishPartyRelayConnect(generation, nil)
@@ -153,17 +161,7 @@ func (r *RobotVo) writePartyRelayConn(conn net.Conn, packet []byte) error {
 	if err := conn.SetWriteDeadline(time.Now().Add(partyRelayWriteTimeout)); err != nil {
 		return err
 	}
-	for len(packet) > 0 {
-		n, err := conn.Write(packet)
-		if err != nil {
-			return err
-		}
-		if n <= 0 {
-			return io.ErrUnexpectedEOF
-		}
-		packet = packet[n:]
-	}
-	return nil
+	return foundationnetwork.WriteFull(conn, packet)
 }
 
 func (r *RobotVo) startPartyRelayWriterUnsafe(conn net.Conn) *partyRelayWriter {
@@ -225,6 +223,9 @@ func (r *RobotVo) enqueuePartyRelayPacketUnsafe(conn net.Conn, packet []byte) er
 	if conn == nil || r.partyRelayConn != conn {
 		return fmt.Errorf("party relay is not connected")
 	}
+	if len(packet) < 12 || len(packet) > partyRelayMaxPacketSize || int(binary.LittleEndian.Uint16(packet[2:4])) != len(packet) {
+		return fmt.Errorf("invalid party relay packet size %d", len(packet))
+	}
 	writer := r.startPartyRelayWriterUnsafe(conn)
 	if writer == nil {
 		return fmt.Errorf("party relay writer is unavailable")
@@ -262,7 +263,16 @@ func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 					return
 				}
 				if now.After(nextHeartbeat) {
-					if err := r.enqueuePartyRelayPacket(conn, buildPartyRelayPacket(1, uid, uid, nil)); err != nil {
+					heartbeat, buildErr := buildPartyRelayPacket(1, uid, uid, nil)
+					if buildErr != nil {
+						unexpected := r.detachPartyRelayConn(conn)
+						_ = conn.Close()
+						if unexpected {
+							fmt.Printf("[PARTY_RELAY_HEARTBEAT_ERROR] uid=%d err=%v\n", uid, buildErr)
+						}
+						return
+					}
+					if err := r.enqueuePartyRelayPacket(conn, heartbeat); err != nil {
 						unexpected := r.detachPartyRelayConn(conn)
 						_ = conn.Close()
 						if unexpected {
@@ -317,8 +327,17 @@ func (r *RobotVo) handlePartyRelayPacket(conn net.Conn, packet []byte) {
 		return
 	}
 	replies := r.buildPartyRelayReplies(payload, src)
-	for _, replyPayload := range groupPartyTransportFrames(replies, partyRelayMaxPacketSize-12) {
-		reply := buildPartyRelayPacket(1, r.UID, src, replyPayload)
+	groups, err := groupPartyTransportFrames(replies, partyRelayMaxPacketSize-12)
+	if err != nil {
+		fmt.Printf("[PARTY_RELAY_REPLY_ERROR] uid=%d dst=%d err=%v\n", r.UID, src, err)
+		return
+	}
+	for _, replyPayload := range groups {
+		reply, err := buildPartyRelayPacket(1, r.UID, src, replyPayload)
+		if err != nil {
+			fmt.Printf("[PARTY_RELAY_REPLY_ERROR] uid=%d dst=%d err=%v\n", r.UID, src, err)
+			return
+		}
 		if err := r.enqueuePartyRelayPacket(conn, reply); err != nil {
 			unexpected := r.detachPartyRelayConn(conn)
 			_ = conn.Close()
@@ -330,13 +349,16 @@ func (r *RobotVo) handlePartyRelayPacket(conn net.Conn, packet []byte) {
 	}
 }
 
-func buildPartyRelayPacket(typ uint16, src, dst uint32, payload []byte) []byte {
+func buildPartyRelayPacket(typ uint16, src, dst uint32, payload []byte) ([]byte, error) {
 	size := 12 + len(payload)
+	if size > partyRelayMaxPacketSize || size > math.MaxUint16 {
+		return nil, fmt.Errorf("party relay packet size %d exceeds limit %d", size, partyRelayMaxPacketSize)
+	}
 	body := make([]byte, size)
 	binary.LittleEndian.PutUint16(body[0:2], typ)
 	binary.LittleEndian.PutUint16(body[2:4], uint16(size))
 	binary.LittleEndian.PutUint32(body[4:8], src)
 	binary.LittleEndian.PutUint32(body[8:12], dst)
 	copy(body[12:], payload)
-	return body
+	return body, nil
 }

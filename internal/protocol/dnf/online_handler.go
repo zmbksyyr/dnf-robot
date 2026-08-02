@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 
 var (
 	rsaKey atomic.Pointer[rsa.PrivateKey]
-	dbPool *sql.DB
+	dbPool atomic.Pointer[sql.DB]
 )
 
 func SetRSAKey(key *rsa.PrivateKey) {
@@ -23,11 +24,15 @@ func SetRSAKey(key *rsa.PrivateKey) {
 }
 
 func SetDBPool(db *sql.DB) {
-	dbPool = db
+	previous := dbPool.Swap(db)
+	if previous != nil && previous != db {
+		loginStaticRepairs.invalidateDB(previous)
+		loginRepairSchemaCache.invalidateDB(previous)
+	}
 }
 
 func GetDBPool() *sql.DB {
-	return dbPool
+	return dbPool.Load()
 }
 
 func (dt *DnfTableDrive) DispatchOnline(users []shared.RuntimeOnlineUser) DnfTableTaskResult {
@@ -43,7 +48,7 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 			return DnfTableTaskResult{Msg: invalidRequestMessage}
 		}
 	}
-	db := dbPool
+	db := dbPool.Load()
 	if db == nil {
 		return DnfTableTaskResult{Msg: "no database connection"}
 	}
@@ -58,12 +63,13 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 
 	for _, user := range users {
 		loginInfo := UserLoginInfo{
-			IP:        user.IP,
-			Port:      user.Port,
-			UID:       uint32(user.UID),
-			CID:       user.CID,
-			MaxReConn: uint32(user.MaxReconnect),
-			ReDelay:   uint32(user.ReconnectDelay),
+			IP:            user.IP,
+			Port:          user.Port,
+			UID:           uint32(user.UID),
+			CID:           user.CID,
+			CharacterSlot: uint8(user.CharacterSlot),
+			MaxReConn:     uint32(user.MaxReconnect),
+			ReDelay:       uint32(user.ReconnectDelay),
 			BirthPos: [4]uint32{
 				uint32(user.BirthVillage),
 				uint32(user.BirthArea),
@@ -91,10 +97,18 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 }
 
 func validOnlineUser(user shared.RuntimeOnlineUser) bool {
-	return user.UID > 0 && len(user.IP) > 0 && len(user.IP) <= 15 &&
+	return positiveUint32(user.UID) && positiveUint32(user.CID) &&
+		uint8Range(user.CharacterSlot) && len(user.IP) > 0 && len(user.IP) <= 15 &&
 		user.Port > 0 && user.Port < 1<<16 &&
-		user.MaxReconnect >= 0 && user.ReconnectDelay >= 0
+		uint32Range(user.MaxReconnect) && uint32Range(user.ReconnectDelay) &&
+		uint8Range(user.BirthVillage) && uint8Range(user.BirthArea) && uint8Range(user.BirthGateArea) &&
+		uint16Range(user.BirthX) && uint16Range(user.BirthY)
 }
+
+func positiveUint32(value int) bool { return value > 0 && uint64(value) <= math.MaxUint32 }
+func uint32Range(value int) bool    { return value >= 0 && uint64(value) <= math.MaxUint32 }
+func uint16Range(value int) bool    { return value >= 0 && value <= math.MaxUint16 }
+func uint8Range(value int) bool     { return value >= 0 && value <= math.MaxUint8 }
 
 func resolveLoginToken(existing string, uid int, key *rsa.PrivateKey) string {
 	if validLoginToken(existing, key) {

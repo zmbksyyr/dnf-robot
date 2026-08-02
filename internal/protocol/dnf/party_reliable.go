@@ -57,7 +57,10 @@ func (r *RobotVo) sendPartyReliableRouteUnsafe(conn *net.UDPConn, peer partyIPPe
 		return "", errPartyReliableBackpressure
 	}
 	sequence := r.partyTQOSReliableSeq[peer.slot][route]
-	packet := buildPartyReliablePacket(sequence, r.partySelfPeer.slot, flags, records)
+	packet, err := buildPartyReliablePacketChecked(sequence, r.partySelfPeer.slot, flags, records)
+	if err != nil {
+		return "", err
+	}
 	destination, err := r.sendPartyTransportUnsafe(conn, peer, route, packet)
 	if err != nil {
 		return destination, err

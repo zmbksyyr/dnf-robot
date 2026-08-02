@@ -230,9 +230,9 @@ func TestStoreDisplayUsesPreparedInventoryAfterNoCacheRelogin(t *testing.T) {
 	r := newStorePacketTestRobot(t, &captureSessionConn{})
 	r.DB = db
 	r.UID = 17000001
-	// Runtime CID is the character-list slot used by CMD 4, not charac_no.
-	// Prepared inventory must therefore resolve the database character by UID.
-	r.CID = 0
+	// Runtime CID is charac_no. Prepared inventory still resolves through the
+	// registry by UID so the lookup stays tied to the managed robot identity.
+	r.CID = 900001
 	r.StoreCreated = true
 
 	if !r.GetDbDataAndCompleteDisplay() {

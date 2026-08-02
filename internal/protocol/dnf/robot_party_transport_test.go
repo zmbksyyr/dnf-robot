@@ -280,7 +280,10 @@ func TestShouldReplyPartyUDP(t *testing.T) {
 }
 
 func TestBuildPartyRelayPacket(t *testing.T) {
-	got := buildPartyRelayPacket(1, 18000000, 17000006, []byte{1, 2, 3})
+	got, err := buildPartyRelayPacket(1, 18000000, 17000006, []byte{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []byte{1, 0, 15, 0, 0x80, 0xa8, 0x12, 0x01, 0x46, 0x66, 0x03, 0x01, 1, 2, 3}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("packet = %x, want %x", got, want)
@@ -289,9 +292,27 @@ func TestBuildPartyRelayPacket(t *testing.T) {
 
 func TestPartyTransportReplyGroupingRespectsDatagramLimit(t *testing.T) {
 	frames := [][]byte{{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}}
-	groups := groupPartyTransportFrames(frames, 8)
+	groups, err := groupPartyTransportFrames(frames, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(groups) != 2 || !bytes.Equal(groups[0], []byte{1, 2, 3, 4, 5, 6, 7, 8}) || !bytes.Equal(groups[1], []byte{9, 10, 11, 12}) {
 		t.Fatalf("reply groups=%x", groups)
+	}
+}
+
+func TestPartyTransportBuildersRejectLengthTruncation(t *testing.T) {
+	if _, err := buildPartyRelayPacket(1, 1, 2, make([]byte, partyRelayMaxPacketSize-11)); err == nil {
+		t.Fatal("oversized relay payload was accepted")
+	}
+	if groups, err := groupPartyTransportFrames([][]byte{make([]byte, partyDefaultUDPMTU+1)}, partyDefaultUDPMTU); err == nil || groups != nil {
+		t.Fatalf("oversized UDP frame groups=%v err=%v", groups, err)
+	}
+	if packet := buildPartyUnreliablePacket(1, 0, 0, make([]byte, 1<<16)); packet != nil {
+		t.Fatalf("oversized unreliable packet length=%d", len(packet))
+	}
+	if packet := buildPartyReliablePacket(1, 0, 0, [][]byte{make([]byte, 1<<16)}); packet != nil {
+		t.Fatalf("oversized reliable packet length=%d", len(packet))
 	}
 }
 
@@ -317,6 +338,23 @@ func TestPartyRouteFallsBackWhenCachedTransportIsUnavailable(t *testing.T) {
 	vo.partyPeerRoute[0] = 1
 	if route := vo.partyRouteForPeerUnsafe(0); route != 2 {
 		t.Fatalf("route with unavailable UDP = %d", route)
+	}
+}
+
+func TestPartyRouteIgnoresInvalidCachedRoute(t *testing.T) {
+	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpConn.Close()
+
+	vo := &RobotVo{partyUDPConn: udpConn, partyUDPRunning: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
+	vo.partyPeerRoute[0] = 0xff
+	vo.partyPeerRouteAt[0] = time.Now()
+
+	if route := vo.partyRouteForPeerUnsafe(0); route != 1 {
+		t.Fatalf("route with invalid cached value = %d, want 1", route)
 	}
 }
 
@@ -719,11 +757,15 @@ func TestPartyRelayCombinesRepliesIntoOneWrite(t *testing.T) {
 	peer := partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true}
 	vo.partyPeers[0] = peer
 	payload := append(buildPartyReliablePacket(7, peer.slot, 0, [][]byte{{1, 2, 3}}), buildPartyReliablePacket(8, peer.slot, 0, [][]byte{{4, 5, 6}})...)
-	vo.handlePartyRelayPacket(robot, buildPartyRelayPacket(3, peer.accID, vo.UID, payload))
-	packet := readPartyRelayPacket(t, relay)
-	frames, ok := splitPartyTransportFrames(packet[12:])
+	packet, err := buildPartyRelayPacket(3, peer.accID, vo.UID, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vo.handlePartyRelayPacket(robot, packet)
+	reply := readPartyRelayPacket(t, relay)
+	frames, ok := splitPartyTransportFrames(reply[12:])
 	if !ok || len(frames) != 2 || !bytes.Equal(frames[0], buildPartyTQOSAck(vo.partySelfPeer.slot, 7)) || !bytes.Equal(frames[1], buildPartyTQOSAck(vo.partySelfPeer.slot, 8)) {
-		t.Fatalf("combined relay replies=%x frames=%x ok=%t", packet, frames, ok)
+		t.Fatalf("combined relay replies=%x frames=%x ok=%t", reply, frames, ok)
 	}
 	vo.mu.Lock()
 	vo.State = StateStop

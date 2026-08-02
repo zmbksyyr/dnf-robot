@@ -151,7 +151,6 @@ func (a *Actor) tick(now time.Time) {
 	}
 	isStore := st.RobotType == 2 || st.RobotType == 3
 	if isStore && a.storeUntilMissing() {
-		rc := a.runtime.Config()
 		grace := time.Duration(rc.AutoStoreTickSec) * time.Second
 		if grace <= 0 {
 			grace = 10 * time.Second

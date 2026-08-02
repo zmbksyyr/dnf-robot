@@ -3,6 +3,7 @@ package dnf
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
@@ -112,7 +113,12 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 			r.markPartyRouteFailureUnsafe(peer, route, time.Now(), err.Error())
 			return "relay", err
 		}
-		err := r.enqueuePartyRelayPacketUnsafe(relay, buildPartyRelayPacket(1, r.UID, peer.accID, payload))
+		packet, err := buildPartyRelayPacket(1, r.UID, peer.accID, payload)
+		if err != nil {
+			r.markPartyRouteFailureUnsafe(peer, route, time.Now(), err.Error())
+			return "relay", err
+		}
+		err = r.enqueuePartyRelayPacketUnsafe(relay, packet)
 		if err != nil && r.partyRelayConn == relay {
 			r.detachPartyRelayConnUnsafe(relay)
 			_ = relay.Close()
@@ -127,11 +133,20 @@ func writePartyUDPDatagram(conn *net.UDPConn, payload []byte, remote *net.UDPAdd
 	if conn == nil || remote == nil {
 		return fmt.Errorf("party UDP destination is unavailable")
 	}
+	if len(payload) > partyDefaultUDPMTU {
+		return fmt.Errorf("party UDP payload size %d exceeds MTU %d", len(payload), partyDefaultUDPMTU)
+	}
 	if err := conn.SetWriteDeadline(time.Now().Add(partyUDPWriteTimeout)); err != nil {
 		return err
 	}
-	_, err := conn.WriteToUDP(payload, remote)
-	return err
+	n, err := conn.WriteToUDP(payload, remote)
+	if err != nil {
+		return err
+	}
+	if n != len(payload) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func buildNATInfoPayload(ip net.IP, port uint16) ([]byte, bool) {
@@ -153,18 +168,24 @@ func buildNATInfoPayload(ip net.IP, port uint16) ([]byte, bool) {
 	return body, true
 }
 
-func groupPartyTransportFrames(frames [][]byte, maxSize int) [][]byte {
+func groupPartyTransportFrames(frames [][]byte, maxSize int) ([][]byte, error) {
+	if maxSize <= 0 {
+		return nil, fmt.Errorf("invalid party transport group limit %d", maxSize)
+	}
 	groups := make([][]byte, 0, len(frames))
 	for _, frame := range frames {
 		if len(frame) == 0 {
 			continue
 		}
+		if len(frame) > maxSize {
+			return nil, fmt.Errorf("party transport frame size %d exceeds limit %d", len(frame), maxSize)
+		}
 		last := len(groups) - 1
-		if last < 0 || (maxSize > 0 && len(groups[last])+len(frame) > maxSize) {
+		if last < 0 || len(groups[last])+len(frame) > maxSize {
 			groups = append(groups, append([]byte(nil), frame...))
 			continue
 		}
 		groups[last] = append(groups[last], frame...)
 	}
-	return groups
+	return groups, nil
 }

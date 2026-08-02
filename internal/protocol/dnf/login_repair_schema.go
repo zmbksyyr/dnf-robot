@@ -76,7 +76,7 @@ func (c *loginRepairCapabilityCache) get(ctx context.Context, db *sql.DB, load f
 	c.entries[db] = entry
 	c.access.Unlock()
 
-	capabilities, err := load(db)
+	capabilities, err := loadLoginRepairCapabilitiesSafely(db, load)
 	c.access.Lock()
 	entry.capabilities = capabilities
 	entry.err = err
@@ -86,6 +86,24 @@ func (c *loginRepairCapabilityCache) get(ctx context.Context, db *sql.DB, load f
 	close(entry.done)
 	c.access.Unlock()
 	return entry.capabilities, entry.err
+}
+
+func loadLoginRepairCapabilitiesSafely(db *sql.DB, load func(*sql.DB) (loginRepairCapabilities, error)) (capabilities loginRepairCapabilities, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("login repair capability load panic: %v", rec)
+		}
+	}()
+	return load(db)
+}
+
+func (c *loginRepairCapabilityCache) invalidateDB(db *sql.DB) {
+	if db == nil {
+		return
+	}
+	c.access.Lock()
+	delete(c.entries, db)
+	c.access.Unlock()
 }
 
 var loginRepairSchemaCache loginRepairCapabilityCache
@@ -111,6 +129,7 @@ func inspectLoginRepairCapabilities(ctx context.Context, db *sql.DB) (loginRepai
 	if err != nil {
 		return loginRepairCapabilities{}, fmt.Errorf("query optional login tables: %w", err)
 	}
+	defer rows.Close()
 
 	available := make(map[string]bool, 7)
 	for rows.Next() {

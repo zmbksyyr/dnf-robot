@@ -8,6 +8,29 @@ import (
 	"robot/internal/scheduler"
 )
 
+const maxGoroutineDumpBytes = 1024 * 1024
+
+type cappedProfileBuffer struct {
+	bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (w *cappedProfileBuffer) Write(p []byte) (int, error) {
+	written := len(p)
+	remaining := w.limit - w.Len()
+	if remaining <= 0 {
+		w.truncated = w.truncated || len(p) > 0
+		return written, nil
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+		w.truncated = true
+	}
+	_, _ = w.Buffer.Write(p)
+	return written, nil
+}
+
 func handleSystemCommand(cmd, pkt string, manager *scheduler.RobotManager) (string, bool) {
 	switch cmd {
 	case "autoStatus":
@@ -35,13 +58,14 @@ func handleSystemCommand(cmd, pkt string, manager *scheduler.RobotManager) (stri
 }
 
 func goroutineDump() map[string]interface{} {
-	var buf bytes.Buffer
+	buf := cappedProfileBuffer{limit: maxGoroutineDumpBytes}
 	if prof := pprof.Lookup("goroutine"); prof != nil {
 		_ = prof.WriteTo(&buf, 1)
 	}
 	return map[string]interface{}{
-		"count": runtime.NumGoroutine(),
-		"dump":  buf.String(),
+		"count":     runtime.NumGoroutine(),
+		"dump":      buf.String(),
+		"truncated": buf.truncated,
 	}
 }
 

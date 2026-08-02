@@ -1,9 +1,12 @@
 package actor
 
 import (
+	"fmt"
+	"runtime/debug"
 	"time"
 
 	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
 	foundationlog "robot/internal/foundation/log"
 )
 
@@ -62,12 +65,14 @@ func (a *Actor) controlAndWait(ctrl control, timeout time.Duration) controlResul
 			return controlResult{}
 		}
 	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case res := <-ctrl.done:
 		return res
 	case <-a.done:
 		return controlResult{}
-	case <-time.After(timeout):
+	case <-timer.C:
 		return controlResult{}
 	}
 }
@@ -78,9 +83,11 @@ func (a *Actor) stopAndWait(timeout time.Duration) {
 		<-a.done
 		return
 	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case <-a.done:
-	case <-time.After(timeout):
+	case <-timer.C:
 		foundationlog.Robotf("[Actor] stop_timeout slot=%d uid=%d timeout=%s\n", a.slotIDValue(), a.uidValue(), timeout)
 	}
 }
@@ -100,40 +107,136 @@ func (a *Actor) enqueue(cmd Command, timeout time.Duration) (robotcap.ActionResu
 	if timeout <= 0 {
 		return robotcap.ActionResult{UID: a.uidValue(), OK: true, State: robotcap.ActionStateAccepted}, true
 	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case res := <-req.done:
 		return res, true
-	case <-time.After(timeout):
+	case <-timer.C:
 		return robotcap.ActionResult{UID: a.uidValue(), OK: false, State: robotcap.ActionStateTimeout, Message: "manual action timeout"}, false
 	}
 }
 
 func (a *Actor) loop() {
-	defer close(a.done)
-	rc := a.runtime.Config()
-	ticker := time.NewTicker(time.Duration(rc.SystemActorPollMS) * time.Millisecond)
-	defer ticker.Stop()
+	defer func() {
+		if rec := recover(); rec != nil {
+			a.handleLoopPanic("loop", rec)
+			a.tryReleaseAfterFatalPanic()
+		}
+		close(a.done)
+	}()
+	// Read the poll interval when each tick is scheduled. The runtime config is
+	// hot-reloadable, and keeping a ticker created at actor startup would make
+	// SystemActorPollMS changes silently ineffective for existing actors.
+	timer := time.NewTimer(a.pollInterval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-a.stop:
 			a.releaseCurrentUIDUntilClosed()
 			return
 		case ctrl := <-a.ctrls:
-			res := a.handleControl(ctrl)
+			res := a.handleControlSafely(ctrl)
 			select {
 			case ctrl.done <- res:
 			default:
 			}
 		case req := <-a.cmds:
-			res := a.handleCommand(req.cmd)
+			res := a.handleCommandSafely(req.cmd)
 			select {
 			case req.done <- res:
 			default:
 			}
-		case now := <-ticker.C:
-			a.tick(now)
+		case now := <-timer.C:
+			a.tickSafely(now)
+			timer.Reset(a.pollInterval())
 		}
 	}
+}
+
+func (a *Actor) pollInterval() (interval time.Duration) {
+	interval = time.Second
+	defer func() {
+		if rec := recover(); rec != nil {
+			a.handleLoopPanic("config", rec)
+		}
+	}()
+	return actorPollInterval(a.runtime.Config())
+}
+
+func (a *Actor) handleControlSafely(ctrl control) (res controlResult) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			a.handleLoopPanic(fmt.Sprintf("control_%d", ctrl.kind), rec)
+			res = controlResult{uid: a.uidValue()}
+		}
+	}()
+	return a.handleControl(ctrl)
+}
+
+func (a *Actor) handleCommandSafely(cmd Command) (res robotcap.ActionResult) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			a.handleLoopPanic(fmt.Sprintf("command_%d", cmd), rec)
+			res = robotcap.ActionResult{
+				UID:     a.uidValue(),
+				OK:      false,
+				State:   robotcap.ActionStateFailed,
+				Message: fmt.Sprintf("actor command panic: %v", rec),
+			}
+		}
+	}()
+	return a.handleCommand(cmd)
+}
+
+func (a *Actor) tickSafely(now time.Time) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			a.handleLoopPanic("tick", rec)
+		}
+	}()
+	if a.stateValue() == StateReleasing {
+		a.releaseCurrentUID()
+		return
+	}
+	a.tick(now)
+}
+
+func (a *Actor) handleLoopPanic(operation string, rec interface{}) {
+	a.stateMu.Lock()
+	uid := a.uid
+	a.busy = false
+	a.busyKind = ""
+	a.onlineDesired = false
+	a.releaseRequested = uid > 0
+	if uid > 0 {
+		a.state = StateReleasing
+	} else {
+		a.state = StateIdle
+	}
+	slotID := a.slotID
+	a.stateMu.Unlock()
+	foundationlog.Robotf("[Actor] panic slot=%d uid=%d operation=%s err=%v\n%s", slotID, uid, operation, rec, debug.Stack())
+}
+
+func (a *Actor) tryReleaseAfterFatalPanic() {
+	defer func() {
+		if rec := recover(); rec != nil {
+			foundationlog.Robotf("[Actor] panic_cleanup_failed slot=%d uid=%d err=%v\n", a.slotIDValue(), a.uidValue(), rec)
+		}
+	}()
+	a.releaseCurrentUID()
+}
+
+func actorPollInterval(rc robotconfig.RuntimeConfig) time.Duration {
+	intervalMS := rc.SystemActorPollMS
+	if intervalMS <= 0 {
+		intervalMS = 1000
+	}
+	if intervalMS < 100 {
+		intervalMS = 100
+	}
+	return time.Duration(intervalMS) * time.Millisecond
 }
 
 func (a *Actor) handleControl(ctrl control) controlResult {
@@ -143,7 +246,9 @@ func (a *Actor) handleControl(ctrl control) controlResult {
 			return controlResult{}
 		}
 		if old := a.uidValue(); old > 0 && old != ctrl.uid {
-			a.releaseCurrentUID()
+			if released := a.releaseCurrentUID(); released != old {
+				return controlResult{uid: old}
+			}
 		}
 		a.resetForUID(ctrl.uid)
 		a.setReleaseRequested(false)

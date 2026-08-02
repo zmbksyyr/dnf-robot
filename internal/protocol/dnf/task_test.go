@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"net"
 	"testing"
 	"time"
 )
@@ -8,6 +9,9 @@ import (
 func TestConnectQueueDeduplicatesUID(t *testing.T) {
 	task := NewRobotDnfTask()
 	defer task.Shutdown()
+	if got := cap(task.connectSlots); got != maxConcurrentConnects {
+		t.Fatalf("connect concurrency capacity = %d, want %d", got, maxConcurrentConnects)
+	}
 
 	if !task.enqueueConnect(&RobotVo{UID: 1001}) {
 		t.Fatalf("first enqueue should pass")
@@ -18,6 +22,24 @@ func TestConnectQueueDeduplicatesUID(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if got := len(task.connectQueue); got > 1 {
 		t.Fatalf("connect queue got %d entries, want at most one deduped uid", got)
+	}
+}
+
+func TestRobotDnfTaskContainsHandlerPanic(t *testing.T) {
+	task := NewRobotDnfTask()
+	defer task.Shutdown()
+	called := false
+	task.keyToHandle["panic-test"] = func(*RobotDnfTask, interface{}) bool {
+		panic("bad handler")
+	}
+	task.handleMessage(MsgQueueData{Type: "panic-test"})
+	task.keyToHandle["panic-test"] = func(*RobotDnfTask, interface{}) bool {
+		called = true
+		return true
+	}
+	task.handleMessage(MsgQueueData{Type: "panic-test"})
+	if !called {
+		t.Fatal("task handler remained unusable after panic")
 	}
 }
 
@@ -130,8 +152,22 @@ func TestMessageDispatchStopsQueuedWorkOnShutdown(t *testing.T) {
 	task.AddMessage("MsgMove", &moveInternalData{ID: 1001, X: 1})
 	<-started
 	task.AddMessage("MsgMove", &moveInternalData{ID: 1001, X: 2})
-	task.Shutdown()
+	shutdownDone := make(chan struct{})
+	go func() {
+		task.Shutdown()
+		close(shutdownDone)
+	}()
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown returned before the active handler stopped")
+	case <-time.After(20 * time.Millisecond):
+	}
 	close(release)
+	select {
+	case <-shutdownDone:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not wait for the active handler")
+	}
 
 	select {
 	case <-secondRan:
@@ -140,6 +176,65 @@ func TestMessageDispatchStopsQueuedWorkOnShutdown(t *testing.T) {
 	}
 	if task.TryAddMessage("MsgMove", &moveInternalData{ID: 1002}) {
 		t.Fatal("message was accepted after shutdown")
+	}
+}
+
+func TestTaskShutdownCancelsConnectContext(t *testing.T) {
+	task := NewRobotDnfTask()
+	ctx := task.context()
+	task.Shutdown()
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("shutdown left the connect context active")
+	}
+}
+
+func TestTaskShutdownClosesAndRemovesRobots(t *testing.T) {
+	task := NewRobotDnfTask()
+	vo := NewRobotVo(nil)
+	vo.Load(UserLoginInfo{UID: 17000001})
+	client, server := net.Pipe()
+	defer server.Close()
+	vo.mu.Lock()
+	vo.Controller = task
+	vo.Conn = client
+	vo.State = StateRun
+	vo.publishSnapshotUnsafe()
+	vo.mu.Unlock()
+	if !task.replaceCurrent(vo.UID, nil, vo) {
+		t.Fatal("failed to register robot")
+	}
+
+	task.Shutdown()
+
+	if task.Find(int(vo.UID)) != nil {
+		t.Fatal("shutdown left robot in registry")
+	}
+	if snap := vo.Snapshot(); snap.State != StateStop {
+		t.Fatalf("robot state = %d, want stopped", snap.State)
+	}
+	_ = server.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := server.Read(make([]byte, 1)); err == nil {
+		t.Fatal("shutdown left robot connection open")
+	}
+}
+
+func TestTaskShutdownRejectsLateWork(t *testing.T) {
+	task := NewRobotDnfTask()
+	task.Shutdown()
+
+	vo := NewRobotVo(nil)
+	vo.Load(UserLoginInfo{UID: 17000001})
+	if task.replaceCurrent(vo.UID, nil, vo) {
+		t.Fatal("shutdown task accepted registry replacement")
+	}
+	if task.enqueueConnect(vo) {
+		t.Fatal("shutdown task accepted connect work")
+	}
+	task.AddMessageDelay("MsgReconnect", vo, 60)
+	if got := len(task.messageTimerQueue); got != 0 {
+		t.Fatalf("shutdown task retained %d delayed messages", got)
 	}
 }
 

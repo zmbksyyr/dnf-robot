@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -27,6 +28,16 @@ func TestCalculateTradeQuoteUsesActiveValidTransactions(t *testing.T) {
 
 	if got, want := calculateTradeQuote(snapshot, prices), uint32(75); got != want {
 		t.Fatalf("calculateTradeQuote() = %d, want %d", got, want)
+	}
+}
+
+func TestCalculateTradeQuoteSaturatesInsteadOfWrapping(t *testing.T) {
+	snapshot := tradeQuoteSnapshot{}
+	snapshot.active[0] = true
+	snapshot.transactions[0] = Transaction{ItemId: 100, ItemNum: math.MaxInt32}
+	prices := map[int]ShopVo{100: {TradeItem: 100, Price: math.MaxInt32}}
+	if got := calculateTradeQuote(snapshot, prices); got != math.MaxUint32 {
+		t.Fatalf("overflow quote = %d, want %d", got, uint32(math.MaxUint32))
 	}
 }
 

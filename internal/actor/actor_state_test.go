@@ -3,6 +3,8 @@ package actor
 import (
 	"testing"
 	"time"
+
+	robotconfig "robot/internal/capability/robotconfig"
 )
 
 func TestOfflineActorKeepsUIDAttached(t *testing.T) {
@@ -40,5 +42,22 @@ func TestMarkOnlineHealthyClearsHealthWithoutChangingSchedule(t *testing.T) {
 	}
 	if !a.nextStore.Equal(now.Add(time.Minute)) {
 		t.Fatalf("health reset changed store cooldown: got %s", a.nextStore)
+	}
+}
+
+func TestActorPollIntervalUsesCurrentNormalizedValue(t *testing.T) {
+	tests := []struct {
+		milliseconds int
+		want         time.Duration
+	}{
+		{milliseconds: 0, want: time.Second},
+		{milliseconds: 10, want: 100 * time.Millisecond},
+		{milliseconds: 250, want: 250 * time.Millisecond},
+	}
+	for _, test := range tests {
+		got := actorPollInterval(robotconfig.RuntimeConfig{SystemActorPollMS: test.milliseconds})
+		if got != test.want {
+			t.Fatalf("actorPollInterval(%d) = %s, want %s", test.milliseconds, got, test.want)
+		}
 	}
 }

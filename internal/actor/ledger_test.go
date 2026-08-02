@@ -130,3 +130,24 @@ func TestLedgerBeginDrainSomeAutoActorsHonorsFloor(t *testing.T) {
 		t.Fatalf("draining actors got %d want 2", got)
 	}
 }
+
+func TestLedgerReapsUnexpectedlyStoppedActorAndBlocksUID(t *testing.T) {
+	ledger := NewLedger()
+	actor := testLedgerActor(1, ModeAuto, 101)
+	addTestLedgerActor(&ledger, actor)
+	if !ledger.TryLeaseUID(101, actor) {
+		t.Fatal("lease uid 101")
+	}
+	close(actor.done)
+
+	ledger.ReapDoneDraining()
+	if got := ledger.ActorForUID(101); got != nil {
+		t.Fatalf("dead actor lease remains: %v", got)
+	}
+	if len(ledger.ActorPointers()) != 0 {
+		t.Fatal("dead actor remains in slot registry")
+	}
+	if _, blocked := ledger.blockedUID[101]; !blocked {
+		t.Fatal("unexpectedly stopped actor uid was not blocked for cleanup")
+	}
+}

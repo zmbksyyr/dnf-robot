@@ -5,18 +5,17 @@ import (
 )
 
 type DNFCipher struct {
-	handles    [14]BlockCipher
-	keys       []byte
-	keySize    int
-	polynomial uint32
-	haveTable  bool
-	table      [256]uint32
+	handles     [14]BlockCipher
+	keySize     int
+	initialized bool
 }
 
+const dnfCRCPolynomial uint32 = 1303941417
+
+var dnfCRCTable = buildDNFCRCTable()
+
 func NewDNFCipher() *DNFCipher {
-	c := &DNFCipher{
-		polynomial: 1303941417,
-	}
+	c := &DNFCipher{}
 	c.handles[0] = NewShiftCipher()
 	c.handles[1] = NewRijndaelCipher()
 	c.handles[2] = NewBlowFishCipher()
@@ -41,35 +40,39 @@ func NewDNFCipher() *DNFCipher {
 }
 
 func (c *DNFCipher) Initialize(key []byte) error {
-	// [C++->Go] C++ always passes 334 bytes, distributed across 14 ciphers
-	// The Go ciphers may have a different total keySize; we accept up to that many bytes
-	keyLen := len(key)
-	if keyLen > c.keySize {
-		keyLen = c.keySize
+	if c == nil || len(key) != c.keySize {
+		return ErrInvalidKeySize
 	}
-	c.keys = make([]byte, keyLen)
-	copy(c.keys, key[:keyLen])
-	pBuffer := key[:keyLen]
+	pBuffer := key
 	for i := 0; i < 14; i++ {
-		ks := c.handles[i].KeySize()
-		if ks > len(pBuffer) {
-			break
+		if c.handles[i] == nil {
+			c.initialized = false
+			return ErrNotInitialized
 		}
+		ks := c.handles[i].KeySize()
 		if err := c.handles[i].SetKey(pBuffer[:ks]); err != nil {
+			c.initialized = false
 			return err
 		}
 		pBuffer = pBuffer[ks:]
 	}
+	c.initialized = true
 	return nil
 }
 
 func (c *DNFCipher) KeySize() int { return c.keySize }
 
 func (c *DNFCipher) Encrypt(packetType uint16, data []byte) ([]byte, error) {
+	if c == nil || !c.initialized {
+		return nil, ErrNotInitialized
+	}
 	return c.handles[packetType%14].Encrypt(data)
 }
 
 func (c *DNFCipher) Decrypt(packetType uint16, data []byte) ([]byte, error) {
+	if c == nil || !c.initialized {
+		return nil, ErrNotInitialized
+	}
 	return c.handles[packetType%14].Decrypt(data)
 }
 
@@ -170,35 +173,27 @@ func (c *DNFCipher) GetTotalKeyLength() int {
 	return c.keySize
 }
 
-func (c *DNFCipher) GetOriginalKey() []byte {
-	out := make([]byte, len(c.keys))
-	copy(out, c.keys)
-	return out
-}
-
 func (c *DNFCipher) CRC32(crc uint32, data []byte) uint32 {
-	if !c.haveTable {
-		c.makeCRCTable()
-	}
 	crc = ^crc
 	for _, b := range data {
-		crc = (crc >> 8) ^ c.table[(crc^uint32(b))&0xFF]
+		crc = (crc >> 8) ^ dnfCRCTable[(crc^uint32(b))&0xFF]
 	}
 	return ^crc
 }
 
-func (c *DNFCipher) makeCRCTable() {
-	c.haveTable = true
+func buildDNFCRCTable() [256]uint32 {
+	var table [256]uint32
 	for i := 0; i < 256; i++ {
-		c.table[i] = uint32(i)
+		table[i] = uint32(i)
 		for j := 0; j < 8; j++ {
-			if c.table[i]&1 != 0 {
-				c.table[i] = (c.table[i] >> 1) ^ c.polynomial
+			if table[i]&1 != 0 {
+				table[i] = (table[i] >> 1) ^ dnfCRCPolynomial
 			} else {
-				c.table[i] >>= 1
+				table[i] >>= 1
 			}
 		}
 	}
+	return table
 }
 
 func (c *DNFCipher) MakeChecksumTo1Byte(data []byte) {

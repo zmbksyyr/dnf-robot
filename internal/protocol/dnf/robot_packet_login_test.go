@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"encoding/binary"
 	"errors"
 	"testing"
 
@@ -45,6 +46,30 @@ func TestSelectCharacRequiresLoginState(t *testing.T) {
 	}
 	if len(conn.written) != 0 {
 		t.Fatal("stopped login wrote a character selection packet")
+	}
+}
+
+func TestSelectCharacUsesCharacterSlotWithoutNarrowingDatabaseCID(t *testing.T) {
+	conn := &captureSessionConn{}
+	robot := newLoginPacketTestRobot(t, conn)
+	robot.CID = 900001
+	robot.CharacterSlot = 7
+
+	if !robot.sendSelectCharacUnsafe("database cid regression") {
+		t.Fatal("character selection was not sent")
+	}
+	if len(conn.written) != 29 || binary.LittleEndian.Uint16(conn.written[1:3]) != 4 {
+		t.Fatalf("select packet = %x", conn.written)
+	}
+	payload, err := robot.Cipher.Decrypt(4, conn.written[13:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload[0] != robot.CharacterSlot {
+		t.Fatalf("selected slot = %d, want %d (database cid=%d)", payload[0], robot.CharacterSlot, robot.CID)
+	}
+	if robot.CID != 900001 {
+		t.Fatalf("database cid changed to %d", robot.CID)
 	}
 }
 

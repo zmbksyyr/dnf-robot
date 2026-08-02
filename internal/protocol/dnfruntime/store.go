@@ -8,16 +8,24 @@ import (
 )
 
 func (rs *RobotSvc) StartPrivateStore(uid int, title string) bool {
+	if !rs.beginWork() {
+		return false
+	}
 	vo := rs.robot(uid)
 	if vo == nil {
+		rs.worker.Done()
 		return false
 	}
 	snap := vo.Snapshot()
 	if shared.StateName(int(snap.State)) != shared.RuntimeStateRunning || snap.PartyActive {
+		rs.worker.Done()
 		return false
 	}
 	vo.PreparePrivateStoreState(title)
-	go completePrivateStore(uid, vo)
+	go func() {
+		defer rs.worker.Done()
+		completePrivateStore(rs.stop, uid, vo)
+	}()
 	return true
 }
 
@@ -73,13 +81,15 @@ func (rs *RobotSvc) runningRobot(uid int) *dnf.RobotVo {
 	return vo
 }
 
-func completePrivateStore(uid int, vo *dnf.RobotVo) {
+func completePrivateStore(stop <-chan struct{}, uid int, vo *dnf.RobotVo) {
 	defer func() {
 		if r := recover(); r != nil {
 			robotLogf("[StartPrivateStore] panic uid=%d err=%v\n", uid, r)
 		}
 	}()
-	time.Sleep(time.Duration(uid%7) * 450 * time.Millisecond)
+	if !waitStoreDelay(stop, time.Duration(uid%7)*450*time.Millisecond) {
+		return
+	}
 	if !storeRobotReady(vo) {
 		return
 	}
@@ -90,7 +100,9 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 	if !vo.GetCompleteDisplay(0) {
 		return
 	}
-	waitStoreItemList(vo, 1500*time.Millisecond)
+	if !waitStoreItemList(stop, vo, 1500*time.Millisecond) {
+		return
+	}
 	if !storeRobotReady(vo) {
 		return
 	}
@@ -103,14 +115,18 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 	if !vo.GetCompleteDisplay(0) {
 		return
 	}
-	waitStoreCreated(vo, 5*time.Second)
+	if !waitStoreCreated(stop, vo, 5*time.Second) {
+		return
+	}
 	if snap := vo.Snapshot(); snap.PartyActive || shared.StateName(int(snap.State)) != shared.RuntimeStateRunning {
 		return
 	} else if !snap.StoreCreated {
 		vo.MarkPrivateStoreCreateFailed()
 		return
 	}
-	waitStoreItemList(vo, 2*time.Second)
+	if !waitStoreItemList(stop, vo, 2*time.Second) {
+		return
+	}
 	// The offline preparation transaction already knows the exact global slots
 	// written into the inventory image. After NoCache and the confirmed relogin,
 	// let CMD 90 validate that image directly instead of waiting on a randomly
@@ -124,7 +140,9 @@ func completePrivateStore(uid int, vo *dnf.RobotVo) {
 		// publishing the complete inventory. Give the second request enough time
 		// to win the seven-item path. If no complete reply arrives, the workflow
 		// refreshes the session once instead of guessing database slot indexes.
-		waitStoreItemList(vo, 10*time.Second)
+		if !waitStoreItemList(stop, vo, 10*time.Second) {
+			return
+		}
 	}
 	if !storeRobotReady(vo) {
 		return
@@ -139,23 +157,56 @@ func storeRobotReady(vo *dnf.RobotVo) bool {
 	return !snap.PartyActive && shared.StateName(int(snap.State)) == shared.RuntimeStateRunning
 }
 
-func waitStoreCreated(vo *dnf.RobotVo, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+func waitStoreCreated(stop <-chan struct{}, vo *dnf.RobotVo, timeout time.Duration) bool {
+	return waitStoreCondition(stop, timeout, func() bool {
 		snap := vo.Snapshot()
-		if snap.PartyActive || snap.StoreCreated || snap.StoreCreateRejected || shared.StateName(int(snap.State)) != shared.RuntimeStateRunning {
-			return
+		return snap.PartyActive || snap.StoreCreated || snap.StoreCreateRejected || shared.StateName(int(snap.State)) != shared.RuntimeStateRunning
+	})
+}
+
+func waitStoreItemList(stop <-chan struct{}, vo *dnf.RobotVo, timeout time.Duration) bool {
+	return waitStoreCondition(stop, timeout, func() bool {
+		return vo.PrivateStoreItemListReceived() || !storeRobotReady(vo)
+	})
+}
+
+func waitStoreCondition(stop <-chan struct{}, timeout time.Duration, done func() bool) bool {
+	if done() {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return false
+		case <-timer.C:
+			return true
+		case <-ticker.C:
+			if done() {
+				return true
+			}
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-func waitStoreItemList(vo *dnf.RobotVo, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if vo.PrivateStoreItemListReceived() || !storeRobotReady(vo) {
-			return
+func waitStoreDelay(stop <-chan struct{}, delay time.Duration) bool {
+	if delay <= 0 {
+		select {
+		case <-stop:
+			return false
+		default:
+			return true
 		}
-		time.Sleep(100 * time.Millisecond)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-stop:
+		return false
+	case <-timer.C:
+		return true
 	}
 }

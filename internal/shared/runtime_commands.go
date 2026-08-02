@@ -3,11 +3,16 @@ package shared
 // RuntimeOnlineUser is the protocol-independent login command exchanged
 // between scheduler and the DNF runtime.
 type RuntimeOnlineUser struct {
-	IP             string
-	Port           int
-	Token          string
-	UID            int
-	CID            int
+	IP    string
+	Port  int
+	Token string
+	UID   int
+
+	// CID is the database character identity (taiwan_cain.charac_info.charac_no).
+	CID int
+	// CharacterSlot is the one-byte character-list index used by CMD 4/12.
+	CharacterSlot int
+
 	MaxReconnect   int
 	ReconnectDelay int
 	BirthVillage   int

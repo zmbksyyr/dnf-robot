@@ -3,11 +3,13 @@ package nocache
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
+	"math"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	foundationnetwork "robot/internal/foundation/network"
 )
 
 const (
@@ -32,7 +34,7 @@ func NewClient(host string, gamePort, serverGroup int) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if serverGroup < 0 {
+	if serverGroup < 0 || uint64(serverGroup) > math.MaxUint32 {
 		return nil, fmt.Errorf("invalid server group %d", serverGroup)
 	}
 	return &Client{
@@ -88,12 +90,5 @@ func sendPacket(network, address string, packet []byte, timeout time.Duration) e
 	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 		return err
 	}
-	n, err := conn.Write(packet)
-	if err != nil {
-		return err
-	}
-	if n != len(packet) {
-		return io.ErrShortWrite
-	}
-	return nil
+	return foundationnetwork.WriteFull(conn, packet)
 }

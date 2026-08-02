@@ -16,7 +16,8 @@ func TestCharacterRefreshUsesCommandSevenAndReselectsSameCharacter(t *testing.T)
 	}
 	robot.Conn = conn
 	robot.State = StateRun
-	robot.CID = 7
+	robot.CID = 900001
+	robot.CharacterSlot = 7
 	robot.PacketID = 41
 
 	if !robot.ReturnToCharacterSelect() {
@@ -50,6 +51,13 @@ func TestCharacterRefreshUsesCommandSevenAndReselectsSameCharacter(t *testing.T)
 	}
 	if len(conn.written) < 13 || binary.LittleEndian.Uint16(conn.written[1:3]) != 4 {
 		t.Fatalf("reselect packet = %x", conn.written)
+	}
+	payload, err := robot.Cipher.Decrypt(4, conn.written[13:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload[0] != robot.CharacterSlot {
+		t.Fatalf("reselected slot = %d, want %d", payload[0], robot.CharacterSlot)
 	}
 }
 

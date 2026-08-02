@@ -10,7 +10,7 @@ import (
 )
 
 type Ledger struct {
-	indexMu    lockhub.Locker
+	indexMu    lockhub.RWLocker
 	actors     map[int]*Actor
 	uidActors  map[int]*Actor
 	draining   map[int]*Actor
@@ -49,8 +49,8 @@ func NewLedger() Ledger {
 }
 
 func (l *Ledger) LeaseSnapshots() []LeaseSnapshot {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	leases := make([]LeaseSnapshot, 0, len(l.uidActors))
 	for uid, actor := range l.uidActors {
 		if uid > 0 && actor != nil && l.draining[actor.slotIDValue()] != actor {
@@ -63,19 +63,22 @@ func (l *Ledger) LeaseSnapshots() []LeaseSnapshot {
 
 func (l *Ledger) Counts(now time.Time, rc robotconfig.RuntimeConfig) LedgerCounts {
 	counts := LedgerCounts{Blocked: l.BlockedCount()}
-	l.indexMu.Lock()
-	actors := make([]*Actor, 0, len(l.actors))
-	draining := make(map[int]*Actor, len(l.draining))
+	type actorCountView struct {
+		actor    *Actor
+		draining bool
+	}
+	l.indexMu.RLock()
+	actors := make([]actorCountView, 0, len(l.actors))
 	for slotID, actor := range l.actors {
 		if actor.ModeValue() == ModeAuto {
-			actors = append(actors, actor)
-		}
-		if current := l.draining[slotID]; current != nil {
-			draining[slotID] = current
+			actors = append(actors, actorCountView{
+				actor: actor, draining: l.draining[slotID] == actor,
+			})
 		}
 	}
-	l.indexMu.Unlock()
-	for _, actor := range actors {
+	l.indexMu.RUnlock()
+	for _, view := range actors {
+		actor := view.actor
 		status := actor.Status(now, rc)
 		counts.Auto++
 		if status.UID > 0 {
@@ -83,8 +86,7 @@ func (l *Ledger) Counts(now time.Time, rc robotconfig.RuntimeConfig) LedgerCount
 		} else {
 			counts.Idle++
 		}
-		isDraining := draining[actor.SlotIDValue()] == actor
-		if isDraining {
+		if view.draining {
 			counts.Draining++
 			counts.Releasing++
 			counts.StateReleasing++
@@ -133,8 +135,8 @@ func (l *Ledger) BlockedUIDs(limit int) []int {
 	if limit <= 0 {
 		return nil
 	}
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	uids := make([]int, 0, limit)
 	for uid := range l.blockedUID {
 		uids = append(uids, uid)
@@ -146,8 +148,8 @@ func (l *Ledger) BlockedUIDs(limit int) []int {
 }
 
 func (l *Ledger) BlockedCount() int {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	return len(l.blockedUID)
 }
 
@@ -261,8 +263,8 @@ func (l *Ledger) EnsureAutoActorSlots(runtime RobotRuntime, rc robotconfig.Runti
 }
 
 func (l *Ledger) ActorPointers() []*Actor {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	actors := make([]*Actor, 0, len(l.actors))
 	for _, actor := range l.actors {
 		actors = append(actors, actor)
@@ -271,8 +273,8 @@ func (l *Ledger) ActorPointers() []*Actor {
 }
 
 func (l *Ledger) ActorForUID(uid int) *Actor {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	return l.uidActors[uid]
 }
 
@@ -280,8 +282,8 @@ func (l *Ledger) HasUID(uid int) bool {
 	if uid <= 0 {
 		return false
 	}
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	return l.uidActors[uid] != nil
 }
 
@@ -316,8 +318,8 @@ func (l *Ledger) ReserveEmptyAutoActor(uid int) (*Actor, bool, bool) {
 }
 
 func (l *Ledger) AutoActorPointers() []*Actor {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	actors := make([]*Actor, 0, len(l.actors))
 	for slotID, actor := range l.actors {
 		if actor.ModeValue() == ModeAuto && l.draining[slotID] != actor {
@@ -328,8 +330,18 @@ func (l *Ledger) AutoActorPointers() []*Actor {
 }
 
 func (l *Ledger) IdleAutoActors() []*Actor {
-	actors := l.AutoActorPointers()
-	out := make([]*Actor, 0, len(actors))
+	l.indexMu.RLock()
+	actors := make([]*Actor, 0, len(l.actors))
+	for slotID, actor := range l.actors {
+		if actor.ModeValue() == ModeAuto && l.draining[slotID] != actor {
+			actors = append(actors, actor)
+		}
+	}
+	l.indexMu.RUnlock()
+
+	// Compact the temporary actor view in place. The supervisor calls this on
+	// every scale tick, so avoiding a second slice removes steady-state churn.
+	out := actors[:0]
 	for _, actor := range actors {
 		if SnapshotEmpty(actor.Snapshot()) {
 			out = append(out, actor)
@@ -342,8 +354,8 @@ func (l *Ledger) FilterBlockedRuntimeStatus(status map[int]robotcap.RuntimeStatu
 	if len(status) == 0 {
 		return
 	}
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	for uid := range l.blockedUID {
 		delete(status, uid)
 	}
@@ -460,21 +472,40 @@ func (l *Ledger) ReapActor(actor *Actor) bool {
 func (l *Ledger) ReapDoneDraining() int {
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
-	return l.reapDoneDrainingLocked()
+	reaped := 0
+	// A loop that exits after an unrecoverable panic is not necessarily marked
+	// draining. Remove such dead actors as well, but keep their UID blocked
+	// until the supervisor has confirmed the runtime and database cleanup.
+	for slotID, actor := range l.actors {
+		if actor == nil || l.draining[slotID] == actor || !actorDone(actor) {
+			continue
+		}
+		for uid, leased := range l.uidActors {
+			if leased == actor {
+				delete(l.uidActors, uid)
+				if uid > 0 {
+					l.blockedUID[uid] = struct{}{}
+				}
+			}
+		}
+		delete(l.actors, slotID)
+		reaped++
+	}
+	return reaped + l.reapDoneDrainingLocked()
 }
 
 func (l *Ledger) IsDraining(actor *Actor) bool {
 	if actor == nil {
 		return false
 	}
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	return l.draining[actor.SlotIDValue()] == actor
 }
 
 func (l *Ledger) DrainingCount() int {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	return len(l.draining)
 }
 
@@ -522,8 +553,8 @@ func (l *Ledger) ActorOwnsUID(uid int) bool {
 	if l.ActorForUID(uid) != nil {
 		return true
 	}
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
 	for _, actor := range l.actors {
 		if actor.UIDValue() == uid {
 			return true

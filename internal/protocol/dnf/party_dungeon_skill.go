@@ -212,11 +212,23 @@ func (r *RobotVo) ensurePartySkillProfileUnsafe() bool {
 	generation := r.partySkillGeneration
 	uid := r.UID
 	cid := r.CID
-	go r.loadPartySkillProfile(generation, uid, cid, loader)
+	startRobotRoutine("party_skill_profile", uid, func() {
+		r.loadPartySkillProfile(generation, uid, cid, loader)
+	})
 	return false
 }
 
 func (r *RobotVo) loadPartySkillProfile(generation uint64, uid uint32, cid int, loader partySkillProfileLoadFunc) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.mu.Lock()
+			if generation == r.partySkillGeneration && r.UID == uid && r.State != StateStop {
+				r.partySkillLoading = false
+			}
+			r.mu.Unlock()
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_ERROR] uid=%d cid=%d panic=%v\n", uid, cid, rec)
+		}
+	}()
 	profile, err := loader(uid, cid)
 	now := time.Now()
 	r.mu.Lock()

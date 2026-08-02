@@ -24,6 +24,7 @@ type RobotSvc struct {
 	disjointMu   lockhub.Locker
 	msgQueue     []robotMsgEntry
 	cond         *sync.Cond
+	stop         chan struct{}
 	running      bool
 	table        robotDriver
 	worker       sync.WaitGroup
@@ -61,7 +62,7 @@ func NewRobotService() *RobotSvc {
 }
 
 func newRobotService(table robotDriver) *RobotSvc {
-	rs := &RobotSvc{table: table, running: true}
+	rs := &RobotSvc{table: table, stop: make(chan struct{}), running: true}
 	rs.cond = sync.NewCond(&rs.mu)
 	rs.worker.Add(1)
 	go rs.run()
@@ -126,15 +127,46 @@ func (rs *RobotSvc) Online(users []shared.RuntimeOnlineUser) error {
 		// the DNF task. Putting it behind the general runtime command backlog
 		// lets the scheduler time out and retry before the old request runs,
 		// producing delayed CMD 238 storms.
-		rs.disjointMu.Lock()
-		result := rs.table.DispatchOnline(commandUsers)
-		rs.disjointMu.Unlock()
+		if !rs.beginWork() {
+			return ErrRuntimeStopped
+		}
+		defer rs.worker.Done()
+		result, err := rs.dispatchDisjointOnline(commandUsers)
+		if err != nil {
+			return err
+		}
 		if result.Code != 200 {
 			return fmt.Errorf("disjoint online rejected: %s", result.Msg)
 		}
 		return nil
 	}
 	return rs.enqueue(robotMsgEntry{typ: robotCommandOnline, online: commandUsers})
+}
+
+func (rs *RobotSvc) dispatchDisjointOnline(users []shared.RuntimeOnlineUser) (result dnf.DnfTableTaskResult, err error) {
+	rs.disjointMu.Lock()
+	defer rs.disjointMu.Unlock()
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("disjoint online panic: %v", rec)
+		}
+	}()
+	return rs.table.DispatchOnline(users), nil
+}
+
+// beginWork registers direct or asynchronous work before Shutdown changes the
+// lifecycle state. The shared mutex prevents Wait from racing a late Add.
+func (rs *RobotSvc) beginWork() bool {
+	if rs == nil {
+		return false
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if !rs.running || rs.table == nil {
+		return false
+	}
+	rs.worker.Add(1)
+	return true
 }
 
 func (rs *RobotSvc) Shout(command shared.RuntimeShoutCommand) error {
@@ -156,8 +188,15 @@ func (rs *RobotSvc) run() {
 		rs.msgQueue = nil
 		rs.mu.Unlock()
 
-		for _, entry := range batch {
+		for index, entry := range batch {
+			select {
+			case <-rs.stop:
+				clear(batch[index:])
+				return
+			default:
+			}
 			rs.dispatch(entry)
+			batch[index] = robotMsgEntry{}
 		}
 	}
 }
@@ -195,6 +234,11 @@ func (rs *RobotSvc) Shutdown() {
 	rs.shutdownOnce.Do(func() {
 		rs.mu.Lock()
 		rs.running = false
+		clear(rs.msgQueue)
+		rs.msgQueue = nil
+		if rs.stop != nil {
+			close(rs.stop)
+		}
 		rs.cond.Broadcast()
 		rs.mu.Unlock()
 		rs.worker.Wait()
@@ -205,12 +249,26 @@ func (rs *RobotSvc) Shutdown() {
 }
 
 func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
+	status := rs.RuntimeStatusMap()
+	if len(status) == 0 {
+		return nil
+	}
+	out := make([]shared.RuntimeStatus, 0, len(status))
+	for _, item := range status {
+		out = append(out, item)
+	}
+	return out
+}
+
+// RuntimeStatusMap lets the scheduler retain the freshly built snapshot
+// directly instead of converting map -> slice -> map every refresh.
+func (rs *RobotSvc) RuntimeStatusMap() map[int]shared.RuntimeStatus {
 	task := rs.task()
 	if task == nil {
 		return nil
 	}
 	robotMap := task.GetRobotVoMap()
-	out := make([]shared.RuntimeStatus, 0, len(robotMap))
+	out := make(map[int]shared.RuntimeStatus, len(robotMap))
 	now := uint32(time.Now().Unix())
 	for _, vo := range robotMap {
 		snap, _ := vo.TrySnapshot()
@@ -218,7 +276,7 @@ func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 			continue
 		}
 		state := int(snap.State)
-		out = append(out, shared.RuntimeStatus{
+		item := shared.RuntimeStatus{
 			UID:                  int(snap.UID),
 			CID:                  int(snap.CID),
 			State:                state,
@@ -245,7 +303,8 @@ func (rs *RobotSvc) RuntimeStatus() []shared.RuntimeStatus {
 			Area:                 int(snap.Area),
 			X:                    int(snap.X),
 			Y:                    int(snap.Y),
-		})
+		}
+		out[item.UID] = item
 	}
 	return out
 }
