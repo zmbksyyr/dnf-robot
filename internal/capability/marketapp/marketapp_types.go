@@ -32,22 +32,24 @@ type SystemOwner struct {
 }
 
 type RestockCfg struct {
-	Comments         map[string]string `json:"comments,omitempty"`
-	QualityFilter    *bool             `json:"quality_filter,omitempty"`
-	StackSizes       []int             `json:"stack_sizes"`
-	EquipmentQtyMin  int               `json:"equipment_qty_min"`
-	EquipmentQtyMax  int               `json:"equipment_qty_max"`
-	EquipInflateMin  int               `json:"equipment_inflate_min"`
-	EquipInflateMax  int               `json:"equipment_inflate_max"`
-	UpgradeMin       int               `json:"upgrade_min"`
-	UpgradeMax       int               `json:"upgrade_max"`
-	UpgradePriceRate float64           `json:"upgrade_price_rate"`
-	RandLow          float64           `json:"rand_low"`
-	RandHigh         float64           `json:"rand_high"`
-	MaxActions       int               `json:"max_actions"`
-	MaxConcurrent    int               `json:"max_concurrent"`
-	MaxResultActions int               `json:"max_result_actions"`
-	PerItemDelayMS   int               `json:"per_item_delay_ms"`
+	Comments           map[string]string `json:"comments,omitempty"`
+	QualityFilter      *bool             `json:"quality_filter,omitempty"`
+	StackSizes         []int             `json:"stack_sizes"`
+	EquipmentQtyMin    int               `json:"equipment_qty_min"`
+	EquipmentQtyMax    int               `json:"equipment_qty_max"`
+	EquipInflateMin    int               `json:"equipment_inflate_min"`
+	EquipInflateMax    int               `json:"equipment_inflate_max"`
+	UpgradeMin         int               `json:"upgrade_min"`
+	UpgradeMax         int               `json:"upgrade_max"`
+	UpgradePriceRate   float64           `json:"upgrade_price_rate"`
+	RandLow            float64           `json:"rand_low"`
+	RandHigh           float64           `json:"rand_high"`
+	CustomPriceEnabled bool              `json:"custom_price_enabled"`
+	CustomPriceFile    string            `json:"custom_price_file"`
+	MaxActions         int               `json:"max_actions"`
+	MaxConcurrent      int               `json:"max_concurrent"`
+	MaxResultActions   int               `json:"max_result_actions"`
+	PerItemDelayMS     int               `json:"per_item_delay_ms"`
 }
 
 type CeraCfg struct {
@@ -56,12 +58,15 @@ type CeraCfg struct {
 }
 
 type CollectorCfg struct {
-	Enabled             bool `json:"enabled"`
-	MaxActions          int  `json:"max_actions"`
-	MaxConcurrent       int  `json:"max_concurrent"`
-	MaxResultActions    int  `json:"max_result_actions"`
-	PerItemDelayMS      int  `json:"per_item_delay_ms"`
-	IncludeSystemOwners bool `json:"include_system_owners"`
+	Enabled             bool    `json:"enabled"`
+	MaxActions          int     `json:"max_actions"`
+	MaxConcurrent       int     `json:"max_concurrent"`
+	MaxResultActions    int     `json:"max_result_actions"`
+	PerItemDelayMS      int     `json:"per_item_delay_ms"`
+	IncludeSystemOwners bool    `json:"include_system_owners"`
+	PriceRangeEnabled   bool    `json:"price_range_enabled"`
+	InRangeProbability  float64 `json:"in_range_probability"`
+	OutRangeProbability float64 `json:"out_of_range_probability"`
 }
 
 type AutoCfg struct {
@@ -144,15 +149,27 @@ type ClearSystemMarketResult struct {
 }
 
 type ConfigUpdateRequest struct {
-	AutoEnabled      *bool    `json:"auto_enabled,omitempty"`
-	CollectorEnabled *bool    `json:"collector_enabled,omitempty"`
-	QualityFilter    *bool    `json:"quality_filter,omitempty"`
-	IntervalMS       int      `json:"interval_ms,omitempty"`
-	InitialDelayMS   *int     `json:"initial_delay_ms,omitempty"`
-	MaxActions       int      `json:"max_actions,omitempty"`
-	MaxConcurrent    int      `json:"max_concurrent,omitempty"`
-	ContinueOnError  *bool    `json:"continue_on_error,omitempty"`
-	Markets          []string `json:"markets,omitempty"`
+	AutoEnabled         *bool    `json:"auto_enabled,omitempty"`
+	CollectorEnabled    *bool    `json:"collector_enabled,omitempty"`
+	QualityFilter       *bool    `json:"quality_filter,omitempty"`
+	IntervalMS          int      `json:"interval_ms,omitempty"`
+	InitialDelayMS      *int     `json:"initial_delay_ms,omitempty"`
+	MaxActions          int      `json:"max_actions,omitempty"`
+	MaxConcurrent       int      `json:"max_concurrent,omitempty"`
+	ContinueOnError     *bool    `json:"continue_on_error,omitempty"`
+	Markets             []string `json:"markets,omitempty"`
+	EquipInflateMin     *int     `json:"equip_inflate_min,omitempty"`
+	EquipInflateMax     *int     `json:"equip_inflate_max,omitempty"`
+	UpgradeMin          *int     `json:"upgrade_min,omitempty"`
+	UpgradeMax          *int     `json:"upgrade_max,omitempty"`
+	UpgradePriceRate    *float64 `json:"upgrade_price_rate,omitempty"`
+	RandLow             *float64 `json:"rand_low,omitempty"`
+	RandHigh            *float64 `json:"rand_high,omitempty"`
+	CustomPriceEnabled  *bool    `json:"custom_price_enabled,omitempty"`
+	CustomPriceFile     *string  `json:"custom_price_file,omitempty"`
+	PriceRangeEnabled   *bool    `json:"price_range_enabled,omitempty"`
+	InRangeProbability  *float64 `json:"in_range_probability,omitempty"`
+	OutRangeProbability *float64 `json:"out_of_range_probability,omitempty"`
 }
 
 type Status struct {
@@ -162,6 +179,7 @@ type Status struct {
 	Auto        AutoCfg                        `json:"auto"`
 	Collector   CollectorCfg                   `json:"collector"`
 	Restock     RestockCfg                     `json:"restock"`
+	PriceRanges PriceRangeStatus               `json:"price_ranges"`
 	AutoRunning bool                           `json:"auto_running"`
 	Ready       bool                           `json:"ready"`
 	DBInit      []string                       `json:"db_init,omitempty"`
@@ -171,6 +189,15 @@ type Status struct {
 	Policy      map[string]MarketPolicyStatus  `json:"policy,omitempty"`
 	LastJob     *JobSummary                    `json:"last_job,omitempty"`
 	LogTail     []LogEvent                     `json:"log_tail,omitempty"`
+}
+
+type PriceRangeStatus struct {
+	Enabled      bool      `json:"enabled"`
+	Path         string    `json:"path,omitempty"`
+	LoadedItems  int       `json:"loaded_items"`
+	InvalidItems int       `json:"invalid_items"`
+	LoadedAt     time.Time `json:"loaded_at,omitempty"`
+	Error        string    `json:"error,omitempty"`
 }
 
 type MarketPolicyStatus struct {
@@ -448,4 +475,17 @@ type ceraRow struct {
 type corePoolItem struct {
 	ItemID    uint32 `json:"item_id"`
 	BasePrice int32  `json:"base_price"`
+}
+
+type customPriceRange struct {
+	ItemID   uint32 `json:"item_id"`
+	Name     string `json:"name,omitempty"`
+	MinPrice int32  `json:"min_price"`
+	MaxPrice int32  `json:"max_price"`
+	Enabled  bool   `json:"enabled"`
+}
+
+type customPriceRangeFile struct {
+	Version int                `json:"version"`
+	Items   []customPriceRange `json:"items"`
 }

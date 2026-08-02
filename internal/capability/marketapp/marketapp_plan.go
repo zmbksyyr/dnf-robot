@@ -6,6 +6,7 @@ import (
 )
 
 func (a *App) Plan(req RestockRequest) (PlanResult, error) {
+	a.refreshCustomPriceRanges()
 	market, needAuction, needCera := requestedRestockMarkets(req.Market)
 	catalog, pvfReady := a.loadAuctionCatalog(needAuction)
 	occ, haveAuction, haveCera, err := a.loadSystemStock()

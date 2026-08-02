@@ -125,7 +125,7 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 				upgrade = randRange(a.rand, a.cfg.Restock.UpgradeMin, a.cfg.Restock.UpgradeMax)
 			}
 		}
-		unit := a.auctionUnitPrice(plan.Row.SystemPrice, plan.IsEquipment, plan.BatchInflate, upgrade)
+		unit := a.auctionUnitPriceFor(plan.Row.ItemID, plan.Row.SystemPrice, plan.IsEquipment, plan.BatchInflate, upgrade)
 		total := unit
 		startPrice := unit - 1
 		if !plan.IsEquipment {
@@ -247,7 +247,7 @@ func (a *App) planSpecialAuction(row restockRow, item catalogItem, special strin
 	batchInflate := float64(randRange(a.rand, a.cfg.Restock.EquipInflateMin, a.cfg.Restock.EquipInflateMax))
 	planned := 0
 	for i := 0; i < records; i++ {
-		unit := a.auctionUnitPrice(row.SystemPrice, true, batchInflate, 0)
+		unit := a.auctionUnitPriceFor(row.ItemID, row.SystemPrice, true, batchInflate, 0)
 		ownerID := a.pickOwner(occ)
 		action := Action{
 			Market:       marketNameAuction,

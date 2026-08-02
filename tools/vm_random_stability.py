@@ -1460,7 +1460,8 @@ class StabilityRun(object):
             "/root/robot",
             "/root/run",
             "/root/stop",
-            "/root/config/market_config.json",
+            "/root/config/market_config.ini",
+            "/root/config/market_item_price_ranges.json",
             "/root/config/pvf_equipment_catalog.json",
             "/root/config/pvf_stackable_catalog.json",
             "/root/config/pvf_level_exp_catalog.json",
@@ -3708,7 +3709,7 @@ find /root/config -mindepth 1 -maxdepth 1 \
   ! -name '*.rotate.tmp' \
   ! -name '*.trim.tmp' \
   -exec rm -rf -- {} + 2>/dev/null || true
-printf '{broken config dir' > /root/config/market_config.json
+printf '[auction_price\nequip_inflate_min = broken\n' > /root/config/market_config.ini
 """
             self.shell(script, 120)
             self.sample_with_event("config_dir_fault_broken")
@@ -5025,7 +5026,7 @@ tail -n 80 /root/config/market_point_service.log 2>/dev/null || true
 echo '===== market special db ====='
 mysql -ugame -puu5!^%%jg -e "SELECT 'auction_high_addinfo',COUNT(*),COUNT(DISTINCT item_id) FROM taiwan_cain_auction_gold.auction_main WHERE owner_id>=90000001 AND add_info>=210000000; SELECT 'auction_creature',COUNT(*),COUNT(DISTINCT a.item_id) FROM taiwan_cain_auction_gold.auction_main a INNER JOIN taiwan_cain_2nd.creature_items c ON c.ui_id=a.add_info AND c.charac_no=a.owner_id WHERE a.owner_id>=90000001; SELECT 'creature_instances',COUNT(*),COUNT(DISTINCT it_id) FROM taiwan_cain_2nd.creature_items WHERE charac_no>=90000001; SELECT 'creature_orphans',COUNT(*),COUNT(DISTINCT c.it_id) FROM taiwan_cain_2nd.creature_items c LEFT JOIN taiwan_cain_auction_gold.auction_main a ON a.add_info=c.ui_id AND a.owner_id=c.charac_no WHERE c.charac_no>=90000001 AND a.auction_id IS NULL;" 2>/dev/null || true
 echo '===== market files ====='
-ls -l /root/config/market_config.json /root/config/pvf_*catalog.json /root/config/pvf_iteminfo.dat %s %s 2>/dev/null || true
+ls -l /root/config/market_config.ini /root/config/market_item_price_ranges.json /root/config/pvf_*catalog.json /root/config/pvf_iteminfo.dat %s %s 2>/dev/null || true
 echo '===== web stdout filtered ====='
 tail -n %s /root/config/robot_stdout.log 2>/dev/null | grep -a -E '%s|request pid|auth rejected|web admin exited' | tail -n 120 || true
 """ % (

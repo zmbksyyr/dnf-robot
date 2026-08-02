@@ -53,6 +53,8 @@ type App struct {
 	lastServiceRestart  map[string]time.Time
 	logMaxBytes         int64
 	logBackups          int
+	priceRanges         map[uint32]customPriceRange
+	priceRangeStatus    PriceRangeStatus
 }
 
 type auctionRejectedState struct {
@@ -158,19 +160,24 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		services:           map[string]MarketServiceStatus{},
 		policy:             map[string]MarketPolicyStatus{},
 		lastServiceRestart: map[string]time.Time{},
+		priceRanges:        map[uint32]customPriceRange{},
 		logMaxBytes:        int64(logMaxSizeMB) * 1024 * 1024,
 		logBackups:         logBackups,
 		rand:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		stopAuto:           make(chan struct{}),
 		autoDone:           make(chan struct{}),
 	}
+	app.refreshCustomPriceRanges()
 	app.itemInfo = app.ensureConfiguredCeraItemInfo()
 	if loadStatus.Recovered {
 		app.appendLog(LogEvent{
 			Type:    "config",
 			Status:  marketLogStatusFallback,
-			Message: "invalid market config moved to " + loadStatus.BackupPath + ": " + loadStatus.Reason,
+			Message: "invalid legacy market config backed up to " + loadStatus.BackupPath + ": " + loadStatus.Reason,
 		})
+	}
+	if loadStatus.MigratedFrom != "" {
+		app.appendLog(LogEvent{Type: "config", Status: marketLogStatusSuccess, Message: "migrated legacy market config from " + loadStatus.MigratedFrom + " to " + path})
 	}
 	if tables, err := app.repository.EnsureMarketTables(app.marketDBNames(), time.Now()); err != nil {
 		app.dbInit = tables
@@ -201,6 +208,7 @@ func (a *App) Status() Status {
 		Auto:        a.cfg.Auto,
 		Collector:   a.cfg.Collector,
 		Restock:     a.cfg.Restock,
+		PriceRanges: a.priceRangeStatus,
 		AutoRunning: a.AutoRunning(),
 		Ready:       true,
 		DBInit:      append([]string(nil), a.dbInit...),
@@ -224,7 +232,7 @@ func (a *App) EnsureServices(markets []string) Status {
 func (a *App) SetAutoEnabled(enabled bool) (Status, error) {
 	a.stateMu.Lock()
 	a.cfg.Auto.Enabled = enabled
-	err := writeJSONFile(a.configPath, a.cfg)
+	err := writeMarketConfig(a.configPath, a.cfg)
 	a.stateMu.Unlock()
 	if err != nil {
 		return a.Status(), err
@@ -270,13 +278,50 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if len(req.Markets) > 0 {
 		a.cfg.Auto.Markets = req.Markets
 	}
+	if req.EquipInflateMin != nil {
+		a.cfg.Restock.EquipInflateMin = *req.EquipInflateMin
+	}
+	if req.EquipInflateMax != nil {
+		a.cfg.Restock.EquipInflateMax = *req.EquipInflateMax
+	}
+	if req.UpgradeMin != nil {
+		a.cfg.Restock.UpgradeMin = *req.UpgradeMin
+	}
+	if req.UpgradeMax != nil {
+		a.cfg.Restock.UpgradeMax = *req.UpgradeMax
+	}
+	if req.UpgradePriceRate != nil {
+		a.cfg.Restock.UpgradePriceRate = *req.UpgradePriceRate
+	}
+	if req.RandLow != nil {
+		a.cfg.Restock.RandLow = *req.RandLow
+	}
+	if req.RandHigh != nil {
+		a.cfg.Restock.RandHigh = *req.RandHigh
+	}
+	if req.CustomPriceEnabled != nil {
+		a.cfg.Restock.CustomPriceEnabled = *req.CustomPriceEnabled
+	}
+	if req.CustomPriceFile != nil {
+		a.cfg.Restock.CustomPriceFile = strings.TrimSpace(*req.CustomPriceFile)
+	}
+	if req.PriceRangeEnabled != nil {
+		a.cfg.Collector.PriceRangeEnabled = *req.PriceRangeEnabled
+	}
+	if req.InRangeProbability != nil {
+		a.cfg.Collector.InRangeProbability = *req.InRangeProbability
+	}
+	if req.OutRangeProbability != nil {
+		a.cfg.Collector.OutRangeProbability = *req.OutRangeProbability
+	}
 	a.cfg.applyDefaults()
 	cfg := a.cfg
-	err := writeJSONFile(a.configPath, cfg)
+	err := writeMarketConfig(a.configPath, cfg)
 	a.stateMu.Unlock()
 	if err != nil {
 		return a.Status(), err
 	}
+	a.refreshCustomPriceRanges()
 	if cfg.Auto.Enabled {
 		a.RestartAutoAsync()
 	} else {

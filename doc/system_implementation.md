@@ -74,11 +74,13 @@
 
 登录速率、熔断、摆摊并发和动作间隔等细节仍可由旧配置键读取，但运行时会根据目标和健康状态重新计算，不作为主要用户调参面。
 
-### 3.3 `market_config.json`
+### 3.3 `market_config.ini`
 
-负责 Auction/Point 服务地址、数据库、系统卖家 UID、补货、回收、金币寄售、并发、自动周期和 `iteminfo.dat` 同步目标。
+负责 Auction/Point 服务地址、数据库、系统卖家 UID、补货、回收、金币寄售、并发、自动周期和 `iteminfo.dat` 同步目标。文件按 INI 分节保存并带完整注释；旧版 `market_config.json` 会在首次启动时自动读取并迁移为 INI。
 
-配置使用临时文件原子替换。JSON 损坏时，原文件保留为 `market_config.json.invalid`，程序恢复安全默认值并以 `fallback` 写入 Market 日志；文件读取、目录权限或默认配置写入失败仍会阻止启动，避免掩盖真实存储故障。
+拍卖价格包含装备基础倍率、随机强化区间、每级强化加价率和最终随机倍率。开启 `custom_price_enabled` 后，`market_item_price_ranges.json` 中有效的物品最终价格范围优先于通用公式；未命中的物品继续使用公式。补货与虚拟买家概率回收共用同一价格范围，范围内使用高回收概率，范围外使用低回收概率。
+
+配置使用临时文件原子替换。单品价格 JSON 不存在时自动生成带字段说明的空模板；文件整体损坏或单条数据无效时记录状态并回退通用公式，不中断 Market。旧版 Market JSON 损坏时保存为 `market_config.json.invalid` 并使用安全默认值生成 INI。
 
 ## 4. PVF 与运行文件
 

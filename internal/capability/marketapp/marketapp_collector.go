@@ -25,7 +25,7 @@ func (a *App) CollectPlan(req CollectRequest) (PlanResult, error) {
 		if err != nil {
 			return PlanResult{}, err
 		}
-		a.appendCollectActions(rows, &result)
+		a.appendAuctionCollectActions(rows, &result)
 	}
 	if market == "" || market == marketNameCera || market == marketAliasGold {
 		rows, err := a.repository.LoadCollectRows(a.cfg.CeraDB, marketNameCera, a.cfg.SystemOwner.IDBase, a.cfg.Collector.IncludeSystemOwners)
@@ -48,6 +48,71 @@ func (a *App) CollectPlan(req CollectRequest) (PlanResult, error) {
 	}
 	a.appendLog(LogEvent{Type: "collect_plan", Market: market, Summary: &result.Summary})
 	return result, nil
+}
+
+type collectPriceStats struct {
+	Orders           int
+	InRange          int
+	OutOfRange       int
+	InRangeSelected  int
+	OutRangeSelected int
+}
+
+func (a *App) appendAuctionCollectActions(rows []collectRow, result *PlanResult) {
+	if !a.cfg.Collector.PriceRangeEnabled {
+		a.appendCollectActions(rows, result)
+		return
+	}
+	a.refreshCustomPriceRanges()
+	catalog, err := a.loadCatalog()
+	if err != nil {
+		catalog = nil
+		a.appendLog(LogEvent{Type: "collect_price_catalog", Market: marketNameAuction, Status: marketLogStatusFallback, Message: err.Error()})
+	}
+	candidates := append([]collectRow(nil), rows...)
+	a.rand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
+	selected := make([]collectRow, 0, len(candidates))
+	stats := collectPriceStats{Orders: len(candidates)}
+	for _, row := range candidates {
+		inside := a.collectPriceInRange(row, catalog)
+		probability := a.cfg.Collector.OutRangeProbability
+		if inside {
+			stats.InRange++
+			probability = a.cfg.Collector.InRangeProbability
+		} else {
+			stats.OutOfRange++
+		}
+		if probability <= 0 || (probability < 1 && a.rand.Float64() >= probability) {
+			continue
+		}
+		selected = append(selected, row)
+		if inside {
+			stats.InRangeSelected++
+		} else {
+			stats.OutRangeSelected++
+		}
+	}
+	a.appendCollectActions(selected, result)
+	a.appendLog(LogEvent{
+		Type: "collect_price_selection", Market: marketNameAuction, Status: marketLogStatusActive,
+		Message: fmt.Sprintf("orders=%d in_range=%d in_selected=%d out_of_range=%d out_selected=%d", stats.Orders, stats.InRange, stats.InRangeSelected, stats.OutOfRange, stats.OutRangeSelected),
+	})
+}
+
+func (a *App) collectPriceInRange(row collectRow, catalog map[uint32]catalogItem) bool {
+	item, known := catalog[row.ItemID]
+	if !known {
+		if _, custom := a.customPriceRange(row.ItemID); !custom {
+			return false
+		}
+		item = catalogItem{ItemID: row.ItemID}
+	}
+	low, high := a.auctionPriceBounds(item)
+	price := row.InstantPrice
+	if row.StartPrice == -1 && row.Count > 0 {
+		price = int32(int64(row.InstantPrice) / int64(row.Count))
+	}
+	return price >= low && price <= high
 }
 
 func (r SQLRepository) LoadCollectRows(dbName, market string, systemOwnerBase uint32, includeSystemOwners bool) ([]collectRow, error) {
