@@ -18,6 +18,7 @@ type SessionEnv interface {
 	EnsureWorldHornByCID(cid int) error
 	InvalidateCharacterCache(uid int) error
 	RobotConnectIP() string
+	RobotGamePort() int
 	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
 	RuntimeStatusMapFresh() map[int]robotcap.RuntimeStatus
 	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
@@ -177,7 +178,7 @@ func (s SessionService) onlinePayload(robot robotcap.Info, disjointCost uint32, 
 		CharacterSlot:  0,
 		IP:             s.Env.RobotConnectIP(),
 		MaxReconnect:   rc.MaxReconnect,
-		Port:           robot.Port,
+		Port:           s.Env.RobotGamePort(),
 		ReconnectDelay: rc.ReconnectDelayMS,
 		UID:            robot.UID,
 		DisjointCost:   disjointCost,

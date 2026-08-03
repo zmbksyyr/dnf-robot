@@ -23,6 +23,7 @@ type directLogoutEnv struct {
 func (*directLogoutEnv) CountRuntimeRunning() int                    { return 0 }
 func (*directLogoutEnv) EnsureWorldHornByCID(int) error              { return nil }
 func (*directLogoutEnv) RobotConnectIP() string                      { return "127.0.0.1" }
+func (*directLogoutEnv) RobotGamePort() int                          { return 20011 }
 func (*directLogoutEnv) SendOnline([]shared.RuntimeOnlineUser) error { return nil }
 
 func (e *directLogoutEnv) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {

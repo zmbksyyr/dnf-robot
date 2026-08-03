@@ -103,6 +103,13 @@ func (e sessionActionEnv) RobotConnectIP() string {
 	return e.manager.robotConnectIP()
 }
 
+func (e sessionActionEnv) RobotGamePort() int {
+	if e.manager == nil || e.manager.cfg == nil {
+		return 0
+	}
+	return e.manager.cfg.RobotGamePort
+}
+
 func (e sessionActionEnv) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {
 	return e.manager.runtimeStatusMap()
 }

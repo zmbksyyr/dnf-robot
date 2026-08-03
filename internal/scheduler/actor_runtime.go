@@ -196,6 +196,7 @@ func (r *RobotRuntime) autoDisjointStore(uid int, st robotcap.RuntimeStatus, sho
 	info := robotcap.Info{UID: uid, CID: st.CID, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y, Port: r.manager.cfg.RobotGamePort}
 	if robots, err := r.manager.repo().SelectRobots(robotcap.CommandRequest{UIDs: []int{uid}}); err == nil && len(robots) > 0 {
 		info = robots[0]
+		info.Port = r.manager.cfg.RobotGamePort
 	}
 	if !r.manager.beginStoreBusy(uid) {
 		return robotcap.ActionResult{UID: uid, CID: st.CID, OK: false, State: robotcap.ActionStateStoreBusy}
@@ -454,6 +455,7 @@ func (r *RobotRuntime) ExpireStore(uid int) robotcap.ActionResult {
 		info := robotcap.Info{UID: uid, CID: st.CID, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y, Port: r.manager.cfg.RobotGamePort}
 		if robots, err := r.manager.repo().SelectRobots(robotcap.CommandRequest{UIDs: []int{uid}}); err == nil && len(robots) > 0 {
 			info = robots[0]
+			info.Port = r.manager.cfg.RobotGamePort
 		}
 		recovered := r.cleanupStoreSession(info, rc, "store_expired")
 		r.manager.addAutoStore(0, 0, 1)

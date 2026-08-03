@@ -195,7 +195,6 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 	info := robotcap.Info{UID: st.UID, CID: st.CID, Village: st.Village, Area: st.Area, X: st.X, Y: st.Y, Port: env.RobotGamePort()}
 	if robots, err := env.SelectRobots(robotcap.CommandRequest{UIDs: []int{st.UID}}); err == nil && len(robots) > 0 {
 		info.CID = robots[0].CID
-		info.Port = robots[0].Port
 		info.Level = robots[0].Level
 		info.Job = robots[0].Job
 		info.Grow = robots[0].Grow

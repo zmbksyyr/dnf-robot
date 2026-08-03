@@ -21,3 +21,16 @@ func TestOnlinePayloadKeepsDatabaseCIDSeparateFromCharacterSlot(t *testing.T) {
 		t.Fatalf("online character slot = %d, want first slot 0", got.CharacterSlot)
 	}
 }
+
+func TestOnlinePayloadUsesConfiguredGamePortInsteadOfStoredRobotPort(t *testing.T) {
+	service := SessionService{Env: &directLogoutEnv{}}
+	got := service.onlinePayload(robotcap.Info{
+		UID:  17000001,
+		CID:  900001,
+		Port: 10011,
+	}, 0, robotconfig.RuntimeConfig{})
+
+	if got.Port != 20011 {
+		t.Fatalf("online port = %d, want configured game port 20011", got.Port)
+	}
+}
