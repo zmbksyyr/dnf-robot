@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +21,7 @@ type Server struct {
 	webAddr                 string
 	tokenMu                 lockhub.RWLocker
 	tokens                  map[string]time.Time
+	loginFailures           map[string]loginFailure
 	partyCompatMu           lockhub.Locker
 	partyCompatWake         chan struct{}
 	mailboxGuardWake        chan struct{}
@@ -52,6 +55,7 @@ func New(cfg *config.SysConfig, robotAddr, webAddr string) *Server {
 		robotAddr:        robotAddr,
 		webAddr:          webAddr,
 		tokens:           make(map[string]time.Time),
+		loginFailures:    make(map[string]loginFailure),
 		partyCompatWake:  make(chan struct{}, 1),
 		mailboxGuardWake: make(chan struct{}, 1),
 	}
@@ -86,13 +90,19 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("/api/keypair-download", s.requireAuth(s.handleKeypairDownload))
 	server := &http.Server{
 		Addr:              s.webAddr,
-		Handler:           s.withDiagnostics(mux),
+		Handler:           s.withSecurityHeaders(s.withDiagnostics(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 	fmt.Printf("[WebAdmin] listening on %s, robot=%s pid=%d sessions=%d\n", s.webAddr, s.robotAddr, os.Getpid(), s.sessionCount())
+	if strings.TrimSpace(s.cfg.WebPassword) == "twadmin" {
+		fmt.Printf("[WebAdmin] SECURITY WARNING: default web password is in use; change WebPassword before exposing this service\n")
+	}
+	if host, _, err := net.SplitHostPort(s.webAddr); err == nil && (host == "" || host == "0.0.0.0" || host == "::") {
+		fmt.Printf("[WebAdmin] SECURITY WARNING: web admin is listening on all interfaces addr=%s\n", s.webAddr)
+	}
 	serveDone := make(chan struct{})
 	go func() {
 		select {

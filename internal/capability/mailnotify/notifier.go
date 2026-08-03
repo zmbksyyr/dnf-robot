@@ -97,19 +97,18 @@ func (n *Notifier) poll(ctx context.Context, state *cursorState, now time.Time) 
 		ctx = context.Background()
 	}
 	changed := prunePendingMails(state.Pending, now)
-	collected, err := n.collect(ctx, state, now)
-	if err != nil {
-		return err
-	}
-	changed = changed || collected
-	if changed {
-		if err := n.saveState(*state); err != nil {
+	if len(state.Pending) < maxPendingMails {
+		collected, err := n.collect(ctx, state, now)
+		if err != nil {
 			return err
 		}
+		changed = changed || collected
 	}
 
 	delivered := 0
 	attempted := 0
+	failed := 0
+	var firstNotifyErr error
 	var pollErr error
 	for key, readyAt := range state.Pending {
 		if err := ctx.Err(); err != nil {
@@ -130,7 +129,10 @@ func (n *Notifier) poll(ctx context.Context, state *cursorState, now time.Time) 
 			continue
 		}
 		if err := n.sender.NotifyNewMail(uint32(value)); err != nil {
-			foundationlog.Robotf("[MAIL_NOTIFY] notify_failed charac_no=%d err=%v\n", value, err)
+			failed++
+			if firstNotifyErr == nil {
+				firstNotifyErr = err
+			}
 			continue
 		}
 		delete(state.Pending, key)
@@ -145,6 +147,9 @@ func (n *Notifier) poll(ctx context.Context, state *cursorState, now time.Time) 
 	if delivered > 0 {
 		foundationlog.Robotf("[MAIL_NOTIFY] delivered=%d pending=%d letter_id=%d postal_id=%d\n", delivered, len(state.Pending), state.LetterID, state.PostalID)
 	}
+	if failed > 0 {
+		foundationlog.Robotf("[MAIL_NOTIFY] notify_failed count=%d attempted=%d pending=%d first_err=%v\n", failed, attempted, len(state.Pending), firstNotifyErr)
+	}
 	return pollErr
 }
 
@@ -155,9 +160,7 @@ func (n *Notifier) collect(ctx context.Context, state *cursorState, now time.Tim
 	if err != nil {
 		return false, err
 	}
-	changed := letterID != state.LetterID || postalID != state.PostalID
-	state.LetterID = letterID
-	state.PostalID = postalID
+	changed := false
 	readyAt := now.Add(n.settleDelay).UnixMilli()
 	dropped := 0
 	for _, characNo := range characNos {
@@ -176,6 +179,15 @@ func (n *Notifier) collect(ctx context.Context, state *cursorState, now time.Tim
 	}
 	if dropped > 0 {
 		foundationlog.Robotf("[MAIL_NOTIFY] pending_full dropped=%d limit=%d\n", dropped, maxPendingMails)
+		// Do not acknowledge either source cursor until every event returned by
+		// this query is durably represented in Pending. Re-reading accepted
+		// events is harmless because Pending is keyed by character number.
+		return changed, nil
+	}
+	if letterID != state.LetterID || postalID != state.PostalID {
+		state.LetterID = letterID
+		state.PostalID = postalID
+		changed = true
 	}
 	return changed, nil
 }

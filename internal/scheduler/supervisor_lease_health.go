@@ -72,6 +72,10 @@ func (s *RobotSupervisor) cleanupBrokenUID(uid int) {
 
 func (s *RobotSupervisor) cleanupBlockedUIDs(limit int) {
 	for _, uid := range s.ledger.BlockedUIDs(limit) {
+		if s.ledger.IsQuarantinedUID(uid) {
+			robotLogf("[RobotSupervisor] blocked_cleanup_deferred uid=%d reason=logout_quarantine\n", uid)
+			continue
+		}
 		if s.actorOwnsUID(uid) {
 			robotLogf("[RobotSupervisor] blocked_cleanup_deferred uid=%d reason=actor_still_attached\n", uid)
 			continue

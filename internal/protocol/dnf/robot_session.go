@@ -117,6 +117,7 @@ type RobotVo struct {
 	tradeQuoteLoading    bool
 	tradeQuotePending    bool
 	tradeQuoteVersion    uint64
+	tradeQuoteFailures   uint8
 
 	TransactionArr [24]*Transaction
 	InfanMap       map[int]Transaction
@@ -135,76 +136,77 @@ type RobotVo struct {
 	storeInventoryVersion  uint64
 	LoginInfo              UserLoginInfo
 
-	DisjointCreateSent       bool
-	DisjointDirectAck        bool
-	DisjointActive           bool
-	LastDisjointError        byte
-	AfterRunDisjointCost     uint32
-	partyOptionReady         bool
-	partyOptionSent          bool
-	partyOptionData          [gameEtcOptionSize]byte
-	partyRecvSource          recvBodySource
-	natInfoSent              bool
-	partySelfPeer            partyIPPeer
-	partySelfRefreshAt       time.Time
-	partySelfRefreshBackoff  time.Duration
-	partySelfRefreshAttempts uint8
-	partyRealtimeUnique      [4]uint16
-	partyPeers               [4]partyIPPeer
-	partyPendingPeer         uint16
-	partyPendingUntil        time.Time
-	partyInviteFallback      partyInviteFallbackState
-	partyInviteTimer         *time.Timer
-	partyInviteEpoch         uint64
-	townEntityPositions      map[uint16]townEntityPosition
-	townEntitySweepAt        time.Time
-	partyUDPConn             *net.UDPConn
-	partyUDPRunning          bool
-	partyUDPGeneration       uint64
-	partySupervisorRun       bool
-	partySupervisorEpoch     uint64
-	partyRelayConn           net.Conn
-	partyRelayConnecting     bool
-	partyRelayGeneration     uint64
-	partyRelayNextAt         time.Time
-	partyRelayBackoff        time.Duration
-	partyRelayDial           partyRelayDialFunc
-	partyRelayWriter         *partyRelayWriter
-	partyTQOSSeq             [4][3]uint32
-	partyTQOSReliableSeq     [4][3]uint32
-	partyTQOSReplies         [4][3]partyTQOSReliableReply
-	partyReliablePending     [4][3][]partyReliablePending
-	partyTQOSReceived        [4][3]partyTQOSReceiveWindow
-	partyTQOSEpochs          [4][3]partyTQOSEpoch
-	partyTQOSCodecs          [4][3]partyTQOSCodec
-	partyTQOSCodecKnown      [4][3]bool
-	partyRobotProbeAt        [4]time.Time
-	partyRobotProbeCount     [4]uint8
-	partyRobotPeerReady      [4]bool
-	partyRobotRouteReady     [4][3]bool
-	partyPeerRoute           [4]byte
-	partyPeerRouteAt         [4]time.Time
-	partyRouteActivityAt     [4][3]time.Time
-	partyRouteBlockedUntil   [4][3]time.Time
-	partyRouteFailures       [4][3]uint8
-	partyRouteRecoveryAt     [4][3]time.Time
-	partyRouteDiagAt         [4][3]time.Time
-	partyUDPDiagAt           time.Time
-	partyRuntimeDiagAt       time.Time
-	partyDungeonFollowDiagAt time.Time
-	partyDungeonFollow       []partyDungeonFollowPending
-	partyDungeonEnteredAt    time.Time
-	partyDungeonLastAt       time.Time
-	partyDungeonFlags        byte
-	partySkillNextAt         time.Time
-	partySkillRecoverAt      time.Time
-	partySkillBlockedUntil   time.Time
-	partySkillLoaded         bool
-	partySkillLoading        bool
-	partySkillGeneration     uint64
-	partySkillJob            int
-	partySkillCandidates     []partySkillCandidate
-	partySkillLoad           partySkillProfileLoadFunc
+	DisjointCreateSent          bool
+	DisjointDirectAck           bool
+	DisjointActive              bool
+	LastDisjointError           byte
+	AfterRunDisjointCost        uint32
+	partyOptionReady            bool
+	partyOptionSent             bool
+	partyOptionData             [gameEtcOptionSize]byte
+	partyRecvSource             recvBodySource
+	natInfoSent                 bool
+	partySelfPeer               partyIPPeer
+	partySelfRefreshAt          time.Time
+	partySelfRefreshBackoff     time.Duration
+	partySelfRefreshAttempts    uint8
+	partyRealtimeUnique         [4]uint16
+	partyPeers                  [4]partyIPPeer
+	partyPendingPeer            uint16
+	partyPendingUntil           time.Time
+	partyInviteFallback         partyInviteFallbackState
+	partyInviteTimer            *time.Timer
+	partyInviteEpoch            uint64
+	townEntityPositions         map[uint16]townEntityPosition
+	townEntitySweepAt           time.Time
+	partyUDPConn                *net.UDPConn
+	partyUDPRunning             bool
+	partyUDPGeneration          uint64
+	partySupervisorRun          bool
+	partySupervisorEpoch        uint64
+	partyRelayConn              net.Conn
+	partyRelayConnecting        bool
+	partyRelayGeneration        uint64
+	partyRelayNextAt            time.Time
+	partyRelayBackoff           time.Duration
+	partyRelayDial              partyRelayDialFunc
+	partyRelayWriter            *partyRelayWriter
+	partyTQOSSeq                [4][3]uint32
+	partyTQOSReliableSeq        [4][3]uint32
+	partyTQOSReplies            [4][3]partyTQOSReliableReply
+	partyReliablePending        [4][3][]partyReliablePending
+	partyTQOSReceived           [4][3]partyTQOSReceiveWindow
+	partyTQOSEpochs             [4][3]partyTQOSEpoch
+	partyTQOSCodecs             [4][3]partyTQOSCodec
+	partyTQOSCodecKnown         [4][3]bool
+	partyRobotProbeAt           [4]time.Time
+	partyRobotProbeCount        [4]uint8
+	partyRobotPeerReady         [4]bool
+	partyRobotRouteReady        [4][3]bool
+	partyPeerRoute              [4]byte
+	partyPeerRouteAt            [4]time.Time
+	partyRouteActivityAt        [4][3]time.Time
+	partyRouteBlockedUntil      [4][3]time.Time
+	partyRouteFailures          [4][3]uint8
+	partyRouteRecoveryAt        [4][3]time.Time
+	partyRouteDiagAt            [4][3]time.Time
+	partyUDPDiagAt              time.Time
+	partyRuntimeDiagAt          time.Time
+	partyDungeonFollowDiagAt    time.Time
+	partyDungeonFollow          []partyDungeonFollowPending
+	partyDungeonEnteredAt       time.Time
+	partyDungeonLastAt          time.Time
+	partyDungeonFlags           byte
+	partySkillNextAt            time.Time
+	partySkillRecoverAt         time.Time
+	partySkillBlockedUntil      time.Time
+	partySkillLoaded            bool
+	partySkillLoading           bool
+	partySkillGeneration        uint64
+	partySkillCatalogGeneration uint64
+	partySkillJob               int
+	partySkillCandidates        []partySkillCandidate
+	partySkillLoad              partySkillProfileLoadFunc
 
 	mu     lockhub.Locker
 	sendMu lockhub.Locker
@@ -638,13 +640,20 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 			return
 		}
 		if n > 0 {
-			r.onRecvData(buf[:n])
+			r.onRecvDataFrom(conn, buf[:n])
 		}
 	}
 }
 
 func (r *RobotVo) finishReadLoop(conn net.Conn) {
 	r.mu.Lock()
+	if r.Conn != conn {
+		r.mu.Unlock()
+		if conn != nil {
+			_ = conn.Close()
+		}
+		return
+	}
 	controller := r.Controller
 	uid := r.UID
 	r.closeOutUnsafe()
@@ -662,9 +671,16 @@ func (r *RobotVo) finishReadLoop(conn net.Conn) {
 
 func (r *RobotVo) onRecvData(data []byte) {
 	r.mu.Lock()
+	conn := r.Conn
+	r.mu.Unlock()
+	r.onRecvDataFrom(conn, data)
+}
+
+func (r *RobotVo) onRecvDataFrom(conn net.Conn, data []byte) {
+	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State == StateStop || len(data) < 1 {
+	if r.State == StateStop || len(data) < 1 || (conn != nil && r.Conn != conn) {
 		return
 	}
 

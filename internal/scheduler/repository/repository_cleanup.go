@@ -473,6 +473,21 @@ ORDER BY x.uid`, minUID, maxUID, minUID, maxUID, minUID, maxUID)
 }
 
 func (r *SQLRepository) BatchDeleteRobotData(uids, cids []int) error {
+	uidTargets, err := r.readyCleanupTargets(cleanupUIDTables)
+	if err != nil {
+		return err
+	}
+	cidTargets, err := r.readyCleanupTargets(cleanupCIDTables)
+	if err != nil {
+		return err
+	}
+	billingTargets, err := r.readyCleanupTargets([]cleanupTableColumn{
+		{table: "taiwan_billing.cash_cera", col: "account"},
+		{table: "taiwan_billing.cash_cera_point", col: "account"},
+	})
+	if err != nil {
+		return err
+	}
 	tx, err := r.Begin()
 	if err != nil {
 		return err
@@ -482,19 +497,18 @@ func (r *SQLRepository) BatchDeleteRobotData(uids, cids []int) error {
 	if err != nil {
 		return err
 	}
-	for _, target := range cleanupUIDTables {
-		if err := r.batchDeleteByInts(tx, target.table, target.col, uids); err != nil {
+	for _, target := range uidTargets {
+		if err := batchDeleteByInts(tx, target.table, target.col, uids); err != nil {
 			return err
 		}
 	}
-	if err := r.batchDeleteByStrings(tx, "taiwan_billing.cash_cera", "account", accounts); err != nil {
-		return err
+	for _, target := range billingTargets {
+		if err := batchDeleteByStrings(tx, target.table, target.col, accounts); err != nil {
+			return err
+		}
 	}
-	if err := r.batchDeleteByStrings(tx, "taiwan_billing.cash_cera_point", "account", accounts); err != nil {
-		return err
-	}
-	for _, target := range cleanupCIDTables {
-		if err := r.batchDeleteByInts(tx, target.table, target.col, cids); err != nil {
+	for _, target := range cidTargets {
+		if err := batchDeleteByInts(tx, target.table, target.col, cids); err != nil {
 			return err
 		}
 	}
@@ -545,15 +559,61 @@ func accountNamesForDelete(tx *sql.Tx, uids []int) ([]string, error) {
 }
 
 func (r *SQLRepository) BatchDeleteCharacterData(cids []int) error {
+	targets, err := r.readyCleanupTargets(cleanupCIDTables)
+	if err != nil {
+		return err
+	}
 	tx, err := r.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	for _, target := range cleanupCIDTables {
-		if err := r.batchDeleteByInts(tx, target.table, target.col, cids); err != nil {
+	for _, target := range targets {
+		if err := batchDeleteByInts(tx, target.table, target.col, cids); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+func (r *SQLRepository) DeleteCharacterAtomic(uid, cid int, deleteRobotMetadata bool) error {
+	if uid <= 0 || cid <= 0 {
+		return fmt.Errorf("uid and cid must be positive")
+	}
+	targets, err := r.readyCleanupTargets(cleanupCIDTables)
+	if err != nil {
+		return err
+	}
+	var metadata []cleanupTableColumn
+	if deleteRobotMetadata {
+		metadata, err = r.readyCleanupTargets([]cleanupTableColumn{
+			{table: "d_starsky.Dummylist", col: "UID"},
+			{table: "d_starsky.v4_ai_user", col: "uid"},
+			{table: "d_starsky.Robot_stall", col: "UID"},
+			{table: "d_starsky.Robot_stall_config", col: "UID"},
+			{table: "d_starsky.robot_registry", col: "uid"},
+		})
+		if err != nil {
+			return err
+		}
+	}
+	tx, err := r.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, target := range targets {
+		if err := batchDeleteByInts(tx, target.table, target.col, []int{cid}); err != nil {
+			return err
+		}
+	}
+	for _, target := range metadata {
+		if err := batchDeleteByInts(tx, target.table, target.col, []int{uid}); err != nil {
+			return err
+		}
+	}
+	if err := rebuildCharacView(tx, uid); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -572,17 +632,14 @@ func (r *SQLRepository) BatchDeleteRobotMetadata(uids []int) error {
 		{name: "d_starsky.Robot_stall_config", col: "UID"},
 		{name: "d_starsky.robot_registry", col: "uid"},
 	}
-	present := make([]struct {
-		name string
-		col  string
-	}, 0, len(tables))
+	present := make([]cleanupTableColumn, 0, len(tables))
 	for _, table := range tables {
-		exists, err := r.TableExists(table.name)
+		ready, err := cleanupTableReady(table.name, table.col, r.TableExists, r.TableColumns)
 		if err != nil {
 			return err
 		}
-		if exists {
-			present = append(present, table)
+		if ready {
+			present = append(present, cleanupTableColumn{table: table.name, col: table.col})
 		}
 	}
 	tx, err := r.Begin()
@@ -591,21 +648,14 @@ func (r *SQLRepository) BatchDeleteRobotMetadata(uids []int) error {
 	}
 	defer tx.Rollback()
 	for _, table := range present {
-		if err := r.batchDeleteByInts(tx, table.name, table.col, uids); err != nil {
+		if err := batchDeleteByInts(tx, table.table, table.col, uids); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-func (r *SQLRepository) batchDeleteByInts(tx *sql.Tx, table, col string, ids []int) error {
-	ready, err := cleanupTableReady(table, col, r.TableExists, r.TableColumns)
-	if err != nil {
-		return err
-	}
-	if !ready {
-		return nil
-	}
+func batchDeleteByInts(tx *sql.Tx, table, col string, ids []int) error {
 	for i := 0; i < len(ids); i += 500 {
 		end := i + 500
 		if end > len(ids) {
@@ -624,14 +674,7 @@ func (r *SQLRepository) batchDeleteByInts(tx *sql.Tx, table, col string, ids []i
 	return nil
 }
 
-func (r *SQLRepository) batchDeleteByStrings(tx *sql.Tx, table, col string, values []string) error {
-	ready, err := cleanupTableReady(table, col, r.TableExists, r.TableColumns)
-	if err != nil {
-		return err
-	}
-	if !ready {
-		return nil
-	}
+func batchDeleteByStrings(tx *sql.Tx, table, col string, values []string) error {
 	for i := 0; i < len(values); i += 500 {
 		end := i + 500
 		if end > len(values) {
@@ -648,6 +691,20 @@ func (r *SQLRepository) batchDeleteByStrings(tx *sql.Tx, table, col string, valu
 		}
 	}
 	return nil
+}
+
+func (r *SQLRepository) readyCleanupTargets(targets []cleanupTableColumn) ([]cleanupTableColumn, error) {
+	readyTargets := make([]cleanupTableColumn, 0, len(targets))
+	for _, target := range targets {
+		ready, err := cleanupTableReady(target.table, target.col, r.TableExists, r.TableColumns)
+		if err != nil {
+			return nil, err
+		}
+		if ready {
+			readyTargets = append(readyTargets, target)
+		}
+	}
+	return readyTargets, nil
 }
 
 func cleanupTableReady(

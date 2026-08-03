@@ -39,6 +39,7 @@ func runMain() int {
 	webAdminMode := flag.Bool("web-admin", false, "run web admin child process")
 	robotAddr := flag.String("robot-addr", "", "robot TCP address for web admin")
 	webAddr := flag.String("web-addr", "", "web admin listen address")
+	webConfigStdin := flag.Bool("web-config-stdin", false, "read the parent runtime config snapshot from stdin")
 	flag.Parse()
 	if boundedLogSinkRequested() {
 		if err := runBoundedLogSink(os.Stdin); err != nil {
@@ -49,7 +50,7 @@ func runMain() int {
 	}
 
 	if *webAdminMode {
-		if err := runWebAdmin(*robotAddr, *webAddr); err != nil {
+		if err := runWebAdmin(*robotAddr, *webAddr, *webConfigStdin); err != nil {
 			fmt.Printf("web admin failed: %v\n", err)
 			return 1
 		}
@@ -158,13 +159,15 @@ func runMain() int {
 		dnf.PrintfRed("market init failed: %v\n", err)
 		return 1
 	}
-	defer marketApp.Shutdown()
 	tcpapi.SetMarketApp(marketApp)
 	runtimeFiles := filewatch.New(time.Second, append(manager.RuntimeFileEntries(), marketApp.RuntimeFileEntries()...), func(entry filewatch.Entry, err error) {
 		dnf.LogString(fmt.Sprintf("RUNTIME_FILE_REJECTED name=%s path=%s err=%v\n", entry.Name, entry.Path, err))
 	})
 	runtimeFiles.Start()
-	defer runtimeFiles.Close()
+	defer func() {
+		marketApp.Shutdown()
+		runtimeFiles.Close()
+	}()
 
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.RobotPort)
 	tcpServer := network.NewTCPServer(addr)
@@ -206,16 +209,25 @@ func runMain() int {
 	return 0
 }
 
-func runWebAdmin(robotAddr, webAddr string) error {
-	configPath, configDir, err := runtimeConfigPaths()
-	if err != nil {
-		return fmt.Errorf("resolve config path: %w", err)
+func runWebAdmin(robotAddr, webAddr string, configFromStdin bool) error {
+	var cfg *config.SysConfig
+	if configFromStdin {
+		cfg = &config.SysConfig{}
+		if err := config.DecodeJSONLimit(os.Stdin, 1<<20, cfg); err != nil {
+			return fmt.Errorf("decode parent runtime config snapshot: %w", err)
+		}
+	} else {
+		configPath, configDir, err := runtimeConfigPaths()
+		if err != nil {
+			return fmt.Errorf("resolve config path: %w", err)
+		}
+		loaded, err := config.LoadConfig(configPath)
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		loaded.ConfigDir = configDir
+		cfg = loaded
 	}
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	cfg.ConfigDir = configDir
 	if robotAddr == "" {
 		robotAddr = fmt.Sprintf("127.0.0.1:%d", cfg.RobotPort)
 	}

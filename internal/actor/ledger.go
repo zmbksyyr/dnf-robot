@@ -15,6 +15,7 @@ type Ledger struct {
 	uidActors  map[int]*Actor
 	draining   map[int]*Actor
 	blockedUID map[int]struct{}
+	quarantine map[int]struct{}
 	nextSlotID int
 }
 
@@ -45,6 +46,7 @@ func NewLedger() Ledger {
 		uidActors:  make(map[int]*Actor),
 		draining:   make(map[int]*Actor),
 		blockedUID: make(map[int]struct{}),
+		quarantine: make(map[int]struct{}),
 	}
 }
 
@@ -127,8 +129,17 @@ func (l *Ledger) BlockLeaseIfCurrent(uid int, actor *Actor) bool {
 
 func (l *Ledger) UnblockUID(uid int) {
 	l.indexMu.Lock()
-	delete(l.blockedUID, uid)
+	if _, quarantined := l.quarantine[uid]; !quarantined {
+		delete(l.blockedUID, uid)
+	}
 	l.indexMu.Unlock()
+}
+
+func (l *Ledger) IsQuarantinedUID(uid int) bool {
+	l.indexMu.RLock()
+	_, ok := l.quarantine[uid]
+	l.indexMu.RUnlock()
+	return ok
 }
 
 func (l *Ledger) BlockedUIDs(limit int) []int {
@@ -151,6 +162,16 @@ func (l *Ledger) BlockedCount() int {
 	l.indexMu.RLock()
 	defer l.indexMu.RUnlock()
 	return len(l.blockedUID)
+}
+
+func (l *Ledger) BlockedUIDSet() map[int]struct{} {
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
+	out := make(map[int]struct{}, len(l.blockedUID))
+	for uid := range l.blockedUID {
+		out[uid] = struct{}{}
+	}
+	return out
 }
 
 func (l *Ledger) TryLeaseUID(uid int, actor *Actor) bool {
@@ -315,6 +336,40 @@ func (l *Ledger) ReserveEmptyAutoActor(uid int) (*Actor, bool, bool) {
 	}
 	l.uidActors[uid] = actor
 	return actor, false, true
+}
+
+func (l *Ledger) ReserveManualActor(uid int, runtime RobotRuntime) (*Actor, bool, bool) {
+	if uid <= 0 || runtime == nil {
+		return nil, false, false
+	}
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
+	if _, blocked := l.blockedUID[uid]; blocked {
+		return nil, false, false
+	}
+	if existing := l.uidActors[uid]; existing != nil {
+		return existing, true, true
+	}
+	slotID := l.nextSlotLocked()
+	actor := NewActor(slotID, ModeManual, runtime)
+	l.actors[slotID] = actor
+	l.uidActors[uid] = actor
+	actor.Start()
+	return actor, false, true
+}
+
+func (l *Ledger) AdoptManualActors() int {
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
+	adopted := 0
+	for slotID, actor := range l.actors {
+		if actor == nil || l.draining[slotID] == actor || actor.ModeValue() != ModeManual {
+			continue
+		}
+		actor.SetMode(ModeAuto)
+		adopted++
+	}
+	return adopted
 }
 
 func (l *Ledger) AutoActorPointers() []*Actor {
@@ -523,7 +578,7 @@ func (l *Ledger) reapDoneActorsLocked(includeUnexpected bool) int {
 		if _, exists := deadActors[actor]; !exists {
 			reaped++
 		}
-		deadActors[actor] = false
+		deadActors[actor] = actor.Snapshot().Quarantined
 	}
 	if len(deadActors) == 0 {
 		return reaped
@@ -536,6 +591,7 @@ func (l *Ledger) reapDoneActorsLocked(includeUnexpected bool) int {
 		delete(l.uidActors, uid)
 		if block && uid > 0 {
 			l.blockedUID[uid] = struct{}{}
+			l.quarantine[uid] = struct{}{}
 		} else {
 			delete(l.blockedUID, uid)
 		}
@@ -555,7 +611,12 @@ func (l *Ledger) reapActorLocked(actor *Actor) bool {
 	for uid, leased := range l.uidActors {
 		if leased == actor {
 			delete(l.uidActors, uid)
-			delete(l.blockedUID, uid)
+			if actor.Snapshot().Quarantined {
+				l.blockedUID[uid] = struct{}{}
+				l.quarantine[uid] = struct{}{}
+			} else {
+				delete(l.blockedUID, uid)
+			}
 		}
 	}
 	return true

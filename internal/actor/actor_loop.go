@@ -11,8 +11,10 @@ import (
 )
 
 type request struct {
-	cmd  Command
-	done chan robotcap.ActionResult
+	cmd        Command
+	uid        int
+	generation uint64
+	done       chan robotcap.ActionResult
 }
 
 type control struct {
@@ -29,6 +31,8 @@ type controlResult struct {
 type runtimeForceCloser interface {
 	ForceClose(uid int) bool
 }
+
+const stopReleaseMaxAttempts = 8
 
 func (a *Actor) start() {
 	go a.loop()
@@ -98,7 +102,8 @@ func (a *Actor) requestStop() {
 }
 
 func (a *Actor) enqueue(cmd Command, timeout time.Duration) (robotcap.ActionResult, bool) {
-	req := request{cmd: cmd, done: make(chan robotcap.ActionResult, 1)}
+	uid, generation := a.leaseIdentity()
+	req := request{cmd: cmd, uid: uid, generation: generation, done: make(chan robotcap.ActionResult, 1)}
 	select {
 	case a.cmds <- req:
 	default:
@@ -113,7 +118,7 @@ func (a *Actor) enqueue(cmd Command, timeout time.Duration) (robotcap.ActionResu
 	case res := <-req.done:
 		return res, true
 	case <-timer.C:
-		return robotcap.ActionResult{UID: a.uidValue(), OK: false, State: robotcap.ActionStateTimeout, Message: "manual action timeout"}, false
+		return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStatePending, Message: "actor command is still running"}, true
 	}
 }
 
@@ -142,7 +147,7 @@ func (a *Actor) loop() {
 			default:
 			}
 		case req := <-a.cmds:
-			res := a.handleCommandSafely(req.cmd)
+			res := a.handleRequestSafely(req)
 			select {
 			case req.done <- res:
 			default:
@@ -152,6 +157,21 @@ func (a *Actor) loop() {
 			timer.Reset(a.pollInterval())
 		}
 	}
+}
+
+func (a *Actor) handleRequestSafely(req request) robotcap.ActionResult {
+	uid, generation := a.leaseIdentity()
+	if req.uid <= 0 || req.uid != uid || req.generation != generation {
+		return robotcap.ActionResult{
+			UID: req.uid, OK: false, State: robotcap.ActionStateFailed,
+			Message: "actor lease changed before command execution",
+		}
+	}
+	result := a.handleCommandSafely(req.cmd)
+	if req.cmd == CommandLogout && a.modeValue() == ModeManual {
+		a.requestStop()
+	}
+	return result
 }
 
 func (a *Actor) pollInterval() (interval time.Duration) {
@@ -294,11 +314,18 @@ func (a *Actor) releaseCurrentUIDUntilClosed() {
 		cid = st.CID
 	}
 	a.finishStoreStateIfNeeded(uid, cid, st, statusOK, "release")
-	for !a.releaseRuntimeUID(uid) {
+	for attempt := 1; attempt <= stopReleaseMaxAttempts; attempt++ {
+		if a.releaseRuntimeUID(uid) {
+			a.resetForUID(0)
+			return
+		}
 		foundationlog.Robotf("[Actor] stop_release_retry slot=%d uid=%d\n", a.slotIDValue(), uid)
-		time.Sleep(250 * time.Millisecond)
+		if attempt < stopReleaseMaxAttempts {
+			time.Sleep(250 * time.Millisecond)
+		}
 	}
-	a.resetForUID(0)
+	a.quarantineCurrentUID()
+	foundationlog.Robotf("[Actor] stop_release_quarantined slot=%d uid=%d attempts=%d\n", a.slotIDValue(), uid, stopReleaseMaxAttempts)
 }
 
 func (a *Actor) releaseRuntimeUID(uid int) bool {

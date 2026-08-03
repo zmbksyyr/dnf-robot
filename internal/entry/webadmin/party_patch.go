@@ -89,23 +89,35 @@ func (s *Server) handlePartyCompat(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
+		skillErr := s.savePartySkillEnabled(*req.SkillEnabled)
+		actualSkillEnabled := s.loadPartySkillEnabled()
+		partialFailure := skillErr != nil && actualSkillEnabled != *req.SkillEnabled
 		skillMessage := ""
-		if err := s.savePartySkillEnabled(*req.SkillEnabled); err != nil {
-			skillMessage = "; skill reload pending: " + err.Error()
+		if skillErr != nil {
+			if partialFailure {
+				skillMessage = "; partial persistence failure: " + skillErr.Error()
+			} else {
+				skillMessage = "; skill apply pending: " + skillErr.Error()
+			}
 		}
 		s.resetPartyCompatFailuresLocked()
 		s.wakePartyCompatSupervisor()
 		status, applyErr := setPartyCompat(s.cfg.RobotGamePort, cfg, enable)
 		status.DesiredEnabled = cfg.Enabled
-		status.SkillEnabled = *req.SkillEnabled
+		status.SkillEnabled = actualSkillEnabled
 		if applyErr != nil {
 			status = s.inspectPartyCompatLocked(cfg)
-			status.SkillEnabled = *req.SkillEnabled
+			status.SkillEnabled = actualSkillEnabled
 			status.Message = "desired state saved; apply pending: " + applyErr.Error() + skillMessage
 		} else {
 			status.Message = "desired state saved and applied" + skillMessage
 		}
-		writeJSON(w, map[string]interface{}{"ok": true, "result": status})
+		response := map[string]interface{}{"ok": !partialFailure, "result": status}
+		if partialFailure {
+			response["partial"] = true
+			response["error"] = "party compatibility was saved but party skill configuration was not"
+		}
+		writeJSON(w, response)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

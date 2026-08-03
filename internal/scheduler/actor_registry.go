@@ -6,7 +6,6 @@ import (
 
 	actormodel "robot/internal/actor"
 	robotcap "robot/internal/capability/robot"
-	robotconfig "robot/internal/capability/robotconfig"
 )
 
 var errActorRegistryUnavailable = errors.New("actor registry unavailable")
@@ -14,7 +13,6 @@ var errActorRegistryUnavailable = errors.New("actor registry unavailable")
 type actorRegistry interface {
 	AttachUID(uid int, timeout time.Duration) bool
 	Command(uid int, cmd actormodel.Command, timeout time.Duration) (robotcap.ActionResult, bool)
-	EnsureActorSlots(rc robotconfig.RuntimeConfig, target int)
 	HasUID(uid int) bool
 	LogoutUID(uid int, timeout time.Duration) (robotcap.ActionResult, bool)
 	StopUIDs(uids []int, logout bool) int
@@ -44,12 +42,24 @@ func (r *supervisorActorRegistry) Command(uid int, cmd actormodel.Command, timeo
 }
 
 func (r *supervisorActorRegistry) LogoutUID(uid int, timeout time.Duration) (robotcap.ActionResult, bool) {
-	return r.Command(uid, actormodel.CommandLogout, timeout)
+	actor := r.supervisor.ledger.ActorForUID(uid)
+	if actor == nil {
+		return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateMissingActor}, false
+	}
+	manual := actor.ModeValue() == actormodel.ModeManual
+	if manual {
+		r.supervisor.ledger.BeginDrainUID(uid)
+	}
+	result, ok := actor.Enqueue(actormodel.CommandLogout, timeout)
+	if manual && !ok {
+		actor.RequestStop()
+	}
+	return result, ok
 }
 
 func (r *supervisorActorRegistry) AttachUID(uid int, timeout time.Duration) bool {
 	s := r.supervisor
-	actor, existing, ok := s.ledger.ReserveEmptyAutoActor(uid)
+	actor, existing, ok := s.ledger.ReserveManualActor(uid, s.runtime)
 	if !ok {
 		return false
 	}
@@ -59,7 +69,9 @@ func (r *supervisorActorRegistry) AttachUID(uid int, timeout time.Duration) bool
 	if actor.AssignAndWait(uid, timeout) {
 		return true
 	}
+	s.ledger.BeginDrainUID(uid)
 	s.ledger.UnleaseUID(uid, actor)
+	actor.RequestStop()
 	return false
 }
 
@@ -107,10 +119,6 @@ func (r *supervisorActorRegistry) StopUIDs(uids []int, logout bool) int {
 	}
 	s.stopDrainingActors(actors, actorStopWait)
 	return len(actors)
-}
-
-func (r *supervisorActorRegistry) EnsureActorSlots(rc robotconfig.RuntimeConfig, target int) {
-	r.supervisor.ensureAutoActorSlots(rc, target)
 }
 
 func (m *RobotManager) currentActorRegistry() actorRegistry {

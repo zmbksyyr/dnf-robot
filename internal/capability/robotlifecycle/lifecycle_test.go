@@ -69,6 +69,26 @@ func TestCreatorStopsBeforeAllocationWhenUIDRangePreparationFails(t *testing.T) 
 	}
 }
 
+func TestCreatorRecoversAndRollsBackBatchOnPostJournalFailure(t *testing.T) {
+	env := &testCreateBatchEnv{
+		testCreateEnv: testCreateEnv{rc: robotconfig.RuntimeConfig{
+			RobotUIDStart: 17000000,
+			RobotUIDEnd:   17000999,
+			LevelMin:      1,
+			LevelMax:      1,
+			Jobs:          []int{1},
+			GrowTypes:     []int{0},
+		}},
+		locationErr: errors.New("locations unavailable"),
+	}
+	if _, err := (Creator{Env: env}).Create(robotcap.CreateRequest{Count: 1}); err == nil {
+		t.Fatal("Create() error = nil")
+	}
+	if env.recovered != 1 || env.begun != 1 || env.rolledBack != 1 || env.completed != 0 {
+		t.Fatalf("batch calls recovered=%d begun=%d rolled_back=%d completed=%d", env.recovered, env.begun, env.rolledBack, env.completed)
+	}
+}
+
 func TestCreatorUsesConfiguredAndPVFAvatarJobIntersection(t *testing.T) {
 	items := make([]shared.EquipmentCatalogItem, 0)
 	for slot := 0; slot < 8; slot++ {
@@ -238,6 +258,26 @@ type testCreateEnv struct {
 	prepareErr        error
 	prepared          bool
 	allocated         bool
+}
+
+type testCreateBatchEnv struct {
+	testCreateEnv
+	locationErr error
+	recovered   int
+	begun       int
+	completed   int
+	rolledBack  int
+}
+
+func (e *testCreateBatchEnv) RecoverIncompleteCreateBatches() error { e.recovered++; return nil }
+func (e *testCreateBatchEnv) BeginCreateBatch(string, []int, []int) error {
+	e.begun++
+	return nil
+}
+func (e *testCreateBatchEnv) CompleteCreateBatch(string) error { e.completed++; return nil }
+func (e *testCreateBatchEnv) RollbackCreateBatch(string) error { e.rolledBack++; return nil }
+func (e *testCreateBatchEnv) RobotLocations() ([]shared.MapLocation, error) {
+	return nil, e.locationErr
 }
 
 func (e *testCreateEnv) AllocateRobotIDs(count, uidStart, uidEnd int) (RobotIDAllocation, error) {

@@ -75,12 +75,17 @@ func (s SessionService) online(req robotcap.CommandRequest, confirm bool, disjoi
 			result.Accepted++
 			result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
 		}
-		if err := env.SendOnline(userinfos); err != nil {
-			result.Failed = result.Accepted
-			result.Accepted = 0
-			for i := range result.Robots {
-				result.Robots[i].State = robotcap.ActionStateFailed
-				result.Robots[i].Message = err.Error()
+		if len(userinfos) > 0 {
+			if err := env.SendOnline(userinfos); err != nil {
+				accepted := result.Accepted
+				result.Failed += accepted
+				result.Accepted = 0
+				for i := range result.Robots {
+					if result.Robots[i].State == robotcap.ActionStateAccepted {
+						result.Robots[i].State = robotcap.ActionStateFailed
+						result.Robots[i].Message = err.Error()
+					}
+				}
 			}
 		}
 	} else {
@@ -143,7 +148,6 @@ func (s SessionService) logoutRobots(robots []robotcap.Info) robotcap.CommandRes
 		if _, ok := status[uid]; ok {
 			result.Robots[i].State = robotcap.ActionStatePending
 			result.Robots[i].Message = "runtime connection still exists"
-			result.Failed++
 			continue
 		}
 		if err := s.Env.InvalidateCharacterCache(uid); err != nil {
@@ -192,6 +196,9 @@ func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout ti
 		confirmed := 0
 		status := s.Env.RuntimeStatusMap()
 		for _, robot := range result.Robots {
+			if robot.State != robotcap.ActionStateAccepted {
+				continue
+			}
 			if st, ok := status[robot.UID]; ok && robotcap.ActiveRuntimeStatus(st) {
 				confirmed++
 			}
@@ -221,7 +228,6 @@ func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout ti
 		} else {
 			result.Robots[i].State = robotcap.ActionStatePending
 			result.Robots[i].Message = "not confirmed running"
-			result.Failed++
 		}
 	}
 }

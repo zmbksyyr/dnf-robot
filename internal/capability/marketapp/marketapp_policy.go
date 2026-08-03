@@ -409,6 +409,20 @@ func normalizeMarketName(market string) string {
 	}
 }
 
+// ValidateExternalMarketName enforces the public API contract. Legacy service
+// aliases remain valid inside the market supervisor, but must never be
+// accepted from TCP/Web requests where they can otherwise become a silent
+// no-op or target the wrong market.
+func ValidateExternalMarketName(market string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(market))
+	switch normalized {
+	case marketNameAuction, marketNameCera:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid market %q: expected auction or cera", market)
+	}
+}
+
 func minPositive(v, limit int) int {
 	if v <= 0 {
 		return limit

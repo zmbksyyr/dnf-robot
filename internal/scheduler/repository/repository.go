@@ -186,6 +186,7 @@ var schemaStatements = [...]string{
 	"CREATE TABLE IF NOT EXISTS d_starsky.Robot_stall (id INT NOT NULL AUTO_INCREMENT, Trade_item INT DEFAULT 0, price BIGINT DEFAULT 0, item_number INT DEFAULT 1, function_type INT DEFAULT 1, state INT DEFAULT 1, UID INT DEFAULT 0, PRIMARY KEY (id), KEY idx_robot_stall (function_type,state,UID)) DEFAULT CHARSET=gbk",
 	"CREATE TABLE IF NOT EXISTS d_starsky.Robot_stall_config (id INT NOT NULL AUTO_INCREMENT, cfg_content VARCHAR(255) DEFAULT '', cfg_type INT DEFAULT 0, UID INT DEFAULT 0, function_type INT DEFAULT 1, state INT DEFAULT 1, PRIMARY KEY (id), KEY idx_robot_stall_cfg (cfg_type,function_type,state,UID)) DEFAULT CHARSET=gbk",
 	"CREATE TABLE IF NOT EXISTS d_starsky.robot_registry (uid INT NOT NULL, cid INT NOT NULL, account VARCHAR(32) NOT NULL, charac_name VARCHAR(64) NOT NULL, created_at DATETIME NOT NULL, PRIMARY KEY (uid), KEY idx_robot_registry_cid (cid)) DEFAULT CHARSET=utf8",
+	"CREATE TABLE IF NOT EXISTS d_starsky.robot_create_batch (batch_id VARCHAR(96) NOT NULL, payload MEDIUMTEXT NOT NULL, state VARCHAR(16) NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, PRIMARY KEY (batch_id), KEY idx_robot_create_batch_state (state,created_at)) DEFAULT CHARSET=utf8",
 	"INSERT IGNORE INTO d_starsky.Robot_stall_config (id,cfg_content,cfg_type,UID,function_type,state) VALUES (1,'bot-store',3,0,2,1)",
 }
 

@@ -164,10 +164,27 @@ func (s *RobotSupervisor) updateMetrics(rc robotconfig.RuntimeConfig, signals ad
 		return
 	}
 	s.nextMetrics = now.Add(time.Duration(rc.SchedulerMetricsIntervalSec) * time.Second)
-	status := s.manager.runtimeStatusMapCopy()
-	s.filterBlockedRuntimeStatus(status)
-	s.filterMissingRuntimeStatus(status)
-	summary := robotcap.SummarizeRuntimeStatusMap(status)
+	status := s.manager.runtimeStatusMap()
+	uids := make([]int, 0, len(status))
+	for uid := range status {
+		uids = append(uids, uid)
+	}
+	alive, err := s.manager.aliveRobotUIDs(uids)
+	if err != nil {
+		robotLogf("[RobotSupervisor] runtime_alive_filter_failed err=%v\n", err)
+		alive = nil
+	}
+	blocked := s.ledger.BlockedUIDSet()
+	var summary robotcap.RuntimeStatusSummary
+	for uid, st := range status {
+		if _, skip := blocked[uid]; skip {
+			continue
+		}
+		if alive != nil && !alive[uid] {
+			continue
+		}
+		summary.Add(st)
+	}
 	running, connecting, stores := summary.Running, summary.Connecting, summary.Stores
 	s.manager.updateAutoSnapshot(rc, summary)
 	counts := s.ledger.Counts(now, rc)

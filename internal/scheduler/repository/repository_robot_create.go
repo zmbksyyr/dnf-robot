@@ -3,6 +3,7 @@ package repository
 import (
 	"bytes"
 	"compress/zlib"
+	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"sort"
@@ -295,7 +296,16 @@ func (r *SQLRepository) RegisterRobot(info robotcap.Info) error {
 }
 
 func (r *SQLRepository) RebuildCharacView(uid int) error {
-	rows, err := r.Query("SELECT charac_no,charac_name,lev,job,grow_type FROM taiwan_cain.charac_info WHERE m_id=? AND delete_flag=0 ORDER BY charac_no", uid)
+	return rebuildCharacView(r, uid)
+}
+
+type characViewDB interface {
+	Query(string, ...interface{}) (*sql.Rows, error)
+	Exec(string, ...interface{}) (sql.Result, error)
+}
+
+func rebuildCharacView(db characViewDB, uid int) error {
+	rows, err := db.Query("SELECT charac_no,charac_name,lev,job,grow_type FROM taiwan_cain.charac_info WHERE m_id=? AND delete_flag=0 ORDER BY charac_no", uid)
 	if err != nil {
 		return err
 	}
@@ -342,10 +352,10 @@ func (r *SQLRepository) RebuildCharacView(uid int) error {
 	}
 	blob := append(make([]byte, 4), compressed.Bytes()...)
 	binary.LittleEndian.PutUint32(blob[0:4], uint32(len(raw)))
-	if _, err := r.Exec("INSERT IGNORE INTO taiwan_cain.charac_view (m_id) VALUES (?)", uid); err != nil {
+	if _, err := db.Exec("INSERT IGNORE INTO taiwan_cain.charac_view (m_id) VALUES (?)", uid); err != nil {
 		return err
 	}
-	_, err = r.Exec("UPDATE taiwan_cain.charac_view SET info=?,slot_effect_count=18,charac_slot_limit=18,hash_key='',charac_count=? WHERE m_id=?", blob, len(chars), uid)
+	_, err = db.Exec("UPDATE taiwan_cain.charac_view SET info=?,slot_effect_count=18,charac_slot_limit=18,hash_key='',charac_count=? WHERE m_id=?", blob, len(chars), uid)
 	return err
 }
 

@@ -8,7 +8,11 @@ import (
 	"time"
 )
 
+const robotOnlineConfirmBudget = 75 * time.Second
+
 func (m *RobotManager) OnlineManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	m.mutationMu.RLock()
+	defer m.mutationMu.RUnlock()
 	registry, robots, rc, early, err := m.prepareUserActorCommand(req, "online", true)
 	if err != nil || early != nil {
 		return resultOrZero(early), err
@@ -33,15 +37,19 @@ func (m *RobotManager) OnlineManaged(req robotcap.CommandRequest) (robotcap.Comm
 			result.Robots = append(result.Robots, failedActorResult(robot, item, "online actor command failed"))
 		}
 	}
-	m.waitManagedConfirm(&result, time.Duration(rc.OnlineConfirmTimeoutMS)*time.Millisecond)
+	m.waitManagedConfirm(&result, robotOnlineConfirmBudget)
 	return result, nil
 }
 
 func (m *RobotManager) MoveManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	m.mutationMu.RLock()
+	defer m.mutationMu.RUnlock()
 	return m.actorCommandManaged(req, actormodel.CommandMove, "move")
 }
 
 func (m *RobotManager) ShoutManaged(req robotcap.CommandRequest, world bool) (robotcap.CommandResult, error) {
+	m.mutationMu.RLock()
+	defer m.mutationMu.RUnlock()
 	if world {
 		return m.actorCommandManaged(req, actormodel.CommandShoutWorld, "shout_world")
 	}
@@ -51,6 +59,8 @@ func (m *RobotManager) ShoutManaged(req robotcap.CommandRequest, world bool) (ro
 }
 
 func (m *RobotManager) ShoutBothManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	m.mutationMu.RLock()
+	defer m.mutationMu.RUnlock()
 	registry, robots, _, early, err := m.prepareUserActorCommand(req, "shout", true)
 	if err != nil || early != nil {
 		return resultOrZero(early), err
@@ -62,8 +72,12 @@ func (m *RobotManager) ShoutBothManaged(req robotcap.CommandRequest) (robotcap.C
 		world, worldOK := registry.Command(robot.UID, actormodel.CommandShoutWorld, timeout)
 		if localOK && worldOK && local.OK && world.OK {
 			result.Accepted++
-			result.Confirmed++
-			result.Robots = append(result.Robots, robotActionResult(robot, true, robotcap.ActionStateSent, ""))
+			if local.State == robotcap.ActionStatePending || world.State == robotcap.ActionStatePending {
+				result.Robots = append(result.Robots, robotActionResult(robot, true, robotcap.ActionStatePending, "actor commands are still running"))
+			} else {
+				result.Confirmed++
+				result.Robots = append(result.Robots, robotActionResult(robot, true, robotcap.ActionStateSent, ""))
+			}
 		} else {
 			result.Failed++
 			msg := "actor command failed"
@@ -85,10 +99,14 @@ func (m *RobotManager) ShoutBothManaged(req robotcap.CommandRequest) (robotcap.C
 }
 
 func (m *RobotManager) StoreManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	m.mutationMu.RLock()
+	defer m.mutationMu.RUnlock()
 	return m.actorCommandManaged(req, actormodel.CommandStore, "store")
 }
 
 func (m *RobotManager) LogoutManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
+	m.mutationMu.RLock()
+	defer m.mutationMu.RUnlock()
 	registry, robots, rc, early, err := m.prepareUserActorCommand(req, "logout", true)
 	if err != nil || early != nil {
 		return resultOrZero(early), err
@@ -100,7 +118,9 @@ func (m *RobotManager) LogoutManaged(req robotcap.CommandRequest) (robotcap.Comm
 		item.CID = robot.CID
 		if ok && item.OK {
 			result.Accepted++
-			result.Confirmed++
+			if item.State != robotcap.ActionStatePending {
+				result.Confirmed++
+			}
 			result.Robots = append(result.Robots, item)
 		} else {
 			result.Failed++
@@ -122,7 +142,9 @@ func (m *RobotManager) actorCommandManaged(req robotcap.CommandRequest, cmd acto
 		item.CID = robot.CID
 		if ok && item.OK {
 			result.Accepted++
-			result.Confirmed++
+			if item.State != robotcap.ActionStatePending {
+				result.Confirmed++
+			}
 			result.Robots = append(result.Robots, item)
 		} else {
 			result.Failed++
@@ -162,8 +184,6 @@ func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, acti
 	}
 	end := m.beginActorContainerOp("manual_attach")
 	defer end()
-	target := len(registry.actorSnapshots()) + len(missing)
-	registry.EnsureActorSlots(rc, target)
 	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
 	out := robotcap.NewCommandResult(len(robots))
 	for _, robot := range missing {

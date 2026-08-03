@@ -60,8 +60,12 @@ func (s *Server) reconcileMailboxGuard(cfg mailboxGuardConfig) {
 		foundationlog.Robotf("[MAILBOX_GUARD] waiting_for_game port=%d err=%s\n", s.cfg.RobotGamePort, status.Message)
 		return
 	}
-	if status.State == "unsupported" || status.State == "error" {
+	if status.State == "unsupported" {
 		foundationlog.Robotf("[MAILBOX_GUARD] refused pid=%d state=%s err=%s\n", status.PID, status.State, status.Message)
+		return
+	}
+	if status.State == "error" {
+		foundationlog.Robotf("[MAILBOX_GUARD] transient_inspect_failed pid=%d err=%s\n", status.PID, status.Message)
 		return
 	}
 	if status.Enabled == cfg.Enabled {

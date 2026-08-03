@@ -11,19 +11,21 @@ func (m *RobotManager) DangerousDeleteDefaults() (int, int) {
 }
 
 func (m *RobotManager) DangerousDelete(req robotcap.DangerousDeleteRequest) (robotcap.DangerousDeleteResult, error) {
-	plan, err := m.schemaRepo().DangerousDeletePlan(req)
-	if err != nil {
-		return robotcap.DangerousDeleteResult{}, err
-	}
-	result := dangerousDeleteResult(plan)
-	_, finishOperation, err := m.beginTrackedStructuralOperation("dangerous_delete", dangerousDeleteScope(plan))
+	_, finishOperation, err := m.beginTrackedStructuralOperation("dangerous_delete", dangerousDeleteRequestScope(req))
 	if err != nil {
 		return robotcap.DangerousDeleteResult{}, err
 	}
 	var opErr error
+	result := robotcap.DangerousDeleteResult{}
 	defer func() {
 		finishOperation(fmt.Sprintf("accounts=%d characters=%d registry=%d deleted=%v", result.AccountCount, result.CharacterCount, result.RegistryCount, result.Deleted), opErr)
 	}()
+	plan, err := m.schemaRepo().DangerousDeletePlan(req)
+	if err != nil {
+		opErr = err
+		return robotcap.DangerousDeleteResult{}, err
+	}
+	result = dangerousDeleteResult(plan)
 	if len(plan.RegistryUIDs) > 0 {
 		if _, err := m.SetAutoEnabled(false); err != nil {
 			opErr = fmt.Errorf("disable automatic actions before dangerous delete: %w", err)
@@ -35,21 +37,9 @@ func (m *RobotManager) DangerousDelete(req robotcap.DangerousDeleteRequest) (rob
 		}
 	}
 	if plan.Mode == robotcap.DangerousDeleteModeCID {
-		if err := m.schemaRepo().BatchDeleteCharacterData(plan.CIDs); err != nil {
+		if err := m.schemaRepo().DeleteCharacterAtomic(plan.UID, plan.CID, len(plan.RegistryUIDs) > 0); err != nil {
 			opErr = err
 			return result, err
-		}
-		if len(plan.RegistryUIDs) > 0 {
-			if err := m.schemaRepo().BatchDeleteRobotMetadata(plan.RegistryUIDs); err != nil {
-				opErr = err
-				return result, err
-			}
-		}
-		if plan.UID > 0 {
-			if err := m.schemaRepo().RebuildCharacView(plan.UID); err != nil {
-				opErr = err
-				return result, err
-			}
 		}
 		m.worldHornCache.Invalidate(plan.CID)
 		m.invalidateLoginRepairs([]int{plan.UID})
@@ -65,6 +55,17 @@ func (m *RobotManager) DangerousDelete(req robotcap.DangerousDeleteRequest) (rob
 	}
 	result.Deleted = true
 	return result, nil
+}
+
+func dangerousDeleteRequestScope(req robotcap.DangerousDeleteRequest) string {
+	switch req.Mode {
+	case robotcap.DangerousDeleteModeCID:
+		return fmt.Sprintf("cid=%d", req.CID)
+	case robotcap.DangerousDeleteModeUID:
+		return fmt.Sprintf("uid=%d", req.UID)
+	default:
+		return fmt.Sprintf("range=%d-%d", req.MinUID, req.MaxUID)
+	}
 }
 
 func dangerousDeleteResult(plan robotcap.DangerousDeletePlan) robotcap.DangerousDeleteResult {

@@ -23,6 +23,7 @@ const (
 
 type messageDispatchShard struct {
 	queue []MsgQueueData
+	head  int
 	mu    lockhub.Locker
 	cond  *sync.Cond
 }
@@ -36,7 +37,7 @@ func newMessageDispatchShard() *messageDispatchShard {
 func (t *RobotDnfTask) dispatchLoop(shard *messageDispatchShard) {
 	for {
 		shard.mu.Lock()
-		for len(shard.queue) == 0 {
+		for shard.head >= len(shard.queue) {
 			select {
 			case <-t.done:
 				shard.mu.Unlock()
@@ -51,9 +52,10 @@ func (t *RobotDnfTask) dispatchLoop(shard *messageDispatchShard) {
 			return
 		default:
 		}
-		msg := shard.queue[0]
-		shard.queue[0] = MsgQueueData{}
-		shard.queue = shard.queue[1:]
+		msg := shard.queue[shard.head]
+		shard.queue[shard.head] = MsgQueueData{}
+		shard.head++
+		shard.compactIfNeeded(false)
 		shard.mu.Unlock()
 
 		t.handleMessage(msg)
@@ -125,20 +127,24 @@ func (t *RobotDnfTask) TryAddMessage(typ string, data interface{}) bool {
 	default:
 	}
 	if typ == "MsgLogout" || typ == "MsgOnLine" {
-		shard.queue = removeQueuedUID(shard.queue, messageUID(typ, data))
-	} else if typ == "MsgMove" && coalesceQueuedMove(shard.queue, data) {
+		shard.queue = removeQueuedUID(shard.liveQueue(), messageUID(typ, data))
+		shard.head = 0
+	} else if typ == "MsgMove" && coalesceQueuedMove(shard.liveQueue(), data) {
 		return true
 	}
-	if len(shard.queue) >= messageShardQueueSize {
-		evict := oldestEvictableMessage(shard.queue)
+	shard.compactIfNeeded(true)
+	if shard.liveLen() >= messageShardQueueSize {
+		live := shard.liveQueue()
+		evict := oldestEvictableMessage(live)
 		if evict < 0 {
-			fmt.Printf("[RobotDnfTask] message_queue_full reject type=%s shard_len=%d\n", typ, len(shard.queue))
+			fmt.Printf("[RobotDnfTask] message_queue_full reject type=%s shard_len=%d\n", typ, len(live))
 			return false
 		}
-		fmt.Printf("[RobotDnfTask] message_queue_overflow evict type=%s for=%s shard_len=%d\n", shard.queue[evict].Type, typ, len(shard.queue))
-		copy(shard.queue[evict:], shard.queue[evict+1:])
-		shard.queue[len(shard.queue)-1] = MsgQueueData{}
-		shard.queue = shard.queue[:len(shard.queue)-1]
+		fmt.Printf("[RobotDnfTask] message_queue_overflow evict type=%s for=%s shard_len=%d\n", live[evict].Type, typ, len(live))
+		copy(live[evict:], live[evict+1:])
+		live[len(live)-1] = MsgQueueData{}
+		shard.queue = live[:len(live)-1]
+		shard.head = 0
 	}
 	shard.queue = append(shard.queue, msg)
 	shard.cond.Signal()
@@ -160,9 +166,39 @@ func (t *RobotDnfTask) dispatchOnlineImmediate(vo *RobotVo) bool {
 	}
 	shard := t.messageShards[messageShardIndex("MsgOnLine", vo)]
 	shard.mu.Lock()
-	shard.queue = removeQueuedUID(shard.queue, int(vo.UID))
+	shard.queue = removeQueuedUID(shard.liveQueue(), int(vo.UID))
+	shard.head = 0
 	shard.mu.Unlock()
 	return t.dnfMsgOnLine(t, vo)
+}
+
+func (s *messageDispatchShard) liveQueue() []MsgQueueData {
+	if s.head >= len(s.queue) {
+		return s.queue[:0]
+	}
+	return s.queue[s.head:]
+}
+
+func (s *messageDispatchShard) liveLen() int {
+	return len(s.queue) - s.head
+}
+
+func (s *messageDispatchShard) compactIfNeeded(needTail bool) {
+	if s.head == 0 {
+		return
+	}
+	if !needTail && (s.head < 64 || s.head*2 < len(s.queue)) {
+		return
+	}
+	if needTail && len(s.queue) < cap(s.queue) && (s.head < 64 || s.head*2 < len(s.queue)) {
+		return
+	}
+	live := copy(s.queue, s.queue[s.head:])
+	for i := live; i < len(s.queue); i++ {
+		s.queue[i] = MsgQueueData{}
+	}
+	s.queue = s.queue[:live]
+	s.head = 0
 }
 
 func messageShardIndex(typ string, data interface{}) int {

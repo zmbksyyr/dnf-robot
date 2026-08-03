@@ -22,6 +22,8 @@ type RobotDnfTask struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	workers      sync.WaitGroup
+	workerMu     lockhub.Locker
+	stopping     bool
 
 	connectQueue  chan *RobotVo
 	connectSlots  chan struct{}
@@ -67,6 +69,9 @@ func NewRobotDnfTask() *RobotDnfTask {
 
 func (t *RobotDnfTask) Shutdown() {
 	t.shutdownOnce.Do(func() {
+		t.workerMu.Lock()
+		t.stopping = true
+		t.workerMu.Unlock()
 		if t.cancel != nil {
 			t.cancel()
 		}
@@ -105,6 +110,24 @@ func (t *RobotDnfTask) Shutdown() {
 		}
 		t.workers.Wait()
 	})
+}
+
+func (t *RobotDnfTask) startWorker(fn func()) bool {
+	if t == nil || fn == nil {
+		return false
+	}
+	t.workerMu.Lock()
+	if t.stopping {
+		t.workerMu.Unlock()
+		return false
+	}
+	t.workers.Add(1)
+	t.workerMu.Unlock()
+	go func() {
+		defer t.workers.Done()
+		fn()
+	}()
+	return true
 }
 
 func (t *RobotDnfTask) context() context.Context {

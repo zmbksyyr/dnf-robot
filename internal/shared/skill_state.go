@@ -11,6 +11,7 @@ type SkillState struct {
 
 var skillStateSnapshot atomic.Value
 var partySkillStateSnapshot atomic.Value
+var partySkillStateGeneration atomic.Uint64
 
 func init() {
 	skillStateSnapshot.Store([]SkillState(nil))
@@ -49,6 +50,11 @@ func cloneSkillStates(entries []SkillState) []SkillState {
 
 func SetPartySkillStates(entries []PartySkillState) {
 	partySkillStateSnapshot.Store(clonePartySkillStates(entries))
+	partySkillStateGeneration.Add(1)
+}
+
+func PartySkillStateGeneration() uint64 {
+	return partySkillStateGeneration.Load()
 }
 
 func PartySkillStatesForJob(job int) []PartySkillState {

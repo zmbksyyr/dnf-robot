@@ -134,10 +134,35 @@ func (m *RobotManager) autoGamePortStable(now time.Time, rc robotconfig.RuntimeC
 	if timeout <= 0 {
 		timeout = 800 * time.Millisecond
 	}
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	open := err == nil
-	if conn != nil {
-		_ = conn.Close()
+	m.autoMu.Lock()
+	probeCached := addr == m.autoPortProbeAddr && now.Before(m.autoPortProbeAt)
+	open := m.autoPortProbeOpen
+	errText := m.autoPortProbeError
+	dial := m.autoPortDial
+	m.autoMu.Unlock()
+	if !probeCached {
+		if dial == nil {
+			dial = net.DialTimeout
+		}
+		conn, err := dial("tcp", addr, timeout)
+		open = err == nil
+		errText = ""
+		if err != nil {
+			errText = err.Error()
+		}
+		if conn != nil {
+			_ = conn.Close()
+		}
+		probeTTL := time.Second
+		if !open {
+			probeTTL = 3 * time.Second
+		}
+		m.autoMu.Lock()
+		m.autoPortProbeAddr = addr
+		m.autoPortProbeOpen = open
+		m.autoPortProbeError = errText
+		m.autoPortProbeAt = now.Add(probeTTL)
+		m.autoMu.Unlock()
 	}
 
 	stableFor := time.Duration(rc.AutoGamePortStableSec) * time.Second
@@ -150,7 +175,7 @@ func (m *RobotManager) autoGamePortStable(now time.Time, rc robotconfig.RuntimeC
 	m.autoStats.GamePortAddress = addr
 	if !open {
 		if m.autoPortReady || now.Sub(m.autoPortLog) >= 10*time.Second {
-			robotLogf("[AutoGate] game_port_not_ready addr=%s err=%v\n", addr, err)
+			robotLogf("[AutoGate] game_port_not_ready addr=%s err=%s\n", addr, errText)
 			m.autoPortLog = now
 		}
 		m.autoPortSince = time.Time{}

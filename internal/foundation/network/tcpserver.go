@@ -246,6 +246,11 @@ func (s *TCPServer) handleClient(clientID, clientIP string, client *tcpClient) {
 			if len(data) > maxReceiveBufferSize {
 				return
 			}
+			if len(bytes.TrimSpace(remaining)) != 0 {
+				// The Robot API is one request/one response per connection. Reject
+				// pipelined frames and trailing bytes before dispatching either.
+				return
+			}
 			recvBuf = remaining
 			if !firstPacketSeen {
 				if !s.registerFirstPacket(clientIP) {
@@ -257,6 +262,7 @@ func (s *TCPServer) handleClient(clientID, clientIP string, client *tcpClient) {
 			if s.onMessage != nil {
 				s.dispatchMessage(clientID, data)
 			}
+			return
 		}
 		if len(recvBuf) > maxReceiveBufferSize {
 			return
@@ -277,16 +283,8 @@ func tryExtractXMLPacket(buf []byte) (packet []byte, remaining []byte, ok bool) 
 	if len(buf) < len("<tw></tw>") {
 		return nil, buf, false
 	}
-	start := bytes.IndexByte(buf, '<')
-	if start < 0 {
-		keep := len(buf)
-		if keep > 32 {
-			keep = 32
-		}
-		return nil, buf[len(buf)-keep:], false
-	}
-	if start > 0 {
-		buf = buf[start:]
+	if !bytes.HasPrefix(buf, []byte("<tw>")) {
+		return nil, buf, false
 	}
 	end := bytes.Index(buf, []byte("</tw>"))
 	if end < 0 {
@@ -295,13 +293,6 @@ func tryExtractXMLPacket(buf []byte) (packet []byte, remaining []byte, ok bool) 
 	packetLen := end + len("</tw>")
 	packet = buf[:packetLen]
 	remaining = buf[packetLen:]
-	if len(remaining) > 0 {
-		if next := bytes.IndexByte(remaining, '<'); next >= 0 {
-			remaining = remaining[next:]
-		} else {
-			remaining = nil
-		}
-	}
 	return packet, remaining, true
 }
 

@@ -37,8 +37,8 @@ func handleMarketCommand(cmd, pkt string) (string, bool) {
 		if err := decodePayload(pkt, &req); err != nil {
 			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()}), true
 		}
-		res := app.EnsureServices(req.Markets)
-		return wrapResult(map[string]interface{}{"ok": true, "result": res}), true
+		res, err := app.EnsureServices(req.Markets)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
 	case "marketStop":
 		app, err := requireMarketApp()
 		if err != nil {

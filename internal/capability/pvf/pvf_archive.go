@@ -50,7 +50,7 @@ func openPVF(path string) (*pvfArchive, error) {
 	treeEnd := treeStart + treeLen
 	tree := append([]byte(nil), raw[treeStart:treeEnd]...)
 	decryptPVFBlock(tree, treeLen, treeCRC)
-	dataStart := treeLen + 0x38
+	dataStart := treeEnd
 	if dataStart > len(raw) {
 		return nil, fmt.Errorf("pvf data section truncated")
 	}

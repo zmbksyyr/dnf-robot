@@ -8,6 +8,7 @@ import (
 	"robot/internal/foundation/process"
 	"robot/internal/shared"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -131,7 +132,9 @@ func robotStateView(item robotcap.StatusItem, stateName string, onlineDesired bo
 		desired = shared.DesiredFromOperation(item.Operation, onlineDesired)
 	}
 	phase := shared.PhaseConfirmed
-	if item.Operation != "" {
+	if actual == shared.ActualDisconnected || actual == shared.ActualError {
+		phase = shared.PhaseFailed
+	} else if item.Operation != "" {
 		phase = shared.PhaseExecuting
 	} else if item.ActorAttached {
 		phase = shared.PhaseAssigned
@@ -141,6 +144,8 @@ func robotStateView(item robotcap.StatusItem, stateName string, onlineDesired bo
 		lastError = robotcap.DBStateMissingCore
 	} else if item.DisconnectReason != 0 {
 		lastError = fmt.Sprintf("disconnect_%d", item.DisconnectReason)
+	} else if actual == shared.ActualError {
+		lastError = stateName
 	}
 	return shared.RobotState{
 		UID:          item.UID,
@@ -247,14 +252,20 @@ func (m *RobotManager) BeginOperationGuarded(typ, scope string, structural bool)
 }
 
 func (m *RobotManager) beginTrackedStructuralOperation(typ, scope string) (robotcap.OperationStatus, func(string, error) robotcap.OperationStatus, error) {
+	m.mutationMu.Lock()
 	op, err := m.BeginOperationGuarded(typ, scope, true)
 	if err != nil {
+		m.mutationMu.Unlock()
 		return robotcap.OperationStatus{}, nil, err
 	}
 	done := m.beginStructuralOp(typ)
+	var finishOnce sync.Once
 	return op, func(summary string, opErr error) robotcap.OperationStatus {
 		status := m.CompleteOperation(op.ID, summary, opErr)
-		done()
+		finishOnce.Do(func() {
+			done()
+			m.mutationMu.Unlock()
+		})
 		return status
 	}, nil
 }
@@ -315,13 +326,15 @@ func (m *RobotManager) beginStructuralOp(op string) func() {
 		op = "unknown"
 	}
 	m.autoMu.Lock()
+	m.structuralOpGeneration++
+	generation := m.structuralOpGeneration
 	m.structuralOp = op
 	m.structuralOpStarted = time.Now()
 	m.autoMu.Unlock()
 	robotLogf("[RobotLifecycle] op=%s state=begin\n", op)
 	return func() {
 		m.autoMu.Lock()
-		if m.structuralOp == op {
+		if m.structuralOp == op && m.structuralOpGeneration == generation {
 			m.structuralOp = ""
 			m.structuralOpStarted = time.Time{}
 		}
@@ -333,32 +346,30 @@ func (m *RobotManager) beginStructuralOp(op string) func() {
 func (m *RobotManager) structuralOperation() (string, time.Time, bool) {
 	m.autoMu.Lock()
 	defer m.autoMu.Unlock()
-	if m.structuralOp != "" && (m.structuralOpStarted.IsZero() || time.Since(m.structuralOpStarted) > 10*time.Minute) {
-		robotLogf("[RobotLifecycle] op=%s state=expired started=%s\n", m.structuralOp, m.structuralOpStarted.Format(time.RFC3339))
-		m.structuralOp = ""
-		m.structuralOpStarted = time.Time{}
-		return "", time.Time{}, false
-	}
 	return m.structuralOp, m.structuralOpStarted, m.structuralOp != ""
 }
 
 func (m *RobotManager) beginActorContainerOp(op string) func() {
+	m.actorMutationMu.Lock()
 	if strings.TrimSpace(op) == "" {
 		op = "actor_container"
 	}
 	m.autoMu.Lock()
+	m.actorContainerOpGeneration++
+	generation := m.actorContainerOpGeneration
 	m.actorContainerOp = op
 	m.actorContainerOpStarted = time.Now()
 	m.autoMu.Unlock()
 	robotLogf("[RobotLifecycle] actor_container op=%s state=begin\n", op)
 	return func() {
 		m.autoMu.Lock()
-		if m.actorContainerOp == op {
+		if m.actorContainerOp == op && m.actorContainerOpGeneration == generation {
 			m.actorContainerOp = ""
 			m.actorContainerOpStarted = time.Time{}
 		}
 		m.autoMu.Unlock()
 		robotLogf("[RobotLifecycle] actor_container op=%s state=end\n", op)
+		m.actorMutationMu.Unlock()
 	}
 }
 

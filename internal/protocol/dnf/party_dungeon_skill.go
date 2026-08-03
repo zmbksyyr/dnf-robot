@@ -188,6 +188,10 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 }
 
 func (r *RobotVo) ensurePartySkillProfileUnsafe() bool {
+	catalogGeneration := shared.PartySkillStateGeneration()
+	if r.partySkillLoaded && r.partySkillCatalogGeneration != catalogGeneration {
+		r.resetPartySkillProfileUnsafe()
+	}
 	if r.partySkillLoaded {
 		return true
 	}
@@ -212,13 +216,15 @@ func (r *RobotVo) ensurePartySkillProfileUnsafe() bool {
 	generation := r.partySkillGeneration
 	uid := r.UID
 	cid := r.CID
-	startRobotRoutine("party_skill_profile", uid, func() {
-		r.loadPartySkillProfile(generation, uid, cid, loader)
-	})
+	if !startRobotRoutine(r.Controller, "party_skill_profile", uid, func() {
+		r.loadPartySkillProfile(generation, catalogGeneration, uid, cid, loader)
+	}) {
+		r.partySkillLoading = false
+	}
 	return false
 }
 
-func (r *RobotVo) loadPartySkillProfile(generation uint64, uid uint32, cid int, loader partySkillProfileLoadFunc) {
+func (r *RobotVo) loadPartySkillProfile(generation, catalogGeneration uint64, uid uint32, cid int, loader partySkillProfileLoadFunc) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			r.mu.Lock()
@@ -233,7 +239,7 @@ func (r *RobotVo) loadPartySkillProfile(generation uint64, uid uint32, cid int, 
 	now := time.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if generation != r.partySkillGeneration || r.UID != uid || r.State == StateStop {
+	if generation != r.partySkillGeneration || catalogGeneration != shared.PartySkillStateGeneration() || r.UID != uid || r.State == StateStop {
 		return
 	}
 	r.partySkillLoading = false
@@ -245,6 +251,7 @@ func (r *RobotVo) loadPartySkillProfile(generation uint64, uid uint32, cid int, 
 		r.CID = profile.cid
 	}
 	r.partySkillLoaded = true
+	r.partySkillCatalogGeneration = catalogGeneration
 	r.partySkillJob = profile.job
 	r.partySkillCandidates = profile.candidates
 	if !r.partyDungeonEnteredAt.IsZero() && now.Sub(r.partyDungeonEnteredAt) <= partyDungeonEntryTimeout && !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= partyDungeonActivityTimeout {
@@ -259,6 +266,7 @@ func (r *RobotVo) resetPartySkillProfileUnsafe() {
 	r.partySkillLoading = false
 	r.partySkillJob = 0
 	r.partySkillCandidates = nil
+	r.partySkillCatalogGeneration = 0
 }
 
 func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile, error) {

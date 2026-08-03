@@ -128,7 +128,15 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 			}
 			title := env.StoreTitle(r.UID, rc)
 			if env.StartPrivateStore(r.UID, title) {
-				_ = env.MarkStoreStarted(r.UID)
+				if err := env.MarkStoreStarted(r.UID); err != nil {
+					env.Logf("[Store] uid=%d persist_start_failed err=%v\n", r.UID, err)
+					_, _ = env.Logout(robotcap.CommandRequest{UIDs: []int{r.UID}})
+					env.FinishStoreState(r.UID, r.CID, StoreReasonStartFailed)
+					env.EndStoreBusy(r.UID)
+					result.Failed++
+					result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateStoreStartFailed, Message: fmt.Sprintf("persist store start: %v", err)})
+					continue
+				}
 				result.Accepted++
 				result.Robots = append(result.Robots, robotcap.ActionResult{UID: r.UID, CID: r.CID, OK: false, State: robotcap.ActionStateAccepted})
 			} else {

@@ -22,6 +22,7 @@ func (a *Actor) status(now time.Time, rc robotconfig.RuntimeConfig) Status {
 func (a *Actor) resetForUID(uid int) {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
+	a.generation++
 	a.uid = uid
 	a.clearAutoScheduleLocked()
 	a.lastOnlineTry = time.Time{}
@@ -31,6 +32,7 @@ func (a *Actor) resetForUID(uid int) {
 	a.busyKind = ""
 	a.releaseRequested = false
 	a.onlineDesired = uid > 0
+	a.quarantined = false
 	if uid > 0 {
 		a.state = StateAssigned
 	} else {
@@ -184,6 +186,7 @@ func (a *Actor) snapshot() Snapshot {
 	return Snapshot{
 		SlotID:         a.slotID,
 		UID:            a.uid,
+		Generation:     a.generation,
 		Mode:           a.mode,
 		State:          a.state,
 		Busy:           a.busy,
@@ -192,7 +195,27 @@ func (a *Actor) snapshot() Snapshot {
 		LastOnlineTry:  a.lastOnlineTry,
 		FirstFailureAt: a.firstFailureAt,
 		Failures:       a.failures,
+		Quarantined:    a.quarantined,
 	}
+}
+
+func (a *Actor) quarantineCurrentUID() {
+	a.stateMu.Lock()
+	a.quarantined = a.uid > 0
+	a.busy = false
+	a.busyKind = ""
+	a.onlineDesired = false
+	a.releaseRequested = true
+	if a.uid > 0 {
+		a.state = StateReleasing
+	}
+	a.stateMu.Unlock()
+}
+
+func (a *Actor) leaseIdentity() (int, uint64) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.uid, a.generation
 }
 
 func (a *Actor) uidValue() int {
@@ -212,6 +235,12 @@ func (a *Actor) modeValue() Mode {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
 	return a.mode
+}
+
+func (a *Actor) SetMode(mode Mode) {
+	a.stateMu.Lock()
+	a.mode = mode
+	a.stateMu.Unlock()
 }
 
 func (a *Actor) stateValue() State {

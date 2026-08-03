@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -22,15 +21,18 @@ type collectRow struct {
 func (a *App) CollectPlan(req CollectRequest) (PlanResult, error) {
 	cfg := a.configSnapshot()
 	result := PlanResult{GeneratedAt: time.Now()}
-	market := strings.ToLower(strings.TrimSpace(req.Market))
-	if market == "" || market == marketNameAuction {
+	market, err := ValidateExternalMarketName(req.Market)
+	if err != nil {
+		return PlanResult{}, fmt.Errorf("collect: %w", err)
+	}
+	if market == marketNameAuction {
 		rows, err := a.repository.LoadCollectRows(cfg.AuctionDB, marketNameAuction, cfg.SystemOwner.IDBase, cfg.Collector.IncludeSystemOwners)
 		if err != nil {
 			return PlanResult{}, err
 		}
 		a.appendAuctionCollectActions(rows, &result)
 	}
-	if market == "" || market == marketNameCera || market == marketAliasGold {
+	if market == marketNameCera {
 		rows, err := a.repository.LoadCollectRows(cfg.CeraDB, marketNameCera, cfg.SystemOwner.IDBase, cfg.Collector.IncludeSystemOwners)
 		if err != nil {
 			return PlanResult{}, err

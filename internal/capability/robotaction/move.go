@@ -39,10 +39,12 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 	status := env.RuntimeStatusMap()
 	result := robotcap.NewCommandResult(len(robots))
 	type movePlan struct {
-		robot  robotcap.Info
-		steps  int
-		target [2]int
-		speeds []int
+		robot       robotcap.Info
+		steps       int
+		target      [2]int
+		speeds      []int
+		failed      bool
+		resultIndex int
 	}
 	var plans []movePlan
 	for _, robot := range robots {
@@ -59,21 +61,27 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 		for i := range speeds {
 			speeds[i] = env.RandBetween(rc.MoveSpeedMin, rc.MoveSpeedMax)
 		}
-		plans = append(plans, movePlan{robot: robot, steps: steps, target: [2]int{targetX, targetY}, speeds: speeds})
 		result.Accepted++
 		result.Robots = append(result.Robots, robotcap.ActionResult{UID: robot.UID, CID: robot.CID, OK: false, State: robotcap.ActionStateAccepted})
+		plans = append(plans, movePlan{robot: robot, steps: steps, target: [2]int{targetX, targetY}, speeds: speeds, resultIndex: len(result.Robots) - 1})
 	}
 	maxSteps := 0
 	for _, plan := range plans {
 		maxSteps = mathx.MaxInt(maxSteps, plan.steps)
 	}
 	for step := 1; step <= maxSteps; step++ {
-		for _, plan := range plans {
-			if step > plan.steps {
+		for index := range plans {
+			plan := &plans[index]
+			if plan.failed || step > plan.steps {
 				continue
 			}
 			if err := env.DispatchMoveStep(plan.robot, plan.robot.Village, plan.robot.Area, plan.target[0], plan.target[1], step, plan.steps, plan.speeds[step-1], rc); err != nil {
+				plan.failed = true
 				result.Failed++
+				item := &result.Robots[plan.resultIndex]
+				item.OK = false
+				item.State = robotcap.ActionStateFailed
+				item.Message = err.Error()
 			}
 		}
 		if step < maxSteps {
@@ -91,6 +99,9 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 	time.Sleep(time.Duration(waitMS) * time.Millisecond)
 	status = env.RuntimeStatusMap()
 	for i := range result.Robots {
+		if result.Robots[i].State == robotcap.ActionStateFailed {
+			continue
+		}
 		if st, ok := status[result.Robots[i].UID]; ok && robotcap.ActiveRuntimeStatus(st) {
 			result.Robots[i].OK = true
 			result.Robots[i].State = st.StateName
@@ -98,7 +109,6 @@ func (s MoveService) Move(req robotcap.CommandRequest, rc robotconfig.RuntimeCon
 		} else if result.Robots[i].State == robotcap.ActionStateAccepted {
 			result.Robots[i].State = robotcap.ActionStatePending
 			result.Robots[i].Message = "move not confirmed by runtime state"
-			result.Failed++
 		}
 	}
 	return result, nil

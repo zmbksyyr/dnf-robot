@@ -169,11 +169,11 @@ func validateCeraItems(items []ceraRow) error {
 		if strings.TrimSpace(row.Label) == "" {
 			return fmt.Errorf("%s.name must not be empty", prefix)
 		}
-		if row.RestockPrice <= 0 {
-			return fmt.Errorf("%s.restock_price must be positive", prefix)
+		if row.RestockPrice <= 0 || int64(row.RestockPrice) > int64(maxInt32) {
+			return fmt.Errorf("%s.restock_price must be in 1..%d", prefix, maxInt32)
 		}
-		if row.RestockQty <= 0 {
-			return fmt.Errorf("%s.restock_qty must be positive even when disabled", prefix)
+		if row.RestockQty <= 0 || row.RestockQty > marketConfigMaxQuantity {
+			return fmt.Errorf("%s.restock_qty must be in 1..%d even when disabled", prefix, marketConfigMaxQuantity)
 		}
 		if _, exists := seen[row.ItemID]; exists {
 			return fmt.Errorf("cera.items contains duplicate item_id %d", row.ItemID)

@@ -34,6 +34,8 @@ type RobotSupervisor struct {
 	nextKeyLog       time.Time
 	nextLeaseHealth  time.Time
 	nextAnnouncement time.Time
+	createFailures   int
+	createNext       time.Time
 }
 
 func NewRobotSupervisor(manager *RobotManager, runtime actormodel.RobotRuntime) *RobotSupervisor {
@@ -113,6 +115,9 @@ func (s *RobotSupervisor) tick(now time.Time) {
 	s.manager.pollMailNotifications(now, rc)
 	if s.handleAutoGuards(now, rc, signals) {
 		return
+	}
+	if adopted := s.ledger.AdoptManualActors(); adopted > 0 {
+		robotLogf("[RobotSupervisor] adopted_manual_actors count=%d\n", adopted)
 	}
 	s.maintainTarget(rc)
 	s.releaseBrokenLeases(now, rc)

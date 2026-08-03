@@ -158,11 +158,23 @@ func (s *RobotSupervisor) acquireUIDs(rc robotconfig.RuntimeConfig, actors []*ac
 	if need > createRoom {
 		need = createRoom
 	}
+	if !s.createNext.IsZero() && time.Now().Before(s.createNext) {
+		return out
+	}
 	created, err := s.manager.CreateRobots(robotcap.CreateRequest{Count: need})
 	if err != nil {
+		s.createFailures++
+		delays := [...]time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second}
+		index := s.createFailures - 1
+		if index >= len(delays) {
+			index = len(delays) - 1
+		}
+		s.createNext = time.Now().Add(delays[index])
 		robotLogf("[RobotSupervisor] create_failed count=%d err=%v\n", need, err)
 		return out
 	}
+	s.createFailures = 0
+	s.createNext = time.Time{}
 	if len(created) > 0 {
 		s.manager.addAutoCreated(len(created))
 	}

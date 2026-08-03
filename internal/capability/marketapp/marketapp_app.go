@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math/rand"
 	"path/filepath"
 	"reflect"
@@ -310,13 +311,20 @@ func (a *App) Status() Status {
 	}
 }
 
-func (a *App) EnsureServices(markets []string) Status {
+func (a *App) EnsureServices(markets []string) (Status, error) {
+	for i, market := range markets {
+		normalized, err := ValidateExternalMarketName(market)
+		if err != nil {
+			return a.Status(), fmt.Errorf("ensure services: %w", err)
+		}
+		markets[i] = normalized
+	}
 	if a.dfGameRRunning() {
 		a.ensureMarketServices(markets)
 	} else {
 		a.refreshMarketServiceStatuses()
 	}
-	return a.Status()
+	return a.Status(), nil
 }
 
 func (a *App) SetAutoEnabled(enabled bool) (Status, error) {

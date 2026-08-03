@@ -31,6 +31,7 @@ type Mode int
 
 const (
 	ModeAuto Mode = iota
+	ModeManual
 )
 
 type Command int
@@ -66,6 +67,7 @@ const (
 type Snapshot struct {
 	SlotID         int
 	UID            int
+	Generation     uint64
 	Mode           Mode
 	State          State
 	Busy           bool
@@ -74,6 +76,7 @@ type Snapshot struct {
 	LastOnlineTry  time.Time
 	FirstFailureAt time.Time
 	Failures       int
+	Quarantined    bool
 }
 
 type Health string

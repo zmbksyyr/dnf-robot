@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"robot/internal/foundation/charset"
 	"robot/internal/foundation/filebackup"
@@ -269,7 +270,7 @@ func findUpgradeSeparateValue(data []byte, strings []string) (int, int, error) {
 }
 
 var pvfChecksumTable [256]uint32
-var pvfChecksumReady bool
+var pvfChecksumOnce sync.Once
 
 func pvfDataChecksum(buf []byte, dataLen int, seed uint32) uint32 {
 	initPVFChecksumTable()
@@ -291,22 +292,20 @@ func pvfDataChecksum(buf []byte, dataLen int, seed uint32) uint32 {
 }
 
 func initPVFChecksumTable() {
-	if pvfChecksumReady {
-		return
-	}
-	current := uint32(1)
-	for step := uint32(128); step > 0; step /= 2 {
-		poly := uint32(0)
-		if current&1 != 0 {
-			poly = 0xEDB88320
+	pvfChecksumOnce.Do(func() {
+		current := uint32(1)
+		for step := uint32(128); step > 0; step /= 2 {
+			poly := uint32(0)
+			if current&1 != 0 {
+				poly = 0xEDB88320
+			}
+			current = (current >> 1) ^ poly
+			for index, currentPos := uint32(0), step; index < 256; index += step * 2 {
+				pvfChecksumTable[currentPos] = pvfChecksumTable[index] ^ current
+				currentPos += step * 2
+			}
 		}
-		current = (current >> 1) ^ poly
-		for index, currentPos := uint32(0), step; index < 256; index += step * 2 {
-			pvfChecksumTable[currentPos] = pvfChecksumTable[index] ^ current
-			currentPos += step * 2
-		}
-	}
-	pvfChecksumReady = true
+	})
 }
 
 func encryptPVFBlockInto(dst []byte, plain []byte, key uint32) {

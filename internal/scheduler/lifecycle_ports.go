@@ -54,6 +54,22 @@ func (e lifecycleCreateEnv) EnsureSchema() error {
 	return e.manager.repo().EnsureSchema()
 }
 
+func (e lifecycleCreateEnv) RecoverIncompleteCreateBatches() error {
+	return e.manager.schemaRepo().RecoverIncompleteCreateBatches()
+}
+
+func (e lifecycleCreateEnv) BeginCreateBatch(batchID string, uids, cids []int) error {
+	return e.manager.schemaRepo().BeginCreateBatch(batchID, uids, cids)
+}
+
+func (e lifecycleCreateEnv) CompleteCreateBatch(batchID string) error {
+	return e.manager.schemaRepo().CompleteCreateBatch(batchID)
+}
+
+func (e lifecycleCreateEnv) RollbackCreateBatch(batchID string) error {
+	return e.manager.schemaRepo().RollbackCreateBatch(batchID)
+}
+
 func (e lifecycleCreateEnv) EquipFromCatalog(cid int, level int, job int, rc robotconfig.RuntimeConfig, items []shared.EquipmentCatalogItem) error {
 	return e.manager.equipFromCatalog(cid, level, job, rc, items)
 }

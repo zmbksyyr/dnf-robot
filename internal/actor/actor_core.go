@@ -9,18 +9,19 @@ import (
 )
 
 type Actor struct {
-	slotID  int
-	uid     int
-	mode    Mode
-	state   State
-	runtime RobotRuntime
-	rand    *rand.Rand
-	stateMu lockhub.Locker
-	cmds    chan request
-	ctrls   chan control
-	stop    chan struct{}
-	done    chan struct{}
-	once    sync.Once
+	slotID     int
+	uid        int
+	generation uint64
+	mode       Mode
+	state      State
+	runtime    RobotRuntime
+	rand       *rand.Rand
+	stateMu    lockhub.Locker
+	cmds       chan request
+	ctrls      chan control
+	stop       chan struct{}
+	done       chan struct{}
+	once       sync.Once
 
 	nextMove         time.Time
 	nextLocalShout   time.Time
@@ -34,6 +35,7 @@ type Actor struct {
 	busyKind         string
 	releaseRequested bool
 	onlineDesired    bool
+	quarantined      bool
 }
 
 func NewActor(slotID int, mode Mode, runtime RobotRuntime) *Actor {

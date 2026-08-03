@@ -1,13 +1,16 @@
 package marketapp
 
 import (
-	"strings"
+	"fmt"
 	"time"
 )
 
 func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 	a.refreshCustomPriceRanges()
-	market, needAuction, needCera := requestedRestockMarkets(req.Market)
+	market, needAuction, needCera, err := requestedRestockMarkets(req.Market)
+	if err != nil {
+		return PlanResult{}, err
+	}
 	catalog, pvfReady := a.loadAuctionCatalog(needAuction)
 	occ, haveAuction, haveCera, err := a.loadSystemStock()
 	if err != nil {
@@ -35,9 +38,12 @@ func (a *App) Plan(req RestockRequest) (PlanResult, error) {
 
 // Restock planning is kept as function islands: market routing, auction PVF/iteminfo
 // boundary, cera fixed-list planning, and final summary/decision logging.
-func requestedRestockMarkets(market string) (string, bool, bool) {
-	normalized := strings.ToLower(strings.TrimSpace(market))
-	return normalized, normalized == "" || normalized == marketNameAuction, normalized == "" || normalized == marketNameCera || normalized == marketAliasGold
+func requestedRestockMarkets(market string) (string, bool, bool, error) {
+	normalized, err := ValidateExternalMarketName(market)
+	if err != nil {
+		return "", false, false, fmt.Errorf("restock: %w", err)
+	}
+	return normalized, normalized == marketNameAuction, normalized == marketNameCera, nil
 }
 
 func (a *App) loadAuctionCatalog(needAuction bool) (map[uint32]catalogItem, bool) {

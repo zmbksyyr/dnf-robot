@@ -29,7 +29,7 @@ func (r *RobotVo) handleSessionPacketUnsafe(packet robotInboundPacket) {
 		if err == nil && len(decData) >= 4 {
 			r.DisconReason = DisconnectReason(binary.LittleEndian.Uint32(decData[0:4]))
 			if r.DisconReason != NoDisconnect {
-				startRobotRoutine("refresh_connect", r.UID, func() { r.RefishConnect() })
+				startRobotRoutine(r.Controller, "refresh_connect", r.UID, func() { r.RefishConnect() })
 			}
 		}
 	}

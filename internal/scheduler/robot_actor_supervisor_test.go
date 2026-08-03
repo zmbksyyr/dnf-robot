@@ -159,7 +159,7 @@ func TestRobotActorControlReturnsWhenStopped(t *testing.T) {
 	}
 }
 
-func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
+func TestSupervisorAttachUIDUsesIndependentManualActor(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	s := NewRobotSupervisor(m, NewRobotRuntime(m))
 	registry := newSupervisorActorRegistry(s)
@@ -171,11 +171,11 @@ func TestSupervisorAttachUIDUsesEmptyActorSlot(t *testing.T) {
 	if !registry.HasUID(101) {
 		t.Fatalf("attached uid should be leased")
 	}
-	if snap := a.Snapshot(); snap.UID != 101 || snap.State != actormodel.StateAssigned {
-		t.Fatalf("actor snapshot uid=%d state=%s", snap.UID, snap.State)
+	if snap := a.Snapshot(); snap.UID != 0 || snap.State != actormodel.StateIdle {
+		t.Fatalf("auto actor should remain idle, snapshot uid=%d state=%s", snap.UID, snap.State)
 	}
-	if registry.AttachUID(102, time.Second) {
-		t.Fatalf("AttachUID should fail when no empty actor remains")
+	if !registry.AttachUID(102, time.Second) {
+		t.Fatalf("AttachUID should create another manual actor")
 	}
 }
 

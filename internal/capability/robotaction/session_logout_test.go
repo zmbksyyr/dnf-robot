@@ -108,7 +108,7 @@ func TestLogoutUIDDoesNotInvalidateWhileRuntimeStillExists(t *testing.T) {
 	if got, want := strings.Join(env.events, ","), "logout,status"; got != want {
 		t.Fatalf("events = %q, want %q", got, want)
 	}
-	if result.Accepted != 1 || result.Confirmed != 0 || result.Failed != 1 || len(result.Robots) != 1 {
+	if result.Accepted != 1 || result.Confirmed != 0 || result.Failed != 0 || len(result.Robots) != 1 {
 		t.Fatalf("logout result = %+v", result)
 	}
 	if result.Robots[0].State != robotcap.ActionStatePending {

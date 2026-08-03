@@ -1,7 +1,6 @@
 package webadmin
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,7 +37,20 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}
-	out := map[string]interface{}{"ok": true, "result": parseRobotResult(raw)}
+	result, err := decodeRobotResult(raw)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	out := map[string]interface{}{"ok": true, "result": result}
+	if business, ok := result.(map[string]interface{}); ok {
+		if businessOK, exists := business["ok"].(bool); exists && !businessOK {
+			out["ok"] = false
+			if message, ok := business["error"].(string); ok {
+				out["error"] = message
+			}
+		}
+	}
 	if r.URL.Query().Get("raw") == "1" {
 		out["raw"] = raw
 	}
@@ -47,6 +59,8 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
 
 func robotCallTimeout(command string) time.Duration {
 	switch strings.TrimSpace(command) {
+	case "robotsOnline":
+		return 120 * time.Second
 	case "robotsStore":
 		return 90 * time.Second
 	default:
@@ -75,52 +89,38 @@ func callRobot(addr, command string, payload map[string]interface{}, timeout tim
 	if err := foundationnetwork.WriteFull(conn, []byte(packet)); err != nil {
 		return "", err
 	}
-	var buf bytes.Buffer
-	endTag := []byte("</tw>")
-	searchFrom := 0
-	tmp := make([]byte, 64*1024)
-	for {
-		n, err := conn.Read(tmp)
-		if n > 0 {
-			buf.Write(tmp[:n])
-			if buf.Len() > maxResponseBytes {
-				return "", fmt.Errorf("robot response too large")
-			}
-			data := buf.Bytes()
-			if bytes.Index(data[searchFrom:], endTag) >= 0 {
-				return buf.String(), nil
-			}
-			searchFrom = len(data) - len(endTag) + 1
-			if searchFrom < 0 {
-				searchFrom = 0
-			}
-		}
-		if err != nil {
-			if err == io.EOF && buf.Len() > 0 {
-				return buf.String(), nil
-			}
-			return "", err
-		}
+	data, err := io.ReadAll(io.LimitReader(conn, int64(maxResponseBytes)+1))
+	if err != nil {
+		return "", err
 	}
+	if len(data) > maxResponseBytes {
+		return "", fmt.Errorf("robot response too large")
+	}
+	raw := string(data)
+	if _, err := decodeRobotResult(raw); err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+func decodeRobotResult(raw string) (interface{}, error) {
+	const prefix = "<tw><result>"
+	const suffix = "</result></tw>"
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, prefix) || !strings.HasSuffix(raw, suffix) {
+		return nil, fmt.Errorf("invalid robot response frame")
+	}
+	payload := raw[len(prefix) : len(raw)-len(suffix)]
+	var out interface{}
+	if err := foundationconfig.DecodeJSONBytes([]byte(payload), &out); err != nil {
+		return nil, fmt.Errorf("invalid robot response JSON: %w", err)
+	}
+	return out, nil
 }
 
 func parseRobotResult(raw string) interface{} {
-	startTag := "<result>"
-	endTag := "</result>"
-	start := strings.Index(raw, startTag)
-	if start < 0 {
-		return nil
-	}
-	start += len(startTag)
-	end := strings.Index(raw[start:], endTag)
-	if end < 0 {
-		return nil
-	}
-	var out interface{}
-	if err := json.Unmarshal([]byte(raw[start:start+end]), &out); err != nil {
-		return nil
-	}
-	return out
+	result, _ := decodeRobotResult(raw)
+	return result
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

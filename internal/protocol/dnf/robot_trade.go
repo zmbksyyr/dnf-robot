@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	sqlpkg "robot/internal/foundation/sql"
 )
@@ -57,7 +58,9 @@ func (r *RobotVo) queueTradeQuoteRefreshUnsafe() {
 		return
 	}
 	r.tradeQuoteLoading = true
-	startRobotRoutine("trade_quote", r.UID, r.refreshTradeQuote)
+	if !startRobotRoutine(r.Controller, "trade_quote", r.UID, r.refreshTradeQuote) {
+		r.tradeQuoteLoading = false
+	}
 }
 
 func (r *RobotVo) invalidateTradeQuoteUnsafe() {
@@ -86,9 +89,28 @@ func (r *RobotVo) refreshTradeQuote() {
 		if rec := recover(); rec != nil {
 			r.mu.Lock()
 			r.tradeQuoteLoading = false
-			r.tradeQuotePending = false
+			r.tradeQuoteFailures++
+			attempt := r.tradeQuoteFailures
+			shouldRetry := attempt <= 3 && r.State == StateRun && r.UID != 0
+			r.tradeQuotePending = shouldRetry
+			uid := r.UID
+			task := r.Controller
 			r.mu.Unlock()
-			fmt.Printf("[TRADE_QUOTE_PANIC] uid=%d err=%v\n", r.UID, rec)
+			fmt.Printf("[TRADE_QUOTE_PANIC] uid=%d attempt=%d retry=%t err=%v\n", uid, attempt, shouldRetry, rec)
+			if shouldRetry {
+				delay := time.Duration(1<<(attempt-1)) * 100 * time.Millisecond
+				startRobotRoutine(task, "trade_quote_retry", uid, func() {
+					time.Sleep(delay)
+					r.mu.Lock()
+					defer r.mu.Unlock()
+					if r.State == StateRun && r.UID == uid && r.tradeQuotePending && !r.tradeQuoteLoading {
+						r.tradeQuoteLoading = true
+						if !startRobotRoutine(r.Controller, "trade_quote", r.UID, r.refreshTradeQuote) {
+							r.tradeQuoteLoading = false
+						}
+					}
+				})
+			}
 		}
 	}()
 	for {
@@ -116,6 +138,7 @@ func (r *RobotVo) refreshTradeQuote() {
 			continue
 		}
 		r.tradeQuoteLoading = false
+		r.tradeQuoteFailures = 0
 		if r.State != StateRun || r.UID != snapshot.uid {
 			r.mu.Unlock()
 			return

@@ -59,15 +59,15 @@ func TestStructuralOperationState(t *testing.T) {
 	}
 }
 
-func TestStructuralOperationExpiresStaleState(t *testing.T) {
+func TestStructuralOperationDoesNotExpireWhileOwnerIsRunning(t *testing.T) {
 	m := testRobotManagerWithConfig(t, "")
 	m.autoMu.Lock()
 	m.structuralOp = "cleanup"
 	m.structuralOpStarted = time.Now().Add(-11 * time.Minute)
 	m.autoMu.Unlock()
 
-	if op, _, active := m.structuralOperation(); active || op != "" {
-		t.Fatalf("stale structural op should expire, active=%v op=%q", active, op)
+	if op, _, active := m.structuralOperation(); !active || op != "cleanup" {
+		t.Fatalf("long structural op must remain active, active=%v op=%q", active, op)
 	}
 }
 

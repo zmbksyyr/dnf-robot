@@ -1,7 +1,9 @@
 package filewatch
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -27,6 +29,7 @@ type fileStamp struct {
 	mtimeNS int64
 	size    int64
 	mode    os.FileMode
+	digest  [sha256.Size]byte
 }
 
 type trackedEntry struct {
@@ -153,14 +156,17 @@ func (p *Poller) check(tracked *trackedEntry) {
 	if tracked.initialized && tracked.observed == stamp {
 		return
 	}
-	tracked.initialized = true
-	tracked.observed = stamp
 	if tracked.entry.Apply == nil {
+		tracked.initialized = true
+		tracked.observed = stamp
 		return
 	}
 	if err := applySafely(tracked.entry); err != nil {
 		p.report(tracked.entry, err)
+		return
 	}
+	tracked.initialized = true
+	tracked.observed = stamp
 }
 
 func applySafely(entry Entry) (err error) {
@@ -187,7 +193,24 @@ func statStamp(path string) (fileStamp, error) {
 	if err != nil {
 		return fileStamp{}, fmt.Errorf("stat %s: %w", path, err)
 	}
-	return fileStamp{
+	stamp := fileStamp{
 		exists: true, mtimeNS: info.ModTime().UnixNano(), size: info.Size(), mode: info.Mode(),
-	}, nil
+	}
+	if info.Mode().IsRegular() {
+		file, err := os.Open(path)
+		if err != nil {
+			return fileStamp{}, fmt.Errorf("open %s for fingerprint: %w", path, err)
+		}
+		hash := sha256.New()
+		_, copyErr := io.Copy(hash, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return fileStamp{}, fmt.Errorf("fingerprint %s: %w", path, copyErr)
+		}
+		if closeErr != nil {
+			return fileStamp{}, fmt.Errorf("close %s after fingerprint: %w", path, closeErr)
+		}
+		copy(stamp.digest[:], hash.Sum(nil))
+	}
+	return stamp, nil
 }

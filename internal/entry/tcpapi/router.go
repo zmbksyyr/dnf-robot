@@ -13,6 +13,9 @@ func HandlePacket(clientID, pkt string, manager *scheduler.RobotManager) (respon
 			response = wrapResult(map[string]interface{}{"ok": false, "error": "internal robot command failure"})
 		}
 	}()
+	if err := validateRequestPacket(pkt); err != nil {
+		return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()})
+	}
 
 	cmd := extractTagContent(pkt, "c")
 	if err := requireValidKeypair(cmd, manager); err != nil {

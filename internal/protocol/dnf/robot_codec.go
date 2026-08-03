@@ -15,24 +15,19 @@ import (
 func buildSendPacket(sendType, sendIndex uint16, rawData []byte, cipher *crypt.DNFCipher) ([]byte, error) {
 	outSize := 13 + len(rawData)
 	outBuf := make([]byte, outSize)
-	tmp := make([]byte, outSize)
-
-	binary.LittleEndian.PutUint16(tmp[11:13], sendIndex)
-	copy(tmp[13:], rawData)
-
-	crc := cipher.CRC32(0, tmp[11:])
-	hashBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(hashBytes, crc)
-	hashBytes[0] ^= hashBytes[2] ^ hashBytes[1] ^ hashBytes[3] ^ 0x18
-	hashVal := binary.LittleEndian.Uint32(hashBytes)
+	var indexBytes [2]byte
+	binary.LittleEndian.PutUint16(indexBytes[:], sendIndex)
+	crc := cipher.CRC32(0, indexBytes[:])
+	crc = cipher.CRC32(crc, rawData)
+	hashVal := crc
+	hashByte0 := byte(hashVal) ^ byte(hashVal>>16) ^ byte(hashVal>>8) ^ byte(hashVal>>24) ^ 0x18
+	hashVal = hashVal&^0xff | uint32(hashByte0)
 
 	outBuf[0] = 1
 	binary.LittleEndian.PutUint16(outBuf[1:3], sendType)
 	binary.LittleEndian.PutUint32(outBuf[3:7], uint32(outSize))
 	binary.LittleEndian.PutUint32(outBuf[7:11], hashVal)
 	binary.LittleEndian.PutUint16(outBuf[11:13], sendIndex)
-
-	copy(tmp[:13], outBuf[:13])
 
 	if len(rawData) > 0 {
 		encrypted, err := cipher.Encrypt(sendType, rawData)

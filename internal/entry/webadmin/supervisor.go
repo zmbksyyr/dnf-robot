@@ -1,6 +1,8 @@
 package webadmin
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -78,7 +80,13 @@ func newCommand(cfg *config.SysConfig) *exec.Cmd {
 	}
 	robotAddr := fmt.Sprintf("127.0.0.1:%d", cfg.RobotPort)
 	webAddr := fmt.Sprintf("0.0.0.0:%d", cfg.WebPort)
-	cmd := exec.Command(exe, "--web-admin", "--robot-addr", robotAddr, "--web-addr", webAddr)
+	snapshot, err := json.Marshal(cfg)
+	if err != nil {
+		foundationlog.Robotf("web admin config snapshot failed: %v\n", err)
+		return nil
+	}
+	cmd := exec.Command(exe, "--web-admin", "--web-config-stdin", "--robot-addr", robotAddr, "--web-addr", webAddr)
+	cmd.Stdin = bytes.NewReader(snapshot)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd

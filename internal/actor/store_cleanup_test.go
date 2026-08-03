@@ -158,6 +158,42 @@ func TestAssignDoesNotReplaceUIDUntilPreviousRuntimeCloses(t *testing.T) {
 	}
 }
 
+func TestActorRejectsCommandFromPreviousLeaseGeneration(t *testing.T) {
+	runtime := &partyWaitRuntime{}
+	a := NewActor(1, ModeAuto, runtime)
+	a.resetForUID(101)
+	uid, generation := a.leaseIdentity()
+	a.resetForUID(202)
+
+	result := a.handleRequestSafely(request{cmd: CommandMove, uid: uid, generation: generation})
+	if result.OK || result.UID != 101 || result.State != robotcap.ActionStateFailed {
+		t.Fatalf("stale command result = %+v", result)
+	}
+	if snap := a.Snapshot(); snap.UID != 202 {
+		t.Fatalf("new lease changed by stale command: %+v", snap)
+	}
+}
+
+func TestLedgerKeepsQuarantinedUIDBlocked(t *testing.T) {
+	l := NewLedger()
+	a := NewActor(1, ModeAuto, &partyWaitRuntime{})
+	a.resetForUID(101)
+	a.quarantineCurrentUID()
+	l.actors[1] = a
+	l.uidActors[101] = a
+	l.draining[1] = a
+	close(a.done)
+	l.reapActorLocked(a)
+
+	if !l.IsQuarantinedUID(101) {
+		t.Fatal("quarantined UID was not recorded")
+	}
+	l.UnblockUID(101)
+	if _, _, ok := l.ReserveManualActor(101, &partyWaitRuntime{}); ok {
+		t.Fatal("quarantined UID became reusable")
+	}
+}
+
 func TestActorCommandPanicReleasesUIDAndKeepsLoopUsable(t *testing.T) {
 	runtime := &panicCommandRuntime{
 		partyWaitRuntime: &partyWaitRuntime{

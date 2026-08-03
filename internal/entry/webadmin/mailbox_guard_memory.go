@@ -20,6 +20,9 @@ type mailboxGuardLayout struct {
 }
 
 var (
+	errMailboxGuardUnsupported = errors.New("unsupported df_game_r mailbox guard layout")
+	errMailboxGuardPartial     = errors.New("mailbox bad-node guard is partially applied")
+
 	mailboxInvalidItemScanOriginal = []byte{0x85, 0xc0}
 	mailboxInvalidItemScanPatched  = []byte{0x31, 0xc0}
 	mailboxInvalidItemScanPrefix   = []byte{0x8b, 0x45, 0x08, 0x8b, 0x80, 0x98, 0x1b, 0x07, 0x00}
@@ -52,7 +55,14 @@ func inspectMailboxGuard(port int) mailboxGuardStatus {
 		return inspectErr
 	})
 	if err != nil {
-		status.State = "error"
+		switch {
+		case errors.Is(err, errMailboxGuardUnsupported):
+			status.State = "unsupported"
+		case errors.Is(err, errMailboxGuardPartial):
+			status.State = "partial"
+		default:
+			status.State = "error"
+		}
 		status.Message = err.Error()
 		return status
 	}
@@ -116,7 +126,7 @@ func inspectMailboxGuardMemory(mem io.ReaderAt, layout mailboxGuardLayout) (bool
 	invalidItemScanEnabled := bytes.Equal(invalidItemScan, mailboxInvalidItemScanPatched)
 	streamListEmptyEnabled := bytes.Equal(streamListEmpty, mailboxStreamListEmptyPatched)
 	if invalidItemScanEnabled != streamListEmptyEnabled {
-		return false, fmt.Errorf("mailbox bad-node guard is partially applied: invalid_item_scan=%t stream_list_empty=%t", invalidItemScanEnabled, streamListEmptyEnabled)
+		return false, fmt.Errorf("%w: invalid_item_scan=%t stream_list_empty=%t", errMailboxGuardPartial, invalidItemScanEnabled, streamListEmptyEnabled)
 	}
 	return invalidItemScanEnabled, nil
 }
@@ -190,7 +200,7 @@ func validateMailboxInvalidItemScanTarget(mem io.ReaderAt, site int64) ([]byte, 
 	}
 	knownPatch := bytes.Equal(current, mailboxInvalidItemScanOriginal) || bytes.Equal(current, mailboxInvalidItemScanPatched)
 	if !bytes.Equal(prefix, mailboxInvalidItemScanPrefix) || !knownPatch || !bytes.Equal(suffix, mailboxInvalidItemScanSuffix) {
-		return nil, fmt.Errorf("unsupported df_game_r near mailbox invalid-item scan site: %x%x%x", prefix, current, suffix)
+		return nil, fmt.Errorf("%w near invalid-item scan site: %x%x%x", errMailboxGuardUnsupported, prefix, current, suffix)
 	}
 	return current, nil
 }
@@ -210,7 +220,7 @@ func validateMailboxStreamListEmptyTarget(mem io.ReaderAt, site int64) ([]byte, 
 	}
 	knownPatch := bytes.Equal(current, mailboxStreamListEmptyOriginal) || bytes.Equal(current, mailboxStreamListEmptyPatched)
 	if !bytes.Equal(prefix, mailboxStreamListEmptyPrefix) || !knownPatch || !bytes.Equal(suffix, mailboxStreamListEmptySuffix) {
-		return nil, fmt.Errorf("unsupported df_game_r near mailbox stream-list empty site: %x%x%x", prefix, current, suffix)
+		return nil, fmt.Errorf("%w near stream-list empty site: %x%x%x", errMailboxGuardUnsupported, prefix, current, suffix)
 	}
 	return current, nil
 }

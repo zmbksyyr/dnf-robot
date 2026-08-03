@@ -1,6 +1,7 @@
 package robotlifecycle
 
 import (
+	"errors"
 	"fmt"
 	equipcap "robot/internal/capability/equipment"
 	robotcap "robot/internal/capability/robot"
@@ -8,6 +9,7 @@ import (
 	robotspawn "robot/internal/capability/robotspawn"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/shared"
+	"time"
 )
 
 type RobotIDAllocation struct {
@@ -49,6 +51,13 @@ type Creator struct {
 	Env CreateEnv
 }
 
+type createBatchRecoveryEnv interface {
+	RecoverIncompleteCreateBatches() error
+	BeginCreateBatch(batchID string, uids, cids []int) error
+	CompleteCreateBatch(batchID string) error
+	RollbackCreateBatch(batchID string) error
+}
+
 func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	env := c.Env
 	if req.Count <= 0 {
@@ -61,6 +70,12 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	maps := env.LoadMapCatalog()
 	if err := env.EnsureSchema(); err != nil {
 		return nil, err
+	}
+	batchEnv, batchRecovery := env.(createBatchRecoveryEnv)
+	if batchRecovery {
+		if err := batchEnv.RecoverIncompleteCreateBatches(); err != nil {
+			return nil, fmt.Errorf("recover interrupted robot creation: %w", err)
+		}
 	}
 	if rc.RobotUIDGuard != 0 && rc.RobotUIDGuard <= rc.RobotUIDEnd {
 		return nil, fmt.Errorf("robot_uid_guard %d must be greater than robot_uid_end %d, or 0 to disable", rc.RobotUIDGuard, rc.RobotUIDEnd)
@@ -77,6 +92,20 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(allocation.UIDs) != req.Count || allocation.FirstCID <= 0 {
+		return nil, fmt.Errorf("invalid robot ID allocation: uids=%d count=%d first_cid=%d", len(allocation.UIDs), req.Count, allocation.FirstCID)
+	}
+	batchID := ""
+	if batchRecovery {
+		cids := make([]int, len(allocation.UIDs))
+		for index := range cids {
+			cids[index] = allocation.FirstCID + index
+		}
+		batchID = fmt.Sprintf("%d-%d-%d", time.Now().UnixNano(), allocation.UIDs[0], allocation.FirstCID)
+		if err := batchEnv.BeginCreateBatch(batchID, allocation.UIDs, cids); err != nil {
+			return nil, fmt.Errorf("begin robot creation batch: %w", err)
+		}
+	}
 	robots := make([]robotcap.Info, 0, req.Count)
 	usedNames := make(map[string]struct{}, req.Count)
 	levels := make([]int, req.Count)
@@ -85,6 +114,9 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 	}
 	locations, err := env.RobotLocations()
 	if err != nil {
+		if batchRecovery {
+			return nil, errors.Join(err, batchEnv.RollbackCreateBatch(batchID))
+		}
 		return nil, err
 	}
 	spawnTargets, hasSpawnTargets := distributedSpawnTargets(env, maps, levels, locations)
@@ -118,9 +150,19 @@ func (c Creator) Create(req robotcap.CreateRequest) ([]robotcap.Info, error) {
 		}
 		env.ApplyConfiguredLocation(&info, rc, maps)
 		if err := c.createRobot(info, rc, catalogs); err != nil {
+			if batchRecovery {
+				rollbackErr := batchEnv.RollbackCreateBatch(batchID)
+				return nil, errors.Join(err, rollbackErr)
+			}
 			return robots, err
 		}
 		robots = append(robots, info)
+	}
+	if batchRecovery {
+		if err := batchEnv.CompleteCreateBatch(batchID); err != nil {
+			rollbackErr := batchEnv.RollbackCreateBatch(batchID)
+			return nil, errors.Join(fmt.Errorf("complete robot creation batch: %w", err), rollbackErr)
+		}
 	}
 	return robots, nil
 }

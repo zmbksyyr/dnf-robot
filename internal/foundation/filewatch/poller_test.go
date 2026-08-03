@@ -37,7 +37,7 @@ func TestPollerReadsOnlyAfterStampChanges(t *testing.T) {
 	}
 }
 
-func TestPollerDoesNotRetryRejectedStamp(t *testing.T) {
+func TestPollerRetriesRejectedStamp(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte("bad"), 0644); err != nil {
 		t.Fatal(err)
@@ -53,11 +53,38 @@ func TestPollerDoesNotRetryRejectedStamp(t *testing.T) {
 	}}, func(Entry, error) { failures.Add(1) })
 	poller.CheckNow()
 	poller.CheckNow()
-	if got := attempts.Load(); got != 1 {
-		t.Fatalf("attempts=%d, want 1", got)
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("attempts=%d, want 2", got)
 	}
-	if got := failures.Load(); got != 1 {
-		t.Fatalf("failures=%d, want 1", got)
+	if got := failures.Load(); got != 2 {
+		t.Fatalf("failures=%d, want 2", got)
+	}
+}
+
+func TestPollerDetectsContentChangeWithSameSizeAndModTime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	stamp := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.WriteFile(path, []byte("one"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	var applied atomic.Int32
+	poller := New(time.Hour, []Entry{{Path: path, Apply: func(string) error {
+		applied.Add(1)
+		return nil
+	}}}, nil)
+	poller.CheckNow()
+	if err := os.WriteFile(path, []byte("two"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	poller.CheckNow()
+	if got := applied.Load(); got != 2 {
+		t.Fatalf("apply count=%d, want 2", got)
 	}
 }
 

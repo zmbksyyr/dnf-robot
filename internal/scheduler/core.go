@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"net"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	lifecyclecap "robot/internal/capability/robotlifecycle"
@@ -20,6 +21,8 @@ import (
 )
 
 type RobotManager struct {
+	mutationMu                      lockhub.RWLocker
+	actorMutationMu                 lockhub.Locker
 	database                        dbstatus.Database
 	cfg                             *config.SysConfig
 	doll                            Runtime
@@ -44,6 +47,11 @@ type RobotManager struct {
 	autoPortSince                   time.Time
 	autoPortReady                   bool
 	autoPortLog                     time.Time
+	autoPortProbeAt                 time.Time
+	autoPortProbeAddr               string
+	autoPortProbeOpen               bool
+	autoPortProbeError              string
+	autoPortDial                    func(string, string, time.Duration) (net.Conn, error)
 	autoStats                       robotcap.AutoStatus
 	autoBreakerUntil                time.Time
 	autoBreakerReason               string
@@ -67,8 +75,10 @@ type RobotManager struct {
 	operations                      []robotcap.OperationStatus
 	structuralOp                    string
 	structuralOpStarted             time.Time
+	structuralOpGeneration          uint64
 	actorContainerOp                string
 	actorContainerOpStarted         time.Time
+	actorContainerOpGeneration      uint64
 	configApplyMu                   lockhub.Locker
 	configSnapshot                  atomic.Pointer[robotConfigSnapshot]
 	runtimeFilesWatched             atomic.Bool
@@ -229,11 +239,16 @@ type SchemaRepository interface {
 	DangerousDeletePlan(req robotcap.DangerousDeleteRequest) (robotcap.DangerousDeletePlan, error)
 	BatchDeleteRobotData(uids, cids []int) error
 	BatchDeleteCharacterData(cids []int) error
+	DeleteCharacterAtomic(uid, cid int, deleteRobotMetadata bool) error
 	BatchDeleteRobotMetadata(uids []int) error
 	UpsertDummy(info robotcap.Info, innerIP string) error
 	RegisterRobot(info robotcap.Info) error
 	RebuildCharacView(uid int) error
 	CopyTemplateDefaults(cid int) error
+	RecoverIncompleteCreateBatches() error
+	BeginCreateBatch(batchID string, uids, cids []int) error
+	CompleteCreateBatch(batchID string) error
+	RollbackCreateBatch(batchID string) error
 }
 
 type Runtime interface {
@@ -444,6 +459,10 @@ func (missingSchemaRepository) BatchDeleteCharacterData([]int) error {
 	return errors.New("scheduler schema repository is not configured")
 }
 
+func (missingSchemaRepository) DeleteCharacterAtomic(int, int, bool) error {
+	return errors.New("scheduler schema repository is not configured")
+}
+
 func (missingSchemaRepository) BatchDeleteRobotMetadata([]int) error {
 	return errors.New("scheduler schema repository is not configured")
 }
@@ -461,6 +480,19 @@ func (missingSchemaRepository) RebuildCharacView(int) error {
 }
 
 func (missingSchemaRepository) CopyTemplateDefaults(int) error {
+	return errors.New("scheduler schema repository is not configured")
+}
+
+func (missingSchemaRepository) RecoverIncompleteCreateBatches() error {
+	return errors.New("scheduler schema repository is not configured")
+}
+func (missingSchemaRepository) BeginCreateBatch(string, []int, []int) error {
+	return errors.New("scheduler schema repository is not configured")
+}
+func (missingSchemaRepository) CompleteCreateBatch(string) error {
+	return errors.New("scheduler schema repository is not configured")
+}
+func (missingSchemaRepository) RollbackCreateBatch(string) error {
 	return errors.New("scheduler schema repository is not configured")
 }
 

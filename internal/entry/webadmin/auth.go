@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -12,6 +13,19 @@ import (
 )
 
 const maxWebSessions = 64
+
+const (
+	loginFailureWindow = 5 * time.Minute
+	loginBlockDuration = time.Minute
+	maxLoginFailures   = 5
+	maxLoginPeers      = 1024
+)
+
+type loginFailure struct {
+	count        int
+	windowStart  time.Time
+	blockedUntil time.Time
+}
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
@@ -37,12 +51,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = r.ParseForm()
+	peer := loginPeer(r)
+	if retryAfter, blocked := s.loginBlocked(peer, time.Now()); blocked {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", max(1, int(retryAfter.Seconds()))))
+		http.Error(w, "too many login failures", http.StatusTooManyRequests)
+		return
+	}
 	password := r.Form.Get("password")
 	if strings.TrimSpace(s.cfg.WebPassword) == "" {
 		s.writeLogin(w, "web password is not configured")
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.WebPassword)) == 1 {
+		s.clearLoginFailures(peer)
 		token := randomToken()
 		s.tokenMu.Lock()
 		now := time.Now()
@@ -55,7 +76,77 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	s.recordLoginFailure(peer, time.Now())
 	s.writeLogin(w, "password error")
+}
+
+func loginPeer(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func (s *Server) loginBlocked(peer string, now time.Time) (time.Duration, bool) {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	s.cleanupLoginFailuresLocked(now)
+	failure, ok := s.loginFailures[peer]
+	if !ok || !now.Before(failure.blockedUntil) {
+		return 0, false
+	}
+	return failure.blockedUntil.Sub(now), true
+}
+
+func (s *Server) recordLoginFailure(peer string, now time.Time) {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	s.cleanupLoginFailuresLocked(now)
+	failure := s.loginFailures[peer]
+	if failure.windowStart.IsZero() || now.Sub(failure.windowStart) >= loginFailureWindow {
+		failure = loginFailure{windowStart: now}
+	}
+	failure.count++
+	if failure.count >= maxLoginFailures {
+		failure.blockedUntil = now.Add(loginBlockDuration)
+	}
+	if len(s.loginFailures) >= maxLoginPeers {
+		for candidate := range s.loginFailures {
+			delete(s.loginFailures, candidate)
+			break
+		}
+	}
+	s.loginFailures[peer] = failure
+}
+
+func (s *Server) clearLoginFailures(peer string) {
+	s.tokenMu.Lock()
+	delete(s.loginFailures, peer)
+	s.tokenMu.Unlock()
+}
+
+func (s *Server) cleanupLoginFailuresLocked(now time.Time) {
+	for peer, failure := range s.loginFailures {
+		if !failure.blockedUntil.IsZero() && now.Before(failure.blockedUntil) {
+			continue
+		}
+		if now.Sub(failure.windowStart) >= loginFailureWindow {
+			delete(s.loginFailures, peer)
+		}
+	}
+}
+
+func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

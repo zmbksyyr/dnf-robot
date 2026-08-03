@@ -100,10 +100,60 @@ func (s *Server) gameEndpointPayload(cfg *config.SysConfig, message string) map[
 		"addr":        addr,
 		"config_path": s.configPath(),
 	}
+	if s != nil && s.cfg != nil && cfg != nil {
+		fields := restartConfigDiff(s.cfg, cfg)
+		out["restart_required"] = len(fields) > 0
+		out["restart_fields"] = fields
+		out["running_config"] = restartConfigView(s.cfg)
+		out["disk_config"] = restartConfigView(cfg)
+	}
 	if message != "" {
 		out["message"] = message
 	}
 	return out
+}
+
+func restartConfigView(cfg *config.SysConfig) map[string]interface{} {
+	if cfg == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"robot_port": cfg.RobotPort, "web_port": cfg.WebPort,
+		"game_port": cfg.RobotGamePort, "monitor_port": cfg.MonitorPort,
+		"auction_port": cfg.AuctionPort, "point_port": cfg.PointPort,
+		"relay_port": cfg.RelayPort, "party_route0_port": cfg.PartyRoute0Port,
+		"connect_ip": cfg.RobotConnectIP, "inner_ip": cfg.RobotInnerIP,
+		"database_host": cfg.DBHost, "database_port": cfg.DBPort,
+		"database_name": cfg.DBName, "database_user": cfg.DBUser,
+		"database_password_set": cfg.DBPassword != "",
+		"web_password_set":      cfg.WebPassword != "",
+	}
+}
+
+func restartConfigDiff(running, disk *config.SysConfig) []string {
+	if running == nil || disk == nil {
+		return nil
+	}
+	var fields []string
+	checks := []struct {
+		name      string
+		different bool
+	}{
+		{"robot_port", running.RobotPort != disk.RobotPort}, {"web_port", running.WebPort != disk.WebPort},
+		{"game_port", running.RobotGamePort != disk.RobotGamePort}, {"monitor_port", running.MonitorPort != disk.MonitorPort},
+		{"auction_port", running.AuctionPort != disk.AuctionPort}, {"point_port", running.PointPort != disk.PointPort},
+		{"relay_port", running.RelayPort != disk.RelayPort}, {"party_route0_port", running.PartyRoute0Port != disk.PartyRoute0Port},
+		{"robot_connect_ip", running.RobotConnectIP != disk.RobotConnectIP}, {"robot_inner_ip", running.RobotInnerIP != disk.RobotInnerIP},
+		{"database_host", running.DBHost != disk.DBHost}, {"database_port", running.DBPort != disk.DBPort},
+		{"database_name", running.DBName != disk.DBName}, {"database_user", running.DBUser != disk.DBUser},
+		{"database_password", running.DBPassword != disk.DBPassword}, {"web_password", running.WebPassword != disk.WebPassword},
+	}
+	for _, check := range checks {
+		if check.different {
+			fields = append(fields, check.name)
+		}
+	}
+	return fields
 }
 
 func (s *Server) loadDiskConfig() (*config.SysConfig, error) {
