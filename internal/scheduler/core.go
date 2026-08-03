@@ -31,6 +31,7 @@ type RobotManager struct {
 	rand                            *rand.Rand
 	sessionLastLogout               map[int]time.Time
 	sessionReloginDelay             time.Duration
+	sessionLogoutCleanupAt          time.Time
 	autoStoreBusy                   map[int]bool
 	autoStoreItemPending            int
 	autoStoreDisjointPending        int
@@ -68,6 +69,7 @@ type RobotManager struct {
 	structuralOpStarted             time.Time
 	actorContainerOp                string
 	actorContainerOpStarted         time.Time
+	configApplyMu                   lockhub.Locker
 	configSnapshot                  atomic.Pointer[robotConfigSnapshot]
 	runtimeFilesWatched             atomic.Bool
 	shoutTemplateSnapshot           atomic.Pointer[robottemplate.ShoutTemplates]

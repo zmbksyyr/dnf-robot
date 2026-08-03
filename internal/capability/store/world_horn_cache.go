@@ -1,6 +1,12 @@
 package store
 
-import "robot/internal/foundation/lockhub"
+import (
+	"fmt"
+
+	"robot/internal/foundation/lockhub"
+)
+
+const maxWorldHornCacheEntries = 4096
 
 type worldHornCacheEntry struct {
 	done chan struct{}
@@ -34,11 +40,15 @@ func (c *WorldHornCache) Ensure(cid int, verify func() error) error {
 	if c.entries == nil {
 		c.entries = make(map[int]*worldHornCacheEntry)
 	}
+	if len(c.entries) >= maxWorldHornCacheEntries && !evictCompletedWorldHornEntry(c.entries) {
+		c.access.Unlock()
+		return callWorldHornVerify(verify)
+	}
 	entry := &worldHornCacheEntry{done: make(chan struct{})}
 	c.entries[cid] = entry
 	c.access.Unlock()
 
-	err := verify()
+	err := callWorldHornVerify(verify)
 	c.access.Lock()
 	entry.err = err
 	if err != nil && c.entries[cid] == entry {
@@ -49,6 +59,15 @@ func (c *WorldHornCache) Ensure(cid int, verify func() error) error {
 	return err
 }
 
+func callWorldHornVerify(verify func() error) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("world horn verification panic: %v", rec)
+		}
+	}()
+	return verify()
+}
+
 func (c *WorldHornCache) Invalidate(cid int) {
 	if c == nil || cid <= 0 {
 		return
@@ -56,4 +75,20 @@ func (c *WorldHornCache) Invalidate(cid int) {
 	c.access.Lock()
 	delete(c.entries, cid)
 	c.access.Unlock()
+}
+
+func evictCompletedWorldHornEntry(entries map[int]*worldHornCacheEntry) bool {
+	for cid, entry := range entries {
+		if entry == nil {
+			delete(entries, cid)
+			return true
+		}
+		select {
+		case <-entry.done:
+			delete(entries, cid)
+			return true
+		default:
+		}
+	}
+	return false
 }

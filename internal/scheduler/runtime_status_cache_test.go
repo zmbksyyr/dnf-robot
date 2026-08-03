@@ -15,6 +15,27 @@ type countingStatusRuntime struct {
 	release  chan struct{}
 }
 
+type mapStatusRuntime struct {
+	noopRuntime
+	statuses   map[int]robotcap.RuntimeStatus
+	mapCalls   atomic.Int32
+	sliceCalls atomic.Int32
+}
+
+func (r *mapStatusRuntime) RuntimeStatus() []robotcap.RuntimeStatus {
+	r.sliceCalls.Add(1)
+	return nil
+}
+
+func (r *mapStatusRuntime) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {
+	r.mapCalls.Add(1)
+	out := make(map[int]robotcap.RuntimeStatus, len(r.statuses))
+	for uid, status := range r.statuses {
+		out[uid] = status
+	}
+	return out
+}
+
 func (r *countingStatusRuntime) RuntimeStatus() []robotcap.RuntimeStatus {
 	r.calls.Add(1)
 	if r.started != nil {
@@ -62,6 +83,20 @@ func TestRuntimeStatusRefreshIsSingleflight(t *testing.T) {
 	}
 	if got := runtime.calls.Load(); got != 1 {
 		t.Fatalf("RuntimeStatus calls got %d want 1", got)
+	}
+}
+
+func TestRuntimeStatusRefreshUsesMapProviderWithoutSliceRoundTrip(t *testing.T) {
+	runtime := &mapStatusRuntime{statuses: map[int]robotcap.RuntimeStatus{
+		17000001: {UID: 17000001, StateName: robotcap.RuntimeStateRunning},
+	}}
+	manager := NewRobotManager(nil, nil, runtime)
+	status, ok := manager.runtimeStatus(17000001)
+	if !ok || status.UID != 17000001 {
+		t.Fatalf("runtime status = %+v, ok=%t", status, ok)
+	}
+	if runtime.mapCalls.Load() != 1 || runtime.sliceCalls.Load() != 0 {
+		t.Fatalf("runtime calls map=%d slice=%d", runtime.mapCalls.Load(), runtime.sliceCalls.Load())
 	}
 }
 
@@ -158,6 +193,31 @@ func BenchmarkRuntimeStatusMutableCopy550(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = manager.runtimeStatusMapCopy()
 	}
+}
+
+func BenchmarkRuntimeStatusRefresh550(b *testing.B) {
+	statuses := make([]robotcap.RuntimeStatus, 550)
+	statusMap := make(map[int]robotcap.RuntimeStatus, len(statuses))
+	for i := range statuses {
+		statuses[i] = robotcap.RuntimeStatus{UID: 17000000 + i, StateName: robotcap.RuntimeStateRunning}
+		statusMap[statuses[i].UID] = statuses[i]
+	}
+	b.Run("slice", func(b *testing.B) {
+		manager := NewRobotManager(nil, nil, &countingStatusRuntime{statuses: statuses})
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			manager.invalidateRuntimeStatusCache()
+			_ = manager.runtimeStatusMap()
+		}
+	})
+	b.Run("map", func(b *testing.B) {
+		manager := NewRobotManager(nil, nil, &mapStatusRuntime{statuses: statusMap})
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			manager.invalidateRuntimeStatusCache()
+			_ = manager.runtimeStatusMap()
+		}
+	})
 }
 
 func benchmarkRuntimeStatusManager(b *testing.B) *RobotManager {

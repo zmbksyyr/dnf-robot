@@ -63,8 +63,6 @@ prefer_avatar_sets = false
 avatar_set_min_slots = 3
 
 [store]
-store_item_allow_ids = 11,12
-store_item_deny_ids = 21,22
 store_item_slots = 2
 store_item_count_min = 3
 store_item_count_max = 5
@@ -138,9 +136,6 @@ packet_rate_per_sec = 30
 	if !reflect.DeepEqual(rc.EquipSlots, []int{1, 3, 5}) || !reflect.DeepEqual(rc.AvatarSlots, []int{0, 2, 4}) {
 		t.Fatalf("slot lists not loaded: equipment=%v avatar=%v", rc.EquipSlots, rc.AvatarSlots)
 	}
-	if !reflect.DeepEqual(rc.StoreItemAllowIDs, []int{11, 12}) || !reflect.DeepEqual(rc.StoreItemDenyIDs, []int{21, 22}) {
-		t.Fatalf("store lists not loaded: allow=%v deny=%v", rc.StoreItemAllowIDs, rc.StoreItemDenyIDs)
-	}
 	if rc.StoreEquipmentStartBox != 9 || rc.StoreMaterialStartBox != 107 || rc.StoreEquipmentIntensifyMin != 8 || rc.StoreEquipmentIntensifyMax != 12 {
 		t.Fatalf("store pool config not loaded: %+v", rc)
 	}
@@ -171,6 +166,7 @@ func TestLoadFileRejectsInvalidOrUnknownSettings(t *testing.T) {
 		"[online]\nmax_online_robots = 20\nmax_online_per_command = 21\n",
 		"[equipment]\nequip_slots = 0,1\n",
 		"[avatar]\navatar_slots = 0,1\nmin_avatar_slots = 3\n",
+		"[store]\nstore_item_allow_ids = 3037\n",
 		"[store]\nstore_equipment_intensify_min = 14\nstore_equipment_intensify_max = 13\n",
 		"[auto]\nauto_store_probability_percent = 101\n",
 		"[scheduler]\nonline_batch_size = 121\n",

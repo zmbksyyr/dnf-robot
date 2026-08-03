@@ -151,3 +151,60 @@ func TestLedgerReapsUnexpectedlyStoppedActorAndBlocksUID(t *testing.T) {
 		t.Fatal("unexpectedly stopped actor uid was not blocked for cleanup")
 	}
 }
+
+func TestLedgerReapsDoneActorsWithOneLeasePassSemantics(t *testing.T) {
+	ledger := NewLedger()
+	unexpected := testLedgerActor(1, ModeAuto, 101)
+	draining := testLedgerActor(2, ModeAuto, 102)
+	live := testLedgerActor(3, ModeAuto, 103)
+	for _, actor := range []*Actor{unexpected, draining, live} {
+		addTestLedgerActor(&ledger, actor)
+		if !ledger.TryLeaseUID(actor.UIDValue(), actor) {
+			t.Fatalf("lease uid=%d", actor.UIDValue())
+		}
+	}
+	ledger.BlockUID(102)
+	ledger.draining[draining.SlotIDValue()] = draining
+	close(unexpected.done)
+	close(draining.done)
+
+	if reaped := ledger.ReapDoneDraining(); reaped != 2 {
+		t.Fatalf("reaped=%d, want 2", reaped)
+	}
+	if ledger.ActorForUID(101) != nil || ledger.ActorForUID(102) != nil {
+		t.Fatal("completed actor lease remains")
+	}
+	if ledger.ActorForUID(103) != live || len(ledger.ActorPointers()) != 1 {
+		t.Fatal("live actor or lease was removed")
+	}
+	if _, blocked := ledger.blockedUID[101]; !blocked {
+		t.Fatal("unexpected exit uid was not blocked")
+	}
+	if _, blocked := ledger.blockedUID[102]; blocked {
+		t.Fatal("normally drained uid remained blocked")
+	}
+}
+
+func BenchmarkLedgerReapDoneDraining550(b *testing.B) {
+	const actorCount = 550
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		ledger := NewLedger()
+		for index := 0; index < actorCount; index++ {
+			slotID := index + 1
+			uid := 17_000_000 + index
+			actor := &Actor{slotID: slotID, uid: uid, done: make(chan struct{})}
+			close(actor.done)
+			ledger.actors[slotID] = actor
+			ledger.uidActors[uid] = actor
+			if index&1 == 0 {
+				ledger.draining[slotID] = actor
+			}
+		}
+		b.StartTimer()
+		if reaped := ledger.ReapDoneDraining(); reaped != actorCount {
+			b.Fatalf("reaped=%d, want %d", reaped, actorCount)
+		}
+	}
+}

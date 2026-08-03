@@ -122,7 +122,6 @@ func TestLoadRobotConfigSchedulerOnlineDefaults(t *testing.T) {
 	if rc.AutoShoutIntervalMinSec != 40 || rc.AutoShoutIntervalMaxSec != 115 {
 		t.Fatalf("AutoShoutInterval got %d..%d want 40..115", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 	}
-	assertIntSlice(t, rc.StoreItemAllowIDs, []int{3037, 3031, 3032, 3034, 3035})
 }
 
 func TestLoadRobotConfigSchedulerValuesAreAdaptive(t *testing.T) {
@@ -209,6 +208,45 @@ func TestReloadRobotConfigRejectsOpenFileRequirementOverflow(t *testing.T) {
 	after := m.loadRobotConfig()
 	if after.MaxOnlineRobots != before.MaxOnlineRobots {
 		t.Fatalf("rejected max_online_robots replaced snapshot: before=%d after=%d", before.MaxOnlineRobots, after.MaxOnlineRobots)
+	}
+}
+
+func TestUpdateRobotConfigPreflightFailureKeepsLastValidFile(t *testing.T) {
+	requests := map[string]robotcap.ConfigUpdateRequest{
+		"text": {
+			Text: fmt.Sprintf("[online]\nmax_online_robots = %d\nmax_online_per_command = 1000\n", int(^uint(0)>>1)),
+		},
+		"updates": {
+			Updates: map[string]interface{}{
+				"online.max_online_robots":      int(^uint(0) >> 1),
+				"online.max_online_per_command": 1000,
+			},
+		},
+	}
+	for name, req := range requests {
+		t.Run(name, func(t *testing.T) {
+			m := testRobotManagerWithConfig(t, "[online]\nmax_online_robots = 1000\nmax_online_per_command = 1000\n")
+			beforeConfig := m.loadRobotConfig()
+			path := layout.New(m.cfg.ConfigDir).RobotConfig()
+			beforeFile, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := m.UpdateRobotConfig(req); err == nil {
+				t.Fatal("overflowing open-file requirement unexpectedly saved")
+			}
+			afterFile, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(afterFile) != string(beforeFile) {
+				t.Fatalf("rejected update changed config file:\nbefore=%q\nafter=%q", beforeFile, afterFile)
+			}
+			if got := m.loadRobotConfig().MaxOnlineRobots; got != beforeConfig.MaxOnlineRobots {
+				t.Fatalf("rejected update changed snapshot: got=%d want=%d", got, beforeConfig.MaxOnlineRobots)
+			}
+		})
 	}
 }
 

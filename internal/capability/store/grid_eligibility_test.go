@@ -24,7 +24,7 @@ func TestStoreCoordinatorValidatesTargetFromCurrentCatalog(t *testing.T) {
 		{Village: 1, Area: 0, Use: true, StoreEligible: eligibility(true), Rectangles: []shared.MapRectangle{{XMin: 1, XMax: 200, YMin: 1, YMax: 200}}},
 		{Village: 1, Area: 1, Use: true, Gate: true, StoreEligible: eligibility(false), Rectangles: []shared.MapRectangle{{XMin: 1, XMax: 200, YMin: 1, YMax: 200}}},
 	})
-	coordinator := NewPointCoordinator(configDir, nil)
+	coordinator := newTestPointCoordinator(configDir, nil)
 	if !coordinator.HasArea(1, 0) {
 		t.Fatal("current PVF store area was not available as a migration target")
 	}

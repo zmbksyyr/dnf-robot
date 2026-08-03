@@ -31,7 +31,7 @@ func writeStoreMapCatalog(t *testing.T, configDir string, maps []shared.MapCatal
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "pvf_map_catalog.json"), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "map_catalog.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
 	return data
@@ -97,7 +97,7 @@ func TestStoreErrReasonRetryClassification(t *testing.T) {
 func TestStoreErr011DoesNotPollutePointExploration(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -105,7 +105,7 @@ func TestStoreErr011DoesNotPollutePointExploration(t *testing.T) {
 	c.Report(1001, first, false, StoreReasonErr011)
 	c.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.Claim(1002)
 	if !ok {
 		t.Fatalf("second claim failed")
@@ -118,7 +118,7 @@ func TestStoreErr011DoesNotPollutePointExploration(t *testing.T) {
 func TestStoreRuntimeFailureDoesNotPollutePointExploration(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -126,7 +126,7 @@ func TestStoreRuntimeFailureDoesNotPollutePointExploration(t *testing.T) {
 	c.Report(1001, first, false, StoreReasonRuntimeStopped)
 	c.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.Claim(1002)
 	if !ok {
 		t.Fatalf("second claim failed")
@@ -169,7 +169,7 @@ func TestBuildStoreGridPointsExcludesZeroCoordinates(t *testing.T) {
 func TestStorePointCoordinatorCachesSourceMD5(t *testing.T) {
 	configDir := t.TempDir()
 	data := writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 120, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	if len(c.points) == 0 {
 		t.Fatalf("expected generated store points")
 	}
@@ -236,7 +236,7 @@ func TestStorePointCoordinatorFiltersUnsafeCachedPoint(t *testing.T) {
 	data := writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
 	sum := md5.Sum(data)
 	cache := PointCache{
-		Version: PointCacheVer, SourceFile: "pvf_map_catalog.json", SourceMD5: hex.EncodeToString(sum[:]),
+		Version: PointCacheVer, SourceFile: "map_catalog.json", SourceMD5: hex.EncodeToString(sum[:]),
 		XStep: PointXStep, YStep: PointYStep,
 		Points: []GridPoint{
 			{ID: "3-1-0-0", Village: 3, Area: 1, X: 0, Y: 0},
@@ -250,7 +250,7 @@ func TestStorePointCoordinatorFiltersUnsafeCachedPoint(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, PointCacheFile), cacheData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	pos, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("claim failed")
@@ -263,7 +263,7 @@ func TestStorePointCoordinatorFiltersUnsafeCachedPoint(t *testing.T) {
 func TestStorePointCoordinatorDoesNotReuseFailedPointAfterRestart(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -271,7 +271,7 @@ func TestStorePointCoordinatorDoesNotReuseFailedPointAfterRestart(t *testing.T) 
 	c.Report(1001, first, false, "store_err_0x38")
 	c.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.Claim(1002)
 	if !ok {
 		t.Fatalf("second claim failed")
@@ -284,7 +284,7 @@ func TestStorePointCoordinatorDoesNotReuseFailedPointAfterRestart(t *testing.T) 
 func TestStorePointCoordinatorRetriesOldFailedPointAfterRestart(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -310,7 +310,7 @@ func TestStorePointCoordinatorRetriesOldFailedPointAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.Claim(1002)
 	if !ok {
 		t.Fatalf("old failed point was not retried")
@@ -323,7 +323,7 @@ func TestStorePointCoordinatorRetriesOldFailedPointAfterRestart(t *testing.T) {
 func TestStorePointCoordinatorRetriesCollisionAfterActiveLease(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	lease := StorePointLeaseDuration(210)
 	first, ok := c.ClaimWithLease(1001, lease)
 	if !ok {
@@ -343,7 +343,7 @@ func TestStorePointCoordinatorRetriesCollisionAfterActiveLease(t *testing.T) {
 func TestStorePointCoordinatorPermanentlySkipsRestrictivePoint(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatal("first claim failed")
@@ -361,7 +361,7 @@ func TestStorePointCoordinatorPermanentlySkipsRestrictivePoint(t *testing.T) {
 func TestStorePointCoordinatorPrefersKnownSuccessOverPackedUnknown(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 400, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	offGrid := Position{Village: 3, Area: 0, X: 1, Y: 281, PointID: "3-0-1-281"}
 	c.Report(1001, offGrid, true, StoreReasonAck)
 	c.ReleaseUID(1001)
@@ -391,7 +391,7 @@ func TestBuildPackedPointSetShiftsAroundPermanentRestriction(t *testing.T) {
 func TestStorePointCoordinatorKeepsActiveSuccessClaimed(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -421,7 +421,7 @@ func TestStorePointCoordinatorKeepsActiveSuccessClaimed(t *testing.T) {
 func TestStorePointCoordinatorBlocksVerticallyNearbyPoint(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 240, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatal("first claim failed")
@@ -437,7 +437,7 @@ func TestStorePointCoordinatorBlocksVerticallyNearbyPoint(t *testing.T) {
 func TestStorePointCoordinatorAllowsEveryOtherGeneratedRow(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 480, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatal("first claim failed")
@@ -451,7 +451,7 @@ func TestStorePointCoordinatorAllowsEveryOtherGeneratedRow(t *testing.T) {
 func TestStorePointCoordinatorAllowsAdjacentGeneratedColumn(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: PointXStep, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatal("first claim failed")
@@ -465,7 +465,7 @@ func TestStorePointCoordinatorAllowsAdjacentGeneratedColumn(t *testing.T) {
 func TestStorePointCoordinatorKeepsHistoricallySuccessfulPointReusable(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -483,7 +483,7 @@ func TestStorePointCoordinatorKeepsHistoricallySuccessfulPointReusable(t *testin
 	c.Report(1002, retry, false, "transient_failed")
 	c.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.Claim(1003)
 	if !ok {
 		t.Fatalf("historically successful point was not reusable after restart")
@@ -496,7 +496,7 @@ func TestStorePointCoordinatorKeepsHistoricallySuccessfulPointReusable(t *testin
 func TestStorePointCoordinatorCoolsDownRecentlyFailedSuccessPoint(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -514,7 +514,7 @@ func TestStorePointCoordinatorCoolsDownRecentlyFailedSuccessPoint(t *testing.T) 
 	c.Report(1002, retry, false, "store_err_0x38")
 	c.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.Claim(1003)
 	if !ok {
 		t.Fatalf("next claim failed")
@@ -527,7 +527,7 @@ func TestStorePointCoordinatorCoolsDownRecentlyFailedSuccessPoint(t *testing.T) 
 func TestStorePointCoordinatorSuccessClearsFailedIndex(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -556,7 +556,7 @@ func TestStorePointCoordinatorSuccessClearsFailedIndex(t *testing.T) {
 func TestStorePointCoordinatorReusesPersistedStoreAckAfterRestart(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -565,7 +565,7 @@ func TestStorePointCoordinatorReusesPersistedStoreAckAfterRestart(t *testing.T) 
 	c.ReleaseUID(1001)
 	c.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.Claim(1002)
 	if !ok {
 		t.Fatalf("next claim failed")
@@ -578,7 +578,7 @@ func TestStorePointCoordinatorReusesPersistedStoreAckAfterRestart(t *testing.T) 
 func TestStorePointCoordinatorReusesPersistedDisjointAckAfterRestart(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -587,7 +587,7 @@ func TestStorePointCoordinatorReusesPersistedDisjointAckAfterRestart(t *testing.
 	c.ReleaseUID(1001)
 	c.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.Claim(1002)
 	if !ok {
 		t.Fatalf("next claim failed")
@@ -609,7 +609,7 @@ func TestStorePointLeaseCoversStoreDurationAndCleanup(t *testing.T) {
 func TestStorePointCoordinatorReleasesSuccessfulLeaseByUID(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.ClaimWithLease(1001, 10*time.Minute)
 	if !ok {
 		t.Fatalf("first claim failed")
@@ -631,7 +631,7 @@ func TestStorePointCoordinatorReleasesSuccessfulLeaseByUID(t *testing.T) {
 func TestStorePointCoordinatorFlushAtomicallyReplacesCache(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	pos, ok := c.Claim(1001)
 	if !ok {
 		t.Fatal("claim failed")
@@ -658,7 +658,7 @@ func TestStorePointCoordinatorFlushAtomicallyReplacesCache(t *testing.T) {
 func TestStorePointCoordinatorTreatsRepeatedIndependentFailureAsSessionScoped(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	var failures AttemptFailureState
 	first, ok := c.Claim(1001)
 	if !ok {
@@ -694,7 +694,7 @@ func TestStorePointCoordinatorTreatsRepeatedIndependentFailureAsSessionScoped(t 
 func TestStorePointCoordinatorKeepsDeferredFailureOutOfCache(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	var failures AttemptFailureState
 	first, _ := c.Claim(1001)
 	c.ReportAttemptFailure(1001, &failures, first, "store_err_0x38")
@@ -715,7 +715,7 @@ func TestStorePointCoordinatorKeepsDeferredFailureOutOfCache(t *testing.T) {
 func TestStorePointCoordinatorCoolsAmbiguousPointAcrossSessions(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 360, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	lease := 5 * time.Minute
 	firstPointID := ""
 	for uid := 1001; uid <= 1003; uid++ {
@@ -749,7 +749,7 @@ func TestStorePointCoordinatorCoolsAmbiguousPointAcrossSessions(t *testing.T) {
 	c.Discard(1004, next)
 	c.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	if got := reloaded.points[reloaded.byID[firstPointID]].LastReason; got != "" {
 		t.Fatalf("evidence cooldown persisted reason %q", got)
 	}
@@ -792,7 +792,7 @@ func TestNormalizeAmbiguousFailureBurstKeepsOneConflictZone(t *testing.T) {
 func TestStorePointCoordinatorKeepsRequestedLeaseAfterSuccess(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := NewPointCoordinator(configDir, nil)
+	c := newTestPointCoordinator(configDir, nil)
 	lease := 10 * time.Minute
 	pos, ok := c.ClaimWithLease(1001, lease)
 	if !ok {

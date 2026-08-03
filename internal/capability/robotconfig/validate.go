@@ -82,20 +82,6 @@ func validateRuntimeConfig(dec *foundationconfig.Decoder, rc RuntimeConfig) erro
 	checkRange("avatar", "avatar_set_min_slots", rc.AvatarSetMinSlots, 2, 10)
 	dec.Check("avatar", "avatar_set_min_slots", !rc.PreferAvatarSets || rc.AvatarSetMinSlots <= len(rc.AvatarSlots), "must not exceed the number of avatar_slots when prefer_avatar_sets is true")
 
-	for _, item := range []struct {
-		key    string
-		values []int
-	}{
-		{key: "store_item_allow_ids", values: rc.StoreItemAllowIDs},
-		{key: "store_item_deny_ids", values: rc.StoreItemDenyIDs},
-	} {
-		for _, value := range item.values {
-			if value <= 0 {
-				dec.Check("store", item.key, false, "values must be positive")
-				break
-			}
-		}
-	}
 	checkRange("store", "store_item_slots", rc.StoreItemSlots, 1, 24)
 	checkPositive("store", "store_item_count_min", rc.StoreItemCountMin)
 	checkPositive("store", "store_item_count_max", rc.StoreItemCountMax)

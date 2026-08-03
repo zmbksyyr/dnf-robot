@@ -81,12 +81,8 @@ func (m *RobotManager) SetAutoEnabled(enabled bool) (robotcap.AutoStatus, error)
 		return m.AutoStatus(), err
 	}
 	m.autoMu.Lock()
-	supervisor := m.supervisor
 	m.autoEnabled = enabled
 	m.autoMu.Unlock()
-	if !enabled {
-		m.stopAutoActorsForDisabledConfig(supervisor, m.loadRobotConfig())
-	}
 	return m.AutoStatus(), nil
 }
 

@@ -9,7 +9,11 @@ import (
 	"robot/internal/shared"
 )
 
-const sessionWriteSafetyMargin = 2 * time.Second
+const (
+	sessionWriteSafetyMargin        = 2 * time.Second
+	minSessionLogoutCleanupInterval = time.Second
+	maxSessionLogoutCleanupInterval = 30 * time.Second
+)
 
 func (m *RobotManager) waitAccountOffline(uid int, shouldStop func() bool) (bool, error) {
 	if uid <= 0 {
@@ -145,22 +149,42 @@ func (m *RobotManager) markSessionLogout(uid int, at time.Time) {
 	if m == nil || uid <= 0 {
 		return
 	}
+	now := time.Now()
+	retention := m.sessionLogoutRetention()
 	m.sessionMu.Lock()
 	if m.sessionLastLogout == nil {
 		m.sessionLastLogout = make(map[int]time.Time)
 	}
+	if m.sessionLogoutCleanupAt.IsZero() || !now.Before(m.sessionLogoutCleanupAt) {
+		cutoff := now.Add(-retention)
+		for existingUID, lastLogout := range m.sessionLastLogout {
+			if !lastLogout.After(cutoff) {
+				delete(m.sessionLastLogout, existingUID)
+			}
+		}
+		m.sessionLogoutCleanupAt = now.Add(sessionLogoutCleanupInterval(retention))
+	}
+	m.sessionLastLogout[uid] = at
+	m.sessionMu.Unlock()
+}
+
+func (m *RobotManager) sessionLogoutRetention() time.Duration {
 	retention := m.sessionReloginDelay + sessionWriteSafetyMargin
 	if retention <= sessionWriteSafetyMargin {
 		retention = 15*time.Second + sessionWriteSafetyMargin
 	}
-	cutoff := time.Now().Add(-retention)
-	for existingUID, lastLogout := range m.sessionLastLogout {
-		if !lastLogout.After(cutoff) {
-			delete(m.sessionLastLogout, existingUID)
-		}
+	return retention
+}
+
+func sessionLogoutCleanupInterval(retention time.Duration) time.Duration {
+	interval := retention / 2
+	if interval < minSessionLogoutCleanupInterval {
+		return minSessionLogoutCleanupInterval
 	}
-	m.sessionLastLogout[uid] = at
-	m.sessionMu.Unlock()
+	if interval > maxSessionLogoutCleanupInterval {
+		return maxSessionLogoutCleanupInterval
+	}
+	return interval
 }
 
 func (m *RobotManager) clearSessionLogout(uid int) {

@@ -17,7 +17,6 @@ func Default() RuntimeConfig {
 		StoreItemSlots: 1, StoreItemCountMin: 1, StoreItemCountMax: 1, StoreInventoryStartBox: 7,
 		StoreEquipmentStartBox: 7, StoreMaterialStartBox: 105, StoreEquipmentIntensifyMin: 7, StoreEquipmentIntensifyMax: 13,
 		StoreEquipmentPriceMin: 500000, StoreEquipmentPriceMax: 1000000, StoreMaterialPriceMin: 10, StoreMaterialPriceMax: 50,
-		StoreItemAllowIDs: []int{3037, 3031, 3032, 3034, 3035}, StoreItemDenyIDs: []int{7312, 7404, 7560, 7563, 7567, 7746},
 		StoreConfirmTimeoutSec: 30,
 		FollowRadiusX:          120, FollowRadiusY: 30, ShoutDelayMS: 1000, ShoutSendEnabled: true,
 		AutoActions: true, AutoMailNotify: true, AutoTargetOnlineCount: 20,

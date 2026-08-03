@@ -472,26 +472,7 @@ func (l *Ledger) ReapActor(actor *Actor) bool {
 func (l *Ledger) ReapDoneDraining() int {
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
-	reaped := 0
-	// A loop that exits after an unrecoverable panic is not necessarily marked
-	// draining. Remove such dead actors as well, but keep their UID blocked
-	// until the supervisor has confirmed the runtime and database cleanup.
-	for slotID, actor := range l.actors {
-		if actor == nil || l.draining[slotID] == actor || !actorDone(actor) {
-			continue
-		}
-		for uid, leased := range l.uidActors {
-			if leased == actor {
-				delete(l.uidActors, uid)
-				if uid > 0 {
-					l.blockedUID[uid] = struct{}{}
-				}
-			}
-		}
-		delete(l.actors, slotID)
-		reaped++
-	}
-	return reaped + l.reapDoneDrainingLocked()
+	return l.reapDoneActorsLocked(true)
 }
 
 func (l *Ledger) IsDraining(actor *Actor) bool {
@@ -510,10 +491,53 @@ func (l *Ledger) DrainingCount() int {
 }
 
 func (l *Ledger) reapDoneDrainingLocked() int {
+	return l.reapDoneActorsLocked(false)
+}
+
+// reapDoneActorsLocked removes all completed actors with one actor scan and
+// one lease scan. Unexpected exits keep their UIDs blocked for supervisor
+// cleanup; normally drained actors clear any existing block as before.
+func (l *Ledger) reapDoneActorsLocked(includeUnexpected bool) int {
+	// The bool records whether leases owned by this actor must remain blocked.
+	// A draining entry always wins over an unexpected classification.
+	deadActors := make(map[*Actor]bool)
 	reaped := 0
-	for _, actor := range l.draining {
-		if actorDone(actor) && l.reapActorLocked(actor) {
+	if includeUnexpected {
+		for slotID, actor := range l.actors {
+			if actor == nil || l.draining[slotID] == actor || !actorDone(actor) {
+				continue
+			}
+			delete(l.actors, slotID)
+			deadActors[actor] = true
 			reaped++
+		}
+	}
+	for slotID, actor := range l.draining {
+		if actor == nil || !actorDone(actor) {
+			continue
+		}
+		delete(l.draining, slotID)
+		if l.actors[slotID] == actor {
+			delete(l.actors, slotID)
+		}
+		if _, exists := deadActors[actor]; !exists {
+			reaped++
+		}
+		deadActors[actor] = false
+	}
+	if len(deadActors) == 0 {
+		return reaped
+	}
+	for uid, leased := range l.uidActors {
+		block, dead := deadActors[leased]
+		if !dead {
+			continue
+		}
+		delete(l.uidActors, uid)
+		if block && uid > 0 {
+			l.blockedUID[uid] = struct{}{}
+		} else {
+			delete(l.blockedUID, uid)
 		}
 	}
 	return reaped

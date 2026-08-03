@@ -1,7 +1,11 @@
 package store
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,7 +16,7 @@ import (
 func TestStorePointCoordinatorKeepsSuccessfulOccupancyAfterClaimExpires(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	coordinator := NewPointCoordinator(configDir, nil)
+	coordinator := newTestPointCoordinator(configDir, nil)
 	lease := 10 * time.Minute
 	position, ok := coordinator.ClaimWithLease(1001, lease)
 	if !ok {
@@ -34,14 +38,15 @@ func TestStorePointCoordinatorKeepsSuccessfulOccupancyAfterClaimExpires(t *testi
 func TestStorePointCoordinatorRestoresActiveOccupancyAfterRestart(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	coordinator := NewPointCoordinator(configDir, nil)
+	coordinator := newTestPointCoordinator(configDir, nil)
 	position, ok := coordinator.ClaimForStore(1001, 210)
 	if !ok {
 		t.Fatal("initial store claim failed")
 	}
 	coordinator.Report(1001, position, true, StoreReasonAck)
+	coordinator.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	if len(reloaded.pointClaims) != 0 {
 		t.Fatalf("restart restored stale claim ownership: %+v", reloaded.pointClaims)
 	}
@@ -55,14 +60,15 @@ func TestStorePointCoordinatorRestoredOccupancyBlocksNearbyPoint(t *testing.T) {
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{
 		Village: 3, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 161, Use: true,
 	}})
-	coordinator := NewPointCoordinator(configDir, nil)
+	coordinator := newTestPointCoordinator(configDir, nil)
 	position, ok := coordinator.ClaimForStore(1001, 210)
 	if !ok {
 		t.Fatal("initial store claim failed")
 	}
 	coordinator.Report(1001, position, true, StoreReasonAck)
+	coordinator.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	if next, ok := reloaded.ClaimForStore(1002, 210); ok {
 		t.Fatalf("nearby point ignored restored occupancy: active=%+v next=%+v", position, next)
 	}
@@ -71,15 +77,16 @@ func TestStorePointCoordinatorRestoredOccupancyBlocksNearbyPoint(t *testing.T) {
 func TestStorePointCoordinatorPersistsActiveOccupancyRelease(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	coordinator := NewPointCoordinator(configDir, nil)
+	coordinator := newTestPointCoordinator(configDir, nil)
 	position, ok := coordinator.ClaimForStore(1001, 210)
 	if !ok {
 		t.Fatal("initial store claim failed")
 	}
 	coordinator.Report(1001, position, true, StoreReasonAck)
 	coordinator.ReleaseUID(1001)
+	coordinator.Flush()
 
-	reloaded := NewPointCoordinator(configDir, nil)
+	reloaded := newTestPointCoordinator(configDir, nil)
 	next, ok := reloaded.ClaimForStore(1002, 210)
 	if !ok {
 		t.Fatal("released store point remained occupied after restart")
@@ -89,10 +96,162 @@ func TestStorePointCoordinatorPersistsActiveOccupancyRelease(t *testing.T) {
 	}
 }
 
+func TestStorePointCoordinatorCoalescesActiveOccupancyWrites(t *testing.T) {
+	const occupancyCount = 32
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{
+		Village: 3, Area: 0,
+		XMin: 1, XMax: 1 + PointXStep*(occupancyCount-1),
+		YMin: 1, YMax: 1, Use: true,
+	}})
+	coordinator := newTestPointCoordinator(configDir, nil)
+	coordinator.activeSave.delay = 50 * time.Millisecond
+	var writes atomic.Int32
+	coordinator.activeSave.write = func(path string, data []byte) error {
+		writes.Add(1)
+		return os.WriteFile(path, data, 0644)
+	}
+
+	for index := 0; index < occupancyCount; index++ {
+		uid := 1000 + index
+		position, ok := coordinator.ClaimForStore(uid, 210)
+		if !ok {
+			t.Fatalf("claim %d failed", index)
+		}
+		coordinator.Report(uid, position, true, StoreReasonAck)
+	}
+	if got := writes.Load(); got != 0 {
+		t.Fatalf("active occupancy write was synchronous: writes=%d", got)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		coordinator.activeSave.access.Lock()
+		idle := coordinator.activeSave.timer == nil && coordinator.activeSave.done == nil
+		coordinator.activeSave.access.Unlock()
+		if writes.Load() == 1 && idle {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := writes.Load(); got != 1 {
+		t.Fatalf("coalesced active occupancy writes=%d, want 1", got)
+	}
+	time.Sleep(2 * coordinator.activeSave.delay)
+	if got := writes.Load(); got != 1 {
+		t.Fatalf("idle active occupancy writer ran again: writes=%d", got)
+	}
+
+	data, err := os.ReadFile(filepath.Join(configDir, ActivePointCacheFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cache ActivePointCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(cache.Occupancies); got != occupancyCount {
+		t.Fatalf("persisted occupancies=%d, want %d", got, occupancyCount)
+	}
+	coordinator.Flush()
+}
+
+func TestStorePointCoordinatorFlushWaitsForActiveOccupancyWriter(t *testing.T) {
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{
+		Village: 3, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true,
+	}})
+	coordinator := newTestPointCoordinator(configDir, nil)
+	coordinator.activeSave.delay = 5 * time.Millisecond
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	coordinator.activeSave.write = func(path string, data []byte) error {
+		started <- struct{}{}
+		<-release
+		return os.WriteFile(path, data, 0644)
+	}
+
+	position, ok := coordinator.ClaimForStore(1001, 210)
+	if !ok {
+		t.Fatal("claim failed")
+	}
+	coordinator.Report(1001, position, true, StoreReasonAck)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("active occupancy writer did not start")
+	}
+
+	flushed := make(chan struct{})
+	go func() {
+		coordinator.Flush()
+		close(flushed)
+	}()
+	select {
+	case <-flushed:
+		t.Fatal("Flush returned while active occupancy writer was blocked")
+	case <-time.After(20 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-flushed:
+	case <-time.After(time.Second):
+		t.Fatal("Flush did not join active occupancy writer")
+	}
+
+	coordinator.activeSave.access.Lock()
+	timer := coordinator.activeSave.timer
+	done := coordinator.activeSave.done
+	flushing := coordinator.activeSave.flushing
+	coordinator.activeSave.access.Unlock()
+	if timer != nil || done != nil || flushing {
+		t.Fatalf("active occupancy writer retained after Flush: timer=%v done=%v flushing=%t", timer, done, flushing)
+	}
+	reloaded := newTestPointCoordinator(configDir, nil)
+	if next, ok := reloaded.ClaimForStore(1002, 210); ok {
+		t.Fatalf("Flush did not persist active occupancy: %+v", next)
+	}
+}
+
+func TestStorePointCoordinatorFlushCancelsPendingActiveOccupancySave(t *testing.T) {
+	configDir := t.TempDir()
+	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{
+		Village: 3, Area: 0, XMin: 1, XMax: 1, YMin: 1, YMax: 1, Use: true,
+	}})
+	coordinator := newTestPointCoordinator(configDir, nil)
+	coordinator.activeSave.delay = time.Hour
+	var writes atomic.Int32
+	coordinator.activeSave.write = func(path string, data []byte) error {
+		writes.Add(1)
+		return os.WriteFile(path, data, 0644)
+	}
+	position, ok := coordinator.ClaimForStore(1001, 210)
+	if !ok {
+		t.Fatal("claim failed")
+	}
+	coordinator.Report(1001, position, true, StoreReasonAck)
+	if got := writes.Load(); got != 0 {
+		t.Fatalf("pending active occupancy write was synchronous: writes=%d", got)
+	}
+	coordinator.Flush()
+	if got := writes.Load(); got != 1 {
+		t.Fatalf("Flush writes=%d, want 1", got)
+	}
+	coordinator.activeSave.access.Lock()
+	timer := coordinator.activeSave.timer
+	done := coordinator.activeSave.done
+	coordinator.activeSave.access.Unlock()
+	if timer != nil || done != nil {
+		t.Fatalf("pending active occupancy timer survived Flush: timer=%v done=%v", timer, done)
+	}
+}
+
 func TestStorePointCoordinatorReusesStorePointAtExactUIDExpiry(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	coordinator := NewPointCoordinator(configDir, nil)
+	coordinator := newTestPointCoordinator(configDir, nil)
 	const (
 		uid         = 1001
 		durationSec = 210
@@ -128,7 +287,7 @@ func TestStorePointCoordinatorReusesStorePointAtExactUIDExpiry(t *testing.T) {
 func TestStorePointCoordinatorOldUIDCannotReleaseReplacementClaim(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	coordinator := NewPointCoordinator(configDir, nil)
+	coordinator := newTestPointCoordinator(configDir, nil)
 	first, ok := coordinator.ClaimForStore(1001, 210)
 	if !ok {
 		t.Fatal("initial store claim failed")
@@ -163,7 +322,7 @@ func TestStorePointCoordinatorOldUIDCannotReleaseReplacementClaim(t *testing.T) 
 func TestStorePointCoordinatorExpiredPointHasSingleConcurrentWinner(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	coordinator := NewPointCoordinator(configDir, nil)
+	coordinator := newTestPointCoordinator(configDir, nil)
 	first, ok := coordinator.ClaimForStore(1001, 210)
 	if !ok {
 		t.Fatal("initial store claim failed")
@@ -211,7 +370,7 @@ func BenchmarkPointCoordinatorClaimAt600Occupancies(b *testing.B) {
 		YMax:    80 * 80,
 		Use:     true,
 	}})
-	coordinator := NewPointCoordinator("", nil)
+	coordinator := newTestPointCoordinator("", nil)
 	coordinator.points = points
 	coordinator.rebuildIndexes()
 	for uid := 1; uid <= 600; uid++ {

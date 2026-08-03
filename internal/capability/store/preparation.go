@@ -297,12 +297,6 @@ func (p Preparer) selectItemsForPlan(info robotcap.Info, rc robotconfig.RuntimeC
 		if item.ID <= 0 || item.Expire {
 			continue
 		}
-		if len(rc.StoreItemAllowIDs) > 0 && !intInSlice(rc.StoreItemAllowIDs, item.ID) {
-			continue
-		}
-		if intInSlice(rc.StoreItemDenyIDs, item.ID) {
-			continue
-		}
 		if item.NoTrade || item.NeedMaterial || item.BadName {
 			continue
 		}
@@ -340,15 +334,6 @@ func (p Preparer) selectItemsForPlan(info robotcap.Info, rc robotconfig.RuntimeC
 		candidates = basic.Items()
 	} else if preferred.Seen() == 0 {
 		candidates = fallback.Items()
-	}
-	if len(candidates) == 0 {
-		allowed := newItemReservoir(count, rng)
-		for _, id := range rc.StoreItemAllowIDs {
-			if id > 0 && !intInSlice(rc.StoreItemDenyIDs, id) {
-				allowed.Add(shared.EquipmentCatalogItem{ID: id, Slot: wantSlot, Trade: true, StackLimit: 1000})
-			}
-		}
-		candidates = allowed.Items()
 	}
 	return candidates
 }
@@ -391,13 +376,4 @@ func (r *itemReservoir) Items() []shared.EquipmentCatalogItem {
 	}
 	r.rng.Shuffle(len(r.items), func(i, j int) { r.items[i], r.items[j] = r.items[j], r.items[i] })
 	return r.items
-}
-
-func intInSlice(values []int, want int) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }

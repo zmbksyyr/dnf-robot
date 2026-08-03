@@ -63,7 +63,7 @@ func (e *cancellingWorkflowEnv) Logf(string, ...interface{}) {}
 func TestAutoStoreCancellationRestoresAfterOfflineBarrier(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, Use: true}})
-	env := &cancellingWorkflowEnv{points: NewPointCoordinator(configDir, nil)}
+	env := &cancellingWorkflowEnv{points: newTestPointCoordinator(configDir, nil)}
 	checks := 0
 	shouldStop := func() bool {
 		checks++

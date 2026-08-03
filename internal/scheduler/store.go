@@ -7,6 +7,7 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	storecap "robot/internal/capability/store"
+	"robot/internal/foundation/layout"
 	"robot/internal/foundation/mathx"
 )
 
@@ -14,11 +15,11 @@ func (m *RobotManager) storePoints() *storecap.PointCoordinator {
 	var points *storecap.PointCoordinator
 	_ = m.lockHub().WithResource(lockScopeScheduler, lockResourceSchedulerStorePoints, "store_points", func() error {
 		if m.storePointsCoord == nil {
-			configDir := ""
+			var paths layout.Paths
 			if m.cfg != nil {
-				configDir = m.cfg.ConfigDir
+				paths = layout.New(m.cfg.ConfigDir)
 			}
-			m.storePointsCoord = storecap.NewPointCoordinator(configDir, robotLogf)
+			m.storePointsCoord = storecap.NewPointCoordinator(paths.State, paths.PVFMaps(), robotLogf)
 		}
 		points = m.storePointsCoord
 		return nil

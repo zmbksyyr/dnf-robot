@@ -58,8 +58,6 @@ type RuntimeConfig struct {
 	StoreMaterialStartBox         int    `json:"store_material_start_box_index"`
 	StoreEquipmentIntensifyMin    int    `json:"store_equipment_intensify_min"`
 	StoreEquipmentIntensifyMax    int    `json:"store_equipment_intensify_max"`
-	StoreItemAllowIDs             []int  `json:"store_item_allow_ids"`
-	StoreItemDenyIDs              []int  `json:"store_item_deny_ids"`
 	StoreConfirmTimeoutSec        int    `json:"store_confirm_timeout_sec"`
 	FollowAccount                 string `json:"follow_account"`
 	FollowRadiusX                 int    `json:"follow_radius_x"`
@@ -104,7 +102,5 @@ func Clone(rc RuntimeConfig) RuntimeConfig {
 	rc.GrowTypes = append([]int(nil), rc.GrowTypes...)
 	rc.EquipSlots = append([]int(nil), rc.EquipSlots...)
 	rc.AvatarSlots = append([]int(nil), rc.AvatarSlots...)
-	rc.StoreItemAllowIDs = append([]int(nil), rc.StoreItemAllowIDs...)
-	rc.StoreItemDenyIDs = append([]int(nil), rc.StoreItemDenyIDs...)
 	return rc
 }

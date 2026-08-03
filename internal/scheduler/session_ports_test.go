@@ -130,6 +130,48 @@ func TestMarkSessionLogoutPrunesExpiredEntries(t *testing.T) {
 	}
 }
 
+func TestMarkSessionLogoutRateLimitsExpiredEntryScans(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	m.sessionReloginDelay = time.Second
+	now := time.Now()
+	m.sessionLastLogout[17000001] = now.Add(-time.Hour)
+	m.sessionLogoutCleanupAt = now.Add(time.Minute)
+
+	m.markSessionLogout(17000002, now)
+	if _, ok := m.sessionLastLogout[17000001]; !ok {
+		t.Fatal("rate-limited mark unexpectedly scanned the logout table")
+	}
+
+	m.sessionLogoutCleanupAt = time.Time{}
+	m.markSessionLogout(17000003, now)
+	if _, ok := m.sessionLastLogout[17000001]; ok {
+		t.Fatal("due cleanup did not prune the expired logout entry")
+	}
+	for _, uid := range []int{17000002, 17000003} {
+		if _, ok := m.sessionLastLogout[uid]; !ok {
+			t.Fatalf("current logout uid=%d was not retained", uid)
+		}
+	}
+}
+
+func BenchmarkMarkSessionLogoutRateLimited(b *testing.B) {
+	now := time.Now()
+	m := &RobotManager{
+		sessionReloginDelay:    15 * time.Second,
+		sessionLastLogout:      make(map[int]time.Time, 10_256),
+		sessionLogoutCleanupAt: now.Add(time.Hour),
+	}
+	for uid := 1; uid <= 10_000; uid++ {
+		m.sessionLastLogout[uid] = now.Add(-time.Hour)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.markSessionLogout(20_000+(i&255), now)
+	}
+}
+
 func TestWaitAccountOfflineCompletesDelayedNoCacheBoundary(t *testing.T) {
 	repo := &offlineSessionRepository{}
 	m := testRobotManagerWithConfig(t, "")

@@ -281,10 +281,7 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 		env.Logf("[AutoStore] uid=%d cleanup_offline_failed reason=%s err=%v\n", info.UID, finalReason, err)
 		return AutoAttemptFailed
 	}
-	env.FinishStoreState(info.UID, info.CID, finalReason)
-	if _, recovered := env.RestoreAutoNormalOnline(info, rc, finalReason); !recovered {
-		env.Logf("[AutoStore] uid=%d restore_normal_online_failed reason=%s\n", info.UID, finalReason)
-	}
+	w.finishAndRestoreAutoNormal(info, rc, finalReason)
 	if finalReason == StoreReasonCancelled {
 		return AutoAttemptCancelled
 	}
@@ -307,13 +304,11 @@ func (w Workflow) prepareAutoSession(info robotcap.Info, rc robotconfig.RuntimeC
 	}
 	if prepareErr != nil {
 		env.Logf("[AutoStore] uid=%d prepare_failed err=%v\n", info.UID, prepareErr)
-		env.FinishStoreState(info.UID, info.CID, StoreReasonPrepareFailed)
-		_, _ = env.RestoreAutoNormalOnline(info, rc, StoreReasonPrepareFailed)
+		w.finishAndRestoreAutoNormal(info, rc, StoreReasonPrepareFailed)
 		return StoreReasonPrepareFailed
 	}
 	if cancelled || (shouldStop != nil && shouldStop()) {
-		env.FinishStoreState(info.UID, info.CID, StoreReasonCancelled)
-		_, _ = env.RestoreAutoNormalOnline(info, rc, StoreReasonCancelled)
+		w.finishAndRestoreAutoNormal(info, rc, StoreReasonCancelled)
 		return StoreReasonCancelled
 	}
 	online, err := env.Online(robotcap.CommandRequest{UIDs: []int{info.UID}}, true)
@@ -323,8 +318,7 @@ func (w Workflow) prepareAutoSession(info robotcap.Info, rc robotconfig.RuntimeC
 			env.Logf("[AutoStore] uid=%d full_resume_cleanup_offline_failed err=%v\n", info.UID, offlineErr)
 			return StoreReasonOnlineAttemptFailed
 		}
-		env.FinishStoreState(info.UID, info.CID, StoreReasonOnlineFailed)
-		_, _ = env.RestoreAutoNormalOnline(info, rc, StoreReasonOnlineFailed)
+		w.finishAndRestoreAutoNormal(info, rc, StoreReasonOnlineFailed)
 		return StoreReasonOnlineAttemptFailed
 	}
 	cancelled, err = env.WaitCharacterRunning(info.UID, shouldStop)
@@ -334,8 +328,7 @@ func (w Workflow) prepareAutoSession(info robotcap.Info, rc robotconfig.RuntimeC
 			env.Logf("[AutoStore] uid=%d full_resume_running_cleanup_offline_failed err=%v\n", info.UID, offlineErr)
 			return StoreReasonOnlineAttemptFailed
 		}
-		env.FinishStoreState(info.UID, info.CID, StoreReasonOnlineFailed)
-		_, _ = env.RestoreAutoNormalOnline(info, rc, StoreReasonOnlineFailed)
+		w.finishAndRestoreAutoNormal(info, rc, StoreReasonOnlineFailed)
 		return StoreReasonOnlineAttemptFailed
 	}
 	if cancelled {
@@ -343,11 +336,20 @@ func (w Workflow) prepareAutoSession(info robotcap.Info, rc robotconfig.RuntimeC
 			env.Logf("[AutoStore] uid=%d cancel_cleanup_offline_failed err=%v\n", info.UID, err)
 			return StoreReasonOnlineAttemptFailed
 		}
-		env.FinishStoreState(info.UID, info.CID, StoreReasonCancelled)
-		_, _ = env.RestoreAutoNormalOnline(info, rc, StoreReasonCancelled)
+		w.finishAndRestoreAutoNormal(info, rc, StoreReasonCancelled)
 		return StoreReasonCancelled
 	}
 	return ""
+}
+
+func (w Workflow) finishAndRestoreAutoNormal(info robotcap.Info, rc robotconfig.RuntimeConfig, reason string) bool {
+	env := w.Env
+	env.FinishStoreState(info.UID, info.CID, reason)
+	_, recovered := env.RestoreAutoNormalOnline(info, rc, reason)
+	if !recovered {
+		env.Logf("[AutoStore] uid=%d restore_normal_online_failed reason=%s\n", info.UID, reason)
+	}
+	return recovered
 }
 
 func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, try int, shouldStop func() bool) (bool, string) {

@@ -149,7 +149,7 @@ func TestStorePoolPricesScaleAllRowsWhenWholeDisplayExceedsLimit(t *testing.T) {
 	}
 }
 
-func TestSelectStoreItemsUsesAllowDenyAndMaterialRules(t *testing.T) {
+func TestSelectStoreItemsUsesCatalogMaterialRules(t *testing.T) {
 	preparer := Preparer{Env: testPreparationEnv{catalog: []shared.EquipmentCatalogItem{
 		{ID: 3037, Level: 1, Slot: "material", Trade: true, BasicMaterial: true, Icon: "stackable/material.img", FieldImage: "material/ore", StackLimit: 1000},
 		{ID: 3031, Level: 1, Slot: "material", Trade: true, Icon: "stackable/material.img", FieldImage: "material/cloth", StackLimit: 1000},
@@ -162,32 +162,28 @@ func TestSelectStoreItemsUsesAllowDenyAndMaterialRules(t *testing.T) {
 	rc := robotconfig.RuntimeConfig{
 		StoreItemSlots:         4,
 		StoreInventoryStartBox: 7,
-		StoreItemAllowIDs:      []int{3037, 3031, 3032, 3034, 3035, 7312},
-		StoreItemDenyIDs:       []int{7312},
 	}
 	items := preparer.selectItemsForPlan(robotcap.Info{Level: 10}, rc, InventoryPlanFor(rc.StoreInventoryStartBox), preparer.Env.StackableCatalog())
 
 	got := storeItemIDSet(items)
 	if len(got) != 1 || !got[3037] {
-		t.Fatalf("selected IDs got %v want only basic allowed material 3037", got)
+		t.Fatalf("selected IDs got %v want only basic valid material 3037", got)
 	}
 }
 
-func TestSelectStoreItemsFallbacksToAllowIDs(t *testing.T) {
+func TestSelectStoreItemsDoesNotSynthesizeMissingCatalogEntries(t *testing.T) {
 	preparer := Preparer{Env: testPreparationEnv{catalog: []shared.EquipmentCatalogItem{
-		{ID: 9001, Level: 1, Slot: "material", Trade: true, Icon: "stackable/material.img", FieldImage: "material/not_allowed", StackLimit: 1000},
+		{ID: 9001, Level: 1, Slot: "material", Trade: true, Icon: "stackable/etc.img", FieldImage: "material/invalid", StackLimit: 1000},
 	}}}
 
 	rc := robotconfig.RuntimeConfig{
 		StoreItemSlots:         4,
 		StoreInventoryStartBox: 7,
-		StoreItemAllowIDs:      []int{3037, 3031},
-		StoreItemDenyIDs:       []int{3031},
 	}
 	items := preparer.selectItemsForPlan(robotcap.Info{Level: 10}, rc, InventoryPlanFor(rc.StoreInventoryStartBox), preparer.Env.StackableCatalog())
 
-	if len(items) != 1 || items[0].ID != 3037 || items[0].Slot != "material" {
-		t.Fatalf("fallback items got %+v want synthetic material 3037", items)
+	if len(items) != 0 {
+		t.Fatalf("invalid catalog unexpectedly produced synthetic items: %+v", items)
 	}
 }
 

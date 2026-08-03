@@ -62,7 +62,10 @@ type Position struct {
 type PointCoordinator struct {
 	pointMu        lockhub.Locker
 	cacheMu        lockhub.Locker
+	flushMu        lockhub.Locker
+	activeSave     activePointPersistence
 	configDir      string
+	sourcePath     string
 	sourceName     string
 	sourceMD5      string
 	generatedAt    string
@@ -102,12 +105,17 @@ func (c *PointCoordinator) HasArea(village, area int) bool {
 	return len(c.byArea[areaKey{village, area}]) > 0
 }
 
-func NewPointCoordinator(configDir string, logf func(string, ...interface{})) *PointCoordinator {
+func NewPointCoordinator(stateDir, mapCatalogPath string, logf func(string, ...interface{})) *PointCoordinator {
+	return newPointCoordinator(stateDir, mapCatalogPath, logf)
+}
+
+func newPointCoordinator(configDir, sourcePath string, logf func(string, ...interface{})) *PointCoordinator {
 	if logf == nil {
 		logf = func(string, ...interface{}) {}
 	}
 	c := &PointCoordinator{
 		configDir:      configDir,
+		sourcePath:     sourcePath,
 		byID:           make(map[string]int),
 		byArea:         make(map[areaKey][]int),
 		pointClaims:    make(map[string]pointClaim),
@@ -389,10 +397,9 @@ func (c *PointCoordinator) Report(uid int, pos Position, ok bool, reason string)
 		c.activeDirty++
 	}
 	shouldSave := c.cacheSaveDueLocked()
-	forceActiveSave := activeChanged && c.configDir != ""
 	c.pointMu.Unlock()
-	if forceActiveSave {
-		c.saveActiveOccupancies()
+	if activeChanged {
+		c.scheduleActiveOccupancySave()
 	}
 	if shouldSave {
 		c.saveCache()
@@ -429,8 +436,8 @@ func (c *PointCoordinator) ReleaseUID(uid int) {
 		c.activeDirty += releasedActive
 	}
 	c.pointMu.Unlock()
-	if releasedActive > 0 && c.configDir != "" {
-		c.saveActiveOccupancies()
+	if releasedActive > 0 {
+		c.scheduleActiveOccupancySave()
 	}
 }
 

@@ -15,8 +15,16 @@ import (
 	robotconfig "robot/internal/capability/robotconfig"
 	robottemplate "robot/internal/capability/robottemplate"
 	"robot/internal/foundation/charset"
+	foundationlog "robot/internal/foundation/log"
 	"robot/internal/shared"
 )
+
+type characterInitializer struct {
+	table    string
+	query    string
+	args     []interface{}
+	required bool
+}
 
 func (r *SQLRepository) EnsureAccount(uid int, innerIP string) error {
 	now := time.Now().Unix()
@@ -140,12 +148,6 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 	}
 	infoQuery, infoArgs := createCharacterInfoInsert(info, exp, dbName, columns)
 	statQuery, statArgs := createCharacterStatInsert(info.CID, exp, info.Village)
-	type characterInitializer struct {
-		table    string
-		query    string
-		args     []interface{}
-		required bool
-	}
 	initializers := []characterInitializer{
 		{table: "taiwan_cain.charac_kill_monster_info", query: "INSERT IGNORE INTO taiwan_cain.charac_kill_monster_info (charac_no) VALUES (?)", args: []interface{}{info.CID}},
 		{table: "taiwan_cain.charac_link_message", query: "INSERT IGNORE INTO taiwan_cain.charac_link_message (m_id) VALUES (?)", args: []interface{}{info.UID}},
@@ -158,7 +160,8 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 		{table: "taiwan_cain_2nd.skill", query: "INSERT IGNORE INTO taiwan_cain_2nd.skill (charac_no) VALUES (?)", args: []interface{}{info.CID}, required: true},
 		{table: "taiwan_game_event.event_1306_account_reward", query: "INSERT IGNORE INTO taiwan_game_event.event_1306_account_reward (m_id,charac_no,occ_date) VALUES (?,?,NOW())", args: []interface{}{info.UID, info.CID}},
 	}
-	activeInitializers := make([]characterInitializer, 0, len(initializers))
+	requiredInitializers := make([]characterInitializer, 0, 2)
+	optionalInitializers := make([]characterInitializer, 0, len(initializers)-2)
 	for _, initializer := range initializers {
 		exists, err := r.TableExists(initializer.table)
 		if err != nil {
@@ -170,7 +173,11 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 			}
 			continue
 		}
-		activeInitializers = append(activeInitializers, initializer)
+		if initializer.required {
+			requiredInitializers = append(requiredInitializers, initializer)
+		} else {
+			optionalInitializers = append(optionalInitializers, initializer)
+		}
 	}
 
 	tx, err := r.Begin()
@@ -184,7 +191,7 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 	if _, err := tx.Exec(statQuery, statArgs...); err != nil {
 		return fmt.Errorf("insert charac_stat cid=%d: %w", info.CID, err)
 	}
-	for _, initializer := range activeInitializers {
+	for _, initializer := range requiredInitializers {
 		if _, err := tx.Exec(initializer.query, initializer.args...); err != nil {
 			return fmt.Errorf("initialize character table %s uid=%d cid=%d: %w", initializer.table, info.UID, info.CID, err)
 		}
@@ -192,7 +199,21 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit character creation uid=%d cid=%d: %w", info.UID, info.CID, err)
 	}
+	applyOptionalCharacterInitializers(optionalInitializers, func(query string, args ...interface{}) error {
+		_, err := r.Exec(query, args...)
+		return err
+	}, func(table string, err error) {
+		foundationlog.Robotf("[RobotCreate] optional initializer skipped table=%s uid=%d cid=%d err=%v\n", table, info.UID, info.CID, err)
+	})
 	return nil
+}
+
+func applyOptionalCharacterInitializers(initializers []characterInitializer, execute func(string, ...interface{}) error, report func(string, error)) {
+	for _, initializer := range initializers {
+		if err := execute(initializer.query, initializer.args...); err != nil && report != nil {
+			report(initializer.table, err)
+		}
+	}
 }
 
 func createCharacterInfoInsert(info robotcap.Info, exp int, dbName interface{}, columns map[string]bool) (string, []interface{}) {

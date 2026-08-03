@@ -38,12 +38,6 @@ func (m *RobotManager) RuntimeFileEntries() []filewatch.Entry {
 	}
 }
 
-func (m *RobotManager) invalidateRobotConfigCache() {
-	m.withCache("invalidate_robot_config", func() {
-		m.configSnapshot.Store(nil)
-	})
-}
-
 func (m *RobotManager) ReleaseDefaultKeypair() (keypair.KeypairStatus, error) {
 	return keypair.ReleaseDefault(m.cfg)
 }
@@ -64,13 +58,7 @@ func (m *RobotManager) RobotConfig() (robotcap.ConfigResult, error) {
 func (m *RobotManager) UpdateRobotConfig(req robotcap.ConfigUpdateRequest) (robotcap.ConfigResult, error) {
 	path := layout.New(m.cfg.ConfigDir).RobotConfig()
 	if strings.TrimSpace(req.Text) != "" {
-		if _, err := robotconfig.Parse(req.Text); err != nil {
-			return robotcap.ConfigResult{}, err
-		}
-		if err := atomicfile.WriteFile(path, []byte(req.Text), 0644); err != nil {
-			return robotcap.ConfigResult{}, err
-		}
-		if err := m.reloadRobotConfigFile(path); err != nil {
+		if err := m.writeRobotConfigText(path, req.Text); err != nil {
 			return robotcap.ConfigResult{}, err
 		}
 	} else if len(req.Updates) > 0 {
@@ -110,19 +98,42 @@ func (m *RobotManager) writeRobotConfigValues(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	m.configApplyMu.Lock()
+	defer m.configApplyMu.Unlock()
+
 	path := layout.New(m.cfg.ConfigDir).RobotConfig()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	text := robotconfig.UpdateINIText(string(data), values)
-	if _, err := robotconfig.Parse(text); err != nil {
+	return m.writeRobotConfigTextLocked(path, text)
+}
+
+func (m *RobotManager) writeRobotConfigText(path, text string) error {
+	m.configApplyMu.Lock()
+	defer m.configApplyMu.Unlock()
+	return m.writeRobotConfigTextLocked(path, text)
+}
+
+// writeRobotConfigTextLocked validates every fallible runtime requirement
+// before publishing the new file. Once the atomic rename succeeds, applying
+// the prepared snapshot is in-memory only and cannot leave disk and memory on
+// different configurations.
+func (m *RobotManager) writeRobotConfigTextLocked(path, text string) error {
+	rc, err := robotconfig.Parse(text)
+	if err != nil {
+		return err
+	}
+	base, previous, err := m.prepareRobotConfigLocked(rc)
+	if err != nil {
 		return err
 	}
 	if err := atomicfile.WriteFile(path, []byte(text), 0644); err != nil {
 		return err
 	}
-	return m.reloadRobotConfigFile(path)
+	m.publishRobotConfigLocked(path, base, previous)
+	return nil
 }
 
 func fileModTime(path string) time.Time {
@@ -163,6 +174,8 @@ func robotConfigSnapshotFresh(snapshot *robotConfigSnapshot, now time.Time) bool
 
 func (m *RobotManager) refreshRobotConfig(now time.Time) robotconfig.RuntimeConfig {
 	var out robotconfig.RuntimeConfig
+	m.configApplyMu.Lock()
+	defer m.configApplyMu.Unlock()
 	m.withCache("refresh_robot_config", func() {
 		if snapshot := m.configSnapshot.Load(); robotConfigSnapshotFresh(snapshot, now) {
 			out = snapshot.effective
@@ -206,15 +219,27 @@ func (m *RobotManager) refreshRobotConfig(now time.Time) robotconfig.RuntimeConf
 }
 
 func (m *RobotManager) reloadRobotConfigFile(path string) error {
+	m.configApplyMu.Lock()
+	defer m.configApplyMu.Unlock()
+
 	rc, err := robotconfig.LoadFile(path)
 	if err != nil {
 		return err
 	}
+	base, previous, err := m.prepareRobotConfigLocked(rc)
+	if err != nil {
+		return err
+	}
+	m.publishRobotConfigLocked(path, base, previous)
+	return nil
+}
+
+func (m *RobotManager) prepareRobotConfigLocked(rc robotconfig.RuntimeConfig) (robotconfig.RuntimeConfig, *robotConfigSnapshot, error) {
 	robotconfig.Normalize(&rc)
 	base := robotconfig.Clone(rc)
 	previous := m.configSnapshot.Load()
 	if previous != nil && reflect.DeepEqual(previous.base, base) {
-		return nil
+		return base, previous, nil
 	}
 	if previous == nil || previous.base.MaxOnlineRobots != base.MaxOnlineRobots {
 		dbMaxConnections := 64
@@ -222,12 +247,25 @@ func (m *RobotManager) reloadRobotConfigFile(path string) error {
 			dbMaxConnections = m.cfg.DBMaxSize
 		}
 		if err := process.EnsureOpenFileLimit(base.MaxOnlineRobots, dbMaxConnections); err != nil {
-			return fmt.Errorf("apply max_online_robots=%d: %w", base.MaxOnlineRobots, err)
+			return robotconfig.RuntimeConfig{}, previous, fmt.Errorf("apply max_online_robots=%d: %w", base.MaxOnlineRobots, err)
 		}
+	}
+	return base, previous, nil
+}
+
+func (m *RobotManager) publishRobotConfigLocked(path string, base robotconfig.RuntimeConfig, previous *robotConfigSnapshot) {
+	now := time.Now()
+	if previous != nil && reflect.DeepEqual(previous.base, base) {
+		m.withCache("refresh_robot_config_metadata", func() {
+			m.configSnapshot.Store(&robotConfigSnapshot{
+				base: previous.base, effective: previous.effective,
+				modTime: fileModTime(path), checkedAt: now,
+			})
+		})
+		return
 	}
 	effective := robotconfig.Clone(base)
 	applyAdaptiveSchedulerConfig(&effective, m.adaptiveSchedulerSignals())
-	now := time.Now()
 	m.withCache("apply_robot_config", func() {
 		m.configSnapshot.Store(&robotConfigSnapshot{
 			base: base, effective: effective, modTime: fileModTime(path), checkedAt: now,
@@ -248,33 +286,20 @@ func (m *RobotManager) reloadRobotConfigFile(path string) error {
 		m.stopAutoActorsForDisabledConfig(supervisor, base)
 	}
 	robotLogf("[RuntimeFile] applied robot_config path=%s\n", path)
-	return nil
 }
 
 func (m *RobotManager) SetPartyAccountRangeSink(sink func(start, end int)) {
 	if m == nil {
 		return
 	}
+	m.configApplyMu.Lock()
+	defer m.configApplyMu.Unlock()
 	m.partyAccountRangeSink = sink
 }
 
 func storePoolConfigChanged(old, current robotconfig.RuntimeConfig) bool {
 	return old.StoreEquipmentIntensifyMin != current.StoreEquipmentIntensifyMin ||
-		old.StoreEquipmentIntensifyMax != current.StoreEquipmentIntensifyMax ||
-		!equalInts(old.StoreItemAllowIDs, current.StoreItemAllowIDs) ||
-		!equalInts(old.StoreItemDenyIDs, current.StoreItemDenyIDs)
-}
-
-func equalInts(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for index := range a {
-		if a[index] != b[index] {
-			return false
-		}
-	}
-	return true
+		old.StoreEquipmentIntensifyMax != current.StoreEquipmentIntensifyMax
 }
 
 func (m *RobotManager) refreshAdaptiveRobotConfig(signals adaptiveSchedulerSignals) (robotconfig.RuntimeConfig, schedulerPolicyDecision) {

@@ -5,12 +5,29 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"robot/internal/foundation/atomicfile"
+	"robot/internal/foundation/lockhub"
 )
 
 const (
 	ActivePointCacheFile = "store_points_active.json"
 	activePointCacheVer  = 1
+	activePointSaveDelay = 250 * time.Millisecond
 )
+
+type activePointCacheWriter func(path string, data []byte) error
+
+type activePointPersistence struct {
+	access     lockhub.Locker
+	timer      *time.Timer
+	done       chan struct{}
+	generation uint64
+	pending    bool
+	flushing   bool
+	delay      time.Duration
+	write      activePointCacheWriter
+}
 
 type ActivePointCache struct {
 	Version     int                    `json:"version"`
@@ -22,6 +39,112 @@ type ActivePointCache struct {
 type ActivePointOccupancy struct {
 	PointID string `json:"point_id"`
 	Until   string `json:"until"`
+}
+
+// scheduleActiveOccupancySave coalesces bursts of store starts and releases.
+// Only one timer or writer is active at a time, while Flush cancels and joins
+// it before publishing the final synchronous snapshot.
+func (c *PointCoordinator) scheduleActiveOccupancySave() {
+	if c == nil || c.configDir == "" {
+		return
+	}
+	c.activeSave.access.Lock()
+	defer c.activeSave.access.Unlock()
+	if c.activeSave.flushing || c.activeSave.timer != nil {
+		c.activeSave.pending = true
+		return
+	}
+	c.scheduleActiveOccupancySaveLocked()
+}
+
+func (c *PointCoordinator) scheduleActiveOccupancySaveLocked() {
+	c.activeSave.generation++
+	generation := c.activeSave.generation
+	done := make(chan struct{})
+	c.activeSave.done = done
+	c.activeSave.pending = false
+	delay := c.activeSave.delay
+	if delay <= 0 {
+		delay = activePointSaveDelay
+	}
+	c.activeSave.timer = time.AfterFunc(delay, func() {
+		c.runScheduledActiveOccupancySave(generation, done)
+	})
+}
+
+func (c *PointCoordinator) runScheduledActiveOccupancySave(generation uint64, done chan struct{}) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			c.logActiveOccupancySavePanic(rec)
+		}
+		c.finishScheduledActiveOccupancySave(generation, done)
+	}()
+	c.saveActiveOccupancies()
+}
+
+func (c *PointCoordinator) finishScheduledActiveOccupancySave(generation uint64, done chan struct{}) {
+	c.activeSave.access.Lock()
+	if c.activeSave.generation != generation || c.activeSave.done != done {
+		c.activeSave.access.Unlock()
+		close(done)
+		return
+	}
+	dirty := c.activeOccupanciesDirty()
+	retry := c.activeSave.pending && dirty && !c.activeSave.flushing
+	c.activeSave.timer = nil
+	c.activeSave.done = nil
+	c.activeSave.pending = false
+	close(done)
+	if retry {
+		c.scheduleActiveOccupancySaveLocked()
+	}
+	c.activeSave.access.Unlock()
+}
+
+func (c *PointCoordinator) beginActiveOccupancyFlush() {
+	c.activeSave.access.Lock()
+	c.activeSave.flushing = true
+	c.activeSave.pending = false
+	c.activeSave.generation++
+	timer := c.activeSave.timer
+	done := c.activeSave.done
+	c.activeSave.timer = nil
+	c.activeSave.done = nil
+	stopped := timer != nil && timer.Stop()
+	c.activeSave.access.Unlock()
+
+	if done == nil {
+		return
+	}
+	if stopped {
+		close(done)
+		return
+	}
+	<-done
+}
+
+func (c *PointCoordinator) endActiveOccupancyFlush() {
+	c.activeSave.access.Lock()
+	dirty := c.activeOccupanciesDirty()
+	queuedDuringFlush := c.activeSave.pending
+	c.activeSave.pending = false
+	c.activeSave.flushing = false
+	if queuedDuringFlush && dirty {
+		c.scheduleActiveOccupancySaveLocked()
+	}
+	c.activeSave.access.Unlock()
+}
+
+func (c *PointCoordinator) activeOccupanciesDirty() bool {
+	c.pointMu.Lock()
+	dirty := c.activeDirty > 0
+	c.pointMu.Unlock()
+	return dirty
+}
+
+func (c *PointCoordinator) logActiveOccupancySavePanic(rec interface{}) {
+	defer func() { _ = recover() }()
+	c.logf("[StorePoint] active_cache_panic err=%v\n", rec)
 }
 
 func (c *PointCoordinator) saveActiveOccupancies() {
@@ -44,24 +167,20 @@ func (c *PointCoordinator) saveActiveOccupancies() {
 	}
 	c.pointMu.Unlock()
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		c.logf("[StorePoint] active_cache_mkdir_failed err=%v\n", err)
-		return
-	}
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		c.logf("[StorePoint] active_cache_encode_failed err=%v\n", err)
 		return
 	}
 	cachePath := filepath.Join(configDir, ActivePointCacheFile)
-	tempPath := cachePath + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
-		c.logf("[StorePoint] active_cache_write_failed err=%v\n", err)
-		return
+	write := c.activeSave.write
+	if write == nil {
+		write = func(path string, data []byte) error {
+			return atomicfile.WriteFile(path, data, 0644)
+		}
 	}
-	if err := os.Rename(tempPath, cachePath); err != nil {
-		_ = os.Remove(tempPath)
-		c.logf("[StorePoint] active_cache_replace_failed err=%v\n", err)
+	if err := write(cachePath, data); err != nil {
+		c.logf("[StorePoint] active_cache_write_failed err=%v\n", err)
 		return
 	}
 	c.pointMu.Lock()

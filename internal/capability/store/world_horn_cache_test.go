@@ -76,3 +76,44 @@ func TestWorldHornCacheSharesConcurrentVerification(t *testing.T) {
 		t.Fatalf("concurrent verification calls got %d want 1", calls.Load())
 	}
 }
+
+func TestWorldHornCacheBoundsSuccessfulEntries(t *testing.T) {
+	cache := NewWorldHornCache()
+	for cid := 1; cid <= maxWorldHornCacheEntries+100; cid++ {
+		if err := cache.Ensure(cid, func() error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache.access.Lock()
+	got := len(cache.entries)
+	cache.access.Unlock()
+	if got != maxWorldHornCacheEntries {
+		t.Fatalf("cache entries = %d, want %d", got, maxWorldHornCacheEntries)
+	}
+}
+
+func TestWorldHornCachePanicDoesNotPoisonEntry(t *testing.T) {
+	cache := NewWorldHornCache()
+	if err := cache.Ensure(101, func() error { panic("bad verifier") }); err == nil {
+		t.Fatal("panicking verifier returned nil error")
+	}
+	calls := 0
+	if err := cache.Ensure(101, func() error { calls++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("verification calls = %d, want retry after panic", calls)
+	}
+}
+
+func TestWorldHornCacheContainsPanicWhenCapacityIsFullyInFlight(t *testing.T) {
+	cache := NewWorldHornCache()
+	for cid := 1; cid <= maxWorldHornCacheEntries; cid++ {
+		cache.entries[cid] = &worldHornCacheEntry{done: make(chan struct{})}
+	}
+	if err := cache.Ensure(maxWorldHornCacheEntries+1, func() error {
+		panic("capacity verifier")
+	}); err == nil {
+		t.Fatal("capacity bypass let verifier panic escape as nil")
+	}
+}

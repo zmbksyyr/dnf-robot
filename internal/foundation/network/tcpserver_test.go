@@ -121,3 +121,13 @@ func TestTCPServerRejectsDuplicateStartAndRestartAfterClose(t *testing.T) {
 		t.Fatalf("restart error = %v, want %v", err, ErrTCPServerClosed)
 	}
 }
+
+func TestTCPServerZeroValueCanStartAndClose(t *testing.T) {
+	server := &TCPServer{addr: "127.0.0.1:0"}
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

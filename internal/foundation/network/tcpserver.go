@@ -75,6 +75,14 @@ func NewTCPServer(addr string) *TCPServer {
 }
 
 func (s *TCPServer) SetLimits(maxClients int, readTimeout, writeTimeout time.Duration) {
+	if s == nil {
+		return
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed || s.running.Load() {
+		return
+	}
 	if maxClients > 0 {
 		s.maxClients = maxClients
 	}
@@ -87,6 +95,14 @@ func (s *TCPServer) SetLimits(maxClients int, readTimeout, writeTimeout time.Dur
 }
 
 func (s *TCPServer) OnMessage(callback func(clientID string, data []byte)) {
+	if s == nil {
+		return
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed || s.running.Load() {
+		return
+	}
 	s.onMessage = callback
 }
 
@@ -105,6 +121,7 @@ func (s *TCPServer) Start() error {
 	if s.running.Load() {
 		return ErrTCPServerRunning
 	}
+	s.initializeLocked()
 	listener, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return fmt.Errorf("TCPServer listen %s: %w", s.addr, err)
@@ -114,6 +131,41 @@ func (s *TCPServer) Start() error {
 	s.wg.Add(1)
 	go s.acceptLoop()
 	return nil
+}
+
+func (s *TCPServer) initializeLocked() {
+	if s.addr == "" {
+		s.addr = defaultListenAddr
+	}
+	if s.closeDone == nil {
+		s.closeDone = make(chan struct{})
+	}
+	if s.maxClients <= 0 {
+		s.maxClients = defaultMaxClients
+	}
+	if s.readTimeout <= 0 {
+		s.readTimeout = defaultReadTimeout
+	}
+	if s.writeTimeout <= 0 {
+		s.writeTimeout = defaultWriteTimeout
+	}
+	if s.firstTimeout <= 0 {
+		s.firstTimeout = defaultFirstPacketTimeout
+	}
+	if s.maxPending <= 0 {
+		s.maxPending = defaultMaxPending
+	}
+	if s.maxPendingIP <= 0 {
+		s.maxPendingIP = defaultMaxPendingPerIP
+	}
+	s.clientsMu.Lock()
+	if s.clients == nil {
+		s.clients = make(map[string]*tcpClient)
+	}
+	if s.pendingByIP == nil {
+		s.pendingByIP = make(map[string]int)
+	}
+	s.clientsMu.Unlock()
 }
 
 func (s *TCPServer) acceptLoop() {

@@ -10,10 +10,18 @@ import (
 	"sort"
 	"time"
 
+	"robot/internal/foundation/atomicfile"
 	"robot/internal/shared"
 )
 
 func (c *PointCoordinator) Flush() {
+	if c == nil {
+		return
+	}
+	c.flushMu.Lock()
+	defer c.flushMu.Unlock()
+	c.beginActiveOccupancyFlush()
+	defer c.endActiveOccupancyFlush()
 	c.saveCache()
 	c.saveActiveOccupancies()
 }
@@ -46,10 +54,6 @@ func (c *PointCoordinator) saveCache() {
 	}
 	c.pointMu.Unlock()
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		c.logf("[StorePoint] cache_mkdir_failed err=%v\n", err)
-		return
-	}
 	if cache.Generated == "" {
 		cache.Generated = cache.Updated
 	}
@@ -59,14 +63,8 @@ func (c *PointCoordinator) saveCache() {
 		return
 	}
 	cachePath := filepath.Join(configDir, PointCacheFile)
-	tempPath := cachePath + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+	if err := atomicfile.WriteFile(cachePath, data, 0644); err != nil {
 		c.logf("[StorePoint] cache_write_failed err=%v\n", err)
-		return
-	}
-	if err := os.Rename(tempPath, cachePath); err != nil {
-		_ = os.Remove(tempPath)
-		c.logf("[StorePoint] cache_replace_failed err=%v\n", err)
 		return
 	}
 	c.pointMu.Lock()
@@ -79,8 +77,8 @@ func (c *PointCoordinator) saveCache() {
 }
 
 func (c *PointCoordinator) load() error {
-	sourceName := "pvf_map_catalog.json"
-	sourceData, err := os.ReadFile(filepath.Join(c.configDir, sourceName))
+	sourceName := filepath.Base(c.sourcePath)
+	sourceData, err := os.ReadFile(c.sourcePath)
 	if err != nil {
 		return err
 	}
@@ -124,7 +122,7 @@ func (c *PointCoordinator) load() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(cachePath, data, 0644); err != nil {
+	if err := atomicfile.WriteFile(cachePath, data, 0644); err != nil {
 		return err
 	}
 	c.sourceName = sourceName

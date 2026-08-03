@@ -1,41 +1,37 @@
 package lockhub
 
 import (
-	"sync"
 	"testing"
+	"time"
 )
 
-func TestWithRobotSerializesSameUID(t *testing.T) {
+func TestWithResourceSerializesSameResource(t *testing.T) {
 	h := New()
-	var wg sync.WaitGroup
-	value := 0
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := h.WithRobot(1, "test", func() error {
-				value++
-				return nil
-			}); err != nil {
-				t.Errorf("WithRobot error: %v", err)
-			}
-		}()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- h.WithResource("store", "slot-1", "test", func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- h.WithResource("store", "slot-1", "test", func() error { return nil })
+	}()
+	select {
+	case err := <-secondDone:
+		t.Fatalf("second resource lock entered early: %v", err)
+	case <-time.After(20 * time.Millisecond):
 	}
-	wg.Wait()
-	if value != 100 {
-		t.Fatalf("value=%d, want 100", value)
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestWithResourceTracksResourceLock(t *testing.T) {
-	h := New()
-	if err := h.WithResource("store", "slot-1", "test", func() error {
-		return nil
-	}); err != nil {
-		t.Fatalf("WithResource error: %v", err)
-	}
-	_, resources := h.ActiveLocks()
-	if resources != 1 {
-		t.Fatalf("resources=%d, want 1", resources)
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
 	}
 }

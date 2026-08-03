@@ -8,6 +8,10 @@ import (
 
 const runtimeStatusCacheTTL = 2000 * time.Millisecond
 
+type runtimeStatusMapProvider interface {
+	RuntimeStatusMap() map[int]robotcap.RuntimeStatus
+}
+
 // runtimeStatusMap returns an immutable snapshot. Callers that need to delete
 // or replace entries must use runtimeStatusMapCopy.
 func (m *RobotManager) runtimeStatusMap() map[int]robotcap.RuntimeStatus {
@@ -71,9 +75,8 @@ func (m *RobotManager) refreshRuntimeStatusMap(refreshDone chan struct{}) (statu
 		m.runtimeStatusMu.Unlock()
 	}()
 
-	status = make(map[int]robotcap.RuntimeStatus)
-	for _, st := range m.doll.RuntimeStatus() {
-		status[st.UID] = st
+	status = m.loadRuntimeStatusMap()
+	for _, st := range status {
 		summary.Add(st)
 	}
 	complete = true
@@ -106,6 +109,17 @@ func (m *RobotManager) runtimeStatusMapCopy() map[int]robotcap.RuntimeStatus {
 }
 
 func (m *RobotManager) runtimeStatusMapFresh() map[int]robotcap.RuntimeStatus {
+	return m.loadRuntimeStatusMap()
+}
+
+func (m *RobotManager) loadRuntimeStatusMap() map[int]robotcap.RuntimeStatus {
+	if provider, ok := m.doll.(runtimeStatusMapProvider); ok {
+		status := provider.RuntimeStatusMap()
+		if status == nil {
+			return make(map[int]robotcap.RuntimeStatus)
+		}
+		return status
+	}
 	status := make(map[int]robotcap.RuntimeStatus)
 	for _, st := range m.doll.RuntimeStatus() {
 		status[st.UID] = st

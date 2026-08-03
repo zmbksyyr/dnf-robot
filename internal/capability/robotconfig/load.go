@@ -76,8 +76,6 @@ func decodeConfig(ini *config.INIConfig) (RuntimeConfig, error) {
 	rc.PreferAvatarSets = dec.Bool("avatar", "prefer_avatar_sets", rc.PreferAvatarSets)
 	rc.AvatarSetMinSlots = dec.Int("avatar", "avatar_set_min_slots", rc.AvatarSetMinSlots)
 
-	rc.StoreItemAllowIDs = dec.IntList("store", "store_item_allow_ids", rc.StoreItemAllowIDs)
-	rc.StoreItemDenyIDs = dec.IntList("store", "store_item_deny_ids", rc.StoreItemDenyIDs)
 	rc.StoreItemSlots = dec.Int("store", "store_item_slots", rc.StoreItemSlots)
 	rc.StoreItemCountMin = dec.Int("store", "store_item_count_min", rc.StoreItemCountMin)
 	rc.StoreItemCountMax = dec.Int("store", "store_item_count_max", rc.StoreItemCountMax)
