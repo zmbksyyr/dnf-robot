@@ -45,10 +45,9 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if r.State != StateRun || packet.flag != 0 || len(packet.data) <= 15 {
 			return
 		}
-		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_INFO", "OBSERVED", fmt.Sprintf("type=9 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
 		clears, source, err := partyInfoPacketClearsParty(r.Cipher, packet.data, packet.isAnti)
 		if err != nil {
-			recordPartyDebugPacket(r.UID, 0, "--", "GAME", "PARTY_INFO_PARSE", "FAIL", err.Error(), nil)
+			recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_INFO_PARSE", "FAIL", err.Error(), packet.data)
 			fmt.Printf("[PARTY_INFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, packet.isAnti, packet.size)
 		} else {
 			r.rememberPartyRecvSourceUnsafe(source)
@@ -56,6 +55,15 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 				fmt.Printf("[PARTY_INFO_PLAIN] uid=%d size=%d\n", r.UID, packet.size)
 			}
 			if clears {
+				peers := make([]string, 0, len(r.partyPeers))
+				for _, peer := range r.partyPeers {
+					if partyPeerIdentityKnown(peer) {
+						peers = append(peers, fmt.Sprintf("s%d/a%d/u%d", peer.slot, peer.accID, peer.uniqueID))
+					}
+				}
+				recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_CLEAR", "OK",
+					fmt.Sprintf("source=%s self=s%d/a%d/u%d pending=%d peers=%s", source, r.partySelfPeer.slot,
+						r.partySelfPeer.accID, r.partySelfPeer.uniqueID, r.partyPendingPeer, strings.Join(peers, ",")), packet.data)
 				r.clearPartyUnsafe()
 			} else {
 				r.clearPartyInviteFallbackUnsafe()
@@ -66,10 +74,9 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if r.State != StateRun || packet.flag != 0 {
 			return
 		}
-		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "SNAPSHOT", "OBSERVED", fmt.Sprintf("type=11 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
 		self, peers, source, err := selectPartyIPInfoPacket(r.Cipher, packet.data, packet.isAnti, uint32(r.UID))
 		if err != nil {
-			recordPartyDebugPacket(r.UID, 0, "--", "GAME", "SNAPSHOT_PARSE", "FAIL", err.Error()+" candidates="+partyIPInfoDebugSummary(r.Cipher, packet.data, packet.isAnti), nil)
+			recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "SNAPSHOT_PARSE", "FAIL", err.Error()+" candidates="+partyIPInfoDebugSummary(r.Cipher, packet.data, packet.isAnti), packet.data)
 			fmt.Printf("[PARTY_IPINFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d candidates=%s\n",
 				r.UID, err, packet.isAnti, packet.size, partyIPInfoDebugSummary(r.Cipher, packet.data, packet.isAnti))
 			return
@@ -78,8 +85,8 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		for _, peer := range peers {
 			peerAccounts = append(peerAccounts, fmt.Sprintf("s%d/a%d/u%d/%s:%d", peer.slot, peer.accID, peer.uniqueID, peer.outerIP, peer.port))
 		}
-		recordPartyDebugPacket(r.UID, 0, "--", "GAME", "SNAPSHOT", "OK",
-			fmt.Sprintf("source=%s self=s%d/a%d/u%d/%s:%d peers=%s", source, self.slot, self.accID, self.uniqueID, self.outerIP, self.port, strings.Join(peerAccounts, ",")), nil)
+		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "SNAPSHOT", "OK",
+			fmt.Sprintf("source=%s self=s%d/a%d/u%d/%s:%d peers=%s", source, self.slot, self.accID, self.uniqueID, self.outerIP, self.port, strings.Join(peerAccounts, ",")), packet.data)
 		r.rememberPartyRecvSourceUnsafe(source)
 		if source == recvBodySourcePlain {
 			fmt.Printf("[PARTY_IPINFO_PLAIN] uid=%d size=%d\n", r.UID, packet.size)

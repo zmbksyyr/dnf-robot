@@ -61,7 +61,7 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 	}
 	peer, ok := r.partyPeerForUDPUnsafe(remote, senderSlot)
 	if !ok {
-		recordPartyDebugPacket(r.UID, 0, "RX", "UDP", "PEER_LOOKUP", "DROP", fmt.Sprintf("remote=%s sender_slot=%v size=%d", remote, senderSlot, len(payload)), payload)
+		recordPartyDebugPacket(r.UID, 0, "RX", "UDP", "PEER_LOOKUP", "DROP", fmt.Sprintf("remote=%s sender_slot=%s size=%d", remote, partyDebugSlotValue(senderSlot), len(payload)), payload)
 		r.tracePartyUDPUnsafe("DROP_PEER", remote, senderSlot, 0, 0)
 		return nil
 	}
@@ -69,7 +69,7 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 	advertisedEndpoint := partyPeerEndpointMatches(peer.outerIP, peer.port, remote)
 	if !observedEndpoint && !advertisedEndpoint {
 		if senderSlot == nil || !r.partyTQOSPayloadAuthenticatesPeerUnsafe(payload, 1, peer) {
-			recordPartyDebugPacket(r.UID, peer.accID, "RX", "UDP", "ENDPOINT_AUTH", "DROP", fmt.Sprintf("remote=%s advertised=%s:%d sender_slot=%v size=%d", remote, peer.outerIP, peer.port, senderSlot, len(payload)), payload)
+			recordPartyDebugPacket(r.UID, peer.accID, "RX", "UDP", "ENDPOINT_AUTH", "DROP", fmt.Sprintf("remote=%s advertised=%s:%d sender_slot=%s size=%d", remote, peer.outerIP, peer.port, partyDebugSlotValue(senderSlot), len(payload)), payload)
 			r.tracePartyUDPUnsafe("DROP_ENDPOINT", remote, senderSlot, peer.accID, len(payload))
 			return nil
 		}

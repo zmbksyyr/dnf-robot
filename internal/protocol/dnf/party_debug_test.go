@@ -2,6 +2,8 @@ package dnf
 
 import (
 	"bytes"
+	"compress/zlib"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -20,15 +22,110 @@ func TestPartyDebugCapturesAndBuildsDenseReport(t *testing.T) {
 	}
 	recordPartyDebugPacket(17000003, 0, "RX", "GAME", "INVITE", "OBSERVED", "request_id=7", []byte{7, 1})
 	recordPartyDebugPacket(17000003, 0, "TX", "GAME", "ACCEPT", "OK", "request_id=7", []byte{11, 1})
+	recordPartyDebugPacket(17000003, 0, "RX", "GAME", "SNAPSHOT", "OK", "members=2", []byte{11, 2})
 	recordPartyDebugPacket(17000003, 17000004, "--", "CORE", "TQOS_READY", "OK", "route=1", nil)
 	result := StopPartyDebug()
-	if result.State != "ready" || result.EventCount != 3 || len(result.ReportLines) == 0 {
+	if result.State != "ready" || result.EventCount != 4 || len(result.ReportLines) == 0 {
 		t.Fatalf("result = %+v", result)
 	}
 	joined := strings.Join(result.ReportLines, "\n")
 	for _, want := range []string{"RESULT=SUCCESS", "INV", "TQOS_READY", "request_id=7"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("report missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestPartyDebugSeparatesAttemptsMemberChangesAndRecoveredDrops(t *testing.T) {
+	if current := globalPartyDebug.active.Load(); current != nil {
+		stopPartyDebugSession(current, partyDebugStopUser)
+		<-current.done
+	}
+	StartPartyDebug()
+	recordPartyDebugPacket(17000003, 0, "RX", "GAME", "INVITE", "OBSERVED", "request_id=1", []byte{7, 1})
+	recordPartyDebugPacket(17000003, 0, "TX", "GAME", "ACCEPT", "OK", "request_id=1", []byte{11, 1})
+	recordPartyDebugPacket(17000003, 0, "RX", "GAME", "SNAPSHOT", "OK", "members=2", []byte{11, 2})
+	recordPartyDebugPacket(17000003, 0, "RX", "GAME", "SNAPSHOT", "OK", "members=3", []byte{11, 3})
+	recordPartyDebugPacket(17000003, 0, "RX", "UDP", "PEER_LOOKUP", "DROP", "sender_slot=1", []byte{1})
+	recordPartyDebugPacket(17000003, 17000004, "--", "CORE", "TQOS_READY", "OK", "route=1", nil)
+	recordPartyDebugPacket(17000003, 0, "RX", "GAME", "PARTY_CLEAR", "OK", "peers=s0/a18000000", []byte{9, 1})
+	recordPartyDebugPacket(17000003, 0, "RX", "GAME", "INVITE", "OBSERVED", "request_id=2", []byte{7, 2})
+	recordPartyDebugPacket(17000003, 0, "TX", "GAME", "ACCEPT", "OK", "request_id=2", []byte{11, 2})
+	recordPartyDebugPacket(17000003, 0, "RX", "GAME", "PARTY_CLEAR", "OK", "peers=-", []byte{9, 2})
+	result := StopPartyDebug()
+	joined := strings.Join(result.ReportLines, "\n")
+	for _, want := range []string{
+		"RESULT=PARTIAL JOIN=1/2", "A1 R17000003 JOIN=OK", "STAGE=COMPLETE_CLEARED",
+		"A2 R17000003 JOIN=-", "STAGE=CLEARED_BEFORE_JOIN", "members=2", "members=3",
+		"STATUS=RECOVERED", "PARTY_CLEAR",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("report missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestPartyDebugRecordsParsedPartyClear(t *testing.T) {
+	if current := globalPartyDebug.active.Load(); current != nil {
+		stopPartyDebugSession(current, partyDebugStopUser)
+		<-current.done
+	}
+	var compressed bytes.Buffer
+	writer := zlib.NewWriter(&compressed)
+	if _, err := writer.Write(mustPartyHex(t, "0100220002ffffff486b01ffffffffffff00010000005887dd13")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	vo := &RobotVo{State: StateRun, UID: 17000003, Cipher: newPartyTestCipher(t), partyPendingPeer: 7}
+	vo.partySelfPeer = partyIPPeer{accID: vo.UID, uniqueID: 8, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{accID: 18000000, uniqueID: 9, slot: 0, slotKnown: true}
+	StartPartyDebug()
+	vo.parsePacket(makePartyRecvPacket(9, compressed.Bytes()))
+	result := StopPartyDebug()
+	joined := strings.Join(result.ReportLines, "\n")
+	if !strings.Contains(joined, "PARTY_CLEAR") || !strings.Contains(joined, "self=s1/a17000003/u8") {
+		t.Fatalf("parsed clear was not captured:\n%s", joined)
+	}
+}
+
+func TestPartyDebugSlotValueUsesSlotNotPointer(t *testing.T) {
+	slot := byte(3)
+	if got := partyDebugSlotValue(&slot); got != "3" {
+		t.Fatalf("slot value = %q", got)
+	}
+	if got := partyDebugSlotValue(nil); got != "UNKNOWN" {
+		t.Fatalf("nil slot value = %q", got)
+	}
+}
+
+func TestPartyDebugReportRemainsSinglePageWithManyAttempts(t *testing.T) {
+	if current := globalPartyDebug.active.Load(); current != nil {
+		stopPartyDebugSession(current, partyDebugStopUser)
+		<-current.done
+	}
+	StartPartyDebug()
+	for index := 0; index < 10; index++ {
+		uid := uint32(17000100 + index)
+		note := fmt.Sprintf("request_id=%d", index+1)
+		recordPartyDebugPacket(uid, 0, "RX", "GAME", "INVITE", "OBSERVED", note, []byte{7, byte(index)})
+		recordPartyDebugPacket(uid, 0, "TX", "GAME", "ACCEPT", "OK", note, []byte{11, byte(index)})
+		if index%2 == 0 {
+			recordPartyDebugPacket(uid, 0, "RX", "GAME", "SNAPSHOT", "OK", fmt.Sprintf("members=%d", index+2), []byte{11, byte(index + 2)})
+		} else {
+			recordPartyDebugPacket(uid, 0, "--", "GAME", "SNAPSHOT_WAIT", "TIMEOUT", "wait=15s", nil)
+		}
+		recordPartyDebugPacket(uid, 0, "RX", "GAME", "PARTY_CLEAR", "OK", "peers=-", []byte{9, byte(index)})
+	}
+	result := StopPartyDebug()
+	joined := strings.Join(result.ReportLines, "\n")
+	if len(result.ReportLines) > 36 || len(joined) > 10*1024 {
+		t.Fatalf("many-attempt report exceeded one page: lines=%d bytes=%d\n%s", len(result.ReportLines), len(joined), joined)
+	}
+	for _, want := range []string{"RESULT=PARTIAL JOIN=5/10", "ATTEMPTS_OMITTED=6", "CLEARED_BEFORE_JOIN", "MEMBERS_OMITTED="} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("many-attempt report missing %q:\n%s", want, joined)
 		}
 	}
 }
