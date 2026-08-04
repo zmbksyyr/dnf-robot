@@ -185,8 +185,6 @@ func applyAdaptiveSchedulerConfig(rc *robotconfig.RuntimeConfig, sig adaptiveSch
 
 	rc.AutoMoveIntervalMinSec = robotconfig.Clamp(5+scale, 6, 18)
 	rc.AutoMoveIntervalMaxSec = rc.AutoMoveIntervalMinSec + robotconfig.Clamp(10+scale*2, 12, 36)
-	rc.AutoShoutIntervalMinSec = robotconfig.Clamp(35+scale*5, 40, 90)
-	rc.AutoShoutIntervalMaxSec = rc.AutoShoutIntervalMinSec + robotconfig.Clamp(60+scale*10, 75, 180)
 
 	rc.SchedulerStoreConcurrent = robotconfig.Clamp(target/20, 5, 50)
 	rc.AutoStoreProbabilityPercent = robotconfig.Clamp(120/scale, 5, 35)
@@ -237,8 +235,6 @@ func applyLiveSchedulerFeedback(rc *robotconfig.RuntimeConfig, target int, sig a
 		rc.SchedulerOnlineFillTimeout = robotconfig.Clamp(rc.SchedulerOnlineFillTimeout*2, 60, 300)
 		rc.AutoMoveIntervalMinSec = robotconfig.Clamp(rc.AutoMoveIntervalMinSec*3/2, 10, 45)
 		rc.AutoMoveIntervalMaxSec = robotconfig.Clamp(rc.AutoMoveIntervalMaxSec*3/2, rc.AutoMoveIntervalMinSec+12, 90)
-		rc.AutoShoutIntervalMinSec = robotconfig.Clamp(rc.AutoShoutIntervalMinSec*3/2, 60, 180)
-		rc.AutoShoutIntervalMaxSec = robotconfig.Clamp(rc.AutoShoutIntervalMaxSec*3/2, rc.AutoShoutIntervalMinSec+60, 360)
 		rc.SchedulerStoreConcurrent = robotconfig.Clamp(rc.SchedulerStoreConcurrent/2, 2, 25)
 		rc.AutoStoreProbabilityPercent = robotconfig.Clamp(rc.AutoStoreProbabilityPercent/3, 1, 15)
 		rc.AutoStoreIntervalMinSec = robotconfig.Clamp(rc.AutoStoreIntervalMinSec*3/2, 60, 240)
@@ -272,8 +268,6 @@ func applyLiveSchedulerFeedback(rc *robotconfig.RuntimeConfig, target int, sig a
 		rc.AutoStoreProbabilityPercent = robotconfig.Clamp(rc.AutoStoreProbabilityPercent+robotconfig.Clamp(storeGap, 1, 10), 5, 60)
 		rc.AutoMoveIntervalMinSec = robotconfig.Clamp(rc.AutoMoveIntervalMinSec*9/10, 5, 18)
 		rc.AutoMoveIntervalMaxSec = robotconfig.Clamp(rc.AutoMoveIntervalMaxSec*9/10, rc.AutoMoveIntervalMinSec+10, 54)
-		rc.AutoShoutIntervalMinSec = robotconfig.Clamp(rc.AutoShoutIntervalMinSec*9/10, 30, 90)
-		rc.AutoShoutIntervalMaxSec = robotconfig.Clamp(rc.AutoShoutIntervalMaxSec*9/10, rc.AutoShoutIntervalMinSec+60, 270)
 		rc.AutoStoreIntervalMinSec = robotconfig.Clamp(rc.AutoStoreIntervalMinSec*4/5, 30, 120)
 		rc.AutoStoreIntervalMaxSec = robotconfig.Clamp(rc.AutoStoreIntervalMaxSec*4/5, rc.AutoStoreIntervalMinSec+60, 300)
 		positionTryBoost := robotconfig.Clamp((storeGap+9)/10, 1, 3)

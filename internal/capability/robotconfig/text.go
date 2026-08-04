@@ -82,8 +82,6 @@ func PublicText(text string) string {
 		"auto.auto_game_port_check_timeout_ms": true,
 		"auto.auto_move_interval_min_sec":      true,
 		"auto.auto_move_interval_max_sec":      true,
-		"auto.auto_shout_interval_min_sec":     true,
-		"auto.auto_shout_interval_max_sec":     true,
 		"auto.auto_store_probability_percent":  true,
 		"auto.auto_store_interval_min_sec":     true,
 		"auto.auto_store_interval_max_sec":     true,

@@ -16,8 +16,8 @@ func TestEmbeddedWebAssetsContainRequiredContent(t *testing.T) {
 		{name: "login", content: loginHTML, required: []string{"Robot Web", `action="/login"`, "{{if .Error}}", i18nJSPlaceholder, `id="languageButton"`}},
 		{name: "index", content: indexHTML, required: []string{"TW Robot Web", appCSSPlaceholder, i18nJSPlaceholder, appJSPlaceholder, `id="languageButton"`, `id="partyCompatButton"`, `id="compatButton"`}},
 		{name: "css", content: appCSS, required: []string{":root{", ".service-lights", ".diagrow"}},
-		{name: "i18n", content: i18nJS, required: []string{"I18N_MESSAGES", "tw_language", "toggleLanguage", "currentLanguage=localStorage.getItem(I18N_STORAGE_KEY)==='zh'?'zh':'en'", "market.section_status", "market.price_range_policy", "market.allowed_rarities", "上架稀有度（0-9）", "范围外回收概率"}},
-		{name: "javascript", content: appJS, required: []string{"async function api(", "openPartyCompatDialog", "openCompatDialog", "openDiagnosticsDialog", "restartRobot", "autoMailNotify", "marketAllowedRarities", "normalizeRarityDigits", "allowed_rarities", "marketEquipmentLevelMin", "marketRestockMaxActions", "marketCollectMaxActions", "auto_max_actions", "collector_max_actions"}},
+		{name: "i18n", content: i18nJS, required: []string{"I18N_MESSAGES", "tw_language", "toggleLanguage", "currentLanguage=localStorage.getItem(I18N_STORAGE_KEY)==='zh'?'zh':'en'", "auto.shout_interval", "喊话间隔", "validation.shout_interval", "market.section_status", "market.price_range_policy", "market.allowed_rarities", "上架稀有度（0-9）", "范围外回收概率"}},
+		{name: "javascript", content: appJS, required: []string{"async function api(", "openPartyCompatDialog", "openCompatDialog", "openDiagnosticsDialog", "restartRobot", "autoMailNotify", "autoShoutMin", "autoShoutMax", "auto.auto_shout_interval_min_sec", "auto.auto_shout_interval_max_sec", "marketAllowedRarities", "normalizeRarityDigits", "allowed_rarities", "marketEquipmentLevelMin", "marketRestockMaxActions", "marketCollectMaxActions", "auto_max_actions", "collector_max_actions"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

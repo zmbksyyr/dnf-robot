@@ -119,13 +119,13 @@ func TestLoadRobotConfigSchedulerOnlineDefaults(t *testing.T) {
 	if rc.AutoMoveIntervalMinSec != 6 || rc.AutoMoveIntervalMaxSec != 18 {
 		t.Fatalf("AutoMoveInterval got %d..%d want 6..18", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
 	}
-	if rc.AutoShoutIntervalMinSec != 40 || rc.AutoShoutIntervalMaxSec != 115 {
-		t.Fatalf("AutoShoutInterval got %d..%d want 40..115", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
+	if rc.AutoShoutIntervalMinSec != 45 || rc.AutoShoutIntervalMaxSec != 120 {
+		t.Fatalf("AutoShoutInterval got %d..%d want 45..120", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 	}
 }
 
 func TestLoadRobotConfigSchedulerValuesAreAdaptive(t *testing.T) {
-	m := testRobotManagerWithConfig(t, "[auto]\nauto_target_online_count = 600\nauto_store_probability_percent = 99\nauto_store_interval_min_sec = 1\nauto_store_interval_max_sec = 2\n[scheduler]\nstore_concurrent = 1\nonline_batch_size = 30\nonline_start_rate = 8\nonline_fill_timeout_sec = 90\nbreaker_abnormal_percent = 25\nbreaker_pause_sec = 120\nbreaker_release_batch = 10\nbreaker_floor_percent = 80\nport_down_release_batch = 15\n")
+	m := testRobotManagerWithConfig(t, "[auto]\nauto_target_online_count = 600\nauto_shout_interval_min_sec = 300\nauto_shout_interval_max_sec = 600\nauto_store_probability_percent = 99\nauto_store_interval_min_sec = 1\nauto_store_interval_max_sec = 2\n[scheduler]\nstore_concurrent = 1\nonline_batch_size = 30\nonline_start_rate = 8\nonline_fill_timeout_sec = 90\nbreaker_abnormal_percent = 25\nbreaker_pause_sec = 120\nbreaker_release_batch = 10\nbreaker_floor_percent = 80\nport_down_release_batch = 15\n")
 	rc := m.loadRobotConfig()
 	if rc.SchedulerOnlineBatchSize != 60 {
 		t.Fatalf("SchedulerOnlineBatchSize got %d want 60", rc.SchedulerOnlineBatchSize)
@@ -145,8 +145,8 @@ func TestLoadRobotConfigSchedulerValuesAreAdaptive(t *testing.T) {
 	if rc.AutoMoveIntervalMinSec != 11 || rc.AutoMoveIntervalMaxSec != 33 {
 		t.Fatalf("AutoMoveInterval got %d..%d want 11..33", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
 	}
-	if rc.AutoShoutIntervalMinSec != 65 || rc.AutoShoutIntervalMaxSec != 185 {
-		t.Fatalf("AutoShoutInterval got %d..%d want 65..185", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
+	if rc.AutoShoutIntervalMinSec != 300 || rc.AutoShoutIntervalMaxSec != 600 {
+		t.Fatalf("AutoShoutInterval got %d..%d want configured 300..600", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 	}
 	if rc.AutoStoreIntervalMinSec != 75 || rc.AutoStoreIntervalMaxSec != 195 {
 		t.Fatalf("AutoStoreInterval got %d..%d want 75..195", rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec)
@@ -251,7 +251,7 @@ func TestUpdateRobotConfigPreflightFailureKeepsLastValidFile(t *testing.T) {
 }
 
 func TestAdaptiveSchedulerLiveFeedbackIncreasesStoreWhenHealthy(t *testing.T) {
-	rc := robotconfig.RuntimeConfig{AutoTargetOnlineCount: 600, MaxOnlineRobots: 1000}
+	rc := robotconfig.RuntimeConfig{AutoTargetOnlineCount: 600, MaxOnlineRobots: 1000, AutoShoutIntervalMinSec: 300, AutoShoutIntervalMaxSec: 600}
 	applyAdaptiveSchedulerConfig(&rc, adaptiveSchedulerSignals{
 		Live:          true,
 		Running:       590,
@@ -270,8 +270,8 @@ func TestAdaptiveSchedulerLiveFeedbackIncreasesStoreWhenHealthy(t *testing.T) {
 	if rc.AutoMoveIntervalMinSec != 9 || rc.AutoMoveIntervalMaxSec != 29 {
 		t.Fatalf("AutoMoveInterval got %d..%d want 9..29", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
 	}
-	if rc.AutoShoutIntervalMinSec != 58 || rc.AutoShoutIntervalMaxSec != 166 {
-		t.Fatalf("AutoShoutInterval got %d..%d want 58..166", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
+	if rc.AutoShoutIntervalMinSec != 300 || rc.AutoShoutIntervalMaxSec != 600 {
+		t.Fatalf("AutoShoutInterval got %d..%d want configured 300..600", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 	}
 	if rc.AutoStoreIntervalMinSec != 60 || rc.AutoStoreIntervalMaxSec != 156 {
 		t.Fatalf("AutoStoreInterval got %d..%d want 60..156", rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec)
@@ -344,7 +344,7 @@ func TestAdaptiveSchedulerDoesNotExpandStoresWhileScalingDown(t *testing.T) {
 }
 
 func TestAdaptiveSchedulerLiveFeedbackReducesPressure(t *testing.T) {
-	rc := robotconfig.RuntimeConfig{AutoTargetOnlineCount: 600, MaxOnlineRobots: 1000}
+	rc := robotconfig.RuntimeConfig{AutoTargetOnlineCount: 600, MaxOnlineRobots: 1000, AutoShoutIntervalMinSec: 300, AutoShoutIntervalMaxSec: 600}
 	applyAdaptiveSchedulerConfig(&rc, adaptiveSchedulerSignals{
 		Live:          true,
 		Running:       420,
@@ -369,8 +369,8 @@ func TestAdaptiveSchedulerLiveFeedbackReducesPressure(t *testing.T) {
 	if rc.AutoMoveIntervalMinSec != 16 || rc.AutoMoveIntervalMaxSec != 49 {
 		t.Fatalf("AutoMoveInterval got %d..%d want 16..49", rc.AutoMoveIntervalMinSec, rc.AutoMoveIntervalMaxSec)
 	}
-	if rc.AutoShoutIntervalMinSec != 97 || rc.AutoShoutIntervalMaxSec != 277 {
-		t.Fatalf("AutoShoutInterval got %d..%d want 97..277", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
+	if rc.AutoShoutIntervalMinSec != 300 || rc.AutoShoutIntervalMaxSec != 600 {
+		t.Fatalf("AutoShoutInterval got %d..%d want configured 300..600", rc.AutoShoutIntervalMinSec, rc.AutoShoutIntervalMaxSec)
 	}
 	if rc.AutoStoreIntervalMinSec != 112 || rc.AutoStoreIntervalMaxSec != 292 {
 		t.Fatalf("AutoStoreInterval got %d..%d want 112..292", rc.AutoStoreIntervalMinSec, rc.AutoStoreIntervalMaxSec)
