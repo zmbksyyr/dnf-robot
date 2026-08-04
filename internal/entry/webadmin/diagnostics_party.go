@@ -1,8 +1,11 @@
 package webadmin
 
 import (
-	"robot/internal/capability/robotconfig"
-	"robot/internal/foundation/layout"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"robot/internal/scheduler/repository"
 )
 
 func (b *diagnosticsBuilder) addPartySection() {
@@ -24,51 +27,74 @@ func (b *diagnosticsBuilder) addPartySection() {
 		portDialCheck("relay service", "127.0.0.1", b.cfg.RelayPort),
 		udpListeningCheck("party route0 UDP", b.cfg.PartyRoute0Port),
 	}
-	checks = append(checks, partyAccountRangeCheck(layout.New(b.cfg.ConfigDir).RobotConfig(), status.AccountStart, status.AccountEnd))
+	uids, uidErr := repository.ReadRobotRegistryUIDs(b.cfg)
+	checks = append(checks, partyAccountRangeCheck(uids, uidErr, status.AccountStart, status.AccountEnd))
 	b.addSection("Party", checks...)
 }
 
-func partyAccountRangeCheck(path string, patchStart, patchEnd uint32) diagnosticsCheck {
-	rc, err := robotconfig.LoadFile(path)
-	if err != nil {
-		return diagnosticsCheck{
-			Name:     "party account range",
-			Status:   diagError,
-			Message:  "cannot load robot account range: " + err.Error(),
-			Expected: path,
-		}
-	}
-
+func partyAccountRangeCheck(uids []uint32, loadErr error, patchStart, patchEnd uint32) diagnosticsCheck {
 	observed := map[string]interface{}{
-		"robot_uid_start":     rc.RobotUIDStart,
-		"robot_uid_end":       rc.RobotUIDEnd,
 		"patch_start":         patchStart,
 		"patch_end_exclusive": patchEnd,
+		"robot_total":         len(uids),
 	}
-	expectedStart, expectedEnd, ok := partyCompatConfiguredWindow(rc.RobotUIDStart, rc.RobotUIDEnd)
-	if !ok {
+	if loadErr != nil {
 		return diagnosticsCheck{
 			Name:     "party account range",
 			Status:   diagError,
-			Message:  "configured robot account range is invalid",
+			Message:  "cannot load robot UIDs from d_starsky.robot_registry: " + loadErr.Error(),
+			Expected: "all robot_registry.uid values are inside [patch_start, patch_end_exclusive)",
 			Observed: observed,
 		}
 	}
-	if patchStart > expectedStart || patchEnd < expectedEnd {
+	if len(uids) == 0 {
+		return diagnosticsCheck{
+			Name:     "party account range",
+			Status:   diagWarn,
+			Message:  "robot_registry is empty; party patch range coverage cannot be verified",
+			Observed: observed,
+		}
+	}
+
+	outside := make([]uint32, 0)
+	for _, uid := range uids {
+		if uid < patchStart || uid >= patchEnd {
+			outside = append(outside, uid)
+		}
+	}
+	observed["inside_count"] = len(uids) - len(outside)
+	observed["outside_count"] = len(outside)
+	if len(outside) > 0 {
+		observed["outside_uids"] = outside
 		return diagnosticsCheck{
 			Name:     "party account range",
 			Status:   diagError,
-			Message:  "party patch range does not cover the configured party account window",
-			Expected: map[string]interface{}{"patch_start_lte": expectedStart, "patch_end_exclusive_gte": expectedEnd},
+			Message:  fmt.Sprintf("%d of %d robot UIDs are outside party patch range [%d,%d): %s", len(outside), len(uids), patchStart, patchEnd, summarizePartyUIDs(outside, 10)),
+			Expected: "all robot_registry.uid values are inside [patch_start, patch_end_exclusive)",
 			Observed: observed,
 		}
 	}
 	return diagnosticsCheck{
 		Name:     "party account range",
 		Status:   diagOK,
-		Message:  "party patch range covers the configured party account window",
+		Message:  fmt.Sprintf("all %d robot UIDs are inside party patch range [%d,%d)", len(uids), patchStart, patchEnd),
 		Observed: observed,
 	}
+}
+
+func summarizePartyUIDs(uids []uint32, limit int) string {
+	if limit <= 0 || limit > len(uids) {
+		limit = len(uids)
+	}
+	values := make([]string, 0, limit)
+	for _, uid := range uids[:limit] {
+		values = append(values, strconv.FormatUint(uint64(uid), 10))
+	}
+	result := strings.Join(values, ",")
+	if limit < len(uids) {
+		result += fmt.Sprintf(" ... and %d more", len(uids)-limit)
+	}
+	return result
 }
 
 func partyCompatDiagStatus(status partyCompatStatus) string {

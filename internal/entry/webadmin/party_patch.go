@@ -14,10 +14,6 @@ import (
 	foundationlog "robot/internal/foundation/log"
 )
 
-const (
-	partyCompatDefaultAccountLimit uint64 = 1000
-)
-
 type partyCompatConfig struct {
 	Enabled      bool   `json:"enabled"`
 	AccountStart uint32 `json:"account_start"`
@@ -186,21 +182,6 @@ func (s *Server) readPartyCompatConfig(path string) (partyCompatConfig, error) {
 		return cfg, fmt.Errorf("read party compatibility config: %w", err)
 	}
 	return cfg, nil
-}
-
-func partyCompatConfiguredWindow(start, end int) (uint32, uint32, bool) {
-	if start <= 0 || end < start || uint64(end) >= uint64(^uint32(0)) {
-		return 0, 0, false
-	}
-	exclusiveEnd := uint64(end) + 1
-	limitEnd := uint64(start) + partyCompatDefaultAccountLimit
-	if exclusiveEnd > limitEnd {
-		exclusiveEnd = limitEnd
-	}
-	if exclusiveEnd > uint64(^uint32(0)) {
-		return 0, 0, false
-	}
-	return uint32(start), uint32(exclusiveEnd), true
 }
 
 func (s *Server) savePartyCompatConfig(cfg partyCompatConfig) error {

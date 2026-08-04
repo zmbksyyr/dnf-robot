@@ -80,20 +80,6 @@ func TestPartyCompatHandlerRejectsMissingUnknownAndTrailingJSON(t *testing.T) {
 	}
 }
 
-func TestPartyCompatConfiguredWindowUsesRobotRange(t *testing.T) {
-	start, end, ok := partyCompatConfiguredWindow(18000000, 18000999)
-	if !ok || start != 18000000 || end != 18001000 {
-		t.Fatalf("configured window = %d..%d ok=%t", start, end, ok)
-	}
-}
-
-func TestPartyCompatConfiguredWindowCapsAtOneThousand(t *testing.T) {
-	start, end, ok := partyCompatConfiguredWindow(18000000, 18001999)
-	if !ok || start != 18000000 || end != 18001000 {
-		t.Fatalf("capped configured window = %d..%d ok=%t", start, end, ok)
-	}
-}
-
 func TestPartyCompatRetryBackoffAndAutoOffThreshold(t *testing.T) {
 	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, 60 * time.Second, 60 * time.Second}
 	for i, delay := range want {
