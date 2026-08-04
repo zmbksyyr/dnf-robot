@@ -219,6 +219,9 @@ func (r *RobotVo) RecordPartyDebugBaseline() {
 			peers++
 		}
 	}
+	if r.partyPendingPeer == 0 && peers == 0 {
+		return
+	}
 	note := fmt.Sprintf("state=%d pending=%d self_slot=%d self_slot_known=%t self_unique=%d peers=%d relay=%t udp=%t supervisor=%t",
 		r.State, r.partyPendingPeer, r.partySelfPeer.slot, r.partySelfPeer.slotKnown, r.partySelfPeer.uniqueID, peers,
 		r.partyRelayConn != nil, r.partyUDPConn != nil && r.partyUDPRunning, r.partySupervisorRun)
