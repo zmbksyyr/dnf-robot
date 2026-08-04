@@ -104,8 +104,13 @@ func TestRobotJobNamesAlwaysUseChineseCatalog(t *testing.T) {
 }
 
 func TestDiagnosticsDialogKeepsRawEnglishText(t *testing.T) {
-	if !strings.Contains(appJS, "showModal('Diagnostics',body,'<button onclick=\"closeModal()\">Close</button>','',false)") {
+	if !strings.Contains(appJS, "showModal('Diagnostics',body,'<button onclick=\"closeModal()\">Close</button>','diagnostics',false)") {
 		t.Fatal("diagnostics dialog is not configured to bypass translation")
+	}
+	for _, want := range []string{"Start Party Debug", "Stop &amp; Analyze", "partyDebugStatus", "partyDebugReport"} {
+		if !strings.Contains(appJS, want) {
+			t.Fatalf("party debug UI is missing %q", want)
+		}
 	}
 }
 

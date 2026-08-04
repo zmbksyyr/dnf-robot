@@ -166,8 +166,11 @@ func writePartyUDPReply(conn *net.UDPConn, payload []byte, remote *net.UDPAddr, 
 		return
 	}
 	if err := writePartyUDPDatagram(conn, payload, remote); err != nil {
+		recordPartyTransportFrames(uid, 0, "TX", "UDP", 1, "FAIL", "dst="+remote.String(), payload)
 		fmt.Printf("[PARTY_UDP_ACK_ERROR] uid=%d remote=%s err=%v\n", uid, remote.String(), err)
+		return
 	}
+	recordPartyTransportFrames(uid, 0, "TX", "UDP", 1, "OK", "dst="+remote.String(), payload)
 }
 
 func (r *RobotVo) partyPeerForUDPUnsafe(remote *net.UDPAddr, senderSlot *byte) (partyIPPeer, bool) {

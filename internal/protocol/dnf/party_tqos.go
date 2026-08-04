@@ -61,6 +61,7 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 	}
 	peer, ok := r.partyPeerForUDPUnsafe(remote, senderSlot)
 	if !ok {
+		recordPartyDebugPacket(r.UID, 0, "RX", "UDP", "PEER_LOOKUP", "DROP", fmt.Sprintf("remote=%s sender_slot=%v size=%d", remote, senderSlot, len(payload)), payload)
 		r.tracePartyUDPUnsafe("DROP_PEER", remote, senderSlot, 0, 0)
 		return nil
 	}
@@ -68,6 +69,7 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 	advertisedEndpoint := partyPeerEndpointMatches(peer.outerIP, peer.port, remote)
 	if !observedEndpoint && !advertisedEndpoint {
 		if senderSlot == nil || !r.partyTQOSPayloadAuthenticatesPeerUnsafe(payload, 1, peer) {
+			recordPartyDebugPacket(r.UID, peer.accID, "RX", "UDP", "ENDPOINT_AUTH", "DROP", fmt.Sprintf("remote=%s advertised=%s:%d sender_slot=%v size=%d", remote, peer.outerIP, peer.port, senderSlot, len(payload)), payload)
 			r.tracePartyUDPUnsafe("DROP_ENDPOINT", remote, senderSlot, peer.accID, len(payload))
 			return nil
 		}
@@ -75,6 +77,7 @@ func (r *RobotVo) buildPartyUDPAcks(payload []byte, remote *net.UDPAddr) [][]byt
 	if !observedEndpoint {
 		peer = r.learnPartyPeerEndpointUnsafe(peer, remote)
 	}
+	recordPartyDebugTransport(r.UID, peer.accID, "RX", "UDP", 1, "ACCEPTED", "src="+remote.String(), payload)
 	return r.buildPartyTQOSRepliesUnsafe(payload, 1, peer)
 }
 
@@ -120,6 +123,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 	}
 	frames, ok := splitPartyTransportFrames(payload)
 	if !ok {
+		recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "TRANSPORT_PARSE", "FAIL", fmt.Sprintf("route=%d payload=%d", route, len(payload)), nil)
 		return nil
 	}
 	replies := make([][]byte, 0, len(frames)+1)
@@ -127,6 +131,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 	for _, frame := range frames {
 		if frame[0] == 0x00 {
 			if len(frame) != 8 || frame[1] != peer.slot {
+				recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "TQOS_ACK_VALIDATE", "DROP", fmt.Sprintf("route=%d expected_slot=%d actual_len=%d", route, peer.slot, len(frame)), nil)
 				return nil
 			}
 			r.rememberPartyPeerRouteUnsafe(peer.slot, route, now)
@@ -139,6 +144,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			continue
 		}
 		if frame[7] != peer.slot {
+			recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "TQOS_SLOT_VALIDATE", "DROP", fmt.Sprintf("route=%d expected=%d actual=%d", route, peer.slot, frame[7]), nil)
 			return nil
 		}
 		r.rememberPartyPeerRouteUnsafe(peer.slot, route, now)
@@ -166,6 +172,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			r.queuePartyDungeonFollowUnsafe(frame, peer, now)
 		}
 		if !requestOK {
+			recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "TQOS_PARSE", "FAIL", fmt.Sprintf("route=%d size=%d", route, len(frame)), frame)
 			continue
 		}
 		if request.state == 3 {

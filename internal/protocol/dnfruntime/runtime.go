@@ -318,6 +318,26 @@ func (rs *RobotSvc) PartyActive(uid int) bool {
 	return vo != nil && vo.Snapshot().PartyActive
 }
 
+func (rs *RobotSvc) PartyDebugStart() shared.PartyDebugStatus {
+	status := dnf.StartPartyDebug()
+	task := rs.task()
+	if task == nil {
+		return status
+	}
+	for _, vo := range task.GetRobotVoMap() {
+		vo.RecordPartyDebugBaseline()
+	}
+	return dnf.PartyDebugStatus()
+}
+
+func (rs *RobotSvc) PartyDebugStop() shared.PartyDebugStatus {
+	return dnf.StopPartyDebug()
+}
+
+func (rs *RobotSvc) PartyDebugStatus() shared.PartyDebugStatus {
+	return dnf.PartyDebugStatus()
+}
+
 func (rs *RobotSvc) task() *dnf.RobotDnfTask {
 	if rs == nil || rs.table == nil {
 		return nil

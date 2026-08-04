@@ -119,6 +119,15 @@ func handleRobotCommand(cmd, pkt string, manager *scheduler.RobotManager) (strin
 	case "partySkillReload":
 		res, err := manager.ReloadPartySkills()
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
+	case "partyDebugStart":
+		res, err := manager.PartyDebugStart()
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
+	case "partyDebugStop":
+		res, err := manager.PartyDebugStop()
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
+	case "partyDebugStatus":
+		res, err := manager.PartyDebugStatus()
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
 	case "cleanupRobots":
 		var req robotcap.CleanupRequest
 		if err := decodePayload(pkt, &req); err != nil {

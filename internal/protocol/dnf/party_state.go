@@ -305,6 +305,7 @@ type partyInviteFallbackState struct {
 
 func (r *RobotVo) partyActiveUnsafe() bool {
 	if r.partyPendingPeer != 0 && (r.partyPendingUntil.IsZero() || !time.Now().Before(r.partyPendingUntil)) {
+		recordPartyDebugPacket(r.UID, 0, "--", "GAME", "SNAPSHOT_WAIT", "TIMEOUT", fmt.Sprintf("peer_unique=%d wait=%s", r.partyPendingPeer, partyPendingTimeout), nil)
 		fmt.Printf("[PARTY_SNAPSHOT_TIMEOUT] uid=%d peer_unique_id=%d wait=%s\n", r.UID, r.partyPendingPeer, partyPendingTimeout)
 		r.clearPartyPendingUnsafe()
 	}
@@ -323,6 +324,7 @@ func (r *RobotVo) setPartyPendingUnsafe(uniqueID uint16) {
 	}
 	r.partyPendingPeer = uniqueID
 	r.partyPendingUntil = time.Now().Add(partyPendingTimeout)
+	recordPartyDebugPacket(r.UID, 0, "--", "CORE", "PARTY_PENDING", "OK", fmt.Sprintf("peer_unique=%d timeout=%s", uniqueID, partyPendingTimeout), nil)
 	r.ensurePartyUDPLoopUnsafe()
 	r.ensurePartySupervisorUnsafe()
 }
@@ -384,10 +386,12 @@ func (r *RobotVo) flushPartyInviteFallbackUnsafe(now time.Time, epoch uint64) bo
 	pkt, err := buildSendPacket(11, uint16(r.PacketID), fallback.data[:], r.Cipher)
 	r.PacketID++
 	if err != nil {
+		recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "ACCEPT_FALLBACK", "FAIL", "build: "+err.Error(), nil)
 		fmt.Printf("[PARTY_FALLBACK_BUILD_ERROR] uid=%d err=%v\n", r.UID, err)
 		return false
 	}
 	if !r.sendRaw(pkt) {
+		recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "ACCEPT_FALLBACK", "FAIL", "send rejected", pkt)
 		fmt.Printf("[PARTY_FALLBACK_SEND_ERROR] uid=%d\n", r.UID)
 		return false
 	}
@@ -399,6 +403,8 @@ func (r *RobotVo) flushPartyInviteFallbackUnsafe(now time.Time, epoch uint64) bo
 	r.rememberPartyRecvSourceUnsafe(fallback.source)
 	r.setPartyPendingUnsafe(uniqueID)
 	r.ensurePartyRelayUnsafe()
+	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "ACCEPT_FALLBACK", "OK",
+		fmt.Sprintf("peer_unique=%d request_id=%d source=%s", uniqueID, binary.LittleEndian.Uint32(fallback.data[3:7]), fallback.source), pkt)
 	fmt.Printf("[PARTY_FALLBACK_ACCEPT] uid=%d peer_unique_id=%d request_id=%d source=%s\n",
 		r.UID, uniqueID, binary.LittleEndian.Uint32(fallback.data[3:7]), fallback.source)
 	return true

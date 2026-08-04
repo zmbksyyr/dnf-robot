@@ -50,6 +50,7 @@ func (r *RobotVo) ensurePartyRelayUnsafe() {
 func (r *RobotVo) connectPartyRelay(generation uint64, uid uint32, relayAddr string, dial partyRelayDialFunc) {
 	conn, err := dial("tcp", relayAddr, 3*time.Second)
 	if err != nil {
+		recordPartyDebugPacket(uid, 0, "--", "RELAY", "RELAY_CONNECT", "FAIL", fmt.Sprintf("addr=%s err=%v", relayAddr, err), nil)
 		r.finishPartyRelayConnect(generation, nil)
 		fmt.Printf("[PARTY_RELAY_CONNECT_ERROR] uid=%d addr=%s err=%v\n", uid, relayAddr, err)
 		return
@@ -62,11 +63,13 @@ func (r *RobotVo) connectPartyRelay(generation uint64, uid uint32, relayAddr str
 		return
 	}
 	if err := r.writePartyRelayConn(conn, auth); err != nil {
+		recordPartyDebugPacket(uid, 0, "TX", "RELAY", "RELAY_AUTH", "FAIL", err.Error(), auth)
 		_ = conn.Close()
 		r.finishPartyRelayConnect(generation, nil)
 		fmt.Printf("[PARTY_RELAY_AUTH_ERROR] uid=%d err=%v\n", uid, err)
 		return
 	}
+	recordPartyDebugPacket(uid, 0, "TX", "RELAY", "RELAY_AUTH", "OK", "write_ok", auth)
 	if !r.finishPartyRelayConnect(generation, conn) {
 		_ = conn.Close()
 		return
@@ -95,6 +98,7 @@ func (r *RobotVo) finishPartyRelayConnect(generation uint64, conn net.Conn) bool
 		r.partyRouteFailures[slot][2] = 0
 	}
 	r.startPartyRelayWriterUnsafe(conn)
+	recordPartyDebugPacket(r.UID, 0, "--", "RELAY", "RELAY_CONNECTED", "OK", "connected", nil)
 	fmt.Printf("[PARTY_RELAY_CONNECTED] uid=%d\n", r.UID)
 	return true
 }
@@ -208,6 +212,7 @@ func (r *RobotVo) partyRelayWriteLoop(writer *partyRelayWriter, uid uint32) {
 			return
 		case packet := <-writer.packets:
 			if err := r.writePartyRelayConn(writer.conn, packet); err != nil {
+				recordPartyDebugPacket(uid, 0, "TX", "RELAY", "RELAY_PACKET", "FAIL", err.Error(), packet)
 				unexpected := r.detachPartyRelayConn(writer.conn)
 				_ = writer.conn.Close()
 				if unexpected {
@@ -215,6 +220,11 @@ func (r *RobotVo) partyRelayWriteLoop(writer *partyRelayWriter, uid uint32) {
 				}
 				return
 			}
+			peer := uint32(0)
+			if len(packet) >= 12 {
+				peer = binary.LittleEndian.Uint32(packet[8:12])
+			}
+			recordPartyDebugPacket(uid, peer, "TX", "RELAY", "RELAY_PACKET", "OK", "", packet)
 		}
 	}
 }
@@ -310,9 +320,21 @@ func (r *RobotVo) partyRelayLoop(conn net.Conn, uid uint32) {
 			}
 			packet := append([]byte(nil), pending[:size]...)
 			pending = pending[size:]
+			src := uint32(0)
+			if len(packet) >= 12 {
+				src = binary.LittleEndian.Uint32(packet[4:8])
+			}
+			recordPartyDebugPacket(uid, src, "RX", "RELAY", "RELAY_PACKET", "OBSERVED", "", packet)
 			r.handlePartyRelayPacket(conn, packet)
 		}
 	}
+}
+
+func describePartyRelayHeader(packet []byte) string {
+	if len(packet) < 12 {
+		return fmt.Sprintf("invalid_header actual=%d", len(packet))
+	}
+	return fmt.Sprintf("type=%d declared=%d src=%d dst=%d payload=%d", binary.LittleEndian.Uint16(packet[0:2]), binary.LittleEndian.Uint16(packet[2:4]), binary.LittleEndian.Uint32(packet[4:8]), binary.LittleEndian.Uint32(packet[8:12]), len(packet)-12)
 }
 
 func (r *RobotVo) handlePartyRelayPacket(conn net.Conn, packet []byte) {
@@ -324,9 +346,14 @@ func (r *RobotVo) handlePartyRelayPacket(conn net.Conn, packet []byte) {
 	dst := binary.LittleEndian.Uint32(packet[8:12])
 	payload := packet[12:]
 	if typ != 3 || src == 0 || src == r.UID || dst != r.UID || len(payload) == 0 {
+		recordPartyDebugPacket(r.UID, src, "--", "RELAY", "RELAY_DISPATCH", "IGNORE", fmt.Sprintf("type=%d src=%d dst=%d payload=%d", typ, src, dst, len(payload)), nil)
 		return
 	}
+	recordPartyTransportFrames(r.UID, src, "RX", "RELAY", 2, "OBSERVED", "relay_src", payload)
 	replies := r.buildPartyRelayReplies(payload, src)
+	for _, replyPayload := range replies {
+		recordPartyTransportFrames(r.UID, src, "TX", "RELAY", 2, "QUEUED", "relay_reply", replyPayload)
+	}
 	groups, err := groupPartyTransportFrames(replies, partyRelayMaxPacketSize-12)
 	if err != nil {
 		fmt.Printf("[PARTY_RELAY_REPLY_ERROR] uid=%d dst=%d err=%v\n", r.UID, src, err)

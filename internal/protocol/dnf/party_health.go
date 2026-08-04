@@ -26,6 +26,7 @@ func (r *RobotVo) setPartyRobotRouteReadyUnsafe(peer partyIPPeer, route byte, re
 		r.partyPeerRouteAt[peer.slot] = now
 		r.partyRouteActivityAt[peer.slot][route] = now
 		if !wasRouteReady {
+			recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "TQOS_READY", "OK", fmt.Sprintf("slot=%d route=%d reason=%s", peer.slot, route, reason), nil)
 			fmt.Printf("[PARTY_ROBOT_TQOS_READY] uid=%d peer=%d slot=%d route=%d reason=%s\n", r.UID, peer.accID, peer.slot, route, reason)
 		}
 		r.partyRobotProbeAt[peer.slot] = time.Time{}
@@ -100,6 +101,8 @@ func (r *RobotVo) markPartyRouteFailureUnsafe(peer partyIPPeer, route byte, now 
 		return
 	}
 	r.partyRouteDiagAt[peer.slot][route] = now.Add(partyRouteDiagGap)
+	recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "ROUTE_DEGRADED", "FAIL",
+		fmt.Sprintf("slot=%d route=%d failures=%d retry=%s reason=%s", peer.slot, route, failures, delay, reason), nil)
 	fmt.Printf("[PARTY_ROUTE_DEGRADED] uid=%d peer=%d slot=%d route=%d failures=%d retry_in=%s reason=%s\n",
 		r.UID, peer.accID, peer.slot, route, failures, delay, reason)
 	if failedOver {

@@ -23,13 +23,16 @@ func (r *RobotVo) sendPartyOptionUnsafe() bool {
 	pkt, err := buildSendPacket(200, uint16(r.PacketID), body[:], r.Cipher)
 	r.PacketID++
 	if err != nil {
+		recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "PARTY_OPTION", "FAIL", "build: "+err.Error(), nil)
 		fmt.Printf("[PARTY_OPTION_BUILD_ERROR] uid=%d err=%v\n", r.UID, err)
 		return false
 	}
 	if !r.sendRaw(pkt) {
+		recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "PARTY_OPTION", "FAIL", "send rejected", pkt)
 		fmt.Printf("[PARTY_OPTION_SEND_ERROR] uid=%d\n", r.UID)
 		return false
 	}
+	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "PARTY_OPTION", "OK", "allow_party option sent", pkt)
 	r.partyOptionSent = true
 	return true
 }
@@ -64,13 +67,16 @@ func (r *RobotVo) sendNATInfoUpdateUnsafe(force bool) bool {
 	pkt, err := buildSendPacket(2, uint16(r.PacketID), body, r.Cipher)
 	r.PacketID++
 	if err != nil {
+		recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "FAIL", "build: "+err.Error(), nil)
 		fmt.Printf("[NAT_BUILD_ERROR] uid=%d err=%v\n", r.UID, err)
 		return false
 	}
 	if !r.sendRaw(pkt) {
+		recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "FAIL", "send rejected", pkt)
 		fmt.Printf("[NAT_SEND_ERROR] uid=%d\n", r.UID)
 		return false
 	}
+	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "OK", fmt.Sprintf("ip=%s port=%d mtu=%d", udpAddr.IP, udpAddr.Port, partyDefaultUDPMTU), pkt)
 	r.natInfoSent = true
 	return true
 }
@@ -97,6 +103,11 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 			return remote.String(), err
 		}
 		err := writePartyUDPDatagram(conn, payload, remote)
+		decision := "OK"
+		if err != nil {
+			decision = "FAIL"
+		}
+		recordPartyTransportFrames(r.UID, peer.accID, "TX", "UDP", route, decision, "dst="+remote.String(), payload)
 		if err != nil {
 			r.markPartyRouteFailureUnsafe(peer, route, time.Now(), err.Error())
 		}
@@ -119,6 +130,11 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 			return "relay", err
 		}
 		err = r.enqueuePartyRelayPacketUnsafe(relay, packet)
+		decision := "QUEUED"
+		if err != nil {
+			decision = "FAIL"
+		}
+		recordPartyTransportFrames(r.UID, peer.accID, "TX", "RELAY", route, decision, "dst=relay", payload)
 		if err != nil && r.partyRelayConn == relay {
 			r.detachPartyRelayConnUnsafe(relay)
 			_ = relay.Close()
@@ -127,6 +143,10 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 	default:
 		return "", fmt.Errorf("unsupported party route %d", route)
 	}
+}
+
+func recordPartyTransportFrames(uid, peer uint32, direction, channel string, route byte, decision, suffix string, payload []byte) {
+	recordPartyDebugTransport(uid, peer, direction, channel, route, decision, suffix, payload)
 }
 
 func writePartyUDPDatagram(conn *net.UDPConn, payload []byte, remote *net.UDPAddr) error {
