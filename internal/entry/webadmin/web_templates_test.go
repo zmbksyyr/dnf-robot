@@ -140,7 +140,7 @@ func TestRequestedChineseLabelsAndDialogWidths(t *testing.T) {
 
 func TestMarketDialogUsesCompactAlignedLayout(t *testing.T) {
 	for _, want := range []string{
-		"dialog.market{width:min(680px,96vw)",
+		"dialog.market{width:min(600px,96vw)",
 		"dialog.market .formgrid>label{white-space:nowrap}",
 		"dialog.market .market-range",
 		"showModal('Market',body,foot,'market')",
@@ -167,12 +167,29 @@ func TestAutoDialogUsesStandardFooterWithoutWrapping(t *testing.T) {
 	for _, want := range []string{
 		`const foot='<button onclick="submitAuto(null)">Save settings</button>`,
 		"showModal('Auto',body,foot)",
-		".auto-form>.auto-option{width:220px}",
+		".auto-form>input[type=number]{width:120px}",
 		".auto-option{white-space:nowrap}",
 	} {
 		if !strings.Contains(appCSS+appJS, want) {
 			t.Fatalf("Auto dialog layout is missing %q", want)
 		}
+	}
+}
+
+func TestMarketFieldsUseOneCompactAlignment(t *testing.T) {
+	for _, want := range []string{
+		"dialog.market .formgrid{grid-template-columns:160px minmax(0,1fr)}",
+		"grid-template-columns:minmax(0,150px) max-content",
+		"grid-template-columns:68px 16px 68px max-content",
+		"marketUpgradeMax",
+		"marketStackSizes",
+	} {
+		if !strings.Contains(appCSS+appJS, want) {
+			t.Fatalf("compact market alignment is missing %q", want)
+		}
+	}
+	if strings.Index(appJS, "marketUpgradeMax") > strings.Index(appJS, "marketStackSizes") {
+		t.Fatal("stack sizes must appear below upgrade in the market dialog")
 	}
 }
 
