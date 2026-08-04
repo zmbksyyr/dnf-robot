@@ -151,14 +151,16 @@ func partyIPInfoMemberWithIDValid(entry []byte) bool {
 	if binary.LittleEndian.Uint16(entry[0:2]) == 0 && partyIPInfoIPZero(entry[2:6]) && partyIPInfoIPZero(entry[6:10]) {
 		return true
 	}
-	return partyIPInfoPrivateIP(entry[2:6]) && partyIPInfoEndpointIP(entry[6:10])
+	return partyIPInfoEndpointIP(entry[2:6]) && partyIPInfoEndpointIP(entry[6:10]) &&
+		partyIPInfoNetworkFieldsValid(binary.BigEndian.Uint16(entry[10:12]), binary.LittleEndian.Uint32(entry[12:16]), binary.LittleEndian.Uint32(entry[17:21]))
 }
 
 func partyIPInfoMemberWithoutIDValid(entry []byte) bool {
 	if len(entry) < 19 {
 		return false
 	}
-	return partyIPInfoPrivateIP(entry[0:4]) && partyIPInfoEndpointIP(entry[4:8])
+	return partyIPInfoEndpointIP(entry[0:4]) && partyIPInfoEndpointIP(entry[4:8]) &&
+		partyIPInfoNetworkFieldsValid(binary.BigEndian.Uint16(entry[8:10]), binary.LittleEndian.Uint32(entry[10:14]), binary.LittleEndian.Uint32(entry[15:19]))
 }
 
 func partyIPInfoMemberWithID(entry []byte, slot byte) partyIPPeer {
@@ -186,18 +188,15 @@ func partyIPInfoMemberWithoutID(entry []byte, slot byte) partyIPPeer {
 	}
 }
 
-func partyIPInfoPrivateIP(ip []byte) bool {
-	if len(ip) < 4 {
-		return false
-	}
-	return ip[0] == 10 || (ip[0] == 192 && ip[1] == 168) || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31)
-}
-
 func partyIPInfoEndpointIP(ip []byte) bool {
 	if len(ip) < net.IPv4len {
 		return false
 	}
-	return net.IPv4(ip[0], ip[1], ip[2], ip[3]).IsGlobalUnicast()
+	return ip[0] != 0 && ip[0] < 224
+}
+
+func partyIPInfoNetworkFieldsValid(port uint16, accID, mtu uint32) bool {
+	return port != 0 && accID != 0 && mtu >= 256 && mtu <= 65535
 }
 
 func partyIPInfoIPZero(ip []byte) bool {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	robotcap "robot/internal/capability/robot"
+	robotconfig "robot/internal/capability/robotconfig"
 	"robot/internal/shared"
 )
 
@@ -23,8 +24,17 @@ type directLogoutEnv struct {
 func (*directLogoutEnv) CountRuntimeRunning() int                    { return 0 }
 func (*directLogoutEnv) EnsureWorldHornByCID(int) error              { return nil }
 func (*directLogoutEnv) RobotConnectIP() string                      { return "127.0.0.1" }
+func (*directLogoutEnv) RobotInnerIP() string                        { return "10.0.0.1" }
 func (*directLogoutEnv) RobotGamePort() int                          { return 20011 }
 func (*directLogoutEnv) SendOnline([]shared.RuntimeOnlineUser) error { return nil }
+
+func TestOnlinePayloadSeparatesGameAndLoginIPs(t *testing.T) {
+	service := SessionService{Env: &directLogoutEnv{}}
+	payload := service.onlinePayload(robotcap.Info{UID: 17000001, CID: 900001}, 0, robotconfig.RuntimeConfig{})
+	if payload.IP != "127.0.0.1" || payload.LoginIP != "10.0.0.1" {
+		t.Fatalf("game IP=%q login IP=%q", payload.IP, payload.LoginIP)
+	}
+}
 
 func (e *directLogoutEnv) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {
 	e.statusCalls++

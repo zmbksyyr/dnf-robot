@@ -31,7 +31,7 @@ func (r *RobotVo) ensurePartyRelayUnsafe() {
 	if r.partyRelayConn != nil || r.partyRelayConnecting || r.State != StateRun || r.Conn == nil || !r.partyActiveUnsafe() || r.LoginIP == "" {
 		return
 	}
-	host := r.LoginIP
+	host := currentPartyRelayHost()
 	now := time.Now()
 	if !r.partyRelayNextAt.IsZero() && now.Before(r.partyRelayNextAt) {
 		return

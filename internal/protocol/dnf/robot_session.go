@@ -160,6 +160,8 @@ type RobotVo struct {
 	townEntityPositions         map[uint16]townEntityPosition
 	townEntitySweepAt           time.Time
 	partyUDPConn                *net.UDPConn
+	partyUDPMTU                 int
+	partyUDPNetwork             *net.IPNet
 	partyUDPRunning             bool
 	partyUDPGeneration          uint64
 	partySupervisorRun          bool
@@ -526,8 +528,8 @@ func (r *RobotVo) connectContext(ctx context.Context, dial robotDialContextFunc)
 		r.mu.Unlock()
 		return
 	}
-	if gameIP == "" || gameIP == "127.0.0.1" {
-		gameIP = "10.0.0.1"
+	if gameIP == "" {
+		gameIP = "127.0.0.1"
 	}
 
 	conn, err := dial(ctx, gameIP, gamePort, localIP)

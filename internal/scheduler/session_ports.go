@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	robotcap "robot/internal/capability/robot"
@@ -101,6 +102,13 @@ func (e sessionActionEnv) InvalidateCharacterCache(uid int) error {
 
 func (e sessionActionEnv) RobotConnectIP() string {
 	return e.manager.robotConnectIP()
+}
+
+func (e sessionActionEnv) RobotInnerIP() string {
+	if e.manager == nil || e.manager.cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(e.manager.cfg.RobotInnerIP)
 }
 
 func (e sessionActionEnv) RobotGamePort() int {

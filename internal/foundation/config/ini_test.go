@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -173,6 +174,20 @@ WebPassword = twadmin
 	}
 	if cfg.GameServerGroup != 4 {
 		t.Fatalf("game server group = %d, want 4", cfg.GameServerGroup)
+	}
+	if cfg.RobotConnectIPSetting != "127.0.0.1" || cfg.RobotConnectIP != "127.0.0.1" {
+		t.Fatalf("connect setting=%q resolved=%q", cfg.RobotConnectIPSetting, cfg.RobotConnectIP)
+	}
+}
+
+func TestLoadConfigResolvesAutoConnectIP(t *testing.T) {
+	text := strings.Replace(defaultConfigForTest(), "RobotConnectIp = 127.0.0.1", "RobotConnectIp = auto", 1)
+	cfg, err := ParseConfig(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RobotConnectIPSetting != "auto" || strings.TrimSpace(cfg.RobotConnectIP) == "" {
+		t.Fatalf("connect setting=%q resolved=%q", cfg.RobotConnectIPSetting, cfg.RobotConnectIP)
 	}
 }
 

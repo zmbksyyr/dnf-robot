@@ -301,6 +301,27 @@ func TestPartyTransportReplyGroupingRespectsDatagramLimit(t *testing.T) {
 	}
 }
 
+func TestPartyPeerUDPAddressCanSwitchBetweenOuterAndInner(t *testing.T) {
+	peer := partyIPPeer{
+		innerIP: net.IPv4(10, 0, 0, 2),
+		outerIP: net.IPv4(203, 0, 113, 2),
+		port:    5063,
+	}
+	primary, source, ok := partyPeerUDPAddrForLocal(peer, nil, false)
+	if !ok || source != "OUTER" || !primary.IP.Equal(peer.outerIP) {
+		t.Fatalf("primary=%v source=%s ok=%v", primary, source, ok)
+	}
+	alternate, source, ok := partyPeerUDPAddrForLocal(peer, nil, true)
+	if !ok || source != "INNER" || !alternate.IP.Equal(peer.innerIP) {
+		t.Fatalf("alternate=%v source=%s ok=%v", alternate, source, ok)
+	}
+	peer.observedIP, peer.observedPort = net.IPv4(198, 51, 100, 8), 62000
+	observed, source, ok := partyPeerUDPAddrForLocal(peer, nil, true)
+	if !ok || source != "OBSERVED" || observed.Port != 62000 || !observed.IP.Equal(peer.observedIP) {
+		t.Fatalf("observed=%v source=%s ok=%v", observed, source, ok)
+	}
+}
+
 func TestPartyTransportBuildersRejectLengthTruncation(t *testing.T) {
 	if _, err := buildPartyRelayPacket(1, 1, 2, make([]byte, partyRelayMaxPacketSize-11)); err == nil {
 		t.Fatal("oversized relay payload was accepted")
@@ -486,6 +507,8 @@ func TestPartySelfIdentityStallRebuildsUDPWithoutRelay(t *testing.T) {
 }
 
 func TestEnsurePartyRelayIsAsyncSingleflightAndUsesLoginIP(t *testing.T) {
+	ConfigurePartyRelayHost("192.0.2.44")
+	t.Cleanup(func() { ConfigurePartyRelayHost("127.0.0.1") })
 	gameConn, gamePeer := net.Pipe()
 	defer gameConn.Close()
 	defer gamePeer.Close()

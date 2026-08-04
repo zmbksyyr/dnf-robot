@@ -53,7 +53,11 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 		return DnfTableTaskResult{Msg: "no database connection"}
 	}
 	for _, user := range users {
-		if !repairLoginPrerequisites(db, user.UID, user.IP) {
+		loginIP := user.LoginIP
+		if loginIP == "" {
+			loginIP = user.IP
+		}
+		if !repairLoginPrerequisites(db, user.UID, loginIP) {
 			return DnfTableTaskResult{Msg: "repair login prerequisites failed"}
 		}
 	}
@@ -97,8 +101,13 @@ func (dt *DnfTableDrive) dispatchOnline(task *RobotDnfTask, users []shared.Runti
 }
 
 func validOnlineUser(user shared.RuntimeOnlineUser) bool {
+	loginIP := user.LoginIP
+	if loginIP == "" {
+		loginIP = user.IP
+	}
 	return positiveUint32(user.UID) && positiveUint32(user.CID) &&
-		uint8Range(user.CharacterSlot) && len(user.IP) > 0 && len(user.IP) <= 15 &&
+		uint8Range(user.CharacterSlot) && len(user.IP) > 0 && len(user.IP) <= 253 &&
+		len(loginIP) > 0 && len(loginIP) <= 15 &&
 		user.Port > 0 && user.Port < 1<<16 &&
 		uint32Range(user.MaxReconnect) && uint32Range(user.ReconnectDelay) &&
 		uint8Range(user.BirthVillage) && uint8Range(user.BirthArea) && uint8Range(user.BirthGateArea) &&

@@ -218,7 +218,7 @@ func (b *diagnosticsBuilder) addFileSection() {
 	configDir := b.cfg.ConfigDir
 	runtimePaths := layout.New(configDir)
 	gameDir := filepath.Dir(b.cfg.DFGameR)
-	serviceRoot := config.DNFServiceRoot(b.cfg.DFGameR)
+	serviceRoot := b.cfg.ServiceRoot
 	auctionItemInfo := filepath.Join(serviceRoot, "auction", "iteminfo.dat")
 	pointItemInfo := filepath.Join(serviceRoot, "point", "iteminfo.dat")
 	paths := []struct {
@@ -258,7 +258,11 @@ func (b *diagnosticsBuilder) addMarketSection() {
 	} else {
 		checks = append(checks, diagnosticsCheck{Name: "marketStatus", Status: diagWarn, Message: err.Error()})
 	}
-	checks = append(checks, auctionGuardCheck(diagnosticsDFGameRJSPath, diagnosticsServerRunPath))
+	runScript := strings.TrimSpace(b.cfg.ServiceRunScript)
+	if runScript == "" {
+		runScript = diagnosticsServerRunPath
+	}
+	checks = append(checks, auctionGuardCheck(diagnosticsDFGameRJSPath, runScript))
 	checks = append(checks, auctionMemoryPatchReadOnlyCheck())
 	b.addSection("Market", checks...)
 }

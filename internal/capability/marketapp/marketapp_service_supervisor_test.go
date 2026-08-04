@@ -13,8 +13,11 @@ func TestMarketServiceSpecsFollowDFGameRoot(t *testing.T) {
 	auctionItemInfo := filepath.Join(root, "auction", "iteminfo.dat")
 	pointItemInfo := filepath.Join(root, "point", "iteminfo.dat")
 	app := &App{
-		dfGameR: filepath.Join(root, "game", "df_game_r"),
+		dfGameR:     filepath.Join(root, "game", "df_game_r"),
+		serviceRoot: root,
 		cfg: Config{
+			AuctionHost: "auction.internal",
+			CeraHost:    "point.internal",
 			ItemInfoTargets: []string{
 				filepath.Join(t.TempDir(), "home", "neople", "auction", "iteminfo.dat"),
 				auctionItemInfo,
@@ -29,6 +32,9 @@ func TestMarketServiceSpecsFollowDFGameRoot(t *testing.T) {
 	}
 	if specs[0].dir != filepath.Join(root, "auction") || specs[1].dir != filepath.Join(root, "point") {
 		t.Fatalf("service dirs=%q,%q want root %q", specs[0].dir, specs[1].dir, root)
+	}
+	if specs[0].addr != "auction.internal:30803" || specs[1].addr != "point.internal:30603" {
+		t.Fatalf("service addresses=%q,%q", specs[0].addr, specs[1].addr)
 	}
 	if got := app.itemInfoTargetForService(marketServiceNameAuction); got != auctionItemInfo {
 		t.Fatalf("auction iteminfo=%q want %q", got, auctionItemInfo)

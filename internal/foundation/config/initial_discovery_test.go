@@ -38,7 +38,7 @@ func TestInitialConfigUsesDiscoveredExternalPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{"# discovered from /srv/game/cfg/game.cfg", "Game = 20011", "PartyRoute0 = 5063"} {
+	for _, want := range []string{"# discovered from /srv/game/cfg/game.cfg", "Game = 20011", "PartyRoute0 = 5063", "RobotConnectIp = auto", "Root = /home/neople", "AuctionHost = 127.0.0.1", "RelayHost = 127.0.0.1"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated config missing %q:\n%s", want, text)
 		}

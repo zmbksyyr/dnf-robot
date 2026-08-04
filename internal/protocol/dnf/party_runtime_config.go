@@ -1,6 +1,9 @@
 package dnf
 
-import "sync/atomic"
+import (
+	"strings"
+	"sync/atomic"
+)
 
 const (
 	defaultPartyRelayPort        = 7200
@@ -9,6 +12,7 @@ const (
 )
 
 type partyRuntimeConfig struct {
+	relayHost    string
 	relayPort    int
 	accountStart uint32
 	accountEnd   uint32
@@ -18,9 +22,20 @@ var partyRuntimeConfigValue atomic.Pointer[partyRuntimeConfig]
 
 func init() {
 	partyRuntimeConfigValue.Store(&partyRuntimeConfig{
+		relayHost:    "127.0.0.1",
 		relayPort:    defaultPartyRelayPort,
 		accountStart: defaultPartyRobotAccountFrom,
 		accountEnd:   defaultPartyRobotAccountTo,
+	})
+}
+
+func ConfigurePartyRelayHost(host string) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	updatePartyRuntimeConfig(func(cfg *partyRuntimeConfig) {
+		cfg.relayHost = host
 	})
 }
 
@@ -57,6 +72,10 @@ func updatePartyRuntimeConfig(update func(*partyRuntimeConfig)) {
 
 func currentPartyRelayPort() int {
 	return partyRuntimeConfigValue.Load().relayPort
+}
+
+func currentPartyRelayHost() string {
+	return partyRuntimeConfigValue.Load().relayHost
 }
 
 func isPartyRobotAccount(accountID uint32) bool {

@@ -58,7 +58,7 @@ func TestWriteGamePortUpdatesMainConfig(t *testing.T) {
 	}
 	s := New(&config.SysConfig{ConfigDir: dir, RobotConnectIP: "127.0.0.1", RobotGamePort: 10011, MonitorPort: 30303, AuctionPort: 30803, PointPort: 30603, RelayPort: 7200}, "", "")
 
-	cfg, err := s.writeExternalPorts(20011, 31303, 31803, 31603, 17200)
+	cfg, err := s.writeExternalServices(20011, 31303, 31803, 31603, 17200, "127.0.0.1", "127.0.0.1", "127.0.0.1", "/home/neople", "/root/run", "auto", "10.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}

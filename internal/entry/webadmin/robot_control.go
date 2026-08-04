@@ -28,11 +28,18 @@ func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.gameEndpointPayload(cfg, ""))
 	case http.MethodPost:
 		var req struct {
-			GamePort    int `json:"game_port"`
-			MonitorPort int `json:"monitor_port"`
-			AuctionPort int `json:"auction_port"`
-			PointPort   int `json:"point_port"`
-			RelayPort   int `json:"relay_port"`
+			GamePort    int    `json:"game_port"`
+			MonitorPort int    `json:"monitor_port"`
+			AuctionPort int    `json:"auction_port"`
+			PointPort   int    `json:"point_port"`
+			RelayPort   int    `json:"relay_port"`
+			AuctionHost string `json:"auction_host"`
+			PointHost   string `json:"point_host"`
+			RelayHost   string `json:"relay_host"`
+			ServiceRoot string `json:"service_root"`
+			RunScript   string `json:"run_script"`
+			GameHost    string `json:"game_host"`
+			LoginIP     string `json:"login_ip"`
 		}
 		if err := config.DecodeJSONLimit(r.Body, 64*1024, &req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
@@ -42,7 +49,8 @@ func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		cfg, err := s.writeExternalPorts(req.GamePort, req.MonitorPort, req.AuctionPort, req.PointPort, req.RelayPort)
+		cfg, err := s.writeExternalServices(req.GamePort, req.MonitorPort, req.AuctionPort, req.PointPort, req.RelayPort,
+			req.AuctionHost, req.PointHost, req.RelayHost, req.ServiceRoot, req.RunScript, req.GameHost, req.LoginIP)
 		if err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
@@ -81,6 +89,11 @@ func (s *Server) gameEndpointPayload(cfg *config.SysConfig, message string) map[
 	connectIP := ""
 	addr := ""
 	ports := map[string]int{}
+	hosts := map[string]string{}
+	serviceRoot := ""
+	runScript := ""
+	connectSetting := ""
+	innerIP := ""
 	if cfg != nil {
 		connectIP = cfg.RobotConnectIP
 		addr = net.JoinHostPort(connectIP, strconv.Itoa(cfg.RobotGamePort))
@@ -91,14 +104,25 @@ func (s *Server) gameEndpointPayload(cfg *config.SysConfig, message string) map[
 			"point":   cfg.PointPort,
 			"relay":   cfg.RelayPort,
 		}
+		hosts = map[string]string{"auction": cfg.AuctionHost, "point": cfg.PointHost, "relay": cfg.RelayHost}
+		serviceRoot = cfg.ServiceRoot
+		runScript = cfg.ServiceRunScript
+		connectSetting = cfg.RobotConnectIPSetting
+		innerIP = cfg.RobotInnerIP
 	}
 	out := map[string]interface{}{
-		"ok":          true,
-		"connect_ip":  connectIP,
-		"game_port":   ports["game"],
-		"ports":       ports,
-		"addr":        addr,
-		"config_path": s.configPath(),
+		"ok":               true,
+		"connect_ip":       connectIP,
+		"game_port":        ports["game"],
+		"ports":            ports,
+		"hosts":            hosts,
+		"service_root":     serviceRoot,
+		"run_script":       runScript,
+		"connect_setting":  connectSetting,
+		"connect_resolved": connectIP,
+		"inner_ip":         innerIP,
+		"addr":             addr,
+		"config_path":      s.configPath(),
 	}
 	if s != nil && s.cfg != nil && cfg != nil {
 		fields := restartConfigDiff(s.cfg, cfg)
@@ -122,7 +146,9 @@ func restartConfigView(cfg *config.SysConfig) map[string]interface{} {
 		"game_port": cfg.RobotGamePort, "monitor_port": cfg.MonitorPort,
 		"auction_port": cfg.AuctionPort, "point_port": cfg.PointPort,
 		"relay_port": cfg.RelayPort, "party_route0_port": cfg.PartyRoute0Port,
-		"connect_ip": cfg.RobotConnectIP, "inner_ip": cfg.RobotInnerIP,
+		"connect_ip": cfg.RobotConnectIP, "connect_setting": cfg.RobotConnectIPSetting, "inner_ip": cfg.RobotInnerIP,
+		"service_root": cfg.ServiceRoot, "service_run_script": cfg.ServiceRunScript,
+		"auction_host": cfg.AuctionHost, "point_host": cfg.PointHost, "relay_host": cfg.RelayHost,
 		"database_host": cfg.DBHost, "database_port": cfg.DBPort,
 		"database_name": cfg.DBName, "database_user": cfg.DBUser,
 		"database_password_set": cfg.DBPassword != "",
@@ -144,6 +170,9 @@ func restartConfigDiff(running, disk *config.SysConfig) []string {
 		{"auction_port", running.AuctionPort != disk.AuctionPort}, {"point_port", running.PointPort != disk.PointPort},
 		{"relay_port", running.RelayPort != disk.RelayPort}, {"party_route0_port", running.PartyRoute0Port != disk.PartyRoute0Port},
 		{"robot_connect_ip", running.RobotConnectIP != disk.RobotConnectIP}, {"robot_inner_ip", running.RobotInnerIP != disk.RobotInnerIP},
+		{"robot_connect_setting", running.RobotConnectIPSetting != disk.RobotConnectIPSetting},
+		{"service_root", running.ServiceRoot != disk.ServiceRoot}, {"service_run_script", running.ServiceRunScript != disk.ServiceRunScript},
+		{"auction_host", running.AuctionHost != disk.AuctionHost}, {"point_host", running.PointHost != disk.PointHost}, {"relay_host", running.RelayHost != disk.RelayHost},
 		{"database_host", running.DBHost != disk.DBHost}, {"database_port", running.DBPort != disk.DBPort},
 		{"database_name", running.DBName != disk.DBName}, {"database_user", running.DBUser != disk.DBUser},
 		{"database_password", running.DBPassword != disk.DBPassword}, {"web_password", running.WebPassword != disk.WebPassword},
@@ -165,18 +194,25 @@ func (s *Server) loadDiskConfig() (*config.SysConfig, error) {
 	return cfg, nil
 }
 
-func (s *Server) writeExternalPorts(game, monitor, auction, point, relay int) (*config.SysConfig, error) {
+func (s *Server) writeExternalServices(game, monitor, auction, point, relay int, auctionHost, pointHost, relayHost, serviceRoot, runScript, gameHost, loginIP string) (*config.SysConfig, error) {
 	path := s.configPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	text := robotconfig.UpdateINIText(string(data), map[string]string{
-		"Ports.Game":    strconv.Itoa(game),
-		"Ports.Monitor": strconv.Itoa(monitor),
-		"Ports.Auction": strconv.Itoa(auction),
-		"Ports.Point":   strconv.Itoa(point),
-		"Ports.Relay":   strconv.Itoa(relay),
+		"Ports.Game":           strconv.Itoa(game),
+		"Ports.Monitor":        strconv.Itoa(monitor),
+		"Ports.Auction":        strconv.Itoa(auction),
+		"Ports.Point":          strconv.Itoa(point),
+		"Ports.Relay":          strconv.Itoa(relay),
+		"Services.AuctionHost": strings.TrimSpace(auctionHost),
+		"Services.PointHost":   strings.TrimSpace(pointHost),
+		"Services.RelayHost":   strings.TrimSpace(relayHost),
+		"Services.Root":        strings.TrimSpace(serviceRoot),
+		"Services.RunScript":   strings.TrimSpace(runScript),
+		"Robot.RobotConnectIp": strings.TrimSpace(gameHost),
+		"Robot.RobotInnerIp":   strings.TrimSpace(loginIP),
 	})
 	cfg, err := config.ParseConfig(text)
 	if err != nil {

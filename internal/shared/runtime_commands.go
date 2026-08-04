@@ -3,10 +3,14 @@ package shared
 // RuntimeOnlineUser is the protocol-independent login command exchanged
 // between scheduler and the DNF runtime.
 type RuntimeOnlineUser struct {
-	IP    string
-	Port  int
-	Token string
-	UID   int
+	// IP is the actual df_game_r connection host.
+	IP string
+	// LoginIP is the stable client identity written to the native login tables.
+	// Empty keeps compatibility with older callers by falling back to IP.
+	LoginIP string
+	Port    int
+	Token   string
+	UID     int
 
 	// CID is the database character identity (taiwan_cain.charac_info.charac_no).
 	CID int

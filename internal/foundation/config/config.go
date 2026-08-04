@@ -17,35 +17,41 @@ var discoverInitialExternalPorts = serviceinit.DiscoverExternalPorts
 
 // SysConfig holds all robot configuration from config.ini.
 type SysConfig struct {
-	RobotPort            int
-	DBHost               string
-	DBPort               int
-	DBName               string
-	DBUser               string
-	DBPassword           string
-	DFGameR              string
-	ConfigDir            string
-	RobotInnerIP         string
-	RobotConnectIP       string
-	RobotGamePort        int
-	GameServerGroup      int
-	MonitorPort          int
-	AuctionPort          int
-	PointPort            int
-	RelayPort            int
-	PartyRoute0Port      int
-	DBInitSize           int
-	DBMaxSize            int
-	DBDialTimeoutSec     int
-	DBReadTimeoutSec     int
-	DBWriteTimeoutSec    int
-	DBConnMaxLifetimeSec int
-	WebPort              int
-	WebPassword          string
-	LogMaxSizeMB         int
-	LogMaxBackups        int
-	MaxResponseBytes     int
-	ThisIP               string
+	RobotPort             int
+	DBHost                string
+	DBPort                int
+	DBName                string
+	DBUser                string
+	DBPassword            string
+	DFGameR               string
+	ServiceRoot           string
+	ServiceRunScript      string
+	AuctionHost           string
+	PointHost             string
+	RelayHost             string
+	ConfigDir             string
+	RobotInnerIP          string
+	RobotConnectIP        string
+	RobotConnectIPSetting string
+	RobotGamePort         int
+	GameServerGroup       int
+	MonitorPort           int
+	AuctionPort           int
+	PointPort             int
+	RelayPort             int
+	PartyRoute0Port       int
+	DBInitSize            int
+	DBMaxSize             int
+	DBDialTimeoutSec      int
+	DBReadTimeoutSec      int
+	DBWriteTimeoutSec     int
+	DBConnMaxLifetimeSec  int
+	WebPort               int
+	WebPassword           string
+	LogMaxSizeMB          int
+	LogMaxBackups         int
+	MaxResponseBytes      int
+	ThisIP                string
 }
 
 // LoadConfig reads config.ini and returns a populated SysConfig.
@@ -96,8 +102,19 @@ func decodeSysConfig(ini *INIConfig) (*SysConfig, error) {
 	// [Robot] section
 	cfg.DFGameR = dec.String("Robot", "DfGameR", "/home/neople/game/df_game_r")
 	cfg.RobotInnerIP = dec.String("Robot", "RobotInnerIp", "10.0.0.1")
-	cfg.RobotConnectIP = dec.String("Robot", "RobotConnectIp", "")
+	cfg.RobotConnectIPSetting = strings.TrimSpace(dec.String("Robot", "RobotConnectIp", "auto"))
+	if cfg.RobotConnectIPSetting == "" {
+		cfg.RobotConnectIPSetting = "auto"
+	}
+	cfg.RobotConnectIP = cfg.RobotConnectIPSetting
 	cfg.GameServerGroup = dec.Int("Robot", "GameServerGroup", 3)
+
+	// [Services] section
+	cfg.ServiceRoot = dec.String("Services", "Root", defaultDNFServiceRoot)
+	cfg.ServiceRunScript = dec.String("Services", "RunScript", serviceinit.DefaultRunScript)
+	cfg.AuctionHost = dec.String("Services", "AuctionHost", "127.0.0.1")
+	cfg.PointHost = dec.String("Services", "PointHost", "127.0.0.1")
+	cfg.RelayHost = dec.String("Services", "RelayHost", "127.0.0.1")
 
 	// [Web] section
 	cfg.WebPassword = dec.String("Web", "WebPassword", "twadmin")
@@ -135,7 +152,13 @@ func decodeSysConfig(ini *INIConfig) (*SysConfig, error) {
 	checkPort("Ports", "PartyRoute0", cfg.PartyRoute0Port)
 	dec.Check("Robot", "DfGameR", strings.TrimSpace(cfg.DFGameR) != "", "must not be empty")
 	dec.Check("Robot", "RobotInnerIp", strings.TrimSpace(cfg.RobotInnerIP) != "", "must not be empty")
+	dec.Check("Robot", "RobotConnectIp", strings.TrimSpace(cfg.RobotConnectIPSetting) != "", "must not be empty")
 	dec.Check("Robot", "GameServerGroup", cfg.GameServerGroup >= 0 && uint64(cfg.GameServerGroup) <= uint64(^uint32(0)), "must be between 0 and 4294967295")
+	dec.Check("Services", "Root", absoluteConfigPath(cfg.ServiceRoot), "must be an absolute path")
+	dec.Check("Services", "RunScript", absoluteConfigPath(cfg.ServiceRunScript), "must be an absolute path")
+	dec.Check("Services", "AuctionHost", strings.TrimSpace(cfg.AuctionHost) != "", "must not be empty")
+	dec.Check("Services", "PointHost", strings.TrimSpace(cfg.PointHost) != "", "must not be empty")
+	dec.Check("Services", "RelayHost", strings.TrimSpace(cfg.RelayHost) != "", "must not be empty")
 	dec.Check("Web", "WebPassword", strings.TrimSpace(cfg.WebPassword) != "", "must not be empty")
 	dec.Check("db", "db_host", strings.TrimSpace(cfg.DBHost) != "", "must not be empty")
 	dec.Check("db", "db_user_name", strings.TrimSpace(cfg.DBUser) != "", "must not be empty")
@@ -155,9 +178,10 @@ func decodeSysConfig(ini *INIConfig) (*SysConfig, error) {
 		return nil, err
 	}
 
-	// auto-detect local IP
-	cfg.ThisIP = getLocalIP()
-	if cfg.RobotConnectIP == "" {
+	// Resolve the explicit auto marker for runtime consumers while preserving
+	// the configured value for diagnostics and restart comparisons.
+	cfg.ThisIP = preferredLocalIPv4()
+	if strings.EqualFold(cfg.RobotConnectIPSetting, "auto") {
 		cfg.RobotConnectIP = cfg.ThisIP
 	}
 
@@ -168,9 +192,6 @@ func decodeSysConfig(ini *INIConfig) (*SysConfig, error) {
 // point service directories. Unknown layouts keep the established default.
 func DNFServiceRoot(dfGameR string) string {
 	gameDir := filepath.Clean(filepath.Dir(strings.TrimSpace(dfGameR)))
-	if filepath.Base(gameDir) != "game" {
-		return defaultDNFServiceRoot
-	}
 	root := filepath.Dir(gameDir)
 	if root == "." || root == string(filepath.Separator) {
 		return defaultDNFServiceRoot
@@ -178,17 +199,43 @@ func DNFServiceRoot(dfGameR string) string {
 	return root
 }
 
-func getLocalIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
+func preferredLocalIPv4() string {
+	if conn, err := net.Dial("udp4", "198.18.0.1:9"); err == nil {
+		if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok && usableLocalIPv4(addr.IP) {
+			_ = conn.Close()
+			return addr.IP.String()
+		}
+		_ = conn.Close()
 	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			return ipnet.IP.String()
+	interfaces, err := net.Interfaces()
+	if err == nil {
+		for _, iface := range interfaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, addrErr := iface.Addrs()
+			if addrErr != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				ip, _, parseErr := net.ParseCIDR(addr.String())
+				if parseErr == nil && usableLocalIPv4(ip) {
+					return ip.String()
+				}
+			}
 		}
 	}
 	return "127.0.0.1"
+}
+
+func usableLocalIPv4(ip net.IP) bool {
+	ip = ip.To4()
+	return ip != nil && !ip.IsUnspecified() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsMulticast()
+}
+
+func absoluteConfigPath(path string) bool {
+	path = strings.TrimSpace(path)
+	return filepath.IsAbs(path) || strings.HasPrefix(path, "/")
 }
 
 func generateDefaultConfig(path string) error {
@@ -216,10 +263,20 @@ func generateDefaultConfig(path string) error {
 		"DfGameR = /home/neople/game/df_game_r",
 		"# Inner game IP written into robot login data.",
 		"RobotInnerIp = 10.0.0.1",
-		"# IP used for game-port checks and robot game connection; leave empty to auto-detect local IP.",
-		"RobotConnectIp = ",
+		"# Game connection host. Use auto to resolve the primary local IPv4 at runtime.",
+		"RobotConnectIp = auto",
 		"# Native game server group used when forwarding internal cache invalidation packets.",
 		"GameServerGroup = 3",
+		"",
+		"[Services]",
+		"# Common root containing game, auction, point, and relay directories.",
+		"Root = /home/neople",
+		"# Script used to discover native service launch commands.",
+		"RunScript = /root/run",
+		"# Native services are local by default; set explicit hosts for split deployments.",
+		"AuctionHost = 127.0.0.1",
+		"PointHost = 127.0.0.1",
+		"RelayHost = 127.0.0.1",
 		"",
 		"[Web]",
 		"# Web login password.",

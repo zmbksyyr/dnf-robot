@@ -38,6 +38,9 @@ func (r *RobotVo) startPartyUDPUnsafe(addr *net.TCPAddr) bool {
 		fmt.Printf("[PARTY_UDP_PORT_FALLBACK] uid=%d requested=%d actual=%d\n", r.UID, addr.Port, actual.Port)
 	}
 	r.partyUDPConn = conn
+	localIP := conn.LocalAddr().(*net.UDPAddr).IP
+	r.partyUDPMTU = partyUDPMTUForIP(localIP)
+	r.partyUDPNetwork = partyIPv4NetworkForIP(localIP)
 	r.partyUDPGeneration++
 	r.partyUDPRunning = false
 	r.ensurePartyUDPLoopUnsafe()
@@ -51,6 +54,8 @@ func (r *RobotVo) closePartyUDPUnsafe() {
 		_ = r.partyUDPConn.Close()
 		r.partyUDPConn = nil
 	}
+	r.partyUDPMTU = 0
+	r.partyUDPNetwork = nil
 }
 
 func (r *RobotVo) ensurePartyUDPLoopUnsafe() bool {
@@ -66,6 +71,7 @@ func (r *RobotVo) ensurePartyUDPLoopUnsafe() bool {
 
 func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64) {
 	buf := make([]byte, 4096)
+	mtu := partyUDPMTUForConn(conn)
 	var readErrorLogAt time.Time
 	var readErrorBackoff time.Duration
 	var readErrorSince time.Time
@@ -124,13 +130,13 @@ func (r *RobotVo) partyUDPLoop(conn *net.UDPConn, uid uint32, generation uint64)
 		}
 		payload := append([]byte(nil), buf[:n]...)
 		if shouldReplyPartyUDP(conn, remote) {
-			replies, groupErr := groupPartyTransportFrames(r.buildPartyUDPAcks(payload, remote), partyDefaultUDPMTU)
+			replies, groupErr := groupPartyTransportFrames(r.buildPartyUDPAcks(payload, remote), mtu)
 			if groupErr != nil {
 				fmt.Printf("[PARTY_UDP_ACK_ERROR] uid=%d remote=%s err=%v\n", uid, remote.String(), groupErr)
 				continue
 			}
 			for _, reply := range replies {
-				writePartyUDPReply(conn, reply, remote, uid)
+				writePartyUDPReply(conn, reply, remote, uid, mtu)
 			}
 		}
 	}
@@ -161,11 +167,11 @@ func shouldReplyPartyUDP(conn *net.UDPConn, remote *net.UDPAddr) bool {
 	return true
 }
 
-func writePartyUDPReply(conn *net.UDPConn, payload []byte, remote *net.UDPAddr, uid uint32) {
+func writePartyUDPReply(conn *net.UDPConn, payload []byte, remote *net.UDPAddr, uid uint32, mtu int) {
 	if conn == nil || remote == nil {
 		return
 	}
-	if err := writePartyUDPDatagram(conn, payload, remote); err != nil {
+	if err := writePartyUDPDatagramWithMTU(conn, payload, remote, mtu); err != nil {
 		recordPartyTransportFrames(uid, 0, "TX", "UDP", 1, "FAIL", "dst="+remote.String(), payload)
 		fmt.Printf("[PARTY_UDP_ACK_ERROR] uid=%d remote=%s err=%v\n", uid, remote.String(), err)
 		return
@@ -231,11 +237,57 @@ func partyPeerKnownIP(peer partyIPPeer, ip net.IP) bool {
 }
 
 func partyPeerUDPAddr(peer partyIPPeer) (*net.UDPAddr, bool) {
+	remote, _, ok := partyPeerUDPAddrForLocal(peer, nil, false)
+	return remote, ok
+}
+
+func partyPeerUDPAddrForLocal(peer partyIPPeer, localIP net.IP, alternate bool) (*net.UDPAddr, string, bool) {
+	return partyPeerUDPAddrForNetwork(peer, partyIPv4NetworkForIP(localIP), alternate)
+}
+
+func partyPeerUDPAddrForNetwork(peer partyIPPeer, localNetwork *net.IPNet, alternate bool) (*net.UDPAddr, string, bool) {
 	if peer.observedIP != nil && peer.observedPort != 0 {
-		return &net.UDPAddr{IP: peer.observedIP, Port: int(peer.observedPort)}, true
+		return &net.UDPAddr{IP: peer.observedIP, Port: int(peer.observedPort)}, "OBSERVED", true
 	}
-	if peer.outerIP == nil || peer.port == 0 {
-		return nil, false
+	if peer.port == 0 {
+		return nil, "", false
 	}
-	return &net.UDPAddr{IP: peer.outerIP, Port: int(peer.port)}, true
+	innerFirst := peer.innerIP != nil && localNetwork != nil && localNetwork.Contains(peer.innerIP)
+	primary, secondary := peer.outerIP, peer.innerIP
+	primarySource, secondarySource := "OUTER", "INNER"
+	if innerFirst {
+		primary, secondary = peer.innerIP, peer.outerIP
+		primarySource, secondarySource = "INNER", "OUTER"
+	}
+	if alternate && secondary != nil && (primary == nil || !secondary.Equal(primary)) {
+		primary, primarySource = secondary, secondarySource
+	}
+	if primary == nil {
+		return nil, "", false
+	}
+	return &net.UDPAddr{IP: primary, Port: int(peer.port)}, primarySource, true
+}
+
+func partyIPv4NetworkForIP(localIP net.IP) *net.IPNet {
+	localIP = localIP.To4()
+	if localIP == nil {
+		return nil
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, iface := range interfaces {
+		addrs, addrErr := iface.Addrs()
+		if addrErr != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ip, network, parseErr := net.ParseCIDR(addr.String())
+			if parseErr == nil && ip.Equal(localIP) {
+				return network
+			}
+		}
+	}
+	return nil
 }

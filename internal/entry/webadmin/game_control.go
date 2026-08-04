@@ -109,11 +109,15 @@ func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	script := ""
+	runScript := strings.TrimSpace(s.cfg.ServiceRunScript)
+	if runScript == "" {
+		runScript = "/root/run"
+	}
 	switch strings.TrimSpace(req.Action) {
 	case "run":
-		script = "/root/run"
+		script = runScript
 	case "stop":
-		script = "/root/stop"
+		script = filepath.Join(filepath.Dir(runScript), "stop")
 	default:
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "unknown script action"})
 		return

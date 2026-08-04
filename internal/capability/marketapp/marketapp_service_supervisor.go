@@ -2,16 +2,16 @@ package marketapp
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"robot/internal/foundation/config"
 )
 
 const (
@@ -345,7 +345,7 @@ func (a *App) marketServiceStaleItemInfoReason(service marketServiceSpec, pid in
 }
 
 func (a *App) itemInfoTargetForService(serviceName string) string {
-	preferredDir := filepath.Clean(filepath.Join(config.DNFServiceRoot(a.dfGameR), serviceName))
+	preferredDir := filepath.Clean(filepath.Join(a.marketServiceRoot(), serviceName))
 	fallback := ""
 	for _, target := range a.configSnapshot().ItemInfoTargets {
 		target = strings.TrimSpace(target)
@@ -377,14 +377,29 @@ func (a *App) marketServiceSpecs() []marketServiceSpec {
 	if pointPort <= 0 {
 		pointPort = 30603
 	}
-	root := config.DNFServiceRoot(a.dfGameR)
+	auctionHost := strings.TrimSpace(cfg.AuctionHost)
+	if auctionHost == "" {
+		auctionHost = "127.0.0.1"
+	}
+	pointHost := strings.TrimSpace(cfg.CeraHost)
+	if pointHost == "" {
+		pointHost = "127.0.0.1"
+	}
+	root := a.marketServiceRoot()
 	auctionLaunch, auctionErr := a.discoverMarketServiceLaunch(marketServiceNameAuction, root)
 	pointLaunch, pointErr := a.discoverMarketServiceLaunch(marketServiceNamePoint, root)
 	a.serviceSpecs = []marketServiceSpec{
-		{name: marketServiceNameAuction, addr: fmt.Sprintf("127.0.0.1:%d", auctionPort), dir: auctionLaunch.dir, bin: auctionLaunch.bin, args: auctionLaunch.args, source: auctionLaunch.source, launchErr: auctionErr},
-		{name: marketServiceNamePoint, addr: fmt.Sprintf("127.0.0.1:%d", pointPort), dir: pointLaunch.dir, bin: pointLaunch.bin, args: pointLaunch.args, source: pointLaunch.source, launchErr: pointErr},
+		{name: marketServiceNameAuction, addr: net.JoinHostPort(auctionHost, strconv.Itoa(auctionPort)), dir: auctionLaunch.dir, bin: auctionLaunch.bin, args: auctionLaunch.args, source: auctionLaunch.source, launchErr: auctionErr},
+		{name: marketServiceNamePoint, addr: net.JoinHostPort(pointHost, strconv.Itoa(pointPort)), dir: pointLaunch.dir, bin: pointLaunch.bin, args: pointLaunch.args, source: pointLaunch.source, launchErr: pointErr},
 	}
 	return append([]marketServiceSpec(nil), a.serviceSpecs...)
+}
+
+func (a *App) marketServiceRoot() string {
+	if root := strings.TrimSpace(a.serviceRoot); root != "" {
+		return filepath.Clean(root)
+	}
+	return filepath.Dir(filepath.Dir(filepath.Clean(a.dfGameR)))
 }
 
 func (a *App) marketServiceSpecByName(name string) (marketServiceSpec, bool) {

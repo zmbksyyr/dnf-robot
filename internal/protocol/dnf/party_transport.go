@@ -60,7 +60,11 @@ func (r *RobotVo) sendNATInfoUpdateUnsafe(force bool) bool {
 	if !ok || udpAddr.Port <= 0 || udpAddr.Port > 0xffff {
 		return false
 	}
-	body, ok := buildNATInfoPayload(udpAddr.IP, uint16(udpAddr.Port))
+	mtu := r.partyUDPMTU
+	if mtu <= 0 {
+		mtu = partyDefaultUDPMTU
+	}
+	body, ok := buildNATInfoPayload(udpAddr.IP, uint16(udpAddr.Port), mtu)
 	if !ok {
 		return false
 	}
@@ -76,7 +80,7 @@ func (r *RobotVo) sendNATInfoUpdateUnsafe(force bool) bool {
 		fmt.Printf("[NAT_SEND_ERROR] uid=%d\n", r.UID)
 		return false
 	}
-	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "OK", fmt.Sprintf("ip=%s port=%d mtu=%d", udpAddr.IP, udpAddr.Port, partyDefaultUDPMTU), pkt)
+	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "OK", fmt.Sprintf("ip=%s port=%d mtu=%d", udpAddr.IP, udpAddr.Port, mtu), pkt)
 	r.natInfoSent = true
 	return true
 }
@@ -91,7 +95,8 @@ func (r *RobotVo) flushPartyRuntimeUnsafe(conn *net.UDPConn, now time.Time) {
 func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, route byte, payload []byte) (string, error) {
 	switch route {
 	case 1:
-		remote, ok := partyPeerUDPAddr(peer)
+		alternate := peer.slotKnown && peer.slot < 4 && r.partyRouteFailures[peer.slot][route] > 0
+		remote, endpointSource, ok := partyPeerUDPAddrForNetwork(peer, r.partyUDPNetwork, alternate)
 		if !ok {
 			err := fmt.Errorf("party peer UDP endpoint is unavailable")
 			r.markPartyRouteFailureUnsafe(peer, route, time.Now(), err.Error())
@@ -102,12 +107,16 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 			r.markPartyRouteFailureUnsafe(peer, route, time.Now(), err.Error())
 			return remote.String(), err
 		}
-		err := writePartyUDPDatagram(conn, payload, remote)
+		mtu := r.partyUDPMTU
+		if mtu <= 0 {
+			mtu = partyDefaultUDPMTU
+		}
+		err := writePartyUDPDatagramWithMTU(conn, payload, remote, mtu)
 		decision := "OK"
 		if err != nil {
 			decision = "FAIL"
 		}
-		recordPartyTransportFrames(r.UID, peer.accID, "TX", "UDP", route, decision, "dst="+remote.String(), payload)
+		recordPartyTransportFrames(r.UID, peer.accID, "TX", "UDP", route, decision, "dst="+remote.String()+" endpoint="+endpointSource, payload)
 		if err != nil {
 			r.markPartyRouteFailureUnsafe(peer, route, time.Now(), err.Error())
 		}
@@ -150,11 +159,18 @@ func recordPartyTransportFrames(uid, peer uint32, direction, channel string, rou
 }
 
 func writePartyUDPDatagram(conn *net.UDPConn, payload []byte, remote *net.UDPAddr) error {
+	return writePartyUDPDatagramWithMTU(conn, payload, remote, partyDefaultUDPMTU)
+}
+
+func writePartyUDPDatagramWithMTU(conn *net.UDPConn, payload []byte, remote *net.UDPAddr, mtu int) error {
 	if conn == nil || remote == nil {
 		return fmt.Errorf("party UDP destination is unavailable")
 	}
-	if len(payload) > partyDefaultUDPMTU {
-		return fmt.Errorf("party UDP payload size %d exceeds MTU %d", len(payload), partyDefaultUDPMTU)
+	if mtu <= 0 || mtu > partyDefaultUDPMTU {
+		mtu = partyDefaultUDPMTU
+	}
+	if len(payload) > mtu {
+		return fmt.Errorf("party UDP payload size %d exceeds MTU %d", len(payload), mtu)
 	}
 	if err := conn.SetWriteDeadline(time.Now().Add(partyUDPWriteTimeout)); err != nil {
 		return err
@@ -169,7 +185,7 @@ func writePartyUDPDatagram(conn *net.UDPConn, payload []byte, remote *net.UDPAdd
 	return nil
 }
 
-func buildNATInfoPayload(ip net.IP, port uint16) ([]byte, bool) {
+func buildNATInfoPayload(ip net.IP, port uint16, mtu int) ([]byte, bool) {
 	ipv4 := ip.To4()
 	if ipv4 == nil {
 		return nil, false
@@ -182,10 +198,53 @@ func buildNATInfoPayload(ip net.IP, port uint16) ([]byte, bool) {
 	copy(body[1:5], ipv4)
 	copy(body[5:9], ipv4)
 	binary.BigEndian.PutUint16(body[9:11], port)
-	binary.LittleEndian.PutUint32(body[11:15], partyDefaultUDPMTU)
+	if mtu <= 0 || mtu > partyDefaultUDPMTU {
+		mtu = partyDefaultUDPMTU
+	}
+	binary.LittleEndian.PutUint32(body[11:15], uint32(mtu))
 	binary.LittleEndian.PutUint32(body[15:19], uint32(len(marker)))
 	copy(body[19:], marker)
 	return body, true
+}
+
+func partyUDPMTUForConn(conn *net.UDPConn) int {
+	if conn == nil {
+		return partyDefaultUDPMTU
+	}
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return partyDefaultUDPMTU
+	}
+	return partyUDPMTUForIP(addr.IP)
+}
+
+func partyUDPMTUForIP(ip net.IP) int {
+	ip = ip.To4()
+	if ip == nil {
+		return partyDefaultUDPMTU
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return partyDefaultUDPMTU
+	}
+	for _, iface := range interfaces {
+		addrs, addrErr := iface.Addrs()
+		if addrErr != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			candidate, _, parseErr := net.ParseCIDR(addr.String())
+			if parseErr != nil || !candidate.Equal(ip) {
+				continue
+			}
+			payloadMTU := iface.MTU - 28
+			if payloadMTU > 0 && payloadMTU < partyDefaultUDPMTU {
+				return payloadMTU
+			}
+			return partyDefaultUDPMTU
+		}
+	}
+	return partyDefaultUDPMTU
 }
 
 func groupPartyTransportFrames(frames [][]byte, maxSize int) ([][]byte, error) {

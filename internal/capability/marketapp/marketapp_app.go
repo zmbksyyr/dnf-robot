@@ -26,6 +26,7 @@ type App struct {
 	configDir        string
 	pvfPath          string
 	dfGameR          string
+	serviceRoot      string
 	serviceRunScript string
 	serviceHomeRoot  string
 	executors        ActionExecutorFactory
@@ -168,11 +169,17 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 	if err != nil {
 		return nil, err
 	}
-	cfg.AuctionHost = "127.0.0.1"
+	cfg.AuctionHost = strings.TrimSpace(sys.AuctionHost)
+	if cfg.AuctionHost == "" {
+		cfg.AuctionHost = "127.0.0.1"
+	}
 	if sys.AuctionPort > 0 {
 		cfg.AuctionPort = sys.AuctionPort
 	}
-	cfg.CeraHost = "127.0.0.1"
+	cfg.CeraHost = strings.TrimSpace(sys.PointHost)
+	if cfg.CeraHost == "" {
+		cfg.CeraHost = "127.0.0.1"
+	}
 	if sys.PointPort > 0 {
 		cfg.CeraPort = sys.PointPort
 	}
@@ -184,6 +191,8 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		configDir:          sys.ConfigDir,
 		pvfPath:            filepath.Join(filepath.Dir(sys.DFGameR), "Script.pvf"),
 		dfGameR:            sys.DFGameR,
+		serviceRoot:        strings.TrimSpace(sys.ServiceRoot),
+		serviceRunScript:   sys.ServiceRunScript,
 		executors:          executors,
 		services:           map[string]MarketServiceStatus{},
 		policy:             map[string]MarketPolicyStatus{},

@@ -465,6 +465,24 @@ func TestPartyIPInfoPacketSupportsPublicExternalAddresses(t *testing.T) {
 	}
 }
 
+func TestPartyIPInfoPacketSupportsNonRFC1918InnerAddresses(t *testing.T) {
+	for _, inner := range []net.IP{
+		net.IPv4(100, 64, 1, 2),
+		net.IPv4(203, 0, 113, 20),
+		net.IPv4(127, 0, 0, 1),
+	} {
+		body := make([]byte, 23)
+		body[0] = 1
+		putPartyPeer(body[1:], 0x2222, inner, 45678, 17000001, 1, 1472)
+		copy(body[7:11], net.IPv4(198, 51, 100, 30).To4())
+
+		self, peers, source, err := selectPartyIPInfoPacket(newPartyTestCipher(t), makePartyRecvPacket(11, body), false, 17000001)
+		if err != nil || source != recvBodySourcePlain || self.accID != 17000001 || len(peers) != 0 {
+			t.Fatalf("inner=%s self=%+v peers=%+v source=%s err=%v", inner, self, peers, source, err)
+		}
+	}
+}
+
 func TestPartyIPInfoRejectsInvalidExternalAddress(t *testing.T) {
 	body := make([]byte, 23)
 	body[0] = 1

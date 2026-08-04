@@ -83,10 +83,10 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		}
 		peerAccounts := make([]string, 0, len(peers))
 		for _, peer := range peers {
-			peerAccounts = append(peerAccounts, fmt.Sprintf("s%d/a%d/u%d/%s:%d", peer.slot, peer.accID, peer.uniqueID, peer.outerIP, peer.port))
+			peerAccounts = append(peerAccounts, fmt.Sprintf("s%d/a%d/u%d/%s>%s:%d", peer.slot, peer.accID, peer.uniqueID, peer.innerIP, peer.outerIP, peer.port))
 		}
 		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "SNAPSHOT", "OK",
-			fmt.Sprintf("source=%s self=s%d/a%d/u%d/%s:%d peers=%s", source, self.slot, self.accID, self.uniqueID, self.outerIP, self.port, strings.Join(peerAccounts, ",")), packet.data)
+			fmt.Sprintf("source=%s self=s%d/a%d/u%d/%s>%s:%d peers=%s", source, self.slot, self.accID, self.uniqueID, self.innerIP, self.outerIP, self.port, strings.Join(peerAccounts, ",")), packet.data)
 		r.rememberPartyRecvSourceUnsafe(source)
 		if source == recvBodySourcePlain {
 			fmt.Printf("[PARTY_IPINFO_PLAIN] uid=%d size=%d\n", r.UID, packet.size)

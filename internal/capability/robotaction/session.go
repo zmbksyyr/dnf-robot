@@ -26,6 +26,10 @@ type SessionEnv interface {
 	SendOnline(userinfos []shared.RuntimeOnlineUser) error
 }
 
+type sessionLoginIPEnv interface {
+	RobotInnerIP() string
+}
+
 func (s SessionService) Online(req robotcap.CommandRequest, confirm bool, rc robotconfig.RuntimeConfig) (robotcap.CommandResult, error) {
 	return s.online(req, confirm, 0, rc)
 }
@@ -169,6 +173,10 @@ func (s SessionService) ConfirmAccepted(result *robotcap.CommandResult, timeout 
 }
 
 func (s SessionService) onlinePayload(robot robotcap.Info, disjointCost uint32, rc robotconfig.RuntimeConfig) shared.RuntimeOnlineUser {
+	loginIP := s.Env.RobotConnectIP()
+	if env, ok := s.Env.(sessionLoginIPEnv); ok && env.RobotInnerIP() != "" {
+		loginIP = env.RobotInnerIP()
+	}
 	return shared.RuntimeOnlineUser{
 		BirthArea:      robot.Area,
 		BirthVillage:   robot.Village,
@@ -177,6 +185,7 @@ func (s SessionService) onlinePayload(robot robotcap.Info, disjointCost uint32, 
 		CID:            robot.CID,
 		CharacterSlot:  0,
 		IP:             s.Env.RobotConnectIP(),
+		LoginIP:        loginIP,
 		MaxReconnect:   rc.MaxReconnect,
 		Port:           s.Env.RobotGamePort(),
 		ReconnectDelay: rc.ReconnectDelayMS,

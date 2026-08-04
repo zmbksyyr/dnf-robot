@@ -85,6 +85,9 @@ func runMain() int {
 	})
 	defer dnf.LogClose()
 	dnf.LogString(fmt.Sprintf("ROBOT_CONFIG path=%s config_dir=%s\n", configPath, cfg.ConfigDir))
+	dnf.LogString(fmt.Sprintf("NETWORK_CONFIG game=%s:%d setting=%s login_ip=%s relay=%s:%d auction=%s:%d point=%s:%d service_root=%s run_script=%s\n",
+		cfg.RobotConnectIP, cfg.RobotGamePort, cfg.RobotConnectIPSetting, cfg.RobotInnerIP,
+		cfg.RelayHost, cfg.RelayPort, cfg.AuctionHost, cfg.AuctionPort, cfg.PointHost, cfg.PointPort, cfg.ServiceRoot, cfg.ServiceRunScript))
 
 	if err := runtimeinit.Init(cfg); err != nil {
 		dnf.LogString(fmt.Sprintf("ROBOT_RUNTIME_INIT_FAILED err=%v\n", err))
@@ -102,6 +105,7 @@ func runMain() int {
 		dnf.PrintfRed("open file capacity check failed: %v\n", err)
 		return 1
 	}
+	dnf.ConfigurePartyRelayHost(cfg.RelayHost)
 	dnf.ConfigurePartyRelayPort(cfg.RelayPort)
 	route0Sink, err := dnf.StartPartyRoute0Sink(cfg.PartyRoute0Port)
 	if err != nil {

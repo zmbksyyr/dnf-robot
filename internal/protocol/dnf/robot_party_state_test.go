@@ -55,7 +55,7 @@ func TestDefaultPartyAcceptGameOptions(t *testing.T) {
 }
 
 func TestBuildNATInfoPayload(t *testing.T) {
-	got, ok := buildNATInfoPayload(net.IPv4(192, 168, 200, 131), 45678)
+	got, ok := buildNATInfoPayload(net.IPv4(192, 168, 200, 131), 45678, 1400)
 	if !ok {
 		t.Fatal("IPv4 address was rejected")
 	}
@@ -69,13 +69,13 @@ func TestBuildNATInfoPayload(t *testing.T) {
 	if !bytes.Equal(got[9:11], []byte{0xb2, 0x6e}) {
 		t.Fatalf("network-order port = %x, want b26e", got[9:11])
 	}
-	if mtu := binary.LittleEndian.Uint32(got[11:15]); mtu != 1472 {
-		t.Fatalf("MTU = %d, want 1472", mtu)
+	if mtu := binary.LittleEndian.Uint32(got[11:15]); mtu != 1400 {
+		t.Fatalf("MTU = %d, want 1400", mtu)
 	}
 	if marker := string(got[19:]); marker != "robot" {
 		t.Fatalf("marker = %q", marker)
 	}
-	if _, ok := buildNATInfoPayload(net.ParseIP("2001:db8::1"), 1234); ok {
+	if _, ok := buildNATInfoPayload(net.ParseIP("2001:db8::1"), 1234, 1472); ok {
 		t.Fatal("IPv6 address should be rejected")
 	}
 }

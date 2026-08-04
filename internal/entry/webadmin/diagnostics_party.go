@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"robot/internal/foundation/config"
 	"robot/internal/scheduler/repository"
 )
 
@@ -17,6 +18,7 @@ func (b *diagnosticsBuilder) addPartySection() {
 	status := inspectPartyCompat(b.cfg.RobotGamePort, cfg)
 	status.DesiredEnabled = cfg.Enabled
 	checks := []diagnosticsCheck{
+		partyNetworkConfigCheck(b.cfg),
 		{
 			Name:     "party compatibility patch",
 			Status:   partyCompatDiagStatus(status),
@@ -24,12 +26,37 @@ func (b *diagnosticsBuilder) addPartySection() {
 			Expected: map[string]interface{}{"desired_enabled": cfg.Enabled, "account_start": cfg.AccountStart, "account_end": cfg.AccountEnd},
 			Observed: status,
 		},
-		portDialCheck("relay service", "127.0.0.1", b.cfg.RelayPort),
+		portDialCheck("relay service", b.cfg.RelayHost, b.cfg.RelayPort),
 		udpListeningCheck("party route0 UDP", b.cfg.PartyRoute0Port),
 	}
 	uids, uidErr := repository.ReadRobotRegistryUIDs(b.cfg)
 	checks = append(checks, partyAccountRangeCheck(uids, uidErr, status.AccountStart, status.AccountEnd))
 	b.addSection("Party", checks...)
+}
+
+func partyNetworkConfigCheck(cfg *config.SysConfig) diagnosticsCheck {
+	if cfg == nil {
+		return diagnosticsCheck{Name: "party network config", Status: diagError, Message: "system config is unavailable"}
+	}
+	source := "config"
+	if strings.EqualFold(cfg.RobotConnectIPSetting, "auto") {
+		source = "auto"
+	}
+	message := fmt.Sprintf("GAME=%s:%d source=%s LOGIN_IP=%s RELAY=%s:%d PARTY_MTU=auto<=1472",
+		cfg.RobotConnectIP, cfg.RobotGamePort, source, cfg.RobotInnerIP, cfg.RelayHost, cfg.RelayPort)
+	return diagnosticsCheck{
+		Name:    "party network config",
+		Status:  diagOK,
+		Message: message,
+		Observed: map[string]interface{}{
+			"game_host_setting":  cfg.RobotConnectIPSetting,
+			"game_host_resolved": cfg.RobotConnectIP,
+			"login_ip":           cfg.RobotInnerIP,
+			"relay_host":         cfg.RelayHost,
+			"relay_port":         cfg.RelayPort,
+			"party_mtu":          "auto<=1472",
+		},
+	}
 }
 
 func partyAccountRangeCheck(uids []uint32, loadErr error, patchStart, patchEnd uint32) diagnosticsCheck {
