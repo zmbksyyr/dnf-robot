@@ -176,6 +176,17 @@ func TestAutoDialogUsesStandardFooterWithoutWrapping(t *testing.T) {
 	}
 }
 
+func TestPortsDialogUsesStandardFooter(t *testing.T) {
+	for _, want := range []string{
+		`const foot='<button onclick="submitGamePort()">Save Ports</button>`,
+		"showModal('Ports',body,foot)",
+	} {
+		if !strings.Contains(appJS, want) {
+			t.Fatalf("Ports dialog standard footer is missing %q", want)
+		}
+	}
+}
+
 func TestMarketFieldsUseOneCompactAlignment(t *testing.T) {
 	for _, want := range []string{
 		"dialog.market .formgrid{grid-template-columns:160px minmax(0,1fr)}",
