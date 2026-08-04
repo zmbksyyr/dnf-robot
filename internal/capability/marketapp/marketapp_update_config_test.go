@@ -12,9 +12,12 @@ func TestUpdateConfigKeepsIndependentActionLimits(t *testing.T) {
 	app.cfg.Restock.MaxConcurrent = 5
 	app.cfg.Collector.MaxConcurrent = 6
 
-	quality := false
-	if _, err := app.UpdateConfig(ConfigUpdateRequest{QualityFilter: &quality}); err != nil {
+	allowed := "43004"
+	if _, err := app.UpdateConfig(ConfigUpdateRequest{AllowedRarities: &allowed}); err != nil {
 		t.Fatal(err)
+	}
+	if app.cfg.Restock.AllowedRarities != "034" {
+		t.Fatalf("allowed rarities=%q, want normalized 034", app.cfg.Restock.AllowedRarities)
 	}
 	if app.cfg.Auto.MaxActions != 101 || app.cfg.Restock.MaxActions != 202 || app.cfg.Collector.MaxActions != 303 {
 		t.Fatalf("unrelated update changed action limits: auto=%d restock=%d collect=%d", app.cfg.Auto.MaxActions, app.cfg.Restock.MaxActions, app.cfg.Collector.MaxActions)

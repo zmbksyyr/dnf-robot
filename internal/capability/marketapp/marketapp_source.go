@@ -193,7 +193,7 @@ func (a *App) catalogAuctionRowWithQualityConfig(item catalogItem, applyQualityF
 	if !marketCandidate(item) {
 		return restockRow{}, false
 	}
-	if applyQualityFilter && qualityFilterEnabled(cfg) && !marketRarityAllowed(item) {
+	if applyQualityFilter && !marketRarityAllowedWithConfig(item, cfg) {
 		return restockRow{}, false
 	}
 	row := restockRow{

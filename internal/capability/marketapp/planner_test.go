@@ -87,12 +87,12 @@ func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 	}
 }
 
-func TestMarketRarityFilterDefaultsOnAndCanBeDisabled(t *testing.T) {
+func TestMarketRarityFilterUsesConfiguredBlockedDigits(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		1001: {ItemID: 1001, Name: "unique", Kind: "stackable", Rarity: 3},
-		1002: {ItemID: 1002, Name: "epic", Kind: "stackable", Rarity: 4},
+		1002: {ItemID: 1002, Name: "epic", Kind: "stackable", Rarity: 5},
 	}
 	app.planAuction([]restockRow{
 		{ItemID: 1001, SystemPrice: 100, Quantity: 1, StackSize: 1, Enabled: true},
@@ -100,7 +100,7 @@ func TestMarketRarityFilterDefaultsOnAndCanBeDisabled(t *testing.T) {
 	}, catalog, map[uint32]int{}, map[uint32]int{}, result)
 
 	if len(result.Actions) != 1 || result.Actions[0].ItemID != 1001 {
-		t.Fatalf("actions=%#v, want only rarity below 4 item", result.Actions)
+		t.Fatalf("actions=%#v, want only allowed rarity item", result.Actions)
 	}
 	if len(result.Skipped) != 1 || result.Skipped[0].Reason != "rarity_filtered" {
 		t.Fatalf("skipped=%#v, want rarity_filtered", result.Skipped)
@@ -114,14 +114,25 @@ func TestMarketRarityFilterDefaultsOnAndCanBeDisabled(t *testing.T) {
 		t.Fatalf("actions=%#v, want explicit high-rarity target", result.Actions)
 	}
 
-	off := false
-	app.cfg.Restock.QualityFilter = &off
+	app.cfg.Restock.AllowedRarities = "0123456789"
 	result = &PlanResult{}
 	app.planAuction([]restockRow{
 		{ItemID: 1002, SystemPrice: 100, Quantity: 1, StackSize: 1, Enabled: true},
 	}, catalog, map[uint32]int{}, map[uint32]int{}, result)
 	if len(result.Actions) != 1 || result.Actions[0].ItemID != 1002 {
 		t.Fatalf("actions=%#v, want high rarity when filter is disabled", result.Actions)
+	}
+}
+
+func TestMarketRarityFilterSupportsArbitraryAllowedDigitSet(t *testing.T) {
+	app := testApp(t)
+	app.cfg.Restock.AllowedRarities = "0246"
+	for rarity := 0; rarity <= 9; rarity++ {
+		allowed := app.marketRarityAllowed(catalogItem{Rarity: rarity})
+		wantAllowed := rarity == 0 || rarity == 2 || rarity == 4 || rarity == 6
+		if allowed != wantAllowed {
+			t.Fatalf("rarity %d allowed=%v, want %v", rarity, allowed, wantAllowed)
+		}
 	}
 }
 
@@ -146,7 +157,7 @@ func TestPlanAuctionAddsCollectForExistingHighRaritySystemStock(t *testing.T) {
 	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
 	mustWriteJSON(t, appPaths(app).PVFStackable(), []map[string]interface{}{
 		{"id": 1001, "price": 100, "rarity": 3},
-		{"id": 1002, "price": 100, "rarity": 4},
+		{"id": 1002, "price": 100, "rarity": 5},
 	})
 	mustWriteJSON(t, appPaths(app).PVFEquipment(), []map[string]interface{}{})
 	mustWriteText(t, filepath.Join(dir, "iteminfo.dat"), "1001 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n")

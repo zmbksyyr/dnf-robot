@@ -12,7 +12,10 @@ import (
 	"robot/internal/foundation/layout"
 )
 
-const defaultMarketMaxActions = 10000
+const (
+	defaultMarketMaxActions = 10000
+	defaultAllowedRarities  = "01234"
+)
 
 func DefaultConfig() Config {
 	return Config{
@@ -23,7 +26,7 @@ func DefaultConfig() Config {
 		SystemOwner:     SystemOwner{IDBase: 90000001, BuyerBase: 90100001, OwnerName: "market", CeraName: "gold", RotateEvery: 10},
 		Collector:       CollectorCfg{Enabled: true, MaxConcurrent: 8, InRangeProbability: 0.8, OutRangeProbability: 0.05},
 		Restock: RestockCfg{
-			Comments: defaultRestockComments(), QualityFilter: boolPtr(true), StackSizes: []int{500, 1000, 2000},
+			Comments: defaultRestockComments(), AllowedRarities: defaultAllowedRarities, StackSizes: []int{500, 1000, 2000},
 			EquipmentQtyMin: 2, EquipmentQtyMax: 5, EquipInflateMin: 5, EquipInflateMax: 8,
 			UpgradeMin: 7, UpgradeMax: 13, UpgradePriceRate: 0.08, RandLow: 0.9, RandHigh: 1.1,
 			MaxActions: defaultMarketMaxActions, MaxConcurrent: 8, MaxResultActions: 200,
@@ -75,7 +78,26 @@ func decodeMarketINI(ini *foundationconfig.INIConfig) (Config, error) {
 	c.Collector.OutRangeProbability = iniFloat(ini, "auction_collect", "out_of_range_probability", d.Collector.OutRangeProbability)
 	c.Collector.MaxActions = ini.GetInt("auction_collect", "max_actions", d.Collector.MaxActions)
 	c.Collector.MaxConcurrent = ini.GetInt("auction_collect", "max_concurrent", d.Collector.MaxConcurrent)
-	c.Restock.QualityFilter = boolPtr(iniBool(ini, "auction_price", "quality_filter", true))
+	allowedRarities := ini.GetString("auction_price", "allowed_rarities", "\x00")
+	if allowedRarities == "\x00" {
+		blockedRarities := ini.GetString("auction_price", "blocked_rarities", "\x00")
+		if blockedRarities != "\x00" {
+			var err error
+			allowedRarities, err = allowedRaritiesFromBlocked(blockedRarities)
+			if err != nil {
+				return Config{}, err
+			}
+		} else if ini.GetString("auction_price", "quality_filter", "true") == "false" {
+			allowedRarities = "0123456789"
+		} else {
+			allowedRarities = defaultAllowedRarities
+		}
+	}
+	var err error
+	c.Restock.AllowedRarities, err = normalizeAllowedRarities(allowedRarities)
+	if err != nil {
+		return Config{}, err
+	}
 	c.Restock.StackSizes = splitInts(ini.GetString("auction_price", "stack_sizes", joinInts(d.Restock.StackSizes)))
 	c.Restock.EquipmentQtyMin = ini.GetInt("auction_price", "equipment_qty_min", d.Restock.EquipmentQtyMin)
 	c.Restock.EquipmentQtyMax = ini.GetInt("auction_price", "equipment_qty_max", d.Restock.EquipmentQtyMax)
@@ -93,7 +115,6 @@ func decodeMarketINI(ini *foundationconfig.INIConfig) (Config, error) {
 	c.Restock.MaxConcurrent = ini.GetInt("auction_price", "max_concurrent", d.Restock.MaxConcurrent)
 	c.Restock.MaxResultActions = ini.GetInt("auction_price", "max_result_actions", d.Restock.MaxResultActions)
 	c.Restock.PerItemDelayMS = ini.GetInt("auction_price", "per_item_delay_ms", d.Restock.PerItemDelayMS)
-	var err error
 	c.Cera.Items, err = decodeCeraItems(ini.GetString("cera", "items", encodeCeraItems(d.Cera.Items)))
 	if err != nil {
 		return Config{}, err
@@ -112,7 +133,6 @@ func writeMarketConfig(path string, c Config) error {
 	if err := validateMarketConfig(c); err != nil {
 		return err
 	}
-	qf := c.Restock.QualityFilter == nil || *c.Restock.QualityFilter
 	lines := []string{
 		"# Market 配置。程序只在整份配置完整校验通过后加载，并按规范格式重写本文件。",
 		"[database]",
@@ -128,7 +148,7 @@ func writeMarketConfig(path string, c Config) error {
 		"# 金币寄售虚拟卖家的名称。", "cera_name = " + c.SystemOwner.CeraName,
 		"# 每个虚拟角色连续使用多少条订单后切换到下一个 ID。", fmt.Sprintf("rotate_every = %d", c.SystemOwner.RotateEvery), "",
 		"[auction_price]",
-		"# 是否过滤不适合自动补货的高稀有度物品。", "quality_filter = " + strconv.FormatBool(qf),
+		"# 允许自动补货上架的稀有度数字，只允许 0 到 9；缺少稀有度的数据按 0 处理。", "allowed_rarities = " + c.Restock.AllowedRarities,
 		"# 堆叠物品的候选数量，使用逗号分隔；实际数量不会超过 PVF stack_limit。", "stack_sizes = " + joinInts(c.Restock.StackSizes),
 		"# 每种缺货装备最少生成的拍卖记录数。", fmt.Sprintf("equipment_qty_min = %d", c.Restock.EquipmentQtyMin),
 		"# 每种缺货装备最多生成的拍卖记录数。", fmt.Sprintf("equipment_qty_max = %d", c.Restock.EquipmentQtyMax),

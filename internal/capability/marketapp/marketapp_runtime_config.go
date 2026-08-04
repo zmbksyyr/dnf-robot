@@ -22,7 +22,7 @@ var marketConfigKeys = map[string]map[string]bool{
 		"id_base": true, "buyer_base": true, "owner_name": true, "cera_name": true, "rotate_every": true,
 	},
 	"auction_price": {
-		"quality_filter": true, "stack_sizes": true,
+		"quality_filter": true, "blocked_rarities": true, "allowed_rarities": true, "stack_sizes": true,
 		"equipment_qty_min": true, "equipment_qty_max": true,
 		"equipment_level_min": true, "equipment_level_max": true,
 		"equip_inflate_min": true, "equip_inflate_max": true,
@@ -160,6 +160,10 @@ func validateMarketValue(section, key, value string) error {
 		"auto.enabled", "auto.continue_on_error":
 		if value != "true" && value != "false" {
 			return fmt.Errorf("must be true or false")
+		}
+	case "auction_price.blocked_rarities", "auction_price.allowed_rarities":
+		if _, err := normalizeAllowedRarities(value); err != nil {
+			return err
 		}
 	case "auction_price.stack_sizes":
 		values := splitStrings(value)

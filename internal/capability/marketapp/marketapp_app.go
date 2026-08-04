@@ -357,8 +357,19 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if req.CollectorEnabled != nil {
 		cfg.Collector.Enabled = *req.CollectorEnabled
 	}
-	if req.QualityFilter != nil {
-		cfg.Restock.QualityFilter = boolPtr(*req.QualityFilter)
+	if req.AllowedRarities != nil {
+		allowed, err := normalizeAllowedRarities(*req.AllowedRarities)
+		if err != nil {
+			a.jobMu.Unlock()
+			return Status{}, err
+		}
+		cfg.Restock.AllowedRarities = allowed
+	} else if req.QualityFilter != nil {
+		if *req.QualityFilter {
+			cfg.Restock.AllowedRarities = defaultAllowedRarities
+		} else {
+			cfg.Restock.AllowedRarities = "0123456789"
+		}
 	}
 	if req.IntervalMS != nil {
 		cfg.Auto.IntervalMS = *req.IntervalMS

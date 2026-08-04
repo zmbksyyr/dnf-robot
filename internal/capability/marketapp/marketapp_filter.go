@@ -10,10 +10,7 @@ func (a *App) marketCandidate(item catalogItem) bool {
 	if !marketCandidate(item) {
 		return false
 	}
-	if !a.qualityFilterEnabled() {
-		return true
-	}
-	return marketRarityAllowed(item)
+	return a.marketRarityAllowed(item)
 }
 
 func (a *App) qualityFilterEnabled() bool {
@@ -24,12 +21,21 @@ func (a *App) qualityFilterEnabled() bool {
 }
 
 func qualityFilterEnabled(cfg Config) bool {
-	qualityFilter := cfg.Restock.QualityFilter
-	return qualityFilter == nil || *qualityFilter
+	return cfg.Restock.AllowedRarities != "0123456789"
 }
 
-func marketRarityAllowed(item catalogItem) bool {
-	return item.Rarity < 4
+func (a *App) marketRarityAllowed(item catalogItem) bool {
+	if a == nil {
+		return item.Rarity >= 0 && item.Rarity <= 9 && strings.ContainsRune(defaultAllowedRarities, rune('0'+item.Rarity))
+	}
+	return marketRarityAllowedWithConfig(item, a.configSnapshot())
+}
+
+func marketRarityAllowedWithConfig(item catalogItem, cfg Config) bool {
+	if item.Rarity < 0 || item.Rarity > 9 {
+		return false
+	}
+	return strings.ContainsRune(cfg.Restock.AllowedRarities, rune('0'+item.Rarity))
 }
 
 func specialAuctionKind(item catalogItem) string {
