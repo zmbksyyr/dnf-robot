@@ -37,7 +37,7 @@ func TestServerScriptButtonsRemainAvailableAfterDispatch(t *testing.T) {
 	if strings.Contains(appJS, "(running?'disabled'") {
 		t.Fatal("server script buttons are still tied to a long-running state")
 	}
-	if !strings.Contains(appJS, "Submitted ") {
+	if !strings.Contains(appJS, "i18nFormat('script.submitted'") {
 		t.Fatal("server script dialog does not report the last submitted command")
 	}
 }

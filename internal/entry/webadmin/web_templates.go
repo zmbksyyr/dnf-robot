@@ -27,8 +27,15 @@ var i18nJS string
 //go:embed assets/app.js
 var appJS string
 
-var cleanLoginTemplate = template.Must(template.New("clean_login").Parse(trimAssetTerminator(loginHTML)))
+var cleanLoginTemplate = template.Must(template.New("clean_login").Parse(inlineLoginAssets()))
 var cleanIndexTemplate = template.Must(template.New("clean_index").Parse(inlineIndexAssets()))
+
+func inlineLoginAssets() string {
+	if strings.Count(loginHTML, i18nJSPlaceholder) != 1 {
+		panic("webadmin: login i18n asset placeholder must occur exactly once")
+	}
+	return strings.Replace(trimAssetTerminator(loginHTML), i18nJSPlaceholder, "<script>\n"+trimAssetTerminator(i18nJS)+"\n</script>", 1)
+}
 
 func inlineIndexAssets() string {
 	if strings.Count(indexHTML, appCSSPlaceholder) != 1 || strings.Count(indexHTML, i18nJSPlaceholder) != 1 || strings.Count(indexHTML, appJSPlaceholder) != 1 {

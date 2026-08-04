@@ -13,7 +13,7 @@ func TestEmbeddedWebAssetsContainRequiredContent(t *testing.T) {
 		content  string
 		required []string
 	}{
-		{name: "login", content: loginHTML, required: []string{"Robot Login", `action="/login"`, "{{if .Error}}"}},
+		{name: "login", content: loginHTML, required: []string{"Robot Web", `action="/login"`, "{{if .Error}}", i18nJSPlaceholder, `id="languageButton"`}},
 		{name: "index", content: indexHTML, required: []string{"TW Robot Web", appCSSPlaceholder, i18nJSPlaceholder, appJSPlaceholder, `id="languageButton"`, `id="partyCompatButton"`, `id="compatButton"`}},
 		{name: "css", content: appCSS, required: []string{":root{", ".service-lights", ".diagrow"}},
 		{name: "i18n", content: i18nJS, required: []string{"I18N_MESSAGES", "tw_language", "toggleLanguage", "currentLanguage=localStorage.getItem(I18N_STORAGE_KEY)==='zh'?'zh':'en'", "market.section_status", "market.price_range_policy", "范围外回收概率"}},
@@ -53,6 +53,20 @@ func TestIndexTemplateInlinesEmbeddedAssets(t *testing.T) {
 	}
 	if strings.Index(page, trimAssetTerminator(i18nJS)) > strings.Index(page, trimAssetTerminator(appJS)) {
 		t.Fatal("i18n script must load before the application script")
+	}
+}
+
+func TestLoginTemplateInlinesI18nAsset(t *testing.T) {
+	var rendered bytes.Buffer
+	if err := cleanLoginTemplate.Execute(&rendered, nil); err != nil {
+		t.Fatalf("execute login template: %v", err)
+	}
+	page := rendered.String()
+	if strings.Contains(page, i18nJSPlaceholder) {
+		t.Fatal("rendered login still contains the i18n asset placeholder")
+	}
+	if !strings.Contains(page, trimAssetTerminator(i18nJS)) {
+		t.Fatal("rendered login does not contain the embedded i18n asset")
 	}
 }
 
