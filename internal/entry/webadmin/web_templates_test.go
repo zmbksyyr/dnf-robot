@@ -140,13 +140,38 @@ func TestRequestedChineseLabelsAndDialogWidths(t *testing.T) {
 
 func TestMarketDialogUsesCompactAlignedLayout(t *testing.T) {
 	for _, want := range []string{
-		"dialog.market{width:min(820px,96vw)",
+		"dialog.market{width:min(680px,96vw)",
 		"dialog.market .formgrid>label{white-space:nowrap}",
 		"dialog.market .market-range",
 		"showModal('Market',body,foot,'market')",
 	} {
 		if !strings.Contains(appCSS+appJS, want) {
 			t.Fatalf("market dialog is missing compact layout rule %q", want)
+		}
+	}
+}
+
+func TestStoreColumnStaysEnglish(t *testing.T) {
+	if strings.Contains(indexHTML, `data-i18n="robots.store"`) {
+		t.Fatal("robot Store header still participates in language switching")
+	}
+	if !strings.Contains(indexHTML, `<th data-i18n-skip>Store</th>`) {
+		t.Fatal("robot Store header is not protected from text-node translation")
+	}
+	if !strings.Contains(appJS, "span.textContent=i18nEnglishFormat('status.'+store)") {
+		t.Fatal("robot Store values are not fixed to English")
+	}
+}
+
+func TestAutoDialogUsesStandardFooterWithoutWrapping(t *testing.T) {
+	for _, want := range []string{
+		`const foot='<button onclick="submitAuto(null)">Save settings</button>`,
+		"showModal('Auto',body,foot)",
+		".auto-form>.auto-option{width:220px}",
+		".auto-option{white-space:nowrap}",
+	} {
+		if !strings.Contains(appCSS+appJS, want) {
+			t.Fatalf("Auto dialog layout is missing %q", want)
 		}
 	}
 }
