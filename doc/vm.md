@@ -28,6 +28,7 @@ Read this before any VM, deploy, or debug task.
 - monitor: `30303`
 - bridge: `7000`
 - relay: `7200`
+- party route 0 (UDP): `5063`
 - auction: `30803`
 - point: `30603`
 
@@ -98,6 +99,7 @@ Do not accept startup from a single port sample. Game `10011`, Monitor `30303`, 
 - Start robot.
 - If needed, start game services with `/root/run`.
 - Verify `8111`, `8112`, logs, and process.
+- If party routing is needed, verify the UDP `5063` listener.
 - If game is needed, verify stable `10011`, `30303`, and `7000` listeners.
 - If market is needed, verify `30803` and `30603`.
 

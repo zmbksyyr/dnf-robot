@@ -8,9 +8,12 @@ import (
 	"strings"
 
 	"robot/internal/foundation/atomicfile"
+	"robot/internal/foundation/serviceinit"
 )
 
 const defaultDNFServiceRoot = "/home/neople"
+
+var discoverInitialExternalPorts = serviceinit.DiscoverExternalPorts
 
 // SysConfig holds all robot configuration from config.ini.
 type SysConfig struct {
@@ -189,17 +192,24 @@ func getLocalIP() string {
 }
 
 func generateDefaultConfig(path string) error {
-	data := strings.Join([]string{
-		"# robot main config. Restart robot after editing.",
-		"[Ports]",
+	discovered := discoverInitialExternalPorts(serviceinit.DefaultRunScript, serviceinit.DefaultHomeRoot)
+	portLines := []string{
 		"RobotAPI = 8111",
 		"Web = 8112",
-		"Game = 10011",
-		"Monitor = 30303",
-		"Auction = 30803",
-		"Point = 30603",
-		"Relay = 7200",
-		"PartyRoute0 = 5063",
+	}
+	portLines = append(portLines, initialPortConfigLine("Game", 10011, discovered.Game, 64535)...)
+	portLines = append(portLines, initialPortConfigLine("Monitor", 30303, discovered.Monitor, 65535)...)
+	portLines = append(portLines, initialPortConfigLine("Auction", 30803, discovered.Auction, 65535)...)
+	portLines = append(portLines, initialPortConfigLine("Point", 30603, discovered.Point, 65535)...)
+	portLines = append(portLines, initialPortConfigLine("Relay", 7200, discovered.Relay, 65535)...)
+	portLines = append(portLines, "# Robot-owned UDP listener; not discovered from /root/run.", "PartyRoute0 = 5063")
+
+	lines := []string{
+		"# robot main config. Restart robot after editing.",
+		"[Ports]",
+	}
+	lines = append(lines, portLines...)
+	lines = append(lines,
 		"",
 		"[Robot]",
 		"# df_game_r path, used for runtime self-check and PVF export.",
@@ -234,7 +244,22 @@ func generateDefaultConfig(path string) error {
 		"log_max_backups = 5",
 		"max_response_bytes = 4194304",
 		"",
-	}, "\n")
+	)
+	data := strings.Join(lines, "\n")
 	_, err := atomicfile.WriteFileIfMissing(path, []byte(data), 0600)
 	return err
+}
+
+func initialPortConfigLine(name string, fallback int, discovered serviceinit.PortValue, max int) []string {
+	if discovered.Port < 1 || discovered.Port > max {
+		return []string{fmt.Sprintf("%s = %d", name, fallback)}
+	}
+	source := strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(discovered.Source), "\r", " "), "\n", " ")
+	if source == "" {
+		source = serviceinit.DefaultRunScript
+	}
+	return []string{
+		fmt.Sprintf("# discovered from %s", source),
+		fmt.Sprintf("%s = %d", name, discovered.Port),
+	}
 }

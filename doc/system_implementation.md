@@ -78,6 +78,10 @@ game 目录密钥、Auction/Point 的 `iteminfo.dat`、df_game_r cfg 和补丁�
 
 `DfGameR` 同时用于推导服务根目录：当路径形如 `<root>/game/df_game_r` 时，Auction 和 Point 使用同一个 `<root>`；无法识别的布局才回退 `/home/neople`。因此 `/home/neople` 和 `/home/dxf` 布局共用同一套逻辑。
 
+首次启动且 `config/conf/config.ini` 不存在时，Robot 只读解析 `/root/run`，定位 Game、Monitor、Auction、Point 和 Relay 的工作目录、二进制及其引用的 `.cfg`、`.ini` 或 `.xml` 文件，再从明确的服务端口字段生成上述五个外部端口。单个服务无法定位、端口缺失或候选值有歧义时，仅该字段回退内置默认值。RobotAPI、Web 和 Robot 自有的 PartyRoute0 UDP 端口不从 `/root/run` 推断。已经存在的主配置始终优先，后续启动不会再次执行端口发现或自动覆盖用户配置。
+
+Market 运行期仍复用同一个受限脚本解析器获取 Auction/Point 启动命令；它不执行 `/root/run`，也不展开 Shell 变量。该启动命令发现与首次生成端口配置相互独立。
+
 主配置包含监听端口、数据库连接、Web 密码和基础路径，只在 Robot 重启时重新读取。
 
 ### 3.2 `config/conf/robot_config.ini`
