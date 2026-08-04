@@ -109,6 +109,35 @@ func TestDiagnosticsDialogKeepsRawEnglishText(t *testing.T) {
 	}
 }
 
+func TestSchedulerAlwaysUsesCompactEnglish(t *testing.T) {
+	for _, want := range []string{
+		`class="scheduler" data-i18n-skip`,
+		`<div class="k">Policy</div>`,
+		`<div class="k">Attach</div>`,
+		"i18nEnglishFormat('scheduler.attach_value'",
+		"'{rate}/s · b{batch}'",
+		"node.parentElement?.closest('[data-i18n-skip]')",
+	} {
+		if !strings.Contains(indexHTML+appJS+i18nJS, want) {
+			t.Fatalf("scheduler compact English behavior is missing %q", want)
+		}
+	}
+}
+
+func TestRequestedChineseLabelsAndDialogWidths(t *testing.T) {
+	for _, want := range []string{
+		"'action.market':'拍卖'",
+		"'common.cast':'释放'",
+		"auto-form",
+		"party-account-input",
+		".party-account-input{width:124px!important}",
+	} {
+		if !strings.Contains(appCSS+appJS+i18nJS, want) {
+			t.Fatalf("requested web label or width is missing %q", want)
+		}
+	}
+}
+
 func TestMarketDialogUsesCompactAlignedLayout(t *testing.T) {
 	for _, want := range []string{
 		"dialog.market{width:min(820px,96vw)",
