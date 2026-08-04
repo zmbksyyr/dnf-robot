@@ -9,6 +9,7 @@ type PartyDebugStatus struct {
 	LimitBytes  int64    `json:"limit_bytes"`
 	EventCount  int      `json:"event_count"`
 	Dropped     uint64   `json:"dropped"`
+	Suppressed  uint64   `json:"suppressed"`
 	StopReason  string   `json:"stop_reason,omitempty"`
 	ReportLines []string `json:"report_lines,omitempty"`
 }

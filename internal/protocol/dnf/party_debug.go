@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,20 +33,23 @@ type partyDebugEvent struct {
 	note      string
 	route     byte
 	raw       []byte
+	seen      *atomic.Uint64
 }
 
 type partyDebugSession struct {
-	started  time.Time
-	stopped  atomic.Int64
-	used     atomic.Int64
-	count    atomic.Int64
-	dropped  atomic.Uint64
-	writers  atomic.Int64
-	stopping atomic.Bool
-	reason   atomic.Int32
-	events   chan partyDebugEvent
-	stop     chan struct{}
-	done     chan struct{}
+	started    time.Time
+	stopped    atomic.Int64
+	used       atomic.Int64
+	count      atomic.Int64
+	dropped    atomic.Uint64
+	suppressed atomic.Uint64
+	writers    atomic.Int64
+	stopping   atomic.Bool
+	reason     atomic.Int32
+	events     chan partyDebugEvent
+	stop       chan struct{}
+	done       chan struct{}
+	samples    sync.Map
 }
 
 type partyDebugStore struct {
@@ -177,11 +181,24 @@ func recordPartyDebug(event partyDebugEvent) {
 	if session.stopping.Load() {
 		return
 	}
+	limit := partyDebugSampleLimit(event)
+	if limit == 0 {
+		session.suppressed.Add(1)
+		return
+	}
+	candidate := &atomic.Uint64{}
+	value, _ := session.samples.LoadOrStore(partyDebugSampleKey(event), candidate)
+	counter := value.(*atomic.Uint64)
+	event.seen = counter
+	if counter.Add(1) > uint64(limit) {
+		session.suppressed.Add(1)
+		return
+	}
 	cost := int64(partyDebugEventCost + len(event.raw) + len(event.note) + len(event.kind) + len(event.decision))
 	for {
 		used := session.used.Load()
 		if used+cost > partyDebugDataBudget {
-			stopPartyDebugSession(session, partyDebugStopMemory)
+			session.suppressed.Add(1)
 			return
 		}
 		if session.used.CompareAndSwap(used, used+cost) {
@@ -197,6 +214,30 @@ func recordPartyDebug(event partyDebugEvent) {
 		session.used.Add(-cost)
 		session.dropped.Add(1)
 	}
+}
+
+func partyDebugSampleLimit(event partyDebugEvent) int {
+	if event.decision == "FAIL" || event.decision == "DROP" || event.decision == "TIMEOUT" {
+		return 3
+	}
+	switch event.kind {
+	case "PARTY_OPTION_SOURCE", "PARTY_OPTION", "NAT_INFO", "PARTY_INFO", "REALTIME":
+		return 0
+	case "BASELINE":
+		return 1
+	case "TRANSPORT":
+		return 12
+	case "RELAY_PACKET":
+		return 8
+	case "DATA_FRAME":
+		return 2
+	default:
+		return 4
+	}
+}
+
+func partyDebugSampleKey(event partyDebugEvent) string {
+	return fmt.Sprintf("%d|%d|%s|%s|%s|%s|%d", event.uid, event.peer, event.direction, event.channel, event.kind, event.decision, event.route)
 }
 
 func recordPartyDebugPacket(uid, peer uint32, direction, channel, kind, decision, note string, raw []byte) {
@@ -251,6 +292,7 @@ func partyDebugStatus(session *partyDebugSession, events []partyDebugEvent) shar
 		BytesUsed:  session.used.Load(),
 		LimitBytes: partyDebugLimitBytes,
 		Dropped:    session.dropped.Load(),
+		Suppressed: session.suppressed.Load(),
 		EventCount: int(session.count.Load()),
 		StopReason: partyDebugStopReason(session.reason.Load()),
 	}
@@ -290,16 +332,22 @@ type partyDebugRobotSummary struct {
 }
 
 func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEvent) []string {
-	lines := []string{fmt.Sprintf("PARTY DEBUG  DUR=%dms  DATA=%d/%d  EVENTS=%d  DROPPED=%d  STOP=%s",
-		status.ElapsedMS, status.BytesUsed, status.LimitBytes, len(events), status.Dropped, valueOr(status.StopReason, "UNKNOWN"))}
+	lines := []string{fmt.Sprintf("PARTY DEBUG DUR=%dms DATA=%d/%d KEPT=%d SUPPRESSED=%d DROPPED=%d STOP=%s",
+		status.ElapsedMS, status.BytesUsed, status.LimitBytes, len(events), status.Suppressed, status.Dropped, valueOr(status.StopReason, "UNKNOWN"))}
 	if len(events) == 0 {
 		return append(lines, "RESULT=NO_DATA  BREAK=NO_PARTY_EVENT_CAPTURED")
 	}
 	events = expandPartyDebugTransportEvents(events)
 	sort.SliceStable(events, func(i, j int) bool { return events[i].at.Before(events[j].at) })
+	relevant := partyDebugRelevantUIDs(events)
 	robots := map[uint32]*partyDebugRobotSummary{}
 	critical := make([]partyDebugEvent, 0, len(events))
 	for _, event := range events {
+		if _, ok := relevant[event.uid]; !ok {
+			if _, peerOK := relevant[event.peer]; !peerOK {
+				continue
+			}
+		}
 		summary := robots[event.uid]
 		if summary == nil {
 			summary = &partyDebugRobotSummary{uid: event.uid}
@@ -350,9 +398,7 @@ func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEv
 		if event.decision == "FAIL" || event.decision == "DROP" || event.decision == "TIMEOUT" {
 			summary.failure = event.kind + ":" + event.note
 		}
-		if event.kind != "RELAY_PACKET" || event.decision == "FAIL" || len(event.raw) <= 128 {
-			critical = append(critical, event)
-		}
+		critical = append(critical, event)
 	}
 	uids := make([]int, 0, len(robots))
 	for uid := range robots {
@@ -362,17 +408,75 @@ func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEv
 	result, breakAt := partyDebugVerdict(robots, uids)
 	lines = append(lines, "RESULT="+result+"  BREAK="+breakAt)
 	lines = append(lines, "UID       INV ACC SNAP RELAY UDP_TX UDP_RX S3_TX S3_RX S0_TX S0_RX S1_TX S1_RX S2_TX S2_RX ACK_TX ACK_RX READY FAILURE")
-	for _, value := range uids {
+	displayUIDs := partyDebugDisplayUIDs(robots, uids, 4)
+	for _, value := range displayUIDs {
 		s := robots[uint32(value)]
 		lines = append(lines, fmt.Sprintf("%-9d %-3s %-3s %-4s %-5s %-6d %-6d %-5d %-5d %-5d %-5d %-5d %-5d %-5d %-5d %-6d %-6d %-5s %s",
 			s.uid, yesNo(s.invite), yesNo(s.accept), yesNo(s.snapshot), yesNo(s.relay), s.udpTX, s.udpRX,
 			s.stateTX[3], s.stateRX[3], s.stateTX[0], s.stateRX[0], s.stateTX[1], s.stateRX[1], s.stateTX[2], s.stateRX[2],
-			s.ackTX, s.ackRX, yesNo(s.ready), valueOr(s.failure, "-")))
+			s.ackTX, s.ackRX, yesNo(s.ready), compactPartyDebugText(valueOr(s.failure, "-"), 120)))
 	}
-	lines = append(lines, "TIMELINE: MS EVENT UID DIR CH PEER KIND LEN DECISION NOTE RAW")
+	if len(uids) > len(displayUIDs) {
+		lines = append(lines, fmt.Sprintf("PARTICIPANTS_OMITTED=%d", len(uids)-len(displayUIDs)))
+	}
+	lines = append(lines, "FLOW: FIRST..LAST UID>PEER DIR CH KIND SEEN LEN DECISION NOTE RAW")
 	lines = append(lines, compactPartyDebugEvents(status, critical)...)
-	lines = append(lines, buildPartyDebugChecks(events)...)
+	lines = append(lines, buildPartyDebugChecks(status, critical)...)
 	return lines
+}
+
+func partyDebugRelevantUIDs(events []partyDebugEvent) map[uint32]struct{} {
+	relevant := map[uint32]struct{}{}
+	for _, event := range events {
+		if event.kind == "PARTY_OPTION_SOURCE" || event.kind == "PARTY_OPTION" || event.kind == "NAT_INFO" || event.kind == "PARTY_INFO" || event.kind == "REALTIME" {
+			continue
+		}
+		if event.uid != 0 {
+			relevant[event.uid] = struct{}{}
+		}
+		if event.peer != 0 {
+			relevant[event.peer] = struct{}{}
+		}
+	}
+	return relevant
+}
+
+func partyDebugDisplayUIDs(robots map[uint32]*partyDebugRobotSummary, uids []int, limit int) []int {
+	ordered := append([]int(nil), uids...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		a, b := robots[uint32(ordered[i])], robots[uint32(ordered[j])]
+		score := func(s *partyDebugRobotSummary) int {
+			value := s.udpTX + s.udpRX + s.ackTX + s.ackRX
+			for state := 0; state < 4; state++ {
+				value += s.stateTX[state] + s.stateRX[state]
+			}
+			if s.invite {
+				value += 1000
+			}
+			if s.accept {
+				value += 1000
+			}
+			if s.snapshot {
+				value += 1000
+			}
+			if s.ready {
+				value += 1000
+			}
+			if s.failure != "" {
+				value += 1000
+			}
+			return value
+		}
+		left, right := score(a), score(b)
+		if left != right {
+			return left > right
+		}
+		return ordered[i] < ordered[j]
+	})
+	if len(ordered) > limit {
+		ordered = ordered[:limit]
+	}
+	return ordered
 }
 
 func expandPartyDebugTransportEvents(events []partyDebugEvent) []partyDebugEvent {
@@ -449,53 +553,146 @@ func partyDebugVerdict(robots map[uint32]*partyDebugRobotSummary, uids []int) (s
 
 func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebugEvent) []string {
 	started, _ := time.Parse(time.RFC3339Nano, status.StartedAt)
-	lines := make([]string, 0, len(events))
-	lastKey := ""
-	repeats := 0
-	flushRepeat := func() {
-		if repeats > 0 && len(lines) > 0 {
-			lines[len(lines)-1] += fmt.Sprintf(" REPEAT=%d", repeats+1)
-		}
-		repeats = 0
+	type eventGroup struct {
+		first time.Time
+		last  time.Time
+		event partyDebugEvent
+		count int
+		seen  uint64
 	}
-	for index, event := range events {
-		key := fmt.Sprintf("%d|%s|%s|%s|%s|%x", event.uid, event.direction, event.channel, event.kind, event.decision, event.raw)
-		if key == lastKey {
-			repeats++
+	groups := make([]eventGroup, 0, len(events))
+	byKey := map[string]int{}
+	for _, event := range events {
+		key := partyDebugReportGroupKey(event)
+		seen := uint64(1)
+		if event.seen != nil {
+			seen = event.seen.Load()
+		}
+		if index, ok := byKey[key]; ok {
+			groups[index].last = event.at
+			groups[index].count++
+			if seen > groups[index].seen {
+				groups[index].seen = seen
+			}
 			continue
 		}
-		flushRepeat()
-		lastKey = key
+		byKey[key] = len(groups)
+		groups = append(groups, eventGroup{first: event.at, last: event.at, event: event, count: 1, seen: seen})
+	}
+	const maxGroups = 18
+	selected := make([]eventGroup, len(groups))
+	copy(selected, groups)
+	sort.SliceStable(selected, func(i, j int) bool {
+		left, right := partyDebugEventPriority(selected[i].event), partyDebugEventPriority(selected[j].event)
+		if left != right {
+			return left < right
+		}
+		return selected[i].first.Before(selected[j].first)
+	})
+	if len(selected) > maxGroups {
+		selected = selected[:maxGroups]
+	}
+	sort.SliceStable(selected, func(i, j int) bool { return selected[i].first.Before(selected[j].first) })
+	lines := make([]string, 0, len(selected)+1)
+	for _, group := range selected {
+		event := group.event
 		raw := "-"
 		if len(event.raw) > 0 {
 			raw = hex.EncodeToString(event.raw)
-			if len(raw) > 192 {
-				raw = raw[:192] + "..."
+			if len(raw) > 96 {
+				raw = raw[:96] + "..."
 			}
 		}
-		lines = append(lines, fmt.Sprintf("+%07d E%03d R%d %s %-5s P%d %-16s L=%d %-8s %s RAW=%s",
-			event.at.Sub(started).Milliseconds(), index+1, event.uid, valueOr(event.direction, "--"), valueOr(event.channel, "CORE"), event.peer,
-			event.kind, len(event.raw), valueOr(event.decision, "OBS"), valueOr(event.note, "-"), raw))
-		if len(lines) >= 80 {
-			lines = append(lines, fmt.Sprintf("TIMELINE_TRUNCATED=%d", len(events)-index-1))
-			break
+		first := group.first.Sub(started).Milliseconds()
+		last := group.last.Sub(started).Milliseconds()
+		count := fmt.Sprintf("%d", group.count)
+		if group.seen > uint64(group.count) {
+			count += "+"
 		}
+		lines = append(lines, fmt.Sprintf("+%d..%d R%d>P%d %s %s %-16s N=%s L=%d %s %s RAW=%s",
+			first, last, event.uid, event.peer, valueOr(event.direction, "--"), valueOr(event.channel, "CORE"),
+			event.kind, count, len(event.raw), valueOr(event.decision, "OBS"), compactPartyDebugText(valueOr(event.note, "-"), 160), raw))
 	}
-	flushRepeat()
+	if len(groups) > len(selected) {
+		lines = append(lines, fmt.Sprintf("FLOW_OMITTED_GROUPS=%d", len(groups)-len(selected)))
+	}
 	return lines
 }
 
-func buildPartyDebugChecks(events []partyDebugEvent) []string {
-	lines := []string{"CHECKS:"}
-	for _, event := range events {
-		if event.decision == "FAIL" || event.decision == "DROP" || event.decision == "TIMEOUT" {
-			lines = append(lines, fmt.Sprintf("CHECK FAIL UID=%d LAYER=%s EVENT=%s NOTE=%s", event.uid, event.channel, event.kind, valueOr(event.note, "-")))
-		}
+func partyDebugReportGroupKey(event partyDebugEvent) string {
+	return fmt.Sprintf("%d|%d|%s|%s|%s|%s|%d", event.uid, event.peer, event.direction, event.channel, event.kind, event.decision, event.route)
+}
+
+func partyDebugEventPriority(event partyDebugEvent) int {
+	switch event.kind {
+	case "INVITE", "INVITE_PARSE", "ACCEPT", "ACCEPT_FALLBACK", "PARTY_PENDING", "SNAPSHOT", "SNAPSHOT_PARSE", "SNAPSHOT_WAIT", "RELAY_CONNECT", "RELAY_AUTH", "RELAY_CONNECTED", "TQOS_READY", "ROUTE_DEGRADED":
+		return 0
 	}
-	if len(lines) == 1 {
+	if event.decision == "FAIL" || event.decision == "DROP" || event.decision == "TIMEOUT" {
+		return 1
+	}
+	switch event.kind {
+	case "TQOS.S0", "TQOS.S1", "TQOS.S2", "TQOS.S3", "TQOS.ACK":
+		return 2
+	case "DATA.RELIABLE", "DATA.UNRELIABLE", "DATA_FRAME", "RELAY_PACKET":
+		return 4
+	default:
+		return 3
+	}
+}
+
+func buildPartyDebugChecks(status shared.PartyDebugStatus, events []partyDebugEvent) []string {
+	started, _ := time.Parse(time.RFC3339Nano, status.StartedAt)
+	type checkGroup struct {
+		first time.Time
+		last  time.Time
+		event partyDebugEvent
+		count uint64
+	}
+	groups := make([]checkGroup, 0, 8)
+	byKey := map[string]int{}
+	for _, event := range events {
+		if event.decision != "FAIL" && event.decision != "DROP" && event.decision != "TIMEOUT" {
+			continue
+		}
+		key := partyDebugSampleKey(event)
+		seen := uint64(1)
+		if event.seen != nil {
+			seen = event.seen.Load()
+		}
+		if index, ok := byKey[key]; ok {
+			groups[index].last = event.at
+			if seen > groups[index].count {
+				groups[index].count = seen
+			}
+			continue
+		}
+		byKey[key] = len(groups)
+		groups = append(groups, checkGroup{first: event.at, last: event.at, event: event, count: seen})
+	}
+	lines := []string{"CHECKS:"}
+	const maxChecks = 4
+	for index, group := range groups {
+		if index >= maxChecks {
+			lines = append(lines, fmt.Sprintf("CHECKS_OMITTED=%d", len(groups)-maxChecks))
+			break
+		}
+		lines = append(lines, fmt.Sprintf("CHECK %s R%d>P%d %s/%s N=%d +%d..%d NOTE=%s", group.event.decision,
+			group.event.uid, group.event.peer, group.event.channel, group.event.kind, group.count,
+			group.first.Sub(started).Milliseconds(), group.last.Sub(started).Milliseconds(), compactPartyDebugText(valueOr(group.event.note, "-"), 160)))
+	}
+	if len(groups) == 0 {
 		lines = append(lines, "CHECK OK NO_EXPLICIT_PARSE_SEND_OR_ROUTE_FAILURE")
 	}
 	return lines
+}
+
+func compactPartyDebugText(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) > limit {
+		return value[:limit] + "..."
+	}
+	return value
 }
 
 func describePartyTransport(raw []byte, route byte) (kind, note string) {

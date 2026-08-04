@@ -172,7 +172,6 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 			r.queuePartyDungeonFollowUnsafe(frame, peer, now)
 		}
 		if !requestOK {
-			recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "TQOS_PARSE", "FAIL", fmt.Sprintf("route=%d size=%d", route, len(frame)), frame)
 			continue
 		}
 		if request.state == 3 {
