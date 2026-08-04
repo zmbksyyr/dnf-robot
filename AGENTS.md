@@ -13,7 +13,6 @@ Must follow:
 - Do not restore VM snapshots unless the user asks.
 - Deploy only after recording the git commit and backing up `/root/robot`.
 - After deploy, check process, ports, and logs.
-- Use the stability pressure script for debug and long tests. Do not use old manual debug docs.
 
 Fast VM card:
 
