@@ -109,6 +109,12 @@ func TestDiagnosticsDialogKeepsRawEnglishText(t *testing.T) {
 	}
 }
 
+func TestMarketDialogUsesWideLayout(t *testing.T) {
+	if !strings.Contains(appCSS, "dialog.market{width:min(1180px,96vw)") || !strings.Contains(appJS, "showModal('Market',body,foot,'market')") {
+		t.Fatal("market dialog is not configured to use the wide layout")
+	}
+}
+
 func TestLoginTemplateEscapesError(t *testing.T) {
 	const loginError = `<script>alert("bad")</script>`
 	var rendered bytes.Buffer
