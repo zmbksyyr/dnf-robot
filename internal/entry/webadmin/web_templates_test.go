@@ -109,9 +109,32 @@ func TestDiagnosticsDialogKeepsRawEnglishText(t *testing.T) {
 	}
 }
 
-func TestMarketDialogUsesWideLayout(t *testing.T) {
-	if !strings.Contains(appCSS, "dialog.market{width:min(1180px,96vw)") || !strings.Contains(appJS, "showModal('Market',body,foot,'market')") {
-		t.Fatal("market dialog is not configured to use the wide layout")
+func TestMarketDialogUsesCompactAlignedLayout(t *testing.T) {
+	for _, want := range []string{
+		"dialog.market{width:min(820px,96vw)",
+		"dialog.market .formgrid>label{white-space:nowrap}",
+		"dialog.market .market-range",
+		"showModal('Market',body,foot,'market')",
+	} {
+		if !strings.Contains(appCSS+appJS, want) {
+			t.Fatalf("market dialog is missing compact layout rule %q", want)
+		}
+	}
+}
+
+func TestMarketDialogHasExplicitSaveAndKeepsAutoSave(t *testing.T) {
+	for _, want := range []string{
+		`id="modalSaveButton"`,
+		"submitMarketConfigExplicit()",
+		"function autoSaveMarketConfig()",
+		"style==='market'?'':'none'",
+	} {
+		if !strings.Contains(indexHTML+appJS, want) {
+			t.Fatalf("market save behavior is missing %q", want)
+		}
+	}
+	if strings.Contains(appJS, "Only these rarity digits will be listed; missing rarity is treated as 0</div>") {
+		t.Fatal("market rarity field still renders its explanatory note")
 	}
 }
 
