@@ -116,11 +116,14 @@ func PortFromConfig(service, text string) (int, error) {
 				continue
 			}
 			key := normalizePortKey(match[1])
+			if isDatabasePortKey(key) {
+				continue
+			}
 			score := 0
 			switch key {
 			case serviceKey, normalizePortKey(service + "port"):
 				score = 3
-			case "port", "listenport", "tcpport", "serverport", "serviceport", "portno":
+			case "port", "listenport", "tcpport", "thistcpport", "serverport", "serviceport", "portno":
 				score = 2
 			default:
 				if strings.Contains(key, normalizePortKey(service)) {
@@ -152,6 +155,10 @@ func PortFromConfig(service, text string) (int, error) {
 		return port, nil
 	}
 	return 0, fmt.Errorf("listen port not found")
+}
+
+func isDatabasePortKey(key string) bool {
+	return strings.Contains(key, "dbport") || strings.Contains(key, "databaseport")
 }
 
 func stripConfigComment(line string) string {

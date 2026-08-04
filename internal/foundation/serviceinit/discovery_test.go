@@ -66,6 +66,24 @@ auction_port = 31803
 	}
 }
 
+func TestPortFromConfigPrefersAuctionListenerOverDatabasePorts(t *testing.T) {
+	port, err := PortFromConfig("auction", `
+[serverframe]
+this_ip = 127.0.0.1
+this_tcp_port = 30803
+this_udp_port = 30803
+logserver_port = 7009
+
+[auction]
+monitor_server_port = 30303 //udp port
+game_db_port = 3306
+auction_db_port = 3306
+`)
+	if err != nil || port != 30803 {
+		t.Fatalf("auction listener port = %d, %v; want 30803", port, err)
+	}
+}
+
 func TestPortFromConfigAcceptsXMLAttributeAndCommandPort(t *testing.T) {
 	port, err := PortFromConfig("monitor", `<server listen_port="31303" database_port="3306"/>`)
 	if err != nil || port != 31303 {
