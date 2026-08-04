@@ -97,6 +97,18 @@ func TestI18nLocalesHaveMatchingKeys(t *testing.T) {
 	}
 }
 
+func TestRobotJobNamesAlwaysUseChineseCatalog(t *testing.T) {
+	if !strings.Contains(appJS, "const table=I18N_MESSAGES.zh||{}") {
+		t.Fatal("robot job display is not fixed to the Chinese catalog")
+	}
+}
+
+func TestDiagnosticsDialogKeepsRawEnglishText(t *testing.T) {
+	if !strings.Contains(appJS, "showModal('Diagnostics',body,'<button onclick=\"closeModal()\">Close</button>','',false)") {
+		t.Fatal("diagnostics dialog is not configured to bypass translation")
+	}
+}
+
 func TestLoginTemplateEscapesError(t *testing.T) {
 	const loginError = `<script>alert("bad")</script>`
 	var rendered bytes.Buffer
