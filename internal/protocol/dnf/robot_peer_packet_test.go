@@ -448,6 +448,35 @@ func TestPartyIPInfoPacketSupportsTwentyFourByteMembers(t *testing.T) {
 	}
 }
 
+func TestPartyIPInfoPacketSupportsPublicExternalAddresses(t *testing.T) {
+	body := make([]byte, 49)
+	body[0] = 2
+	putPartyPeer(body[1:23], 0xa4ed, net.IPv4(192, 168, 200, 1), 5063, 18000000, 1, 1472)
+	copy(body[7:11], net.IPv4(114, 237, 99, 62).To4())
+	putPartyPeer(body[25:47], 0x2222, net.IPv4(192, 168, 200, 131), 45678, 17000001, 1, 1472)
+	copy(body[31:35], net.IPv4(203, 0, 113, 10).To4())
+
+	self, peers, source, err := selectPartyIPInfoPacket(newPartyTestCipher(t), makePartyRecvPacket(11, body), false, 17000001)
+	if err != nil || source != recvBodySourcePlain || self.accID != 17000001 || len(peers) != 1 {
+		t.Fatalf("self=%+v peers=%+v source=%s err=%v", self, peers, source, err)
+	}
+	if got := peers[0].outerIP.String(); got != "114.237.99.62" {
+		t.Fatalf("leader external IP = %s, want 114.237.99.62", got)
+	}
+}
+
+func TestPartyIPInfoRejectsInvalidExternalAddress(t *testing.T) {
+	body := make([]byte, 23)
+	body[0] = 1
+	putPartyPeer(body[1:], 0x1111, net.IPv4(192, 168, 200, 131), 45678, 17000001, 1, 1472)
+	copy(body[7:11], net.IPv4(239, 1, 2, 3).To4())
+
+	_, _, _, err := selectPartyIPInfoPacket(newPartyTestCipher(t), makePartyRecvPacket(11, body), false, 17000001)
+	if err == nil || err.Error() != "party IP info has no valid body" {
+		t.Fatalf("invalid external IP error = %v", err)
+	}
+}
+
 func TestPartyIPInfoPacketSupportsMixedTwentyFourByteMembers(t *testing.T) {
 	body := mustPartyHex(t, "02f700c0a8c801c0a8c80113c780a8120101c0050000644704c0a8c883c0a8c883878c0867030101c005000064a8b1c270")
 

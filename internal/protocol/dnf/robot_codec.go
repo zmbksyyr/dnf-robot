@@ -151,14 +151,14 @@ func partyIPInfoMemberWithIDValid(entry []byte) bool {
 	if binary.LittleEndian.Uint16(entry[0:2]) == 0 && partyIPInfoIPZero(entry[2:6]) && partyIPInfoIPZero(entry[6:10]) {
 		return true
 	}
-	return partyIPInfoPrivateIP(entry[2:6]) && partyIPInfoPrivateIP(entry[6:10])
+	return partyIPInfoPrivateIP(entry[2:6]) && partyIPInfoEndpointIP(entry[6:10])
 }
 
 func partyIPInfoMemberWithoutIDValid(entry []byte) bool {
 	if len(entry) < 19 {
 		return false
 	}
-	return partyIPInfoPrivateIP(entry[0:4]) && partyIPInfoPrivateIP(entry[4:8])
+	return partyIPInfoPrivateIP(entry[0:4]) && partyIPInfoEndpointIP(entry[4:8])
 }
 
 func partyIPInfoMemberWithID(entry []byte, slot byte) partyIPPeer {
@@ -191,6 +191,13 @@ func partyIPInfoPrivateIP(ip []byte) bool {
 		return false
 	}
 	return ip[0] == 10 || (ip[0] == 192 && ip[1] == 168) || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31)
+}
+
+func partyIPInfoEndpointIP(ip []byte) bool {
+	if len(ip) < net.IPv4len {
+		return false
+	}
+	return net.IPv4(ip[0], ip[1], ip[2], ip[3]).IsGlobalUnicast()
 }
 
 func partyIPInfoIPZero(ip []byte) bool {
@@ -403,7 +410,7 @@ func selectPartyIPInfoPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool, s
 		}
 		return self, peers, candidate.source, nil
 	}
-	if decryptErr != nil {
+	if len(candidates) == 0 && decryptErr != nil {
 		return partyIPPeer{}, nil, recvBodySourceUnknown, decryptErr
 	}
 	return partyIPPeer{}, nil, recvBodySourceUnknown, fmt.Errorf("party IP info has no valid body")
