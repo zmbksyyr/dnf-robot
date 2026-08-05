@@ -67,6 +67,7 @@ func (r *RobotVo) partySupervisorStep(epoch uint64, uid uint32, now time.Time, n
 		r.ensurePartyRelayUnsafe()
 		r.startPartyRobotPeerNegotiationUnsafe()
 		r.probePartyRobotPeerHealthUnsafe(r.partyUDPConn, now)
+		r.maybeRecoverStalePartyUnsafe(now)
 		*nextMaintenance = now.Add(partySupervisorMaintenance)
 	}
 	var udp *net.UDPConn

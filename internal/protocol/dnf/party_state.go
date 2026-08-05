@@ -518,22 +518,29 @@ func (r *RobotVo) setPartySelfPeerUnsafe(peer partyIPPeer) {
 }
 
 func (r *RobotVo) rememberPartyRealtimeIdentitiesUnsafe(identities []partyRealtimeIdentity) {
-	next := [4]uint16{}
-	for _, identity := range identities {
-		if identity.slot < 4 {
-			next[identity.slot] = identity.uniqueID
-		}
-	}
+	next := partyRealtimeRoster(identities)
+	r.partyRosterAt = time.Now()
 	r.partyRealtimeUnique = next
 	r.applyPartyRealtimeIdentitiesUnsafe()
+	if next == r.partyRealtimeCandidate {
+		if r.partyRealtimeConfirmations < 0xff {
+			r.partyRealtimeConfirmations++
+		}
+	} else {
+		r.partyRealtimeCandidate = next
+		r.partyRealtimeConfirmations = 1
+	}
+	if r.partyRealtimeConfirmations == partyRealtimeConfirmationsRequired {
+		r.reconcilePartyRealtimeUnsafe(next)
+	}
 }
 
 func (r *RobotVo) applyPartyRealtimeIdentitiesUnsafe() {
 	self := r.partySelfPeer
 	selfRecovered := false
 	if self.slotKnown && self.slot < 4 {
-		if uniqueID := r.partyRealtimeUnique[self.slot]; uniqueID != 0 && uniqueID != self.uniqueID {
-			selfRecovered = self.uniqueID == 0
+		if uniqueID := r.partyRealtimeUnique[self.slot]; uniqueID != 0 && self.uniqueID == 0 {
+			selfRecovered = true
 			self.uniqueID = uniqueID
 			r.setPartySelfPeerUnsafe(self)
 		}
@@ -546,7 +553,7 @@ func (r *RobotVo) applyPartyRealtimeIdentitiesUnsafe() {
 			continue
 		}
 		if peer.slotKnown && peer.slot < 4 {
-			if uniqueID := r.partyRealtimeUnique[peer.slot]; uniqueID != 0 && uniqueID != peer.uniqueID {
+			if uniqueID := r.partyRealtimeUnique[peer.slot]; uniqueID != 0 && peer.uniqueID == 0 {
 				peer.uniqueID = uniqueID
 				peersChanged = true
 			}
@@ -569,6 +576,11 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.partySelfRefreshBackoff = 0
 	r.partySelfRefreshAttempts = 0
 	r.partyRealtimeUnique = [4]uint16{}
+	r.partyRealtimeCandidate = [4]uint16{}
+	r.partyRealtimeConfirmations = 0
+	r.partyRosterAt = time.Time{}
+	r.partyHumanObserved = false
+	r.partyAnyTransportAt = time.Time{}
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)

@@ -3,6 +3,7 @@ package dnf
 import (
 	"encoding/binary"
 	"testing"
+	"time"
 
 	"robot/internal/protocol/dnf/crypt"
 )
@@ -94,5 +95,46 @@ func TestCharacterRefreshAcceptsFlagOneAckWithoutBody(t *testing.T) {
 	}
 	if robot.State != StateSelect || robot.ReturnSelectPending || robot.ReturnSelectRejected {
 		t.Fatalf("flag-one ACK state=%d pending=%t rejected=%t", robot.State, robot.ReturnSelectPending, robot.ReturnSelectRejected)
+	}
+}
+
+func TestPartyRecoveryAckClearsPartyAndReselectsCharacter(t *testing.T) {
+	conn := &captureSessionConn{}
+	robot := NewRobotVo(nil)
+	robot.Cipher = crypt.NewDNFCipher()
+	if err := robot.Cipher.Initialize(make([]byte, 334)); err != nil {
+		t.Fatal(err)
+	}
+	robot.Conn = conn
+	robot.State = StateRun
+	robot.UID = 17000026
+	robot.CharacterSlot = 3
+	robot.partySelfPeer = partyIPPeer{uniqueID: 2, accID: robot.UID, slot: 1, slotKnown: true}
+	robot.partyPeers[0] = partyIPPeer{uniqueID: 1, accID: 18000000, slot: 0, slotKnown: true}
+	if !robot.sendReturnToCharacterSelectUnsafe(true) {
+		t.Fatal("party recovery command was not sent")
+	}
+
+	response := make([]byte, 7)
+	response[0] = 1
+	binary.LittleEndian.PutUint16(response[1:3], 7)
+	binary.LittleEndian.PutUint32(response[3:7], uint32(len(response)))
+	if !robot.handleReturnToSelectPacketUnsafe(robotInboundPacket{data: response, size: len(response), flag: 1, typ: 7}) {
+		t.Fatal("party recovery ACK was not consumed")
+	}
+	if robot.partyActiveUnsafe() {
+		t.Fatal("party state survived the server ACK")
+	}
+	conn.written = nil
+
+	deadline := time.Now().Add(2 * time.Second)
+	for robot.State != StateLogin && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if robot.State != StateLogin || !robot.SelectCharacSent {
+		t.Fatalf("character was not automatically reselected: state=%d sent=%t", robot.State, robot.SelectCharacSent)
+	}
+	if len(conn.written) < 3 || binary.LittleEndian.Uint16(conn.written[1:3]) != 4 {
+		t.Fatalf("last recovery packet is not character select: %x", conn.written)
 	}
 }

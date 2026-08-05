@@ -92,7 +92,12 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 			fmt.Printf("[PARTY_IPINFO_PLAIN] uid=%d size=%d\n", r.UID, packet.size)
 		}
 		tracePartyIPInfo(r.UID, self, peers)
+		r.partyRosterAt = time.Now()
+		r.observePartyAccountsUnsafe(peers)
 		r.setPartySelfPeerUnsafe(self)
+		if r.partyHumanObserved && r.partyRosterIsPureRobotUnsafe(r.partySelfPeer, peers) && r.startPartyRecoveryUnsafe(time.Now()) {
+			return
+		}
 		r.setPartyPeersUnsafe(peers)
 		r.applyPartyRealtimeIdentitiesUnsafe()
 		r.ensurePartyRelayUnsafe()

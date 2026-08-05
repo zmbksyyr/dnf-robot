@@ -212,6 +212,74 @@ func TestPartyRealtimePacketDispatchCompletesPeerIdentities(t *testing.T) {
 	}
 }
 
+func TestPartyRealtimeRosterMovesSlotsAndRemovesDepartedMember(t *testing.T) {
+	vo := &RobotVo{UID: 17000026, State: StateRun}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x2222, accID: 17000026, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.partyPeers[1] = partyIPPeer{uniqueID: 0x3333, accID: 17000027, slot: 2, slotKnown: true}
+	identities := []partyRealtimeIdentity{
+		{uniqueID: 0x2222, slot: 0},
+		{uniqueID: 0x3333, slot: 1},
+	}
+
+	vo.rememberPartyRealtimeIdentitiesUnsafe(identities)
+	if vo.partySelfPeer.slot != 1 || vo.partyPeerForSlotUnsafe(0).uniqueID != 0x1111 {
+		t.Fatal("a single realtime roster changed authoritative membership")
+	}
+	vo.rememberPartyRealtimeIdentitiesUnsafe(identities)
+
+	if vo.partySelfPeer.slot != 0 || vo.partySelfPeer.uniqueID != 0x2222 {
+		t.Fatalf("self was not moved to leader slot: %+v", vo.partySelfPeer)
+	}
+	if peer := vo.partyPeerForSlotUnsafe(1); peer.uniqueID != 0x3333 || peer.accID != 17000027 {
+		t.Fatalf("remaining robot was not moved with its account metadata: %+v", peer)
+	}
+	if _, ok := vo.partyPeerForAccountUnsafe(18000000); ok {
+		t.Fatal("departed human remained in the realtime roster")
+	}
+}
+
+func TestPartyRealtimeUnknownMemberPreventsRecovery(t *testing.T) {
+	vo := &RobotVo{UID: 17000026, State: StateRun, partyHumanObserved: true}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x2222, accID: 17000026, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	identities := []partyRealtimeIdentity{
+		{uniqueID: 0x2222, slot: 0},
+		{uniqueID: 0x4444, slot: 1},
+	}
+
+	vo.rememberPartyRealtimeIdentitiesUnsafe(identities)
+	vo.rememberPartyRealtimeIdentitiesUnsafe(identities)
+
+	if vo.ReturnSelectPending || vo.partyRecovery {
+		t.Fatal("an unresolved realtime member triggered party recovery")
+	}
+	if peer := vo.partyPeerForSlotUnsafe(1); peer.uniqueID != 0x4444 || peer.accID != 0 {
+		t.Fatalf("unknown member was not retained as a blocking placeholder: %+v", peer)
+	}
+}
+
+func TestPartyRealtimePureRobotsTriggersServerSideRecovery(t *testing.T) {
+	conn := &captureSessionConn{}
+	vo := &RobotVo{UID: 17000026, State: StateRun, Conn: conn, Cipher: newPartyTestCipher(t), partyHumanObserved: true}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x2222, accID: 17000026, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	identities := []partyRealtimeIdentity{{uniqueID: 0x2222, slot: 0}}
+
+	vo.rememberPartyRealtimeIdentitiesUnsafe(identities)
+	vo.rememberPartyRealtimeIdentitiesUnsafe(identities)
+
+	if !vo.ReturnSelectPending || !vo.partyRecovery {
+		t.Fatal("stable self-only roster did not start party recovery")
+	}
+	if len(conn.written) < 3 || binary.LittleEndian.Uint16(conn.written[1:3]) != 7 {
+		t.Fatalf("party recovery did not use command 7: %x", conn.written)
+	}
+	if !vo.partyActiveUnsafe() {
+		t.Fatal("party state was cleared locally before the server acknowledged recovery")
+	}
+}
+
 func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}

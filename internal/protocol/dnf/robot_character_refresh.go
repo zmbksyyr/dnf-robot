@@ -1,5 +1,7 @@
 package dnf
 
+import "time"
+
 // ReturnToCharacterSelect performs the game's normal "small logout". Unlike
 // CloseOut it preserves the authenticated account connection. The successful
 // server response is the write barrier: ReturnToSelectCharacList() has already
@@ -11,6 +13,13 @@ func (r *RobotVo) ReturnToCharacterSelect() bool {
 	if r.State != StateRun || r.ReturnSelectPending || r.partyActiveUnsafe() {
 		return false
 	}
+	return r.sendReturnToCharacterSelectUnsafe(false)
+}
+
+func (r *RobotVo) sendReturnToCharacterSelectUnsafe(partyRecovery bool) bool {
+	if r.State != StateRun || r.ReturnSelectPending {
+		return false
+	}
 	pkt, err := buildSendPacket(7, uint16(r.PacketID), nil, r.Cipher)
 	if err != nil || !r.sendRaw(pkt) {
 		return false
@@ -18,6 +27,7 @@ func (r *RobotVo) ReturnToCharacterSelect() bool {
 	r.PacketID++
 	r.ReturnSelectPending = true
 	r.ReturnSelectRejected = false
+	r.partyRecovery = partyRecovery
 	r.publishSnapshotUnsafe()
 	return true
 }
@@ -69,6 +79,8 @@ func (r *RobotVo) handleReturnToSelectPacketUnsafe(packet robotInboundPacket) bo
 		r.ReturnSelectPending = false
 		if candidate.body[0] != 1 {
 			r.ReturnSelectRejected = true
+			r.partyRecovery = false
+			r.partyRecoveryCooldownUntil = time.Now().Add(30 * time.Second)
 			r.publishSnapshotUnsafe()
 			return true
 		}
@@ -79,13 +91,50 @@ func (r *RobotVo) handleReturnToSelectPacketUnsafe(packet robotInboundPacket) bo
 }
 
 func (r *RobotVo) finishReturnToSelectUnsafe() {
+	recoverParty := r.partyRecovery
 	r.ReturnSelectPending = false
 	r.ReturnSelectRejected = false
+	r.partyRecovery = false
 	r.SelectCharacSent = false
 	r.State = StateSelect
-	r.stopPartySupervisorUnsafe()
-	r.closePartyUDPUnsafe()
-	r.closePartyRelayUnsafe()
-	r.clearPartyPendingUnsafe()
+	if recoverParty {
+		r.clearPartyUnsafe()
+	} else {
+		r.stopPartySupervisorUnsafe()
+		r.closePartyUDPUnsafe()
+		r.closePartyRelayUnsafe()
+		r.clearPartyPendingUnsafe()
+	}
 	r.publishSnapshotUnsafe()
+	if recoverParty {
+		r.schedulePartyReselectUnsafe()
+	}
+}
+
+func (r *RobotVo) schedulePartyReselectUnsafe() {
+	r.partyRecoveryEpoch++
+	epoch := r.partyRecoveryEpoch
+	deadline := time.Now().Add(30 * time.Second)
+	var attempt func()
+	attempt = func() {
+		r.mu.Lock()
+		if r.partyRecoveryEpoch != epoch || r.State != StateSelect || r.ReturnSelectPending || r.ReturnSelectRejected {
+			r.mu.Unlock()
+			return
+		}
+		r.State = StateLogin
+		r.SelectCharacSent = false
+		if !r.sendSelectCharacUnsafe("after party recovery") {
+			r.State = StateSelect
+			r.publishSnapshotUnsafe()
+			r.mu.Unlock()
+			if time.Now().Before(deadline) {
+				time.AfterFunc(time.Second, attempt)
+			}
+			return
+		}
+		r.publishSnapshotUnsafe()
+		r.mu.Unlock()
+	}
+	time.AfterFunc(300*time.Millisecond, attempt)
 }
