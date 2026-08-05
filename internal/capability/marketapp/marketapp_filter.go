@@ -19,7 +19,7 @@ func marketListingAllowedWithConfig(item catalogItem, cfg Config) bool {
 		return false
 	}
 	if item.Kind == "equipment" {
-		if cfg.Restock.EquipmentTradePolicy == tradePolicyStrict && tradeFieldBlocked(item) {
+		if cfg.Restock.EquipmentTradePolicy == tradePolicyStrict && strictTradeBlocked(item) {
 			return false
 		}
 		if min := cfg.Restock.EquipmentLevelMin; min > 0 && item.Level < min {
@@ -30,11 +30,12 @@ func marketListingAllowedWithConfig(item catalogItem, cfg Config) bool {
 		}
 		return true
 	}
-	return cfg.Restock.MaterialTradePolicy != tradePolicyStrict || !tradeFieldBlocked(item)
+	return cfg.Restock.OtherTradePolicy != tradePolicyStrict || !strictTradeBlocked(item)
 }
 
-func tradeFieldBlocked(item catalogItem) bool {
-	return item.NoTrade || (item.CanTrade != nil && !*item.CanTrade) || (item.CanAuction != nil && !*item.CanAuction)
+func strictTradeBlocked(item catalogItem) bool {
+	attach := strings.ToLower(strings.TrimSpace(item.Attach))
+	return attach == "account" || item.NoTrade || (item.CanTrade != nil && !*item.CanTrade) || (item.CanAuction != nil && !*item.CanAuction)
 }
 
 func (a *App) qualityFilterEnabled() bool {
@@ -45,14 +46,15 @@ func (a *App) qualityFilterEnabled() bool {
 }
 
 func qualityFilterEnabled(cfg Config) bool {
-	return cfg.Restock.AllowedRarities != "0123456789" ||
+	return cfg.Restock.EquipmentAllowedRarities != "0123456789" ||
+		cfg.Restock.OtherAllowedRarities != "0123456789" ||
 		cfg.Restock.EquipmentTradePolicy == tradePolicyStrict ||
-		cfg.Restock.MaterialTradePolicy == tradePolicyStrict
+		cfg.Restock.OtherTradePolicy == tradePolicyStrict
 }
 
 func (a *App) marketRarityAllowed(item catalogItem) bool {
 	if a == nil {
-		return item.Rarity >= 0 && item.Rarity <= 9 && strings.ContainsRune(defaultAllowedRarities, rune('0'+item.Rarity))
+		return item.Rarity >= 0 && item.Rarity <= 9 && strings.ContainsRune(defaultEquipmentRarities, rune('0'+item.Rarity))
 	}
 	return marketRarityAllowedWithConfig(item, a.configSnapshot())
 }
@@ -61,7 +63,11 @@ func marketRarityAllowedWithConfig(item catalogItem, cfg Config) bool {
 	if item.Rarity < 0 || item.Rarity > 9 {
 		return false
 	}
-	return strings.ContainsRune(cfg.Restock.AllowedRarities, rune('0'+item.Rarity))
+	allowed := cfg.Restock.OtherAllowedRarities
+	if item.Kind != "stackable" {
+		allowed = cfg.Restock.EquipmentAllowedRarities
+	}
+	return strings.ContainsRune(allowed, rune('0'+item.Rarity))
 }
 
 func specialAuctionKind(item catalogItem) string {

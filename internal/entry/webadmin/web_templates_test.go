@@ -17,7 +17,7 @@ func TestEmbeddedWebAssetsContainRequiredContent(t *testing.T) {
 		{name: "index", content: indexHTML, required: []string{"TW Robot Web", appCSSPlaceholder, i18nJSPlaceholder, appJSPlaceholder, `id="languageButton"`, `id="partyCompatButton"`, `id="compatButton"`}},
 		{name: "css", content: appCSS, required: []string{":root{", ".service-lights", ".diagrow", ".market-policy-select"}},
 		{name: "i18n", content: i18nJS, required: []string{"I18N_MESSAGES", "tw_language", "toggleLanguage", "currentLanguage=localStorage.getItem(I18N_STORAGE_KEY)==='zh'?'zh':'en'", "auto.shout_interval", "喊话间隔", "validation.shout_interval", "market.section_status", "market.price_range_policy", "market.allowed_rarities", "上架稀有度（0-9）", "范围外回收概率"}},
-		{name: "javascript", content: appJS, required: []string{"async function api(", "openPartyCompatDialog", "openCompatDialog", "openDiagnosticsDialog", "restartRobot", "autoMailNotify", "autoShoutMin", "autoShoutMax", "auto.auto_shout_interval_min_sec", "auto.auto_shout_interval_max_sec", "marketAllowedRarities", "normalizeRarityDigits", "allowed_rarities", "marketEquipmentLevelMin", "equipment_trade_policy", "material_trade_policy", "marketApplyListingConfig"}},
+		{name: "javascript", content: appJS, required: []string{"async function api(", "openPartyCompatDialog", "openCompatDialog", "openDiagnosticsDialog", "restartRobot", "autoMailNotify", "autoShoutMin", "autoShoutMax", "auto.auto_shout_interval_min_sec", "auto.auto_shout_interval_max_sec", "marketEquipmentRarities", "marketOtherRarities", "normalizeRarityDigits", "equipment_allowed_rarities", "other_allowed_rarities", "marketEquipmentLevelMin", "equipment_trade_policy", "other_trade_policy", "marketInRangeProbability", "marketApplyListingConfig"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -233,7 +233,7 @@ func TestMarketDialogHasExplicitRebuildWithoutAutoSave(t *testing.T) {
 			t.Fatalf("market save behavior is missing %q", want)
 		}
 	}
-	for _, hidden := range []string{"marketCycleSeconds", "marketAutoConcurrent", "marketRestockMaxActions", "marketCollectMaxActions", "marketInRangeProbability"} {
+	for _, hidden := range []string{"marketCycleSeconds", "marketAutoConcurrent", "marketRestockMaxActions", "marketCollectMaxActions", "marketCollectConcurrent"} {
 		if strings.Contains(appJS, hidden) {
 			t.Fatalf("market dialog still exposes runtime field %q", hidden)
 		}

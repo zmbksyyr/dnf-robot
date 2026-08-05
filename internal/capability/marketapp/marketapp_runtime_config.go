@@ -22,7 +22,7 @@ var marketConfigKeys = map[string]map[string]bool{
 		"id_base": true, "buyer_base": true, "owner_name": true, "cera_name": true, "rotate_every": true,
 	},
 	"auction_price": {
-		"allowed_rarities": true, "equipment_trade_policy": true, "material_trade_policy": true, "stack_sizes": true,
+		"equipment_allowed_rarities": true, "other_allowed_rarities": true, "equipment_trade_policy": true, "other_trade_policy": true, "stack_sizes": true,
 		"equipment_qty_min": true, "equipment_qty_max": true,
 		"equipment_level_min": true, "equipment_level_max": true,
 		"equip_inflate_min": true, "equip_inflate_max": true,
@@ -161,11 +161,11 @@ func validateMarketValue(section, key, value string) error {
 		if value != "true" && value != "false" {
 			return fmt.Errorf("must be true or false")
 		}
-	case "auction_price.allowed_rarities":
+	case "auction_price.equipment_allowed_rarities", "auction_price.other_allowed_rarities":
 		if _, err := normalizeAllowedRarities(value); err != nil {
 			return err
 		}
-	case "auction_price.equipment_trade_policy", "auction_price.material_trade_policy":
+	case "auction_price.equipment_trade_policy", "auction_price.other_trade_policy":
 		if value != tradePolicyPermissive && value != tradePolicyStrict {
 			return fmt.Errorf("must be permissive or strict")
 		}

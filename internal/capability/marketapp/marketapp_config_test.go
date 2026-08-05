@@ -34,7 +34,7 @@ func TestLoadConfigCreatesCommentedINIInConfDirectory(t *testing.T) {
 	if !strings.Contains(text, "[auction_price]") || !strings.Contains(text, "# 装备基础价格的最小随机倍率。") {
 		t.Fatalf("generated INI lacks documented pricing configuration:\n%s", text)
 	}
-	if !strings.Contains(text, "allowed_rarities = 01234") || !strings.Contains(text, "equipment_trade_policy = permissive") || !strings.Contains(text, "material_trade_policy = strict") {
+	if !strings.Contains(text, "equipment_allowed_rarities = 01234") || !strings.Contains(text, "other_allowed_rarities = 01234") || !strings.Contains(text, "equipment_trade_policy = permissive") || !strings.Contains(text, "other_trade_policy = strict") {
 		t.Fatalf("generated INI does not use the default listed rarity digits:\n%s", text)
 	}
 	if strings.Contains(text, "quality_filter =") || strings.Contains(text, "blocked_rarities =") {
@@ -56,25 +56,25 @@ func TestLoadConfigNormalizesAllowedRaritiesAndAddsTradePolicies(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("[auction_price]\nallowed_rarities = 43004\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("[auction_price]\nequipment_allowed_rarities = 43004\nother_allowed_rarities = 43004\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := loadConfig(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Restock.AllowedRarities != "034" {
-		t.Fatalf("allowed rarities=%q, want 034", cfg.Restock.AllowedRarities)
+	if cfg.Restock.EquipmentAllowedRarities != "034" || cfg.Restock.OtherAllowedRarities != "034" {
+		t.Fatalf("rarities=%q/%q, want 034/034", cfg.Restock.EquipmentAllowedRarities, cfg.Restock.OtherAllowedRarities)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "allowed_rarities = 034") {
+	if !strings.Contains(string(data), "equipment_allowed_rarities = 034") || !strings.Contains(string(data), "other_allowed_rarities = 034") {
 		t.Fatalf("normalized config does not contain canonical allowed rarities:\n%s", data)
 	}
-	if cfg.Restock.EquipmentTradePolicy != tradePolicyPermissive || cfg.Restock.MaterialTradePolicy != tradePolicyStrict {
-		t.Fatalf("trade policies = %q/%q", cfg.Restock.EquipmentTradePolicy, cfg.Restock.MaterialTradePolicy)
+	if cfg.Restock.EquipmentTradePolicy != tradePolicyPermissive || cfg.Restock.OtherTradePolicy != tradePolicyStrict {
+		t.Fatalf("trade policies = %q/%q", cfg.Restock.EquipmentTradePolicy, cfg.Restock.OtherTradePolicy)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestLoadConfigRejectsInvalidAllowedRarities(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("[auction_price]\nallowed_rarities = 01a4\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("[auction_price]\nequipment_allowed_rarities = 01a4\nother_allowed_rarities = 01234\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := loadConfig(dir); err == nil || !strings.Contains(err.Error(), "digits 0..9") {

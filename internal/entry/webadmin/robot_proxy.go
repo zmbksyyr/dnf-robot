@@ -63,7 +63,7 @@ func robotCallTimeout(command string) time.Duration {
 		return 120 * time.Second
 	case "robotsStore":
 		return 90 * time.Second
-	case "marketApplyListingConfig", "marketSyncItemInfo", "marketClearSystemStock":
+	case "marketSyncItemInfo", "marketClearSystemStock":
 		return 5 * time.Minute
 	default:
 		return 30 * time.Second

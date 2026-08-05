@@ -80,6 +80,7 @@ type App struct {
 	priceRanges         map[uint32]customPriceRange
 	priceRangeStatus    PriceRangeStatus
 	runtimeFilesWatched atomic.Bool
+	rebuildRunning      atomic.Bool
 }
 
 type auctionRejectedState struct {
@@ -366,19 +367,27 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if req.CollectorEnabled != nil {
 		cfg.Collector.Enabled = *req.CollectorEnabled
 	}
-	if req.AllowedRarities != nil {
-		allowed, err := normalizeAllowedRarities(*req.AllowedRarities)
+	if req.EquipmentAllowedRarities != nil {
+		allowed, err := normalizeAllowedRarities(*req.EquipmentAllowedRarities)
 		if err != nil {
 			a.jobMu.Unlock()
 			return Status{}, err
 		}
-		cfg.Restock.AllowedRarities = allowed
+		cfg.Restock.EquipmentAllowedRarities = allowed
+	}
+	if req.OtherAllowedRarities != nil {
+		allowed, err := normalizeAllowedRarities(*req.OtherAllowedRarities)
+		if err != nil {
+			a.jobMu.Unlock()
+			return Status{}, err
+		}
+		cfg.Restock.OtherAllowedRarities = allowed
 	}
 	if req.EquipmentTradePolicy != nil {
 		cfg.Restock.EquipmentTradePolicy = strings.TrimSpace(*req.EquipmentTradePolicy)
 	}
-	if req.MaterialTradePolicy != nil {
-		cfg.Restock.MaterialTradePolicy = strings.TrimSpace(*req.MaterialTradePolicy)
+	if req.OtherTradePolicy != nil {
+		cfg.Restock.OtherTradePolicy = strings.TrimSpace(*req.OtherTradePolicy)
 	}
 	if req.IntervalMS != nil {
 		cfg.Auto.IntervalMS = *req.IntervalMS

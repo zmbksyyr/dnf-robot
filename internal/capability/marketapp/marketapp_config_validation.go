@@ -66,18 +66,25 @@ func validateMarketConfig(cfg Config) error {
 	}
 
 	r := cfg.Restock
-	allowedRarities, err := normalizeAllowedRarities(r.AllowedRarities)
+	equipmentRarities, err := normalizeAllowedRarities(r.EquipmentAllowedRarities)
 	if err != nil {
 		return err
 	}
-	if allowedRarities != r.AllowedRarities {
-		return fmt.Errorf("auction_price.allowed_rarities must be sorted and contain no duplicates")
+	if equipmentRarities != r.EquipmentAllowedRarities {
+		return fmt.Errorf("auction_price.equipment_allowed_rarities must be sorted and contain no duplicates")
+	}
+	otherRarities, err := normalizeAllowedRarities(r.OtherAllowedRarities)
+	if err != nil {
+		return err
+	}
+	if otherRarities != r.OtherAllowedRarities {
+		return fmt.Errorf("auction_price.other_allowed_rarities must be sorted and contain no duplicates")
 	}
 	if r.EquipmentTradePolicy != tradePolicyPermissive && r.EquipmentTradePolicy != tradePolicyStrict {
 		return fmt.Errorf("auction_price.equipment_trade_policy must be permissive or strict")
 	}
-	if r.MaterialTradePolicy != tradePolicyPermissive && r.MaterialTradePolicy != tradePolicyStrict {
-		return fmt.Errorf("auction_price.material_trade_policy must be permissive or strict")
+	if r.OtherTradePolicy != tradePolicyPermissive && r.OtherTradePolicy != tradePolicyStrict {
+		return fmt.Errorf("auction_price.other_trade_policy must be permissive or strict")
 	}
 	if len(r.StackSizes) == 0 {
 		return fmt.Errorf("auction_price.stack_sizes must contain at least one value")
@@ -153,7 +160,7 @@ func normalizeAllowedRarities(value string) (string, error) {
 	var seen [10]bool
 	for _, digit := range value {
 		if digit < '0' || digit > '9' {
-			return "", fmt.Errorf("auction_price.allowed_rarities must contain only digits 0..9")
+			return "", fmt.Errorf("auction_price rarity settings must contain only digits 0..9")
 		}
 		seen[digit-'0'] = true
 	}

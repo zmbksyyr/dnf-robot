@@ -13,7 +13,7 @@ func TestConfigReturnsDeepCopy(t *testing.T) {
 	got.ItemInfoTargets[0] = "changed"
 	got.Restock.StackSizes[0] = 1
 	got.Restock.Comments["changed"] = "true"
-	got.Restock.AllowedRarities = ""
+	got.Restock.EquipmentAllowedRarities = ""
 	got.Cera.Items[0].Enabled = false
 	got.Auto.Markets[0] = "changed"
 
@@ -21,7 +21,7 @@ func TestConfigReturnsDeepCopy(t *testing.T) {
 	if current.ItemInfoTargets[0] == "changed" || current.Restock.StackSizes[0] == 1 || current.Restock.Comments["changed"] != "" {
 		t.Fatalf("Config returned mutable internal slices or maps: %+v", current)
 	}
-	if current.Restock.AllowedRarities != defaultAllowedRarities || !current.Cera.Items[0].Enabled || current.Auto.Markets[0] == "changed" {
+	if current.Restock.EquipmentAllowedRarities != defaultEquipmentRarities || !current.Cera.Items[0].Enabled || current.Auto.Markets[0] == "changed" {
 		t.Fatalf("Config returned mutable internal rows: %+v", current)
 	}
 }

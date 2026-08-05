@@ -13,11 +13,11 @@ func TestUpdateConfigKeepsIndependentActionLimits(t *testing.T) {
 	app.cfg.Collector.MaxConcurrent = 6
 
 	allowed := "43004"
-	if _, err := app.UpdateConfig(ConfigUpdateRequest{AllowedRarities: &allowed}); err != nil {
+	if _, err := app.UpdateConfig(ConfigUpdateRequest{EquipmentAllowedRarities: &allowed}); err != nil {
 		t.Fatal(err)
 	}
-	if app.cfg.Restock.AllowedRarities != "034" {
-		t.Fatalf("allowed rarities=%q, want normalized 034", app.cfg.Restock.AllowedRarities)
+	if app.cfg.Restock.EquipmentAllowedRarities != "034" {
+		t.Fatalf("allowed rarities=%q, want normalized 034", app.cfg.Restock.EquipmentAllowedRarities)
 	}
 	if app.cfg.Auto.MaxActions != 101 || app.cfg.Restock.MaxActions != 202 || app.cfg.Collector.MaxActions != 303 {
 		t.Fatalf("unrelated update changed action limits: auto=%d restock=%d collect=%d", app.cfg.Auto.MaxActions, app.cfg.Restock.MaxActions, app.cfg.Collector.MaxActions)
@@ -59,13 +59,13 @@ func TestApplyListingConfigLockedDoesNotChangeRuntimeParameters(t *testing.T) {
 	allowed, equipmentPolicy, materialPolicy := "056", tradePolicyStrict, tradePolicyPermissive
 	qty := 4
 	cfg, err := app.applyListingConfigLocked(ConfigUpdateRequest{
-		AllowedRarities: &allowed, EquipmentTradePolicy: &equipmentPolicy, MaterialTradePolicy: &materialPolicy,
+		EquipmentAllowedRarities: &allowed, EquipmentTradePolicy: &equipmentPolicy, OtherTradePolicy: &materialPolicy,
 		EquipmentQtyMin: &qty, EquipmentQtyMax: &qty,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Restock.AllowedRarities != "056" || cfg.Restock.EquipmentTradePolicy != tradePolicyStrict || cfg.Restock.MaterialTradePolicy != tradePolicyPermissive {
+	if cfg.Restock.EquipmentAllowedRarities != "056" || cfg.Restock.EquipmentTradePolicy != tradePolicyStrict || cfg.Restock.OtherTradePolicy != tradePolicyPermissive {
 		t.Fatalf("listing settings not applied: %+v", cfg.Restock)
 	}
 	if cfg.Auto.IntervalMS != 98765 || cfg.Restock.MaxConcurrent != 17 {

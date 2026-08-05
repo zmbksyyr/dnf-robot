@@ -114,7 +114,8 @@ func TestMarketRarityFilterUsesConfiguredBlockedDigits(t *testing.T) {
 		t.Fatalf("actions=%#v, want explicit high-rarity target", result.Actions)
 	}
 
-	app.cfg.Restock.AllowedRarities = "0123456789"
+	app.cfg.Restock.EquipmentAllowedRarities = "0123456789"
+	app.cfg.Restock.OtherAllowedRarities = "0123456789"
 	result = &PlanResult{}
 	app.planAuction([]restockRow{
 		{ItemID: 1002, SystemPrice: 100, Quantity: 1, StackSize: 1, Enabled: true},
@@ -126,7 +127,7 @@ func TestMarketRarityFilterUsesConfiguredBlockedDigits(t *testing.T) {
 
 func TestMarketRarityFilterSupportsArbitraryAllowedDigitSet(t *testing.T) {
 	app := testApp(t)
-	app.cfg.Restock.AllowedRarities = "0246"
+	app.cfg.Restock.EquipmentAllowedRarities = "0246"
 	for rarity := 0; rarity <= 9; rarity++ {
 		allowed := app.marketRarityAllowed(catalogItem{Rarity: rarity})
 		wantAllowed := rarity == 0 || rarity == 2 || rarity == 4 || rarity == 6

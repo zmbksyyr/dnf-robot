@@ -3,7 +3,42 @@ package marketapp
 import (
 	"fmt"
 	"strings"
+	"time"
 )
+
+// StartListingConfigRebuild accepts the request immediately and performs the
+// destructive clear/restart/restock sequence in the background. Progress is
+// exposed through Status.LastJob.
+func (a *App) StartListingConfigRebuild(req ConfigUpdateRequest) (JobSummary, error) {
+	if !a.rebuildRunning.CompareAndSwap(false, true) {
+		job := busyMarketJob("listing_rebuild")
+		return job, fmt.Errorf(job.Error)
+	}
+	start := time.Now()
+	job := JobSummary{
+		ID:        fmt.Sprintf("listing-rebuild-%d", start.UnixNano()),
+		Kind:      "listing_rebuild",
+		Status:    MarketJobStatusRunning,
+		StartedAt: start,
+	}
+	a.setLastJob(job)
+	a.appendLog(LogEvent{Type: "job_start", JobID: job.ID, Status: job.Status})
+	go func() {
+		defer a.rebuildRunning.Store(false)
+		_, err := a.ApplyListingConfigAndRebuild(req)
+		job.EndedAt = time.Now()
+		job.Duration = job.EndedAt.Sub(job.StartedAt).Milliseconds()
+		if err != nil {
+			job.Status = MarketJobStatusFailed
+			job.Error = err.Error()
+		} else {
+			job.Status = MarketJobStatusSuccess
+		}
+		a.setLastJob(job)
+		a.appendLog(LogEvent{Type: "job_end", JobID: job.ID, Status: job.Status, Message: job.Error})
+	}()
+	return job, nil
+}
 
 // ApplyListingConfigAndRebuild applies only user-facing listing settings.
 // It uses the currently deployed iteminfo.dat as the candidate boundary and
@@ -77,18 +112,25 @@ func (a *App) resetAuctionQueuesLockedSafe() {
 
 func (a *App) applyListingConfigLocked(req ConfigUpdateRequest) (Config, error) {
 	cfg := cloneConfig(a.configSnapshot())
-	if req.AllowedRarities != nil {
-		allowed, err := normalizeAllowedRarities(*req.AllowedRarities)
+	if req.EquipmentAllowedRarities != nil {
+		allowed, err := normalizeAllowedRarities(*req.EquipmentAllowedRarities)
 		if err != nil {
 			return Config{}, err
 		}
-		cfg.Restock.AllowedRarities = allowed
+		cfg.Restock.EquipmentAllowedRarities = allowed
+	}
+	if req.OtherAllowedRarities != nil {
+		allowed, err := normalizeAllowedRarities(*req.OtherAllowedRarities)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Restock.OtherAllowedRarities = allowed
 	}
 	if req.EquipmentTradePolicy != nil {
 		cfg.Restock.EquipmentTradePolicy = strings.TrimSpace(*req.EquipmentTradePolicy)
 	}
-	if req.MaterialTradePolicy != nil {
-		cfg.Restock.MaterialTradePolicy = strings.TrimSpace(*req.MaterialTradePolicy)
+	if req.OtherTradePolicy != nil {
+		cfg.Restock.OtherTradePolicy = strings.TrimSpace(*req.OtherTradePolicy)
 	}
 	if req.StackSizes != nil {
 		cfg.Restock.StackSizes = append([]int(nil), req.StackSizes...)
@@ -125,6 +167,18 @@ func (a *App) applyListingConfigLocked(req ConfigUpdateRequest) (Config, error) 
 	}
 	if req.RandHigh != nil {
 		cfg.Restock.RandHigh = *req.RandHigh
+	}
+	if req.CollectorEnabled != nil {
+		cfg.Collector.Enabled = *req.CollectorEnabled
+	}
+	if req.PriceRangeEnabled != nil {
+		cfg.Collector.PriceRangeEnabled = *req.PriceRangeEnabled
+	}
+	if req.InRangeProbability != nil {
+		cfg.Collector.InRangeProbability = *req.InRangeProbability
+	}
+	if req.OutRangeProbability != nil {
+		cfg.Collector.OutRangeProbability = *req.OutRangeProbability
 	}
 	if err := writeMarketConfig(a.configPath, cfg); err != nil {
 		return Config{}, err
