@@ -7,10 +7,34 @@ func marketCandidate(item catalogItem) bool {
 }
 
 func (a *App) marketCandidate(item catalogItem) bool {
-	if !marketCandidate(item) {
+	return marketCandidate(item) && a.marketListingAllowed(item)
+}
+
+func (a *App) marketListingAllowed(item catalogItem) bool {
+	return marketListingAllowedWithConfig(item, a.configSnapshot())
+}
+
+func marketListingAllowedWithConfig(item catalogItem, cfg Config) bool {
+	if item.ItemID == 0 || item.Kind == "blocked" || isAvatarEquipment(item) || !marketRarityAllowedWithConfig(item, cfg) {
 		return false
 	}
-	return a.marketRarityAllowed(item)
+	if item.Kind == "equipment" {
+		if cfg.Restock.EquipmentTradePolicy == tradePolicyStrict && tradeFieldBlocked(item) {
+			return false
+		}
+		if min := cfg.Restock.EquipmentLevelMin; min > 0 && item.Level < min {
+			return false
+		}
+		if max := cfg.Restock.EquipmentLevelMax; max > 0 && item.Level > max {
+			return false
+		}
+		return true
+	}
+	return cfg.Restock.MaterialTradePolicy != tradePolicyStrict || !tradeFieldBlocked(item)
+}
+
+func tradeFieldBlocked(item catalogItem) bool {
+	return item.NoTrade || (item.CanTrade != nil && !*item.CanTrade) || (item.CanAuction != nil && !*item.CanAuction)
 }
 
 func (a *App) qualityFilterEnabled() bool {
@@ -21,7 +45,9 @@ func (a *App) qualityFilterEnabled() bool {
 }
 
 func qualityFilterEnabled(cfg Config) bool {
-	return cfg.Restock.AllowedRarities != "0123456789"
+	return cfg.Restock.AllowedRarities != "0123456789" ||
+		cfg.Restock.EquipmentTradePolicy == tradePolicyStrict ||
+		cfg.Restock.MaterialTradePolicy == tradePolicyStrict
 }
 
 func (a *App) marketRarityAllowed(item catalogItem) bool {

@@ -27,25 +27,27 @@ type SystemOwner struct {
 }
 
 type RestockCfg struct {
-	Comments           map[string]string `json:"comments,omitempty"`
-	AllowedRarities    string            `json:"allowed_rarities"`
-	StackSizes         []int             `json:"stack_sizes"`
-	EquipmentQtyMin    int               `json:"equipment_qty_min"`
-	EquipmentQtyMax    int               `json:"equipment_qty_max"`
-	EquipmentLevelMin  int               `json:"equipment_level_min"`
-	EquipmentLevelMax  int               `json:"equipment_level_max"`
-	EquipInflateMin    int               `json:"equipment_inflate_min"`
-	EquipInflateMax    int               `json:"equipment_inflate_max"`
-	UpgradeMin         int               `json:"upgrade_min"`
-	UpgradeMax         int               `json:"upgrade_max"`
-	UpgradePriceRate   float64           `json:"upgrade_price_rate"`
-	RandLow            float64           `json:"rand_low"`
-	RandHigh           float64           `json:"rand_high"`
-	CustomPriceEnabled bool              `json:"custom_price_enabled"`
-	MaxActions         int               `json:"max_actions"`
-	MaxConcurrent      int               `json:"max_concurrent"`
-	MaxResultActions   int               `json:"max_result_actions"`
-	PerItemDelayMS     int               `json:"per_item_delay_ms"`
+	Comments             map[string]string `json:"comments,omitempty"`
+	AllowedRarities      string            `json:"allowed_rarities"`
+	EquipmentTradePolicy string            `json:"equipment_trade_policy"`
+	MaterialTradePolicy  string            `json:"material_trade_policy"`
+	StackSizes           []int             `json:"stack_sizes"`
+	EquipmentQtyMin      int               `json:"equipment_qty_min"`
+	EquipmentQtyMax      int               `json:"equipment_qty_max"`
+	EquipmentLevelMin    int               `json:"equipment_level_min"`
+	EquipmentLevelMax    int               `json:"equipment_level_max"`
+	EquipInflateMin      int               `json:"equipment_inflate_min"`
+	EquipInflateMax      int               `json:"equipment_inflate_max"`
+	UpgradeMin           int               `json:"upgrade_min"`
+	UpgradeMax           int               `json:"upgrade_max"`
+	UpgradePriceRate     float64           `json:"upgrade_price_rate"`
+	RandLow              float64           `json:"rand_low"`
+	RandHigh             float64           `json:"rand_high"`
+	CustomPriceEnabled   bool              `json:"custom_price_enabled"`
+	MaxActions           int               `json:"max_actions"`
+	MaxConcurrent        int               `json:"max_concurrent"`
+	MaxResultActions     int               `json:"max_result_actions"`
+	PerItemDelayMS       int               `json:"per_item_delay_ms"`
 }
 
 type CeraCfg struct {
@@ -146,7 +148,8 @@ type ConfigUpdateRequest struct {
 	AutoEnabled            *bool    `json:"auto_enabled,omitempty"`
 	CollectorEnabled       *bool    `json:"collector_enabled,omitempty"`
 	AllowedRarities        *string  `json:"allowed_rarities,omitempty"`
-	QualityFilter          *bool    `json:"quality_filter,omitempty"` // legacy API compatibility
+	EquipmentTradePolicy   *string  `json:"equipment_trade_policy,omitempty"`
+	MaterialTradePolicy    *string  `json:"material_trade_policy,omitempty"`
 	IntervalMS             *int     `json:"interval_ms,omitempty"`
 	InitialDelayMS         *int     `json:"initial_delay_ms,omitempty"`
 	AutoMaxActions         *int     `json:"auto_max_actions,omitempty"`
@@ -174,6 +177,12 @@ type ConfigUpdateRequest struct {
 	InRangeProbability     *float64 `json:"in_range_probability,omitempty"`
 	OutRangeProbability    *float64 `json:"out_of_range_probability,omitempty"`
 	RestockPerItemDelayMS  *int     `json:"restock_per_item_delay_ms,omitempty"`
+}
+
+type MarketRebuildResult struct {
+	Config   Status                 `json:"config"`
+	Cleared  ClearSystemStockResult `json:"cleared"`
+	Restocks []JobSummary           `json:"restocks"`
 }
 
 type Status struct {
@@ -378,36 +387,51 @@ type SkippedItem struct {
 }
 
 type pvfItem struct {
-	ID         int    `json:"id"`
-	Level      int    `json:"level,omitempty"`
-	ItemType   int    `json:"item_type"`
-	SubType    int    `json:"sub_type,omitempty"`
-	Slot       string `json:"slot,omitempty"`
-	Attach     string `json:"attach,omitempty"`
-	Rarity     int    `json:"rarity,omitempty"`
-	Price      int    `json:"price,omitempty"`
-	Value      int    `json:"value,omitempty"`
-	Trade      bool   `json:"trade,omitempty"`
-	NoTrade    bool   `json:"no_trade,omitempty"`
-	Auction    bool   `json:"auction,omitempty"`
-	BadName    bool   `json:"bad_name,omitempty"`
-	StackLimit int    `json:"stack_limit,omitempty"`
-	Expire     bool   `json:"expire,omitempty"`
+	ID            int    `json:"id"`
+	Path          string `json:"path,omitempty"`
+	Level         int    `json:"level,omitempty"`
+	ItemType      int    `json:"item_type"`
+	SubType       int    `json:"sub_type,omitempty"`
+	Slot          string `json:"slot,omitempty"`
+	Attach        string `json:"attach,omitempty"`
+	Rarity        int    `json:"rarity,omitempty"`
+	Price         int    `json:"price,omitempty"`
+	Value         int    `json:"value,omitempty"`
+	Trade         bool   `json:"trade,omitempty"`
+	NoTrade       bool   `json:"no_trade,omitempty"`
+	TradeBlock    bool   `json:"trade_block,omitempty"`
+	CanTrade      *bool  `json:"available_trade,omitempty"`
+	CanAuction    *bool  `json:"available_auction,omitempty"`
+	Auction       bool   `json:"auction,omitempty"`
+	BadName       bool   `json:"bad_name,omitempty"`
+	NeedMaterial  bool   `json:"need_material,omitempty"`
+	BasicMaterial bool   `json:"basic_material,omitempty"`
+	StackLimit    int    `json:"stack_limit,omitempty"`
+	Expire        bool   `json:"expire,omitempty"`
 }
 
 type catalogItem struct {
-	ItemID     uint32
-	Name       string
-	Kind       string
-	Level      int
-	ItemType   int
-	SubType    int
-	Slot       string
-	Attach     string
-	Rarity     int
-	StackLimit int
-	Price      int32
-	Value      int32
+	ItemID        uint32
+	Name          string
+	Kind          string
+	Path          string
+	Level         int
+	ItemType      int
+	SubType       int
+	Slot          string
+	Attach        string
+	Rarity        int
+	StackLimit    int
+	Price         int32
+	Value         int32
+	Trade         bool
+	NoTrade       bool
+	TradeBlock    bool
+	CanTrade      *bool
+	CanAuction    *bool
+	Auction       bool
+	NeedMaterial  bool
+	BasicMaterial bool
 }
 
 type restockRow struct {

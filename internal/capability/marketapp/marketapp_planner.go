@@ -26,8 +26,12 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: reason})
 			continue
 		}
-		if !row.ExplicitTarget && !a.marketRarityAllowed(item) {
-			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "rarity_filtered"})
+		if !row.ExplicitTarget && !a.marketListingAllowed(item) {
+			reason := "listing_filtered"
+			if !a.marketRarityAllowed(item) {
+				reason = "rarity_filtered"
+			}
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: reason})
 			continue
 		}
 		if special := specialAuctionKind(item); special != "" {

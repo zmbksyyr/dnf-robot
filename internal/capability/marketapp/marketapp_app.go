@@ -373,12 +373,12 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 			return Status{}, err
 		}
 		cfg.Restock.AllowedRarities = allowed
-	} else if req.QualityFilter != nil {
-		if *req.QualityFilter {
-			cfg.Restock.AllowedRarities = defaultAllowedRarities
-		} else {
-			cfg.Restock.AllowedRarities = "0123456789"
-		}
+	}
+	if req.EquipmentTradePolicy != nil {
+		cfg.Restock.EquipmentTradePolicy = strings.TrimSpace(*req.EquipmentTradePolicy)
+	}
+	if req.MaterialTradePolicy != nil {
+		cfg.Restock.MaterialTradePolicy = strings.TrimSpace(*req.MaterialTradePolicy)
 	}
 	if req.IntervalMS != nil {
 		cfg.Auto.IntervalMS = *req.IntervalMS

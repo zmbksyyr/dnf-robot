@@ -34,8 +34,11 @@ func TestLoadConfigCreatesCommentedINIInConfDirectory(t *testing.T) {
 	if !strings.Contains(text, "[auction_price]") || !strings.Contains(text, "# 装备基础价格的最小随机倍率。") {
 		t.Fatalf("generated INI lacks documented pricing configuration:\n%s", text)
 	}
-	if !strings.Contains(text, "allowed_rarities = 01234") || strings.Contains(text, "quality_filter =") {
+	if !strings.Contains(text, "allowed_rarities = 01234") || !strings.Contains(text, "equipment_trade_policy = permissive") || !strings.Contains(text, "material_trade_policy = strict") {
 		t.Fatalf("generated INI does not use the default listed rarity digits:\n%s", text)
+	}
+	if strings.Contains(text, "quality_filter =") || strings.Contains(text, "blocked_rarities =") {
+		t.Fatalf("generated INI still contains legacy rarity settings:\n%s", text)
 	}
 	for _, unused := range []string{"listen_addr", "frida_db", "[service]", "auto_sync", "nexon_base", "recycle_price", "market_config.json", "custom_price_file", "source_path"} {
 		if strings.Contains(text, unused) {
@@ -47,7 +50,7 @@ func TestLoadConfigCreatesCommentedINIInConfDirectory(t *testing.T) {
 	}
 }
 
-func TestLoadConfigNormalizesAllowedRaritiesAndMigratesLegacySettings(t *testing.T) {
+func TestLoadConfigNormalizesAllowedRaritiesAndAddsTradePolicies(t *testing.T) {
 	dir := t.TempDir()
 	path := layout.New(dir).MarketConfig()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -70,27 +73,8 @@ func TestLoadConfigNormalizesAllowedRaritiesAndMigratesLegacySettings(t *testing
 	if !strings.Contains(string(data), "allowed_rarities = 034") {
 		t.Fatalf("normalized config does not contain canonical allowed rarities:\n%s", data)
 	}
-
-	if err := os.WriteFile(path, []byte("[auction_price]\nblocked_rarities = 97550\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err = loadConfig(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Restock.AllowedRarities != "123468" {
-		t.Fatalf("legacy blocked rarities migrated to %q, want 123468", cfg.Restock.AllowedRarities)
-	}
-
-	if err := os.WriteFile(path, []byte("[auction_price]\nquality_filter = false\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err = loadConfig(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Restock.AllowedRarities != "0123456789" {
-		t.Fatalf("legacy disabled filter migrated to %q, want all digits", cfg.Restock.AllowedRarities)
+	if cfg.Restock.EquipmentTradePolicy != tradePolicyPermissive || cfg.Restock.MaterialTradePolicy != tradePolicyStrict {
+		t.Fatalf("trade policies = %q/%q", cfg.Restock.EquipmentTradePolicy, cfg.Restock.MaterialTradePolicy)
 	}
 }
 

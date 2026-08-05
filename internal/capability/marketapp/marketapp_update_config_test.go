@@ -50,3 +50,25 @@ func TestUpdateConfigKeepsIndependentActionLimits(t *testing.T) {
 		t.Fatalf("restock web settings not applied: %+v", app.cfg.Restock)
 	}
 }
+
+func TestApplyListingConfigLockedDoesNotChangeRuntimeParameters(t *testing.T) {
+	app := testApp(t)
+	app.configPath = appPaths(app).MarketConfig()
+	app.cfg.Auto.IntervalMS = 98765
+	app.cfg.Restock.MaxConcurrent = 17
+	allowed, equipmentPolicy, materialPolicy := "056", tradePolicyStrict, tradePolicyPermissive
+	qty := 4
+	cfg, err := app.applyListingConfigLocked(ConfigUpdateRequest{
+		AllowedRarities: &allowed, EquipmentTradePolicy: &equipmentPolicy, MaterialTradePolicy: &materialPolicy,
+		EquipmentQtyMin: &qty, EquipmentQtyMax: &qty,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Restock.AllowedRarities != "056" || cfg.Restock.EquipmentTradePolicy != tradePolicyStrict || cfg.Restock.MaterialTradePolicy != tradePolicyPermissive {
+		t.Fatalf("listing settings not applied: %+v", cfg.Restock)
+	}
+	if cfg.Auto.IntervalMS != 98765 || cfg.Restock.MaxConcurrent != 17 {
+		t.Fatalf("runtime parameters changed: auto=%+v restock=%+v", cfg.Auto, cfg.Restock)
+	}
+}

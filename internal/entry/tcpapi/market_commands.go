@@ -57,6 +57,17 @@ func handleMarketCommand(cmd, pkt string) (string, bool) {
 		}
 		res, err := app.UpdateConfig(req)
 		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
+	case "marketApplyListingConfig":
+		app, err := requireMarketApp()
+		if err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()}), true
+		}
+		var req marketapp.ConfigUpdateRequest
+		if err := decodePayload(pkt, &req); err != nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": err.Error()}), true
+		}
+		res, err := app.ApplyListingConfigAndRebuild(req)
+		return wrapResult(map[string]interface{}{"ok": err == nil, "error": errString(err), "result": res}), true
 	case "marketRestockOnce":
 		app, err := requireMarketApp()
 		if err != nil {

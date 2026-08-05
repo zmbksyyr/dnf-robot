@@ -73,6 +73,12 @@ func validateMarketConfig(cfg Config) error {
 	if allowedRarities != r.AllowedRarities {
 		return fmt.Errorf("auction_price.allowed_rarities must be sorted and contain no duplicates")
 	}
+	if r.EquipmentTradePolicy != tradePolicyPermissive && r.EquipmentTradePolicy != tradePolicyStrict {
+		return fmt.Errorf("auction_price.equipment_trade_policy must be permissive or strict")
+	}
+	if r.MaterialTradePolicy != tradePolicyPermissive && r.MaterialTradePolicy != tradePolicyStrict {
+		return fmt.Errorf("auction_price.material_trade_policy must be permissive or strict")
+	}
 	if len(r.StackSizes) == 0 {
 		return fmt.Errorf("auction_price.stack_sizes must contain at least one value")
 	}
@@ -158,20 +164,6 @@ func normalizeAllowedRarities(value string) (string, error) {
 		}
 	}
 	return normalized.String(), nil
-}
-
-func allowedRaritiesFromBlocked(value string) (string, error) {
-	blocked, err := normalizeAllowedRarities(value)
-	if err != nil {
-		return "", err
-	}
-	var allowed strings.Builder
-	for digit := byte('0'); digit <= '9'; digit++ {
-		if !strings.ContainsRune(blocked, rune(digit)) {
-			allowed.WriteByte(digit)
-		}
-	}
-	return allowed.String(), nil
 }
 
 func validateMarketLimits(section string, maxActions, maxConcurrent int) error {

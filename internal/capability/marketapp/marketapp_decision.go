@@ -215,7 +215,7 @@ func (a *App) auctionDecisionFromCatalog(catalog map[uint32]catalogItem, allowed
 		switch {
 		case item.ItemID == 0 || item.Kind == "blocked":
 			counts.Blocked++
-		case !a.marketRarityAllowed(item):
+		case !a.marketListingAllowed(item):
 			counts.Blocked++
 		case isAvatarEquipment(item):
 			counts.Avatar++

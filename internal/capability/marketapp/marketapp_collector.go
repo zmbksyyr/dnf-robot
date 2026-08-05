@@ -243,7 +243,7 @@ func (a *App) appendRarityFilteredCollectActions(catalog map[uint32]catalogItem,
 		if !ok {
 			continue
 		}
-		if !a.marketRarityAllowed(item) {
+		if !a.marketListingAllowed(item) {
 			filtered = append(filtered, row)
 		}
 	}

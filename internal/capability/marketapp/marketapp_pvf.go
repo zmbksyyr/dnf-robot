@@ -475,10 +475,10 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 			continue
 		}
 		kind := "stackable"
-		if item.BadName || item.NoTrade || item.Expire {
+		if item.BadName || item.Expire {
 			kind = "blocked"
 		}
-		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Path: item.Path, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value), Trade: item.Trade, NoTrade: item.NoTrade, TradeBlock: item.TradeBlock, CanTrade: item.CanTrade, CanAuction: item.CanAuction, Auction: item.Auction, NeedMaterial: item.NeedMaterial, BasicMaterial: item.BasicMaterial}
 	}
 	equipment, err := readPVFItems(paths.PVFEquipment())
 	if err != nil {
@@ -489,10 +489,10 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 			continue
 		}
 		kind := "equipment"
-		if item.BadName || item.NoTrade || item.Expire {
+		if item.BadName || item.Expire {
 			kind = "blocked"
 		}
-		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value)}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Path: item.Path, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value), Trade: item.Trade, NoTrade: item.NoTrade, TradeBlock: item.TradeBlock, CanTrade: item.CanTrade, CanAuction: item.CanAuction, Auction: item.Auction, NeedMaterial: item.NeedMaterial, BasicMaterial: item.BasicMaterial}
 	}
 	return out, nil
 }
