@@ -189,10 +189,12 @@ func TestAutoDialogUsesStandardFooterWithoutWrapping(t *testing.T) {
 func TestPortsDialogUsesStandardFooter(t *testing.T) {
 	for _, want := range []string{
 		`const foot='<button onclick="submitGamePort()">Save Ports</button>`,
-		"showModal('Ports',body,foot,'compact')",
+		"showModal('Ports',body,foot,'ports')",
+		"dialog.ports{width:min(320px,96vw)",
+		"dialog.ports .formgrid{grid-template-columns:100px 92px}",
 		`const ports=endpoint.ports||{};const body='<div class="formgrid"><label>Game</label>`,
 	} {
-		if !strings.Contains(appJS, want) {
+		if !strings.Contains(appCSS+appJS, want) {
 			t.Fatalf("Ports dialog standard footer is missing %q", want)
 		}
 	}
