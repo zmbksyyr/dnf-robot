@@ -51,9 +51,6 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 			fmt.Printf("[PARTY_INFO_PARSE_ERROR] uid=%d err=%v anti=%t size=%d\n", r.UID, err, packet.isAnti, packet.size)
 		} else {
 			r.rememberPartyRecvSourceUnsafe(source)
-			if clears && source == recvBodySourcePlain {
-				fmt.Printf("[PARTY_INFO_PLAIN] uid=%d size=%d\n", r.UID, packet.size)
-			}
 			if clears {
 				peers := make([]string, 0, len(r.partyPeers))
 				for _, peer := range r.partyPeers {
@@ -61,10 +58,9 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 						peers = append(peers, fmt.Sprintf("s%d/a%d/u%d", peer.slot, peer.accID, peer.uniqueID))
 					}
 				}
-				recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_CLEAR", "OK",
+				recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_DELETE_HINT", "OBSERVED",
 					fmt.Sprintf("source=%s self=s%d/a%d/u%d pending=%d peers=%s", source, r.partySelfPeer.slot,
 						r.partySelfPeer.accID, r.partySelfPeer.uniqueID, r.partyPendingPeer, strings.Join(peers, ",")), packet.data)
-				r.clearPartyUnsafe()
 			} else {
 				r.clearPartyInviteFallbackUnsafe()
 			}

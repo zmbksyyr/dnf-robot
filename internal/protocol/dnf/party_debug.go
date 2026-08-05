@@ -528,7 +528,7 @@ func buildPartyDebugAttempts(events []partyDebugEvent) []*partyDebugAttempt {
 				copyEvent := event
 				attempt.ready = &copyEvent
 			}
-		case "PARTY_CLEAR":
+		case "PARTY_CLEAR", "PARTY_RETURN_ACK":
 			copyEvent := event
 			attempt.clear = &copyEvent
 			delete(active, event.uid)
@@ -831,7 +831,7 @@ func partyDebugEventPriority(event partyDebugEvent) int {
 		return 0
 	}
 	switch event.kind {
-	case "INVITE", "INVITE_PARSE", "ACCEPT", "ACCEPT_FALLBACK", "PARTY_PENDING", "SNAPSHOT", "SNAPSHOT_PARSE", "SNAPSHOT_WAIT", "PARTY_CLEAR", "ORPHAN_DETECTED", "PARTY_RETURN_ACK", "PARTY_RESELECT", "PARTY_NORMAL":
+	case "INVITE", "INVITE_PARSE", "ACCEPT", "ACCEPT_FALLBACK", "PARTY_PENDING", "SNAPSHOT", "SNAPSHOT_PARSE", "SNAPSHOT_WAIT", "PARTY_CLEAR", "PARTY_DELETE_HINT", "ORPHAN_DETECTED", "PARTY_RETURN_ACK", "PARTY_RESELECT", "PARTY_NORMAL":
 		return 1
 	case "RELAY_CONNECT", "RELAY_AUTH", "RELAY_CONNECTED", "TQOS_READY", "ROUTE_DEGRADED":
 		return 2

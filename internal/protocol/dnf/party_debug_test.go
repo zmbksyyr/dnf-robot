@@ -65,7 +65,7 @@ func TestPartyDebugSeparatesAttemptsMemberChangesAndRecoveredDrops(t *testing.T)
 	}
 }
 
-func TestPartyDebugRecordsParsedPartyClear(t *testing.T) {
+func TestPartyDebugRecordsPartyDeleteHintWithoutClearingState(t *testing.T) {
 	if current := globalPartyDebug.active.Load(); current != nil {
 		stopPartyDebugSession(current, partyDebugStopUser)
 		<-current.done
@@ -85,8 +85,11 @@ func TestPartyDebugRecordsParsedPartyClear(t *testing.T) {
 	vo.parsePacket(makePartyRecvPacket(9, compressed.Bytes()))
 	result := StopPartyDebug()
 	joined := strings.Join(result.ReportLines, "\n")
-	if !strings.Contains(joined, "PARTY_CLEAR") || !strings.Contains(joined, "self=s1/a17000003/u8") {
-		t.Fatalf("parsed clear was not captured:\n%s", joined)
+	if !strings.Contains(joined, "PARTY_DELETE_HINT") || !strings.Contains(joined, "self=s1/a17000003/u8") {
+		t.Fatalf("party delete hint was not captured:\n%s", joined)
+	}
+	if !vo.partyActiveUnsafe() || vo.partySelfPeer.uniqueID != 8 || vo.partyPeers[0].uniqueID != 9 {
+		t.Fatalf("global party delete hint cleared local party state: self=%+v peers=%+v", vo.partySelfPeer, vo.partyPeers)
 	}
 }
 
