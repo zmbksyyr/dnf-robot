@@ -98,6 +98,8 @@ func (r *RobotVo) finishReturnToSelectUnsafe() {
 	r.SelectCharacSent = false
 	r.State = StateSelect
 	if recoverParty {
+		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_RETURN_ACK", "OK", "server accepted character return", nil)
+		r.partyRecoveryResumePending = true
 		r.clearPartyUnsafe()
 	} else {
 		r.stopPartySupervisorUnsafe()
@@ -133,6 +135,7 @@ func (r *RobotVo) schedulePartyReselectUnsafe() {
 			}
 			return
 		}
+		recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "PARTY_RESELECT", "OK", "same character selected", nil)
 		r.publishSnapshotUnsafe()
 		r.mu.Unlock()
 	}

@@ -280,6 +280,54 @@ func TestPartyRealtimePureRobotsTriggersServerSideRecovery(t *testing.T) {
 	}
 }
 
+func TestPartyRealtimeSingleRosterBecomesAuthoritativeAfterStableDelay(t *testing.T) {
+	conn := &captureSessionConn{}
+	vo := &RobotVo{UID: 17000026, State: StateRun, Conn: conn, Cipher: newPartyTestCipher(t), partyHumanObserved: true}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x2222, accID: 17000026, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.rememberPartyRealtimeIdentitiesUnsafe([]partyRealtimeIdentity{{uniqueID: 0x2222, slot: 0}})
+	if vo.ReturnSelectPending {
+		t.Fatal("one realtime roster was applied without the stability delay")
+	}
+
+	vo.maybeConfirmPartyRealtimeUnsafe(vo.partyRealtimeCandidateAt.Add(partyRealtimeStableDelay))
+
+	if !vo.ReturnSelectPending || !vo.partyRecovery {
+		t.Fatal("stable single realtime roster did not start recovery")
+	}
+}
+
+func TestPartyStaleHumanRecoveryIgnoresActiveRobotTransport(t *testing.T) {
+	now := time.Now()
+	conn := &captureSessionConn{}
+	vo := &RobotVo{UID: 17000026, State: StateRun, Conn: conn, Cipher: newPartyTestCipher(t), partyHumanObserved: true}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x3333, accID: 17000026, slot: 2, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.partyPeers[1] = partyIPPeer{uniqueID: 0x2222, accID: 17000027, slot: 1, slotKnown: true}
+	vo.partyRouteActivityAt[0][1] = now.Add(-partyStaleRecoveryTimeout - time.Second)
+	vo.partyRouteActivityAt[1][1] = now
+
+	vo.maybeRecoverStalePartyUnsafe(now)
+
+	if !vo.ReturnSelectPending || !vo.partyRecovery {
+		t.Fatal("active robot-to-robot transport kept a stale human party alive")
+	}
+}
+
+func TestPartyFreshHumanTransportPreventsRecovery(t *testing.T) {
+	now := time.Now()
+	vo := &RobotVo{UID: 17000026, State: StateRun, partyHumanObserved: true}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 0x3333, accID: 17000026, slot: 2, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.partyRouteActivityAt[0][1] = now
+
+	vo.maybeRecoverStalePartyUnsafe(now)
+
+	if vo.ReturnSelectPending || vo.partyRecovery {
+		t.Fatal("fresh human transport triggered party recovery")
+	}
+}
+
 func TestPartyInfoClearStateResetsFollowState(t *testing.T) {
 	vo := &RobotVo{}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 9, slot: 1, slotKnown: true}

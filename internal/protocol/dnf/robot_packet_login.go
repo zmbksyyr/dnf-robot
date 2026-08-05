@@ -112,6 +112,10 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 					r.RunStartTime = uint32(time.Now().Unix())
 				}
 				r.runDisjointAfterLoginUnsafe()
+				if r.partyRecoveryResumePending {
+					r.partyRecoveryResumePending = false
+					recordPartyDebugPacket(r.UID, 0, "--", "CORE", "PARTY_NORMAL", "OK", "running state restored", nil)
+				}
 			}
 		}
 	}

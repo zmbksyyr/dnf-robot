@@ -4,6 +4,7 @@ import "time"
 
 const (
 	partyRealtimeConfirmationsRequired = 2
+	partyRealtimeStableDelay           = 2 * time.Second
 	partyStaleRecoveryTimeout          = 30 * time.Second
 )
 
@@ -28,7 +29,7 @@ func (r *RobotVo) partyRosterIsPureRobotUnsafe(self partyIPPeer, peers []partyIP
 	return true
 }
 
-func (r *RobotVo) startPartyRecoveryUnsafe(now time.Time) bool {
+func (r *RobotVo) startPartyRecoveryUnsafe(now time.Time, reason string) bool {
 	if !r.partyHumanObserved || r.partyRecovery || r.ReturnSelectPending || now.Before(r.partyRecoveryCooldownUntil) {
 		return false
 	}
@@ -36,21 +37,70 @@ func (r *RobotVo) startPartyRecoveryUnsafe(now time.Time) bool {
 		r.partyRecoveryCooldownUntil = now.Add(5 * time.Second)
 		return false
 	}
+	recordPartyDebugPacket(r.UID, 0, "--", "CORE", "ORPHAN_DETECTED", "OK", reason, nil)
 	return true
 }
 
-func (r *RobotVo) maybeRecoverStalePartyUnsafe(now time.Time) {
-	if !r.partyHumanObserved || r.partyRecovery || r.ReturnSelectPending || r.partyAnyTransportAt.IsZero() || r.partyRosterAt.IsZero() {
+func (r *RobotVo) maybeConfirmPartyRealtimeUnsafe(now time.Time) {
+	if r.partyRealtimeConfirmations != 1 || r.partyRealtimeCandidateAt.IsZero() || now.Sub(r.partyRealtimeCandidateAt) < partyRealtimeStableDelay {
 		return
 	}
-	if now.Sub(r.partyAnyTransportAt) < partyStaleRecoveryTimeout || now.Sub(r.partyRosterAt) < partyStaleRecoveryTimeout {
+	r.partyRealtimeConfirmations = partyRealtimeConfirmationsRequired
+	r.partyRealtimeCandidateAt = time.Time{}
+	r.reconcilePartyRealtimeUnsafe(r.partyRealtimeCandidate)
+}
+
+func (r *RobotVo) maybeRecoverStalePartyUnsafe(now time.Time) {
+	if !r.partyHumanObserved || r.partyRecovery || r.ReturnSelectPending {
 		return
 	}
 	if (!r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) < partyStaleRecoveryTimeout) ||
 		(!r.partyDungeonEnteredAt.IsZero() && now.Sub(r.partyDungeonEnteredAt) < partyStaleRecoveryTimeout) {
 		return
 	}
-	r.startPartyRecoveryUnsafe(now)
+	peers := make([]partyIPPeer, 0, len(r.partyPeers))
+	for _, peer := range r.partyPeers {
+		if partyPeerIdentityKnown(peer) {
+			peers = append(peers, peer)
+		}
+	}
+	if r.partyRosterIsPureRobotUnsafe(r.partySelfPeer, peers) {
+		r.startPartyRecoveryUnsafe(now, "known roster contains only robots")
+		return
+	}
+	foundHuman := false
+	for _, peer := range peers {
+		if peer.accID == 0 {
+			return
+		}
+		if isPartyRobotAccount(peer.accID) {
+			continue
+		}
+		foundHuman = true
+		last := r.partyPeerTransportAtUnsafe(peer)
+		if last.IsZero() || now.Sub(last) < partyStaleRecoveryTimeout {
+			return
+		}
+	}
+	if foundHuman {
+		r.startPartyRecoveryUnsafe(now, "human peer transport inactive for 30s")
+	}
+}
+
+func (r *RobotVo) partyPeerTransportAtUnsafe(peer partyIPPeer) time.Time {
+	if !peer.slotKnown || peer.slot >= 4 {
+		return time.Time{}
+	}
+	last := r.partyPeerRouteAt[peer.slot]
+	for route := byte(1); route <= 2; route++ {
+		if r.partyRouteActivityAt[peer.slot][route].After(last) {
+			last = r.partyRouteActivityAt[peer.slot][route]
+		}
+	}
+	if peer.slot == 0 && peer.uniqueID != 0 && r.partyLeaderTransportUnique == peer.uniqueID && r.partyLeaderTransportAt.After(last) {
+		last = r.partyLeaderTransportAt
+	}
+	return last
 }
 
 func partyRealtimeRoster(identities []partyRealtimeIdentity) [4]uint16 {
@@ -103,7 +153,7 @@ func (r *RobotVo) reconcilePartyRealtimeUnsafe(roster [4]uint16) {
 		peers = append(peers, peer)
 	}
 	r.observePartyAccountsUnsafe(peers)
-	if r.partyHumanObserved && r.partyRosterIsPureRobotUnsafe(self, peers) && r.startPartyRecoveryUnsafe(time.Now()) {
+	if r.partyHumanObserved && r.partyRosterIsPureRobotUnsafe(self, peers) && r.startPartyRecoveryUnsafe(time.Now(), "stable realtime roster contains only robots") {
 		return
 	}
 	r.setPartyPeersUnsafe(peers)

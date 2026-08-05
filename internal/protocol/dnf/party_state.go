@@ -519,7 +519,7 @@ func (r *RobotVo) setPartySelfPeerUnsafe(peer partyIPPeer) {
 
 func (r *RobotVo) rememberPartyRealtimeIdentitiesUnsafe(identities []partyRealtimeIdentity) {
 	next := partyRealtimeRoster(identities)
-	r.partyRosterAt = time.Now()
+	now := time.Now()
 	r.partyRealtimeUnique = next
 	r.applyPartyRealtimeIdentitiesUnsafe()
 	if next == r.partyRealtimeCandidate {
@@ -529,8 +529,10 @@ func (r *RobotVo) rememberPartyRealtimeIdentitiesUnsafe(identities []partyRealti
 	} else {
 		r.partyRealtimeCandidate = next
 		r.partyRealtimeConfirmations = 1
+		r.partyRealtimeCandidateAt = now
 	}
 	if r.partyRealtimeConfirmations == partyRealtimeConfirmationsRequired {
+		r.partyRealtimeCandidateAt = time.Time{}
 		r.reconcilePartyRealtimeUnsafe(next)
 	}
 }
@@ -578,9 +580,8 @@ func (r *RobotVo) clearPartyUnsafe() {
 	r.partyRealtimeUnique = [4]uint16{}
 	r.partyRealtimeCandidate = [4]uint16{}
 	r.partyRealtimeConfirmations = 0
-	r.partyRosterAt = time.Time{}
+	r.partyRealtimeCandidateAt = time.Time{}
 	r.partyHumanObserved = false
-	r.partyAnyTransportAt = time.Time{}
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
