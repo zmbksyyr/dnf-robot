@@ -14,8 +14,8 @@ func TestAuctionKindsProgressReportsLiveActualAndOptionalExpected(t *testing.T) 
 	app.cfg.ItemInfoTargets = []string{itemInfo}
 	mustWriteText(t, itemInfo, "1001 0 1 1 `a` `a` 1\n2001 2 1 1 `b` `b` 1\n3001 0 1 1 `c` `c` 1\n")
 	mustWriteJSON(t, appPaths(app).PVFStackable(), []pvfItem{
-		{ID: 1001, Rarity: 0, StackLimit: 1000},
-		{ID: 3001, Rarity: 9, StackLimit: 1000},
+		{ID: 1001, Attach: "free", Rarity: 0, StackLimit: 1000},
+		{ID: 3001, Attach: "free", Rarity: 9, StackLimit: 1000},
 	})
 	mustWriteJSON(t, appPaths(app).PVFEquipment(), []pvfItem{
 		{ID: 2001, ItemType: 2, Slot: "title", Rarity: 0},

@@ -91,8 +91,8 @@ func TestMarketRarityFilterUsesConfiguredBlockedDigits(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
-		1001: {ItemID: 1001, Name: "unique", Kind: "stackable", Rarity: 3},
-		1002: {ItemID: 1002, Name: "epic", Kind: "stackable", Rarity: 5},
+		1001: {ItemID: 1001, Name: "unique", Kind: "stackable", Attach: "free", Rarity: 3},
+		1002: {ItemID: 1002, Name: "epic", Kind: "stackable", Attach: "free", Rarity: 5},
 	}
 	app.planAuction([]restockRow{
 		{ItemID: 1001, SystemPrice: 100, Quantity: 1, StackSize: 1, Enabled: true},
@@ -157,8 +157,8 @@ func TestPlanAuctionAddsCollectForExistingHighRaritySystemStock(t *testing.T) {
 	app.repository = repo
 	app.cfg.ItemInfoTargets = []string{filepath.Join(dir, "iteminfo.dat")}
 	mustWriteJSON(t, appPaths(app).PVFStackable(), []map[string]interface{}{
-		{"id": 1001, "price": 100, "rarity": 3},
-		{"id": 1002, "price": 100, "rarity": 5},
+		{"id": 1001, "price": 100, "rarity": 3, "attach": "free"},
+		{"id": 1002, "price": 100, "rarity": 5, "attach": "free"},
 	})
 	mustWriteJSON(t, appPaths(app).PVFEquipment(), []map[string]interface{}{})
 	mustWriteText(t, filepath.Join(dir, "iteminfo.dat"), "1001 0 1 1 1 1 1 1 1 1 1 1 1 1 `x` `x` 1\n")
@@ -183,7 +183,7 @@ func TestPlanAuctionStackableSplitsQuantity(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
-		3037: {ItemID: 3037, Name: "cube", Kind: "stackable", StackLimit: 1000},
+		3037: {ItemID: 3037, Name: "cube", Kind: "stackable", Attach: "free", StackLimit: 1000},
 	}
 	app.planAuction([]restockRow{{
 		ItemID: 3037, SystemPrice: 88, Quantity: 2500, StackSize: 1000, Enabled: true,
@@ -216,7 +216,7 @@ func TestPlanAuctionStackableClampsToPVFStackLimit(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
-		36: {ItemID: 36, Name: "speaker", Kind: "stackable", StackLimit: 1},
+		36: {ItemID: 36, Name: "speaker", Kind: "stackable", Attach: "free", StackLimit: 1},
 	}
 	app.planAuction([]restockRow{{
 		ItemID: 36, SystemPrice: 200000, Quantity: 3, StackSize: 1000, Enabled: true,
@@ -236,7 +236,7 @@ func TestPlanAuctionStackableAvoidsInt32TotalOverflow(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
-		63041: {ItemID: 63041, Name: "fallback stack", Kind: "stackable"},
+		63041: {ItemID: 63041, Name: "fallback stack", Kind: "stackable", Attach: "free"},
 	}
 	app.planAuction([]restockRow{{
 		ItemID:      63041,
@@ -395,7 +395,7 @@ func TestPlanAuctionFiltersEquipmentOutsideConfiguredLevelRange(t *testing.T) {
 		1001: {ItemID: 1001, Name: "low", Kind: "equipment", Level: 39, Attach: "trade", Slot: "coat"},
 		1002: {ItemID: 1002, Name: "allowed", Kind: "equipment", Level: 55, Attach: "trade", Slot: "coat"},
 		1003: {ItemID: 1003, Name: "high", Kind: "equipment", Level: 71, Attach: "trade", Slot: "coat"},
-		1004: {ItemID: 1004, Name: "material", Kind: "stackable", Level: 1},
+		1004: {ItemID: 1004, Name: "material", Kind: "stackable", Attach: "free", Level: 1},
 	}
 	rows := []restockRow{
 		{ItemID: 1001, SystemPrice: 1000, Quantity: 1, StackSize: 1, Enabled: true},

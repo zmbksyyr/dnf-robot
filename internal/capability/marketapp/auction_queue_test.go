@@ -134,8 +134,8 @@ func TestAuctionQueueSkipsNullNameItemInfoRows(t *testing.T) {
 		"2600557 2 1 1 1 1 1 1 1 1 1 1 1 80 `name2_2600557 == NULL, stackable/Stackable.kor.str : ` 33001\r\n"+
 		"2600558 2 1 1 1 1 1 1 1 1 1 1 1 80 `valid` `valid` 33001\r\n")
 	catalog := map[uint32]catalogItem{
-		2600557: {ItemID: 2600557, Kind: "stackable", StackLimit: 1000, Price: 100},
-		2600558: {ItemID: 2600558, Kind: "stackable", StackLimit: 1000, Price: 100},
+		2600557: {ItemID: 2600557, Kind: "stackable", Attach: "free", StackLimit: 1000, Price: 100},
+		2600558: {ItemID: 2600558, Kind: "stackable", Attach: "free", StackLimit: 1000, Price: 100},
 	}
 
 	selection, err := app.nextAuctionQueueSelection(true, catalog, map[uint32]int{}, 10)

@@ -33,7 +33,7 @@ func TestMarketListingAlwaysIncludesEquipmentAndMaterials(t *testing.T) {
 	cfg.Restock.OtherAllowedRarities = "0"
 	for _, item := range []catalogItem{
 		{ItemID: 1, Kind: "equipment", Slot: "weapon"},
-		{ItemID: 2, Kind: "stackable"},
+		{ItemID: 2, Kind: "stackable", Attach: "free"},
 	} {
 		if !marketListingAllowedWithConfig(item, cfg) {
 			t.Fatalf("default listing unexpectedly filtered kind %q", item.Kind)
@@ -75,6 +75,30 @@ func TestStrictTradePolicyBlocksAccountAttach(t *testing.T) {
 	}
 }
 
+func TestStrictTradePolicyMatchesNativeAttachRules(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Restock.EquipmentTradePolicy = tradePolicyStrict
+	cfg.Restock.OtherTradePolicy = tradePolicyStrict
+	cases := []struct {
+		name string
+		item catalogItem
+		want bool
+	}{
+		{name: "free equipment", item: catalogItem{ItemID: 1, Kind: "equipment", Attach: "free", Slot: "weapon"}, want: true},
+		{name: "sealed equipment", item: catalogItem{ItemID: 2, Kind: "equipment", Attach: "sealing", Slot: "weapon"}, want: true},
+		{name: "trade equipment", item: catalogItem{ItemID: 3, Kind: "equipment", Attach: "trade", Slot: "weapon"}, want: false},
+		{name: "trade-delete material", item: catalogItem{ItemID: 4, Kind: "stackable", Attach: "trade delete"}, want: false},
+		{name: "trade-limit material", item: catalogItem{ItemID: 5, Kind: "stackable", Attach: "trade limit"}, want: false},
+		{name: "free material", item: catalogItem{ItemID: 6, Kind: "stackable", Attach: "free"}, want: true},
+		{name: "sealed special equipment", item: catalogItem{ItemID: 7, Kind: "equipment", Attach: "sealing", ItemType: 2, Slot: "title"}, want: false},
+	}
+	for _, tt := range cases {
+		if got := marketListingAllowedWithConfig(tt.item, cfg); got != tt.want {
+			t.Fatalf("%s allowed=%v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestEquipmentAndOtherRarityFiltersAreIndependent(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Restock.EquipmentAllowedRarities = "2"
@@ -85,7 +109,7 @@ func TestEquipmentAndOtherRarityFiltersAreIndependent(t *testing.T) {
 	if marketListingAllowedWithConfig(catalogItem{ItemID: 2, Kind: "equipment", Rarity: 3}, cfg) {
 		t.Fatal("equipment rarity filter used other-item digits")
 	}
-	if !marketListingAllowedWithConfig(catalogItem{ItemID: 3, Kind: "stackable", Rarity: 3}, cfg) {
+	if !marketListingAllowedWithConfig(catalogItem{ItemID: 3, Kind: "stackable", Attach: "free", Rarity: 3}, cfg) {
 		t.Fatal("other-item rarity filter rejected configured rarity")
 	}
 }

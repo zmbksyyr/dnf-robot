@@ -35,7 +35,29 @@ func marketListingAllowedWithConfig(item catalogItem, cfg Config) bool {
 
 func strictTradeBlocked(item catalogItem) bool {
 	attach := strings.ToLower(strings.TrimSpace(item.Attach))
-	return attach == "account" || item.NoTrade || (item.CanTrade != nil && !*item.CanTrade) || (item.CanAuction != nil && !*item.CanAuction)
+	if item.NoTrade || (item.CanTrade != nil && !*item.CanTrade) || (item.CanAuction != nil && !*item.CanAuction) {
+		return true
+	}
+	// Reverse-engineered from df_game_r CTradeSpace::_IsTradable @ 0x08529DCE
+	// and CItem::GetAttachType @ 0x080F12E2: 0=free, 1=trade,
+	// 2=trade delete, 3=sealing, 4=trade limit, 5=account. Native trading
+	// allows free, and sealing only when Inven_Item byte 0 is 1; it rejects
+	// 1/2/4/5. UpgradeSeparateInfo::IsTradeRestriction @ 0x08110B0A also
+	// rejects bit 0x20 at Inven_Item+0x33. Robot-generated rows leave that
+	// instance bit clear, so catalog filtering only needs to mirror attach.
+	// Direct auction registration bypasses this native check entirely.
+	if item.Kind == "equipment" {
+		if attach == "free" {
+			return false
+		}
+		// Normal sealed equipment is emitted with item type 1. Special auction
+		// records use their own item type (title/creature/artifact), so they
+		// cannot safely use the sealing exception.
+		return attach != "sealing" || specialAuctionKind(item) != ""
+	}
+	// Stackable strict mode has no safe per-instance sealing state; only the
+	// unbound PVF attach type is guaranteed to remain tradeable.
+	return attach != "free"
 }
 
 func (a *App) qualityFilterEnabled() bool {

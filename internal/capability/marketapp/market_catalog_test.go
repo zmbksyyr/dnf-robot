@@ -6,7 +6,7 @@ func TestCatalogAuctionRowsUsePVFOnly(t *testing.T) {
 	app := testApp(t)
 	app.cfg.Restock.StackSizes = []int{500}
 	catalog := map[uint32]catalogItem{
-		4000:      {ItemID: 4000, Kind: "stackable", Price: 7, StackLimit: 1000},
+		4000:      {ItemID: 4000, Kind: "stackable", Attach: "free", Price: 7, StackLimit: 1000},
 		31056:     {ItemID: 31056, Kind: "equipment", Level: 40, Attach: "trade", Slot: "weapon", Price: 100},
 		100050020: {ItemID: 100050020, Kind: "equipment", Level: 80, Attach: "trade", Slot: "coat", Price: 100},
 		31057:     {ItemID: 31057, Kind: "blocked", Price: 100},
