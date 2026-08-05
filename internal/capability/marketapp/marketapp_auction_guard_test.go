@@ -78,6 +78,12 @@ func TestAuctionSearchGuardOnlyOverlaysTrackedSocketData(t *testing.T) {
 	if !strings.Contains(source, "return nativeSearch(dispatcher, user, src, a4)") {
 		t.Fatal("guard must finish through the native auction search function")
 	}
+	if !strings.Contains(source, "if (equipmentId <= 1)") {
+		t.Fatal("guard must skip DP2 lookups for ordinary Robot equipment sentinels")
+	}
+	if !strings.Contains(source, "if (overlayActive)") || !strings.Contains(source, "overlayActive = false") {
+		t.Fatal("guard must bypass socket overlay when the native search callback re-enters")
+	}
 }
 
 func TestUpsertAuctionSearchGuardCollapsesDuplicateBlocks(t *testing.T) {

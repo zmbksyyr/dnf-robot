@@ -21,7 +21,7 @@ const auctionSearchGuardBackupCount = 3
 const auctionSearchGuardSource = auctionSearchGuardBegin + `
 function DP2_AUCTION_SEARCH_HOOK_GUARD_REPLACE(target, ignoredReplacement) {
     var root = (typeof globalThis !== 'undefined') ? globalThis : this;
-    var key = '__dp2_auction_search_hook_guard_v5__';
+    var key = '__dp2_auction_search_hook_guard_v6__';
     if (root[key]) {
         return;
     }
@@ -34,45 +34,62 @@ function DP2_AUCTION_SEARCH_HOOK_GUARD_REPLACE(target, ignoredReplacement) {
         ['pointer', 'pointer', 'pointer', 'int'],
         { abi: 'sysv' }
     );
+    var overlayActive = false;
     var replacement = new NativeCallback(function (dispatcher, user, src, a4) {
+        if (overlayActive) {
+            return nativeSearch(dispatcher, user, src, a4);
+        }
+        overlayActive = true;
         try {
-            if (!src.isNull() &&
-                typeof G_CDataManager === 'function' &&
-                typeof CDataManager_find_item === 'function' &&
-                typeof CItem_getItemGroupName === 'function' &&
-                typeof api_get_jewel_socket_data === 'function') {
-                var count = src.add(5).readU8();
-                if (count <= 100) {
-                    for (var i = 0; i < count; i++) {
-                        var itemId = src.add(54 + 137 * i).readU32();
-                        if (itemId === 0) {
-                            continue;
-                        }
-                        var item = CDataManager_find_item(G_CDataManager(), itemId);
-                        if (item.isNull()) {
-                            continue;
-                        }
-                        var group = CItem_getItemGroupName(item);
-                        if (group <= 0 || group >= 59) {
-                            continue;
-                        }
-                        var equipmentId = src.add(76 + 137 * i).readU32();
-                        var socketData = api_get_jewel_socket_data(mysql_frida, equipmentId);
+            try {
+                if (!src.isNull() &&
+                    typeof G_CDataManager === 'function' &&
+                    typeof CDataManager_find_item === 'function' &&
+                    typeof CItem_getItemGroupName === 'function' &&
+                    typeof api_get_jewel_socket_data === 'function') {
+                    var count = src.add(5).readU8();
+                    if (count <= 100) {
+                        for (var i = 0; i < count; i++) {
+                            var itemId = src.add(54 + 137 * i).readU32();
+                            if (itemId === 0) {
+                                continue;
+                            }
+                            var equipmentId = src.add(76 + 137 * i).readU32();
 
-                        // api_get_jewel_socket_data always allocates a buffer.
-                        // Byte zero is its actual "record exists" indicator.
-                        // Preserve native bytes for normal/untracked equipment.
-                        if (socketData.isNull() || socketData.add(0).readU8() === 0) {
-                            continue;
+                            // Robot-created ordinary equipment uses 1 as its
+                            // no-instance sentinel. It can never reference a
+                            // DP2 jewel row, so avoid a synchronous SQL lookup
+                            // for every result while users rapidly change pages.
+                            if (equipmentId <= 1) {
+                                continue;
+                            }
+                            var item = CDataManager_find_item(G_CDataManager(), itemId);
+                            if (item.isNull()) {
+                                continue;
+                            }
+                            var group = CItem_getItemGroupName(item);
+                            if (group <= 0 || group >= 59) {
+                                continue;
+                            }
+                            var socketData = api_get_jewel_socket_data(mysql_frida, equipmentId);
+
+                            // api_get_jewel_socket_data always allocates a buffer.
+                            // Byte zero is its actual "record exists" indicator.
+                            // Preserve native bytes for normal/untracked equipment.
+                            if (socketData.isNull() || socketData.add(0).readU8() === 0) {
+                                continue;
+                            }
+                            Memory.copy(src.add(106 + 137 * i), socketData, 30);
                         }
-                        Memory.copy(src.add(106 + 137 * i), socketData, 30);
                     }
                 }
+            } catch (e) {
+                console.log('[dp2 guard] socket overlay skipped: ' + e);
             }
-        } catch (e) {
-            console.log('[dp2 guard] socket overlay skipped: ' + e);
+            return nativeSearch(dispatcher, user, src, a4);
+        } finally {
+            overlayActive = false;
         }
-        return nativeSearch(dispatcher, user, src, a4);
     }, 'int', ['pointer', 'pointer', 'pointer', 'int']);
 
     Interceptor.replace(target, replacement);
