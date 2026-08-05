@@ -133,6 +133,7 @@ type Repository interface {
 	LoadCollectRows(dbName, market string, systemOwnerBase uint32, includeSystemOwners bool) ([]collectRow, error)
 	LoadSystemCollectRows(dbName, market string, systemOwnerBase uint32) ([]collectRow, error)
 	LoadMarketStock(dbName string, systemOwnerBase uint32, occupied map[uint32]int) (map[uint32]int, error)
+	CountSystemStockKinds(dbName string, systemOwnerBase uint32) (int, error)
 	LoadMaxAddInfo(dbName string, min int32) (int32, error)
 	CreateCreatureItem(dbName string, ownerID uint32, itemID uint32) (int32, error)
 	CountSystemStock(dbName string, systemOwnerBase uint32) (int, error)

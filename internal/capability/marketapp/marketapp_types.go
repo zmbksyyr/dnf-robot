@@ -245,6 +245,11 @@ type MarketPolicyStatus struct {
 	UpdatedAt            time.Time `json:"updated_at,omitempty"`
 }
 
+type MarketKindsProgress struct {
+	Actual   int  `json:"actual"`
+	Expected *int `json:"expected,omitempty"`
+}
+
 type ItemInfoSyncStatus struct {
 	SourcePath string   `json:"source_path,omitempty"`
 	Targets    []string `json:"targets,omitempty"`

@@ -99,6 +99,10 @@ func (r *clearStockRepository) LoadMarketStock(dbName string, _ uint32, _ map[ui
 	return out, nil
 }
 
+func (r *clearStockRepository) CountSystemStockKinds(dbName string, _ uint32) (int, error) {
+	return len(r.stock[dbName]), nil
+}
+
 func (r *clearStockRepository) LoadMaxAddInfo(string, int32) (int32, error) {
 	return r.maxAddInfo, nil
 }

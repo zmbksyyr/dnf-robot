@@ -96,6 +96,18 @@ func (r SQLRepository) LoadMarketStock(dbName string, systemOwnerBase uint32, oc
 	return out, rows.Err()
 }
 
+func (r SQLRepository) CountSystemStockKinds(dbName string, systemOwnerBase uint32) (int, error) {
+	query := "SELECT COUNT(DISTINCT item_id) FROM " + quoteIdent(dbName) + ".`auction_main` WHERE owner_id >= ?"
+	var count int
+	if err := r.db.QueryRow(query, systemOwnerBase).Scan(&count); err != nil {
+		if isMissingTable(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return count, nil
+}
+
 func (r SQLRepository) LoadMaxAddInfo(dbName string, min int32) (int32, error) {
 	query := "SELECT IFNULL(MAX(add_info),0) FROM " + quoteIdent(dbName) + ".`auction_main` WHERE add_info >= ?"
 	var max sql.NullInt64

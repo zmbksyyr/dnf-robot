@@ -320,17 +320,35 @@ func (a *App) recordMarketPolicyJob(market string, job JobSummary) {
 
 func (a *App) currentMarketKinds(market string) (int, error) {
 	cfg := a.configSnapshot()
-	occ := map[uint32]int{}
 	switch normalizeMarketName(market) {
 	case marketNameAuction:
-		have, err := a.repository.LoadMarketStock(cfg.AuctionDB, cfg.SystemOwner.IDBase, occ)
-		return len(have), err
+		return a.repository.CountSystemStockKinds(cfg.AuctionDB, cfg.SystemOwner.IDBase)
 	case marketNameCera:
-		have, err := a.repository.LoadMarketStock(cfg.CeraDB, cfg.SystemOwner.IDBase, occ)
-		return len(have), err
+		return a.repository.CountSystemStockKinds(cfg.CeraDB, cfg.SystemOwner.IDBase)
 	default:
 		return 0, nil
 	}
+}
+
+// AuctionKindsProgress returns the current robot auction item-kind count. The
+// expected count is optional because it requires reading the current iteminfo
+// and PVF export; callers that poll should request it only on the first sample.
+func (a *App) AuctionKindsProgress(includeExpected bool) (MarketKindsProgress, error) {
+	actual, err := a.currentMarketKinds(marketNameAuction)
+	progress := MarketKindsProgress{Actual: actual}
+	if err != nil {
+		return progress, err
+	}
+	if !includeExpected {
+		return progress, nil
+	}
+	candidates := a.observeAuctionCandidates()
+	if candidates.Error != "" {
+		return progress, fmt.Errorf("observe auction candidates: %s", candidates.Error)
+	}
+	expected := candidates.Count + candidates.Special
+	progress.Expected = &expected
+	return progress, nil
 }
 
 func countPolicyActionFailureEntries(entries []ActionEntry) int {
