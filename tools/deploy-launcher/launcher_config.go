@@ -11,18 +11,20 @@ import (
 const launcherConfigName = "deploy-launcher.ini"
 
 type launcherConfig struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
+	Host         string
+	Port         string
+	User         string
+	Password     string
+	FreshInstall bool
 }
 
 func defaultLauncherConfig() launcherConfig {
 	return launcherConfig{
-		Host:     "192.168.200.131",
-		Port:     "22",
-		User:     "root",
-		Password: "123456",
+		Host:         "192.168.200.131",
+		Port:         "22",
+		User:         "root",
+		Password:     "123456",
+		FreshInstall: true,
 	}
 }
 
@@ -40,6 +42,7 @@ func loadLauncherConfig(path string) (launcherConfig, error) {
 	}
 
 	section := ""
+	freshInstallSeen := false
 	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -73,14 +76,64 @@ func loadLauncherConfig(path string) (launcherConfig, error) {
 			case "password":
 				config.Password = value
 			}
+		case strings.EqualFold(section, "deploy") && key == "fresh_install":
+			freshInstallSeen = true
+			switch value {
+			case "1":
+				config.FreshInstall = true
+			case "0":
+				config.FreshInstall = false
+			default:
+				// A malformed value must never turn an intended in-place upgrade
+				// into a destructive fresh deployment.
+				config.FreshInstall = false
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return defaultLauncherConfig(), fmt.Errorf("parse %s: %w", path, err)
 	}
+	if !freshInstallSeen {
+		separator := "\n"
+		if len(raw) == 0 || raw[len(raw)-1] == '\n' {
+			separator = ""
+		}
+		addition := separator + "\n" + formatDeployConfig(config.FreshInstall)
+		file, openErr := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+		if openErr != nil {
+			return config, fmt.Errorf("open %s for deploy config migration: %w", path, openErr)
+		}
+		_, writeErr := file.WriteString(addition)
+		closeErr := file.Close()
+		if writeErr != nil {
+			return config, fmt.Errorf("append deploy settings to %s: %w", path, writeErr)
+		}
+		if closeErr != nil {
+			return config, fmt.Errorf("close %s after deploy config migration: %w", path, closeErr)
+		}
+	}
 	return config, nil
 }
 
 func formatLauncherConfig(config launcherConfig) []byte {
-	return []byte(fmt.Sprintf("[ssh]\nhost = %s\nport = %s\nuser = %s\npassword = %s\n", config.Host, config.Port, config.User, config.Password))
+	return []byte(fmt.Sprintf(`[ssh]
+host = %s
+port = %s
+user = %s
+password = %s
+
+%s`, config.Host, config.Port, config.User, config.Password, formatDeployConfig(config.FreshInstall)))
+}
+
+func formatDeployConfig(freshInstall bool) string {
+	value := 0
+	if freshInstall {
+		value = 1
+	}
+	return fmt.Sprintf(`[deploy]
+# 1 = 全新安装：备份并重建 /root/config，再部署 robot
+# 0 = 保留配置升级：只替换 /root/robot，保留 /root/config
+# “重启 robot”始终保留 /root/config，不受此配置影响
+fresh_install = %d
+`, value)
 }

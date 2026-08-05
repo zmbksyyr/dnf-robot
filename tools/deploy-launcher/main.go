@@ -26,13 +26,14 @@ const (
 
 type DeployWindow struct {
 	*walk.MainWindow
-	deployBtn  *walk.PushButton
-	restartBtn *walk.PushButton
-	hostEdit   *walk.LineEdit
-	portEdit   *walk.LineEdit
-	userEdit   *walk.LineEdit
-	passEdit   *walk.LineEdit
-	logEdit    *walk.TextEdit
+	deployBtn    *walk.PushButton
+	restartBtn   *walk.PushButton
+	hostEdit     *walk.LineEdit
+	portEdit     *walk.LineEdit
+	userEdit     *walk.LineEdit
+	passEdit     *walk.LineEdit
+	logEdit      *walk.TextEdit
+	freshInstall bool
 
 	operationMu      sync.Mutex
 	operationRunning bool
@@ -311,12 +312,16 @@ func (dw *DeployWindow) doDeploy() error {
 	}
 	dw.appendLog("替换 robot 完成")
 
-	configBackup := fmt.Sprintf("/root/config.bak.%s", time.Now().Format("20060102_150405.000"))
-	dw.appendLog(fmt.Sprintf("重建 /root/config；旧配置存在时备份到 %s", configBackup))
-	if err := runCmd(client, backupAndResetConfigCommand(configBackup)); err != nil {
-		return fmt.Errorf("备份并重建 /root/config 失败: %v", err)
+	if dw.freshInstall {
+		configBackup := fmt.Sprintf("/root/config.bak.%s", time.Now().Format("20060102_150405.000"))
+		dw.appendLog(fmt.Sprintf("全新安装：重建 /root/config；旧配置存在时备份到 %s", configBackup))
+		if err := runCmd(client, backupAndResetConfigCommand(configBackup)); err != nil {
+			return fmt.Errorf("备份并重建 /root/config 失败: %v", err)
+		}
+		dw.appendLog("/root/config 已重建，旧配置备份最多保留 3 份")
+	} else {
+		dw.appendLog("保留配置升级：仅替换 /root/robot，保留 /root/config")
 	}
-	dw.appendLog("/root/config 已重建，旧配置备份最多保留 3 份")
 
 	if err := runCmdBg(client, robotStartCommand); err != nil {
 		return fmt.Errorf("启动 robot 失败: %v", err)
@@ -619,6 +624,7 @@ func main() {
 			launcherCfg = loaded
 		}
 	}
+	dw.freshInstall = launcherCfg.FreshInstall
 	if _, err := (MainWindow{
 		AssignTo: &dw.MainWindow,
 		Title:    "DNF Robot 部署启动器",

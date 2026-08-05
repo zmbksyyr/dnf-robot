@@ -44,13 +44,20 @@ password = secret=value
 	if err != nil {
 		t.Fatalf("loadLauncherConfig: %v", err)
 	}
-	want := launcherConfig{Host: "10.0.0.8", Port: "2222", User: "deploy", Password: "secret=value"}
+	want := launcherConfig{Host: "10.0.0.8", Port: "2222", User: "deploy", Password: "secret=value", FreshInstall: true}
 	if config != want {
 		t.Fatalf("config = %+v, want %+v", config, want)
 	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "[deploy]") || !strings.Contains(string(updated), "fresh_install = 1") || !strings.Contains(string(updated), "0 = 保留配置升级") {
+		t.Fatalf("legacy launcher config was not migrated with documented deploy settings: %q", updated)
+	}
 }
 
-func TestLoadLauncherConfigIgnoresRemovedDeployOptions(t *testing.T) {
+func TestLoadLauncherConfigDisablesFreshInstall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), launcherConfigName)
 	raw := `[ssh]
 host = 10.0.0.8
@@ -66,10 +73,8 @@ fresh_install = 0
 	if err != nil {
 		t.Fatalf("loadLauncherConfig: %v", err)
 	}
-	want := defaultLauncherConfig()
-	want.Host = "10.0.0.8"
-	if config != want {
-		t.Fatalf("config = %+v, want %+v", config, want)
+	if config.FreshInstall {
+		t.Fatal("fresh_install=0 was not applied")
 	}
 }
 
@@ -95,10 +100,32 @@ func TestBackupAndResetConfigCommandBacksUpBeforeCreatingEmptyConfig(t *testing.
 	}
 }
 
-func TestLauncherConfigContainsOnlySSHSettings(t *testing.T) {
+func TestLauncherConfigDocumentsFreshInstallModes(t *testing.T) {
 	raw := string(formatLauncherConfig(defaultLauncherConfig()))
-	if strings.Contains(raw, "[deploy]") || strings.Contains(raw, "fresh_install") {
-		t.Fatalf("obsolete deploy option remains in launcher config: %q", raw)
+	for _, want := range []string{
+		"[deploy]",
+		"fresh_install = 1",
+		"1 = 全新安装",
+		"0 = 保留配置升级",
+		"重启 robot”始终保留 /root/config",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("launcher config does not contain %q: %q", want, raw)
+		}
+	}
+}
+
+func TestLoadLauncherConfigInvalidFreshInstallPreservesRemoteConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), launcherConfigName)
+	if err := os.WriteFile(path, []byte("[deploy]\nfresh_install = yes\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadLauncherConfig(path)
+	if err != nil {
+		t.Fatalf("loadLauncherConfig: %v", err)
+	}
+	if config.FreshInstall {
+		t.Fatal("invalid fresh_install enabled destructive deployment")
 	}
 }
 
