@@ -28,18 +28,11 @@ func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.gameEndpointPayload(cfg, ""))
 	case http.MethodPost:
 		var req struct {
-			GamePort    int    `json:"game_port"`
-			MonitorPort int    `json:"monitor_port"`
-			AuctionPort int    `json:"auction_port"`
-			PointPort   int    `json:"point_port"`
-			RelayPort   int    `json:"relay_port"`
-			AuctionHost string `json:"auction_host"`
-			PointHost   string `json:"point_host"`
-			RelayHost   string `json:"relay_host"`
-			ServiceRoot string `json:"service_root"`
-			RunScript   string `json:"run_script"`
-			GameHost    string `json:"game_host"`
-			LoginIP     string `json:"login_ip"`
+			GamePort    int `json:"game_port"`
+			MonitorPort int `json:"monitor_port"`
+			AuctionPort int `json:"auction_port"`
+			PointPort   int `json:"point_port"`
+			RelayPort   int `json:"relay_port"`
 		}
 		if err := config.DecodeJSONLimit(r.Body, 64*1024, &req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
@@ -49,8 +42,7 @@ func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		cfg, err := s.writeExternalServices(req.GamePort, req.MonitorPort, req.AuctionPort, req.PointPort, req.RelayPort,
-			req.AuctionHost, req.PointHost, req.RelayHost, req.ServiceRoot, req.RunScript, req.GameHost, req.LoginIP)
+		cfg, err := s.writeExternalPorts(req.GamePort, req.MonitorPort, req.AuctionPort, req.PointPort, req.RelayPort)
 		if err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
@@ -194,25 +186,18 @@ func (s *Server) loadDiskConfig() (*config.SysConfig, error) {
 	return cfg, nil
 }
 
-func (s *Server) writeExternalServices(game, monitor, auction, point, relay int, auctionHost, pointHost, relayHost, serviceRoot, runScript, gameHost, loginIP string) (*config.SysConfig, error) {
+func (s *Server) writeExternalPorts(game, monitor, auction, point, relay int) (*config.SysConfig, error) {
 	path := s.configPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	text := robotconfig.UpdateINIText(string(data), map[string]string{
-		"Ports.Game":           strconv.Itoa(game),
-		"Ports.Monitor":        strconv.Itoa(monitor),
-		"Ports.Auction":        strconv.Itoa(auction),
-		"Ports.Point":          strconv.Itoa(point),
-		"Ports.Relay":          strconv.Itoa(relay),
-		"Services.AuctionHost": strings.TrimSpace(auctionHost),
-		"Services.PointHost":   strings.TrimSpace(pointHost),
-		"Services.RelayHost":   strings.TrimSpace(relayHost),
-		"Services.Root":        strings.TrimSpace(serviceRoot),
-		"Services.RunScript":   strings.TrimSpace(runScript),
-		"Robot.RobotConnectIp": strings.TrimSpace(gameHost),
-		"Robot.RobotInnerIp":   strings.TrimSpace(loginIP),
+		"Ports.Game":    strconv.Itoa(game),
+		"Ports.Monitor": strconv.Itoa(monitor),
+		"Ports.Auction": strconv.Itoa(auction),
+		"Ports.Point":   strconv.Itoa(point),
+		"Ports.Relay":   strconv.Itoa(relay),
 	})
 	cfg, err := config.ParseConfig(text)
 	if err != nil {

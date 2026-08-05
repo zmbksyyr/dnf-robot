@@ -48,6 +48,14 @@ func TestWriteGamePortUpdatesMainConfig(t *testing.T) {
 		"",
 		"[Robot]",
 		"RobotConnectIp = 127.0.0.1",
+		"RobotInnerIp = 10.0.0.1",
+		"",
+		"[Services]",
+		"AuctionHost = 192.168.1.10",
+		"PointHost = 192.168.1.11",
+		"RelayHost = 192.168.1.12",
+		"Root = /home/neople",
+		"RunScript = /root/run",
 		"",
 		"[Web]",
 		"WebPassword = twadmin",
@@ -58,7 +66,7 @@ func TestWriteGamePortUpdatesMainConfig(t *testing.T) {
 	}
 	s := New(&config.SysConfig{ConfigDir: dir, RobotConnectIP: "127.0.0.1", RobotGamePort: 10011, MonitorPort: 30303, AuctionPort: 30803, PointPort: 30603, RelayPort: 7200}, "", "")
 
-	cfg, err := s.writeExternalServices(20011, 31303, 31803, 31603, 17200, "127.0.0.1", "127.0.0.1", "127.0.0.1", "/home/neople", "/root/run", "auto", "10.0.0.1")
+	cfg, err := s.writeExternalPorts(20011, 31303, 31803, 31603, 17200)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +83,11 @@ func TestWriteGamePortUpdatesMainConfig(t *testing.T) {
 	for _, want := range []string{"Game = 20011", "Monitor = 31303", "Auction = 31803", "Point = 31603", "Relay = 17200"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("config file missing %q:\n%s", want, data)
+		}
+	}
+	for _, want := range []string{"RobotConnectIp = 127.0.0.1", "RobotInnerIp = 10.0.0.1", "AuctionHost = 192.168.1.10", "PointHost = 192.168.1.11", "RelayHost = 192.168.1.12", "Root = /home/neople", "RunScript = /root/run"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("non-port config changed while saving ports, missing %q:\n%s", want, data)
 		}
 	}
 	if strings.Contains(string(data), "RobotGamePort") {

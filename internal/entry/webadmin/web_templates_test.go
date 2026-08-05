@@ -177,6 +177,8 @@ func TestAutoDialogUsesStandardFooterWithoutWrapping(t *testing.T) {
 		"showModal('Auto',body,foot)",
 		".auto-form>input[type=number]{width:120px}",
 		".auto-option{white-space:nowrap}",
+		"grid-template-columns:68px 16px 68px max-content",
+		`<span>~</span><input id="autoShoutMax"`,
 	} {
 		if !strings.Contains(appCSS+appJS, want) {
 			t.Fatalf("Auto dialog layout is missing %q", want)
@@ -187,10 +189,16 @@ func TestAutoDialogUsesStandardFooterWithoutWrapping(t *testing.T) {
 func TestPortsDialogUsesStandardFooter(t *testing.T) {
 	for _, want := range []string{
 		`const foot='<button onclick="submitGamePort()">Save Ports</button>`,
-		"showModal('Ports',body,foot)",
+		"showModal('Ports',body,foot,'compact')",
+		`const ports=endpoint.ports||{};const body='<div class="formgrid"><label>Game</label>`,
 	} {
 		if !strings.Contains(appJS, want) {
 			t.Fatalf("Ports dialog standard footer is missing %q", want)
+		}
+	}
+	for _, removed := range []string{`id="gameHost"`, `id="loginIP"`, `id="auctionHost"`, `id="pointHost"`, `id="relayHost"`, `id="serviceRoot"`, `id="serviceRunScript"`} {
+		if strings.Contains(appJS, removed) {
+			t.Fatalf("Ports dialog still exposes non-port field %q", removed)
 		}
 	}
 }
