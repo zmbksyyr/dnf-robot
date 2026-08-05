@@ -484,6 +484,8 @@ func (r *RobotVo) sendPartyRobotPeerProbeRouteUnsafe(peer partyIPPeer, route byt
 }
 
 func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
+	r.partyLeaderTransportUnique = 0
+	r.partyLeaderTransportAt = time.Time{}
 	r.partyTQOSSeq = [4][3]uint32{}
 	r.partyTQOSReliableSeq = [4][3]uint32{}
 	r.partyTQOSReplies = [4][3]partyTQOSReliableReply{}

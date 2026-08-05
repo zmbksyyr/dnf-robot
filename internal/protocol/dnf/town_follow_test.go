@@ -145,6 +145,29 @@ func TestRobotIgnoresStaleCachedLeaderPosition(t *testing.T) {
 	}
 }
 
+func TestPartyLeaderTransportFreshnessSuspendsAndResumesFollow(t *testing.T) {
+	now := time.Now()
+	leader := partyIPPeer{uniqueID: 2, slot: 0, slotKnown: true}
+	vo := &RobotVo{State: StateRun}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 1, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = leader
+
+	if !vo.partyLeaderTransportFreshUnsafe(leader.uniqueID, now.Add(time.Hour)) {
+		t.Fatal("server without observed peer transport lost compatibility follow")
+	}
+	vo.markPartyRouteHealthyUnsafe(leader, 1, now)
+	if !vo.partyLeaderTransportFreshUnsafe(leader.uniqueID, now.Add(partyLeaderTransportTimeout)) {
+		t.Fatal("leader transport expired at the freshness boundary")
+	}
+	if vo.partyLeaderTransportFreshUnsafe(leader.uniqueID, now.Add(partyLeaderTransportTimeout+time.Millisecond)) {
+		t.Fatal("stale leader transport still permitted follow")
+	}
+	vo.markPartyRouteHealthyUnsafe(leader, 2, now.Add(partyLeaderTransportTimeout+2*time.Millisecond))
+	if !vo.partyLeaderTransportFreshUnsafe(leader.uniqueID, now.Add(partyLeaderTransportTimeout+3*time.Millisecond)) {
+		t.Fatal("fresh leader transport did not resume follow")
+	}
+}
+
 func TestTownEntityRemovalPreservesPartyState(t *testing.T) {
 	cipher := crypt.NewDNFCipher()
 	if err := cipher.Initialize(make([]byte, 334)); err != nil {

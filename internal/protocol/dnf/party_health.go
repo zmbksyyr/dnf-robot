@@ -166,6 +166,10 @@ func (r *RobotVo) markPartyRouteHealthyUnsafe(peer partyIPPeer, route byte, now 
 	r.partyRouteActivityAt[peer.slot][route] = now
 	r.partyPeerRoute[peer.slot] = route
 	r.partyPeerRouteAt[peer.slot] = now
+	if peer.slot == 0 && peer.uniqueID != 0 {
+		r.partyLeaderTransportUnique = peer.uniqueID
+		r.partyLeaderTransportAt = now
+	}
 	if wasBlocked {
 		fmt.Printf("[PARTY_ROUTE_RECOVERED] uid=%d peer=%d slot=%d route=%d\n", r.UID, peer.accID, peer.slot, route)
 	}

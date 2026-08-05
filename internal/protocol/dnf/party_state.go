@@ -247,6 +247,12 @@ func (r *RobotVo) partyLeaderUniqueIDUnsafe() (uint16, bool) {
 	return 0, false
 }
 
+const partyLeaderTransportTimeout = 15 * time.Second
+
+func (r *RobotVo) partyLeaderTransportFreshUnsafe(uniqueID uint16, now time.Time) bool {
+	return uniqueID != 0 && (r.partyLeaderTransportUnique != uniqueID || r.partyLeaderTransportAt.IsZero() || now.Sub(r.partyLeaderTransportAt) <= partyLeaderTransportTimeout)
+}
+
 func (r *RobotVo) followCachedPartyLeaderTownPositionUnsafe() bool {
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
 	if !ok {
@@ -264,7 +270,7 @@ func (r *RobotVo) followPartyLeaderTownAreaUnsafe(area townEntityArea) bool {
 		return false
 	}
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
-	if !ok || area.uniqueID != leaderID || (r.CurVillage == area.village && r.CurArea == area.area) {
+	if !ok || !r.partyLeaderTransportFreshUnsafe(leaderID, time.Now()) || area.uniqueID != leaderID || (r.CurVillage == area.village && r.CurArea == area.area) {
 		return false
 	}
 	r.setAreaFromLocked(area.village, area.area, area.x, area.y, uint16(r.CurVillage), uint16(r.CurArea))
@@ -276,7 +282,7 @@ func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPositio
 		return false
 	}
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
-	if !ok || position.uniqueID != leaderID || (r.CurX == position.x && r.CurY == position.y) {
+	if !ok || !r.partyLeaderTransportFreshUnsafe(leaderID, time.Now()) || position.uniqueID != leaderID || (r.CurX == position.x && r.CurY == position.y) {
 		return false
 	}
 	moveType := position.moveType

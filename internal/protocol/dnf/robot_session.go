@@ -152,6 +152,8 @@ type RobotVo struct {
 	partySelfRefreshAttempts    uint8
 	partyRealtimeUnique         [4]uint16
 	partyPeers                  [4]partyIPPeer
+	partyLeaderTransportUnique  uint16
+	partyLeaderTransportAt      time.Time
 	partyPendingPeer            uint16
 	partyPendingUntil           time.Time
 	partyInviteFallback         partyInviteFallbackState
