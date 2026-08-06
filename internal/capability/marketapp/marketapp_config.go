@@ -14,8 +14,8 @@ import (
 
 const (
 	defaultMarketMaxActions  = 10000
-	defaultEquipmentRarities = "01234"
-	defaultOtherRarities     = "01234"
+	defaultEquipmentRarities = "012345"
+	defaultOtherRarities     = "012345"
 	tradePolicyPermissive    = "permissive"
 	tradePolicyStrict        = "strict"
 )
@@ -30,7 +30,7 @@ func DefaultConfig() Config {
 		Collector:       CollectorCfg{Enabled: true, MaxConcurrent: 8, InRangeProbability: 0.8, OutRangeProbability: 0.05},
 		Restock: RestockCfg{
 			Comments: defaultRestockComments(), EquipmentAllowedRarities: defaultEquipmentRarities, OtherAllowedRarities: defaultOtherRarities,
-			EquipmentTradePolicy: tradePolicyPermissive, OtherTradePolicy: tradePolicyStrict, StackSizes: []int{500, 1000, 2000},
+			EquipmentTradePolicy: tradePolicyPermissive, OtherTradePolicy: tradePolicyPermissive, StackSizes: []int{500, 1000, 2000},
 			EquipmentQtyMin: 2, EquipmentQtyMax: 5, EquipInflateMin: 5, EquipInflateMax: 8,
 			UpgradeMin: 7, UpgradeMax: 13, UpgradePriceRate: 0.08, RandLow: 0.9, RandHigh: 1.1,
 			MaxActions: defaultMarketMaxActions, MaxConcurrent: 8, MaxResultActions: 200,

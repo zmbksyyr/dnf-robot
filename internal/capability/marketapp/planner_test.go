@@ -89,6 +89,7 @@ func TestDefaultConfigDoesNotExposeUnknownCycleLimit(t *testing.T) {
 
 func TestMarketRarityFilterUsesConfiguredBlockedDigits(t *testing.T) {
 	app := testApp(t)
+	app.cfg.Restock.OtherAllowedRarities = "01234"
 	result := &PlanResult{}
 	catalog := map[uint32]catalogItem{
 		1001: {ItemID: 1001, Name: "unique", Kind: "stackable", Attach: "free", Rarity: 3},
@@ -140,6 +141,7 @@ func TestMarketRarityFilterSupportsArbitraryAllowedDigitSet(t *testing.T) {
 func TestPlanAuctionAddsCollectForExistingHighRaritySystemStock(t *testing.T) {
 	dir := t.TempDir()
 	app := testApp(t)
+	app.cfg.Restock.OtherAllowedRarities = "01234"
 	app.configDir = dir
 	repo := &clearStockRepository{
 		stock: map[string]map[uint32]int{

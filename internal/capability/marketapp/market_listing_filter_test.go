@@ -13,6 +13,7 @@ func TestMarketListingTradePoliciesAreIndependent(t *testing.T) {
 	if !marketListingAllowedWithConfig(equipment, cfg) {
 		t.Fatal("default permissive equipment policy filtered a high-rarity item only because of PVF trade fields")
 	}
+	cfg.Restock.OtherTradePolicy = tradePolicyStrict
 	if marketListingAllowedWithConfig(material, cfg) {
 		t.Fatal("default strict material policy allowed an explicitly blocked material")
 	}

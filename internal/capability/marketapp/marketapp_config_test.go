@@ -34,7 +34,7 @@ func TestLoadConfigCreatesCommentedINIInConfDirectory(t *testing.T) {
 	if !strings.Contains(text, "[auction_price]") || !strings.Contains(text, "# 装备基础价格的最小随机倍率。") {
 		t.Fatalf("generated INI lacks documented pricing configuration:\n%s", text)
 	}
-	if !strings.Contains(text, "equipment_allowed_rarities = 01234") || !strings.Contains(text, "other_allowed_rarities = 01234") || !strings.Contains(text, "equipment_trade_policy = permissive") || !strings.Contains(text, "other_trade_policy = strict") {
+	if !strings.Contains(text, "equipment_allowed_rarities = 012345") || !strings.Contains(text, "other_allowed_rarities = 012345") || !strings.Contains(text, "equipment_trade_policy = permissive") || !strings.Contains(text, "other_trade_policy = permissive") {
 		t.Fatalf("generated INI does not use the default listed rarity digits:\n%s", text)
 	}
 	if strings.Contains(text, "quality_filter =") || strings.Contains(text, "blocked_rarities =") {
@@ -73,7 +73,7 @@ func TestLoadConfigNormalizesAllowedRaritiesAndAddsTradePolicies(t *testing.T) {
 	if !strings.Contains(string(data), "equipment_allowed_rarities = 034") || !strings.Contains(string(data), "other_allowed_rarities = 034") {
 		t.Fatalf("normalized config does not contain canonical allowed rarities:\n%s", data)
 	}
-	if cfg.Restock.EquipmentTradePolicy != tradePolicyPermissive || cfg.Restock.OtherTradePolicy != tradePolicyStrict {
+	if cfg.Restock.EquipmentTradePolicy != tradePolicyPermissive || cfg.Restock.OtherTradePolicy != tradePolicyPermissive {
 		t.Fatalf("trade policies = %q/%q", cfg.Restock.EquipmentTradePolicy, cfg.Restock.OtherTradePolicy)
 	}
 }
