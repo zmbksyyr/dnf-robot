@@ -37,6 +37,9 @@ func TestLoadConfigCreatesCommentedINIInConfDirectory(t *testing.T) {
 	if !strings.Contains(text, "equipment_allowed_rarities = 012345") || !strings.Contains(text, "other_allowed_rarities = 012345") || !strings.Contains(text, "equipment_trade_policy = permissive") || !strings.Contains(text, "other_trade_policy = permissive") {
 		t.Fatalf("generated INI does not use the default listed rarity digits:\n%s", text)
 	}
+	if !strings.Contains(text, "blocked_item_ids = ") {
+		t.Fatalf("generated INI lacks blocked item IDs setting:\n%s", text)
+	}
 	if strings.Contains(text, "quality_filter =") || strings.Contains(text, "blocked_rarities =") {
 		t.Fatalf("generated INI still contains legacy rarity settings:\n%s", text)
 	}
@@ -89,6 +92,23 @@ func TestLoadConfigRejectsInvalidAllowedRarities(t *testing.T) {
 	}
 	if _, _, err := loadConfig(dir); err == nil || !strings.Contains(err.Error(), "digits 0..9") {
 		t.Fatalf("invalid allowed rarities error=%v", err)
+	}
+}
+
+func TestMarketConfigRoundTripsBlockedItemIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := layout.New(dir).MarketConfig()
+	cfg := DefaultConfig()
+	cfg.Restock.BlockedItemIDs = []uint32{100, 300}
+	if err := writeMarketConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Restock.BlockedItemIDs; len(got) != 2 || got[0] != 100 || got[1] != 300 {
+		t.Fatalf("blocked item IDs = %v, want [100 300]", got)
 	}
 }
 

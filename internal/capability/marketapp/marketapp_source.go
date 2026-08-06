@@ -244,6 +244,7 @@ func defaultRestockComments() map[string]string {
 	return map[string]string{
 		"_summary":              "Normal auction uses PVF for item data and the current auction iteminfo.dat as the environment boundary. Candidate IDs are PVF auctionable IDs intersected with iteminfo.dat IDs; clicking ItemInfo explicitly releases the generated iteminfo.dat and expands that boundary.",
 		"stack_sizes":           "Stackable listing count candidates, such as material bundles. The selected count is clamped by PVF stack_limit when available.",
+		"blocked_item_ids":      "Auction item IDs excluded from automatic and explicit restock. Rebuild collection removes existing Robot listings for these IDs.",
 		"equipment_qty_min":     "Minimum duplicate records generated for each missing equipment item after the DB shows no system stock for that item.",
 		"equipment_qty_max":     "Maximum duplicate records generated for each missing equipment item after the DB shows no system stock for that item.",
 		"equipment_level_min":   "Minimum PVF equipment level allowed for auction restock. 0 disables the lower bound.",

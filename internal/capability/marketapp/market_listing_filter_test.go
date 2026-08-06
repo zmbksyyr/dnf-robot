@@ -57,6 +57,26 @@ func TestListingFilterRemainsEnabledForStrictTradePolicy(t *testing.T) {
 	}
 }
 
+func TestBlockedItemIDsOverrideListingAndExplicitTargets(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Restock.BlockedItemIDs = []uint32{1002}
+	blocked := catalogItem{ItemID: 1002, Kind: "stackable", Attach: "free", Rarity: 1}
+	if marketListingAllowedWithConfig(blocked, cfg) {
+		t.Fatal("blocked item ID passed listing filter")
+	}
+	if !qualityFilterEnabled(cfg) {
+		t.Fatal("item ID blacklist must enable collection filtering")
+	}
+
+	app := testApp(t)
+	app.cfg.Restock.BlockedItemIDs = []uint32{1002}
+	result := &PlanResult{}
+	app.planAuction([]restockRow{{ItemID: 1002, Quantity: 1, StackSize: 1, Enabled: true, ExplicitTarget: true}}, map[uint32]catalogItem{1002: blocked}, map[uint32]int{}, map[uint32]int{}, result)
+	if len(result.Actions) != 0 || len(result.Skipped) != 1 || result.Skipped[0].Reason != "item_id_blocked" {
+		t.Fatalf("explicit blocked target result = %#v", result)
+	}
+}
+
 func TestStrictTradePolicyBlocksAccountAttach(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Restock.EquipmentTradePolicy = tradePolicyStrict

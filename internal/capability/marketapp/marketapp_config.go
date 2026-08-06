@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -93,6 +94,10 @@ func decodeMarketINI(ini *foundationconfig.INIConfig) (Config, error) {
 	}
 	c.Restock.EquipmentTradePolicy = ini.GetString("auction_price", "equipment_trade_policy", d.Restock.EquipmentTradePolicy)
 	c.Restock.OtherTradePolicy = ini.GetString("auction_price", "other_trade_policy", d.Restock.OtherTradePolicy)
+	c.Restock.BlockedItemIDs, err = decodeBlockedItemIDs(ini.GetString("auction_price", "blocked_item_ids", ""))
+	if err != nil {
+		return Config{}, err
+	}
 	c.Restock.StackSizes = splitInts(ini.GetString("auction_price", "stack_sizes", joinInts(d.Restock.StackSizes)))
 	c.Restock.EquipmentQtyMin = ini.GetInt("auction_price", "equipment_qty_min", d.Restock.EquipmentQtyMin)
 	c.Restock.EquipmentQtyMax = ini.GetInt("auction_price", "equipment_qty_max", d.Restock.EquipmentQtyMax)
@@ -147,6 +152,7 @@ func writeMarketConfig(path string, c Config) error {
 		"# 允许自动补货上架的其他物品稀有度数字，只允许 0 到 9。", "other_allowed_rarities = " + c.Restock.OtherAllowedRarities,
 		"# 装备交易策略：permissive 或 strict。", "equipment_trade_policy = " + c.Restock.EquipmentTradePolicy,
 		"# 其他物品交易策略：permissive 或 strict。", "other_trade_policy = " + c.Restock.OtherTradePolicy,
+		"# 禁止自动或指定补货上架的物品 ID，使用逗号分隔；保存设置重建后会回收已有机器人库存。", "blocked_item_ids = " + joinUint32s(c.Restock.BlockedItemIDs),
 		"# 堆叠物品的候选数量，使用逗号分隔；实际数量不会超过 PVF stack_limit。", "stack_sizes = " + joinInts(c.Restock.StackSizes),
 		"# 每种缺货装备最少生成的拍卖记录数。", fmt.Sprintf("equipment_qty_min = %d", c.Restock.EquipmentQtyMin),
 		"# 每种缺货装备最多生成的拍卖记录数。", fmt.Sprintf("equipment_qty_max = %d", c.Restock.EquipmentQtyMax),
@@ -237,6 +243,48 @@ func joinInts(v []int) string {
 	out := make([]string, 0, len(v))
 	for _, n := range v {
 		out = append(out, strconv.Itoa(n))
+	}
+	return strings.Join(out, ",")
+}
+
+func decodeBlockedItemIDs(raw string) ([]uint32, error) {
+	values := splitStrings(raw)
+	out := make([]uint32, 0, len(values))
+	seen := make(map[uint32]struct{}, len(values))
+	for _, value := range values {
+		parsed, err := strconv.ParseUint(value, 10, 32)
+		if err != nil || parsed == 0 {
+			return nil, fmt.Errorf("auction_price.blocked_item_ids contains invalid item ID %q", value)
+		}
+		id := uint32(parsed)
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+func normalizeBlockedItemIDs(values []uint32) []uint32 {
+	out := append([]uint32(nil), values...)
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	write := 0
+	for _, value := range out {
+		if value == 0 || write > 0 && out[write-1] == value {
+			continue
+		}
+		out[write] = value
+		write++
+	}
+	return out[:write]
+}
+
+func joinUint32s(values []uint32) string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, strconv.FormatUint(uint64(value), 10))
 	}
 	return strings.Join(out, ",")
 }

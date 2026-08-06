@@ -22,6 +22,10 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			continue
 		}
 		row, item := auctionPlanRow(row, catalog)
+		if blockedAuctionItemWithConfig(row.ItemID, a.configSnapshot()) {
+			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "item_id_blocked"})
+			continue
+		}
 		if reason := a.equipmentLevelSkipReason(item); reason != "" {
 			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: reason})
 			continue

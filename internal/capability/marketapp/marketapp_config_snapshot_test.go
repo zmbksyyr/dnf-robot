@@ -7,18 +7,20 @@ import (
 
 func TestConfigReturnsDeepCopy(t *testing.T) {
 	app := testApp(t)
+	app.cfg.Restock.BlockedItemIDs = []uint32{100}
 	app.setConfig(app.cfg)
 
 	got := app.Config()
 	got.ItemInfoTargets[0] = "changed"
 	got.Restock.StackSizes[0] = 1
+	got.Restock.BlockedItemIDs[0] = 200
 	got.Restock.Comments["changed"] = "true"
 	got.Restock.EquipmentAllowedRarities = ""
 	got.Cera.Items[0].Enabled = false
 	got.Auto.Markets[0] = "changed"
 
 	current := app.Config()
-	if current.ItemInfoTargets[0] == "changed" || current.Restock.StackSizes[0] == 1 || current.Restock.Comments["changed"] != "" {
+	if current.ItemInfoTargets[0] == "changed" || current.Restock.StackSizes[0] == 1 || current.Restock.BlockedItemIDs[0] == 200 || current.Restock.Comments["changed"] != "" {
 		t.Fatalf("Config returned mutable internal slices or maps: %+v", current)
 	}
 	if current.Restock.EquipmentAllowedRarities != defaultEquipmentRarities || !current.Cera.Items[0].Enabled || current.Auto.Markets[0] == "changed" {

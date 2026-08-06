@@ -7,7 +7,8 @@ func marketCandidate(item catalogItem) bool {
 }
 
 func (a *App) marketCandidate(item catalogItem) bool {
-	return marketCandidate(item) && a.marketListingAllowed(item)
+	cfg := a.configSnapshot()
+	return marketCandidate(item) && marketListingAllowedWithConfig(item, cfg)
 }
 
 func (a *App) marketListingAllowed(item catalogItem) bool {
@@ -15,7 +16,7 @@ func (a *App) marketListingAllowed(item catalogItem) bool {
 }
 
 func marketListingAllowedWithConfig(item catalogItem, cfg Config) bool {
-	if item.ItemID == 0 || item.Kind == "blocked" || isAvatarEquipment(item) || !marketRarityAllowedWithConfig(item, cfg) {
+	if item.ItemID == 0 || blockedAuctionItemWithConfig(item.ItemID, cfg) || item.Kind == "blocked" || isAvatarEquipment(item) || !marketRarityAllowedWithConfig(item, cfg) {
 		return false
 	}
 	if item.Kind == "equipment" {
@@ -68,10 +69,20 @@ func (a *App) qualityFilterEnabled() bool {
 }
 
 func qualityFilterEnabled(cfg Config) bool {
-	return cfg.Restock.EquipmentAllowedRarities != "0123456789" ||
+	return len(cfg.Restock.BlockedItemIDs) > 0 ||
+		cfg.Restock.EquipmentAllowedRarities != "0123456789" ||
 		cfg.Restock.OtherAllowedRarities != "0123456789" ||
 		cfg.Restock.EquipmentTradePolicy == tradePolicyStrict ||
 		cfg.Restock.OtherTradePolicy == tradePolicyStrict
+}
+
+func blockedAuctionItemWithConfig(itemID uint32, cfg Config) bool {
+	for _, blockedID := range cfg.Restock.BlockedItemIDs {
+		if blockedID == itemID {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) marketRarityAllowed(item catalogItem) bool {
