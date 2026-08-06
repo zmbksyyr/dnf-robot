@@ -32,6 +32,10 @@ type EquipmentCatalogItem struct {
 	Expire        bool   `json:"expire,omitempty"`
 	StackLimit    int    `json:"stack_limit,omitempty"`
 	UseJob        []int  `json:"use_job,omitempty"`
+
+	// ClientIncompatible marks an item whose script uses fields that this DP2
+	// client cannot parse safely. Such items must not enter iteminfo or markets.
+	ClientIncompatible bool `json:"client_incompatible,omitempty"`
 }
 
 type MapCatalogItem struct {

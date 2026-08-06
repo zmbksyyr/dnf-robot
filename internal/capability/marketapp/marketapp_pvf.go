@@ -45,6 +45,24 @@ func (a *App) syncItemInfoDATFrom(status ItemInfoSyncStatus) ItemInfoSyncStatus 
 		a.appendLog(LogEvent{Type: "iteminfo_native_merge", Status: marketLogStatusFailed, Message: status.Error})
 		return status
 	}
+	incompatibleIDs, err := a.clientIncompatibleItemInfoIDs()
+	if err != nil {
+		status.Error = err.Error()
+		a.appendLog(LogEvent{Type: "iteminfo_native_filter", Status: marketLogStatusFailed, Message: status.Error})
+		return status
+	}
+	filtered := 0
+	for id := range incompatibleIDs {
+		if _, ok := nativeRows[id]; ok {
+			delete(nativeRows, id)
+			filtered++
+		}
+	}
+	if filtered > 0 {
+		// Native iteminfo rows normally preserve service-only IDs, but an old
+		// target must never restore equipment that PVF marked incompatible.
+		a.appendLog(LogEvent{Type: "iteminfo_native_filter", Status: marketLogStatusSuccess, Message: fmt.Sprintf("rows=%d", filtered)})
+	}
 	merged, changed := mergeItemInfoOverlay(source, nativeRows)
 	if err := validateConfiguredCeraItemInfo(merged, cfg.Cera.Items); err != nil {
 		status.Error = err.Error()
@@ -94,6 +112,20 @@ func (a *App) syncItemInfoDATFrom(status ItemInfoSyncStatus) ItemInfoSyncStatus 
 	}
 	a.appendLog(LogEvent{Type: "iteminfo_sync", Status: marketLogStatusSuccess, Message: fmt.Sprintf("synced=%d skipped=%d", status.Synced, status.Skipped)})
 	return status
+}
+
+func (a *App) clientIncompatibleItemInfoIDs() (map[uint32]bool, error) {
+	items, err := readPVFItems(layout.New(a.configDir).PVFEquipment())
+	if err != nil {
+		return nil, fmt.Errorf("read PVF equipment compatibility markers: %w", err)
+	}
+	ids := make(map[uint32]bool)
+	for _, item := range items {
+		if item.ID > 0 && item.ClientIncompatible {
+			ids[uint32(item.ID)] = true
+		}
+	}
+	return ids, nil
 }
 
 func (a *App) SyncItemInfoDAT() ItemInfoSyncStatus {
@@ -478,7 +510,7 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 		if item.BadName || item.Expire {
 			kind = "blocked"
 		}
-		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Path: item.Path, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value), Trade: item.Trade, NoTrade: item.NoTrade, TradeBlock: item.TradeBlock, CanTrade: item.CanTrade, CanAuction: item.CanAuction, Auction: item.Auction, NeedMaterial: item.NeedMaterial, BasicMaterial: item.BasicMaterial}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Path: item.Path, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value), Trade: item.Trade, NoTrade: item.NoTrade, TradeBlock: item.TradeBlock, CanTrade: item.CanTrade, CanAuction: item.CanAuction, Auction: item.Auction, NeedMaterial: item.NeedMaterial, BasicMaterial: item.BasicMaterial, ClientIncompatible: item.ClientIncompatible}
 	}
 	equipment, err := readPVFItems(paths.PVFEquipment())
 	if err != nil {
@@ -492,7 +524,7 @@ func (a *App) loadCatalog() (map[uint32]catalogItem, error) {
 		if item.BadName || item.Expire {
 			kind = "blocked"
 		}
-		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Path: item.Path, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value), Trade: item.Trade, NoTrade: item.NoTrade, TradeBlock: item.TradeBlock, CanTrade: item.CanTrade, CanAuction: item.CanAuction, Auction: item.Auction, NeedMaterial: item.NeedMaterial, BasicMaterial: item.BasicMaterial}
+		out[uint32(item.ID)] = catalogItem{ItemID: uint32(item.ID), Kind: kind, Path: item.Path, Level: item.Level, ItemType: item.ItemType, SubType: item.SubType, Slot: item.Slot, Attach: item.Attach, Rarity: item.Rarity, StackLimit: item.StackLimit, Price: int32(item.Price), Value: int32(item.Value), Trade: item.Trade, NoTrade: item.NoTrade, TradeBlock: item.TradeBlock, CanTrade: item.CanTrade, CanAuction: item.CanAuction, Auction: item.Auction, NeedMaterial: item.NeedMaterial, BasicMaterial: item.BasicMaterial, ClientIncompatible: item.ClientIncompatible}
 	}
 	return out, nil
 }

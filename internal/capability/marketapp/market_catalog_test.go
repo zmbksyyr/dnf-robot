@@ -41,7 +41,7 @@ func TestLoadCatalogUsesPVFJSONOnly(t *testing.T) {
 		{"id": 4000, "price": 7, "stack_limit": 1000},
 	})
 	mustWriteJSON(t, appPaths(app).PVFEquipment(), []map[string]interface{}{
-		{"id": 31056, "price": 100, "attach": "trade", "slot": "weapon"},
+		{"id": 31056, "price": 100, "attach": "trade", "slot": "weapon", "client_incompatible": true},
 	})
 
 	catalog, err := app.loadCatalog()
@@ -53,6 +53,9 @@ func TestLoadCatalogUsesPVFJSONOnly(t *testing.T) {
 	}
 	if _, ok := catalog[31056]; !ok {
 		t.Fatal("equipment PVF id missing")
+	}
+	if !catalog[31056].ClientIncompatible {
+		t.Fatal("client compatibility marker was not loaded from PVF JSON")
 	}
 }
 

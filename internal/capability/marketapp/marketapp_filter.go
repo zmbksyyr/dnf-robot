@@ -148,6 +148,9 @@ func isAvatarEquipment(item catalogItem) bool {
 }
 
 func isRiskyPVFItem(item catalogItem) bool {
+	if isClientIncompatibleEquipment(item) {
+		return true
+	}
 	if isKnownZeroSuccessEquipment(item) {
 		return true
 	}
@@ -157,6 +160,10 @@ func isRiskyPVFItem(item catalogItem) bool {
 	default:
 		return false
 	}
+}
+
+func isClientIncompatibleEquipment(item catalogItem) bool {
+	return item.Kind == "equipment" && item.ClientIncompatible
 }
 
 func isKnownZeroSuccessEquipment(item catalogItem) bool {

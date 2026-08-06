@@ -84,6 +84,8 @@ func auctionPlanSkipReason(row restockRow, item catalogItem) string {
 		return "not_auctionable"
 	case isAvatarEquipment(item):
 		return "avatar_not_auctionable"
+	case isClientIncompatibleEquipment(item):
+		return "client_incompatible_item"
 	case isRiskyPVFItem(item):
 		return "risky_special_type"
 	case row.SealFlag != 0 && item.Kind != "equipment":

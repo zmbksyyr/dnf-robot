@@ -132,7 +132,7 @@ func summarizePlan(actions []Action, skipped []SkippedItem, existingRecords int)
 		switch skipped.Reason {
 		case "missing_from_pvf":
 			summary.Missing++
-		case "risky_special_type":
+		case "risky_special_type", "client_incompatible_item":
 			summary.Risky++
 		case "not_auctionable", "avatar_not_auctionable", "requires_add_info":
 			summary.NotAuctionable++

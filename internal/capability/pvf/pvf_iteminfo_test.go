@@ -30,8 +30,10 @@ func TestFormatPVFItemInfoDAT(t *testing.T) {
 
 func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) {
 	raw := "2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `百萬金幣` `金币` 13002\r\n" +
-		"3100060 0 1 1 1 1 1 1 1 1 1 1 1 90 `raw` `raw2` 99999\r\n"
+		"3100060 0 1 1 1 1 1 1 1 1 1 1 1 90 `raw` `raw2` 99999\r\n" +
+		"101030240 0 1 1 1 1 1 1 1 1 1 1 1 75 `bad` `bad2` 10103\r\n"
 	got := formatExtendedPVFItemInfoDAT(raw, []shared.EquipmentCatalogItem{
+		{ID: 101030240, ItemType: 1, Slot: "weapon", ClientIncompatible: true},
 		{ID: 3100060, Name: "無法編碼的名稱", Name2: "无法编码的名称", Level: 90, Rarity: 4, ItemType: 8, Slot: "amulet", Path: "equipment/ancient/halin/3100060.equ"},
 		{ID: 35500001, Level: 90, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 3, Path: "equipment/character/fighter/weapon/boxglove/35500001.equ", UseJob: []int{1, 7}},
 		{ID: 28237, Level: 85, Rarity: 4, ItemType: 1, Slot: "weapon", SubType: 3, Path: "equipment/character/swordman/weapon/beamsword/28237.equ"},
@@ -60,6 +62,9 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 	assertLineHasToken(t, lines, "3100060 ", 13, "70")
 	if strings.Contains(got, "99999") || strings.Contains(got, "`raw`") {
 		t.Fatalf("raw iteminfo row was not overwritten by PVF generated row: %q", got)
+	}
+	if strings.Contains(got, "101030240") {
+		t.Fatalf("client-incompatible equipment survived iteminfo filtering: %q", got)
 	}
 	assertLineContains(t, lines, "35500001 ", "10205")
 	assertLineHasToken(t, lines, "35500001 ", 2, "1")

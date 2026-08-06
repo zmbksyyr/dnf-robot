@@ -102,7 +102,10 @@ func TestSyncItemInfoDATOverlaysPVFOnOriginalTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWriteText(t, source, "1001 0 `pvf_only`\n2675336 2 `pvf_gold`\n")
-	mustWriteText(t, target, "2675336 2 `native_gold`\n2681762 2 `native_point`\n")
+	mustWriteText(t, target, "2675336 2 `native_gold`\n2681762 2 `native_point`\n101030240 1 `client_incompatible`\n")
+	mustWriteJSON(t, appPaths(app).PVFEquipment(), []map[string]interface{}{
+		{"id": 101030240, "client_incompatible": true},
+	})
 
 	app.cfg.ItemInfoTargets = []string{target}
 	app.cfg.Cera.Items = []ceraRow{{ItemID: 2675336, Enabled: true, RestockQty: 1}}
@@ -124,6 +127,9 @@ func TestSyncItemInfoDATOverlaysPVFOnOriginalTarget(t *testing.T) {
 		}
 		if strings.Contains(text, "`native_gold`") {
 			t.Fatalf("%s kept native duplicate instead of PVF row: %q", path, text)
+		}
+		if strings.Contains(text, "101030240") {
+			t.Fatalf("%s restored client-incompatible native row: %q", path, text)
 		}
 	}
 }

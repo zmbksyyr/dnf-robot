@@ -415,6 +415,8 @@ type pvfItem struct {
 	BasicMaterial bool   `json:"basic_material,omitempty"`
 	StackLimit    int    `json:"stack_limit,omitempty"`
 	Expire        bool   `json:"expire,omitempty"`
+
+	ClientIncompatible bool `json:"client_incompatible,omitempty"`
 }
 
 type catalogItem struct {
@@ -439,6 +441,8 @@ type catalogItem struct {
 	Auction       bool
 	NeedMaterial  bool
 	BasicMaterial bool
+
+	ClientIncompatible bool
 }
 
 type restockRow struct {

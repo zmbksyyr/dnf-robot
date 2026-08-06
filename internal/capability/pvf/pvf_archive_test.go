@@ -19,3 +19,24 @@ func TestOpenPVFRejectsTruncatedFileTreeEntry(t *testing.T) {
 		t.Fatalf("openPVF error = %v, want truncated entry", err)
 	}
 }
+
+func TestExtractItemListMarksUnsupportedAddCastSpeed(t *testing.T) {
+	archive := &pvfArchive{files: map[string]*pvfFile{
+		"equipment/equipment.lst": {
+			Name: "equipment/equipment.lst",
+			Data: []byte("101030240 `character/swordman/weapon/hsword/101030240.equ`"),
+		},
+		"equipment/character/swordman/weapon/hsword/101030240.equ": {
+			Name: "equipment/character/swordman/weapon/hsword/101030240.equ",
+			Data: []byte("[name]\r\n`bad weapon`\r\n[rarity]\r\n1\r\n[equipment type]\r\n`weapon`\r\n[add cast speed]\r\n20\r\n"),
+		},
+	}}
+
+	items := extractItemList(archive, "equipment/equipment.lst", "equipment/", false)
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	if !items[0].ClientIncompatible {
+		t.Fatal("[add cast speed] equipment was not marked client-incompatible")
+	}
+}

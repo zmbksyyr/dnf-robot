@@ -432,8 +432,13 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 	}
 	rows := make([]row, 0, len(raw)+len(equipment)+len(stackable))
 	seen := make(map[int]bool, len(raw)+len(equipment)+len(stackable))
+	clientIncompatible := make(map[int]bool)
 	for _, item := range equipment {
 		if item.ID <= 0 {
+			continue
+		}
+		if item.ClientIncompatible {
+			clientIncompatible[item.ID] = true
 			continue
 		}
 		rows = append(rows, row{id: item.ID, text: strings.Join(generatedItemInfoFields(item, false), " ")})
@@ -447,6 +452,11 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 		seen[item.ID] = true
 	}
 	for id, fields := range raw {
+		// Do not retain a stale raw iteminfo row for equipment whose .equ
+		// script is known to leave this DP2 client's ItemInfo incomplete.
+		if clientIncompatible[id] {
+			continue
+		}
 		if seen[id] {
 			continue
 		}

@@ -173,14 +173,30 @@ func TestRiskyPVFItemAllowsHighLevelEquipmentWhenItemInfoCapsLevel(t *testing.T)
 	}
 }
 
+func TestClientIncompatibleEquipmentIsRejected(t *testing.T) {
+	bad := catalogItem{ItemID: 101030240, Kind: "equipment", ItemType: 1, Slot: "weapon", Attach: "free", ClientIncompatible: true}
+	if marketCandidate(bad) {
+		t.Fatal("client-incompatible equipment entered the auction candidate set")
+	}
+	if reason := auctionPlanSkipReason(restockRow{}, bad); reason != "client_incompatible_item" {
+		t.Fatalf("skip reason = %q, want client_incompatible_item", reason)
+	}
+
+	safe := catalogItem{ItemID: 101030241, Kind: "equipment", ItemType: 1, Slot: "weapon", Attach: "free"}
+	if !marketCandidate(safe) {
+		t.Fatal("ordinary equipment was rejected by the compatibility filter")
+	}
+}
+
 func TestSummarizePlanCountsAuctionabilitySkips(t *testing.T) {
 	summary := summarizePlan(nil, []SkippedItem{
 		{Reason: "not_auctionable"},
 		{Reason: "avatar_not_auctionable"},
 		{Reason: "requires_add_info"},
 		{Reason: "risky_special_type"},
+		{Reason: "client_incompatible_item"},
 	}, 0)
-	if summary.NotAuctionable != 3 || summary.Risky != 1 || summary.Skipped != 4 {
+	if summary.NotAuctionable != 3 || summary.Risky != 2 || summary.Skipped != 5 {
 		t.Fatalf("summary = %#v", summary)
 	}
 }

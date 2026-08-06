@@ -308,6 +308,12 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 				item.FieldImage = cleanPVFString(nextLine(lines, i))
 			case "[need material]":
 				item.NeedMaterial = true
+			case "[add cast speed]":
+				// This DP2 client stops parsing an equipment script at this tag.
+				// Fields after it remain zeroed, including the auction UI equipment
+				// class, which becomes sentinel 26 and is then used to index a
+				// 26-element array (valid indexes 0..25), crashing the client.
+				item.ClientIncompatible = true
 			case "[sub type]":
 				item.SubType = atoi(nextLine(lines, i))
 			case "[expiration date]", "[usable period]":
