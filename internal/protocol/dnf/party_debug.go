@@ -2,6 +2,7 @@ package dnf
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -503,8 +504,8 @@ func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEv
 	}
 	lines = append(lines, partyDebugTransportLines(robots, displayAttempts)...)
 	lines = append(lines, partyDebugMemberLines(status, critical, 4)...)
-	lines = append(lines, "PACKETS: FIRST..LAST UID>PEER DIR CH KIND COUNT LEN DECISION NOTE RAW")
-	lines = append(lines, compactPartyDebugEvents(status, critical)...)
+	lines = append(lines, "PKTS: ID FIRST..LAST UID>PEER DIR/CH KIND N LEN DEC NOTE DATA")
+	lines = append(lines, compactPartyDebugEvents(status, critical, attempts)...)
 	lines = append(lines, buildPartyDebugChecks(status, critical)...)
 	return lines
 }
@@ -818,7 +819,7 @@ func expandPartyDebugTransportEvents(events []partyDebugEvent) []partyDebugEvent
 	return expanded
 }
 
-func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebugEvent) []string {
+func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebugEvent, attempts []*partyDebugAttempt) []string {
 	started, _ := time.Parse(time.RFC3339Nano, status.StartedAt)
 	type eventGroup struct {
 		first time.Time
@@ -838,6 +839,7 @@ func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebug
 		if index, ok := byKey[key]; ok {
 			groups[index].last = event.at
 			groups[index].count++
+			groups[index].event = event
 			if seen > groups[index].seen {
 				groups[index].seen = seen
 			}
@@ -847,21 +849,49 @@ func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebug
 		groups = append(groups, eventGroup{first: event.at, last: event.at, event: event, count: 1, seen: seen})
 	}
 	const maxGroups = 8
-	selected := make([]eventGroup, len(groups))
-	copy(selected, groups)
-	sort.SliceStable(selected, func(i, j int) bool {
-		left, right := partyDebugEventPriority(selected[i].event), partyDebugEventPriority(selected[j].event)
+	selectedIndexes := make(map[int]bool, maxGroups)
+	pending := partyDebugLatestPendingTransportAttempt(attempts)
+	if pending != nil {
+		transport := make([]int, 0, len(groups))
+		for index := range groups {
+			if groups[index].event.uid == pending.uid && !groups[index].last.Before(pending.snapshot.at) && partyDebugTransportEvidence(groups[index].event) {
+				transport = append(transport, index)
+			}
+		}
+		sort.SliceStable(transport, func(i, j int) bool { return groups[transport[i]].last.After(groups[transport[j]].last) })
+		if len(transport) > 3 {
+			transport = transport[:3]
+		}
+		for _, index := range transport {
+			selectedIndexes[index] = true
+		}
+	}
+	ranked := make([]int, len(groups))
+	for index := range groups {
+		ranked[index] = index
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		left, right := partyDebugEventPriority(groups[ranked[i]].event), partyDebugEventPriority(groups[ranked[j]].event)
 		if left != right {
 			return left < right
 		}
-		return selected[i].first.After(selected[j].first)
+		return groups[ranked[i]].first.After(groups[ranked[j]].first)
 	})
-	if len(selected) > maxGroups {
-		selected = selected[:maxGroups]
+	for _, index := range ranked {
+		if len(selectedIndexes) >= maxGroups {
+			break
+		}
+		selectedIndexes[index] = true
+	}
+	selected := make([]eventGroup, 0, len(selectedIndexes))
+	for index := range groups {
+		if selectedIndexes[index] {
+			selected = append(selected, groups[index])
+		}
 	}
 	sort.SliceStable(selected, func(i, j int) bool { return selected[i].first.Before(selected[j].first) })
 	lines := make([]string, 0, len(selected)+1)
-	for _, group := range selected {
+	for index, group := range selected {
 		event := group.event
 		raw := partyDebugReportRaw(event)
 		first := group.first.Sub(started).Milliseconds()
@@ -870,9 +900,9 @@ func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebug
 		if group.seen > uint64(group.count) {
 			count += "+"
 		}
-		lines = append(lines, fmt.Sprintf("+%d..%d R%d>P%d %s %s %-16s N=%s L=%d %s %s %s",
-			first, last, event.uid, event.peer, valueOr(event.direction, "--"), valueOr(event.channel, "CORE"),
-			event.kind, count, len(event.raw), valueOr(event.decision, "OBS"), compactPartyDebugText(valueOr(event.note, "-"), 160), raw))
+		lines = append(lines, fmt.Sprintf("P%d +%d..%d R%d>P%d %s/%s %-13s N=%s L=%d %s %s %s",
+			index+1, first, last, event.uid, event.peer, valueOr(event.direction, "--"), partyDebugChannelShort(event.channel),
+			partyDebugKindShort(event.kind), count, len(event.raw), valueOr(event.decision, "OBS"), compactPartyDebugText(valueOr(event.note, "-"), 150), raw))
 	}
 	if len(groups) > len(selected) {
 		lines = append(lines, fmt.Sprintf("FLOW_OMITTED_GROUPS=%d", len(groups)-len(selected)))
@@ -880,19 +910,84 @@ func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebug
 	return lines
 }
 
+func partyDebugLatestPendingTransportAttempt(attempts []*partyDebugAttempt) *partyDebugAttempt {
+	for index := len(attempts) - 1; index >= 0; index-- {
+		attempt := attempts[index]
+		if attempt.snapshot != nil && attempt.ready == nil && attempt.clear == nil {
+			return attempt
+		}
+	}
+	return nil
+}
+
+func partyDebugTransportEvidence(event partyDebugEvent) bool {
+	if strings.HasPrefix(event.kind, "TQOS.S") || event.kind == "TQOS.ACK" {
+		return true
+	}
+	switch event.kind {
+	case "ROUTE_DEGRADED", "RELAY_CONNECT", "RELAY_AUTH", "RELAY_CONNECTED", "TRANSPORT_FRAME":
+		return true
+	default:
+		return false
+	}
+}
+
+func partyDebugChannelShort(channel string) string {
+	switch channel {
+	case "GAME":
+		return "G"
+	case "UDP":
+		return "U"
+	case "CORE":
+		return "C"
+	case "RELAY":
+		return "R"
+	default:
+		return valueOr(channel, "C")
+	}
+}
+
+func partyDebugKindShort(kind string) string {
+	switch kind {
+	case "SNAPSHOT_PARSE":
+		return "SNAP_PARSE"
+	case "SNAPSHOT_WAIT":
+		return "SNAP_WAIT"
+	case "PEER_LOOKUP":
+		return "PEER_FIND"
+	case "RELAY_CONNECTED":
+		return "RELAY_OK"
+	case "ROUTE_DEGRADED":
+		return "ROUTE_BAD"
+	case "PARTY_RETURN_ACK":
+		return "RETURN_ACK"
+	case "PARTY_RESELECT":
+		return "RESELECT"
+	case "PARTY_NORMAL":
+		return "NORMAL"
+	case "PARTY_PENDING":
+		return "PENDING"
+	default:
+		return kind
+	}
+}
+
 func partyDebugReportRaw(event partyDebugEvent) string {
 	if len(event.raw) == 0 {
-		return "RAW=-"
+		return "B64=-"
+	}
+	if strings.HasPrefix(event.kind, "TQOS.S") || event.kind == "TQOS.ACK" {
+		return "B64=-"
 	}
 	limit := partyDebugNormalRaw
 	if event.decision == "FAIL" || event.decision == "TIMEOUT" {
 		limit = partyDebugRawLimit
 	}
 	if len(event.raw) <= limit {
-		return fmt.Sprintf("RAW[%d]=%s", len(event.raw), hex.EncodeToString(event.raw))
+		return fmt.Sprintf("B64[%d]=%s", len(event.raw), base64.RawStdEncoding.EncodeToString(event.raw))
 	}
 	if limit == partyDebugNormalRaw {
-		return fmt.Sprintf("RAW[%d]=%s...(+%dB)", len(event.raw), hex.EncodeToString(event.raw[:limit]), len(event.raw)-limit)
+		return fmt.Sprintf("B64[%d]=%s...(+%dB)", len(event.raw), base64.RawStdEncoding.EncodeToString(event.raw[:limit]), len(event.raw)-limit)
 	}
 	head := partyDebugRawHead
 	tail := partyDebugRawTail
@@ -900,11 +995,11 @@ func partyDebugReportRaw(event partyDebugEvent) string {
 		head = len(event.raw)
 		tail = 0
 	}
-	raw := hex.EncodeToString(event.raw[:head])
+	raw := base64.RawStdEncoding.EncodeToString(event.raw[:head])
 	if tail > 0 {
-		raw += "..." + hex.EncodeToString(event.raw[len(event.raw)-tail:])
+		raw += "..." + base64.RawStdEncoding.EncodeToString(event.raw[len(event.raw)-tail:])
 	}
-	return fmt.Sprintf("RAW[%d]=%s(+%dB)", len(event.raw), raw, len(event.raw)-head-tail)
+	return fmt.Sprintf("B64[%d]=%s(+%dB)", len(event.raw), raw, len(event.raw)-head-tail)
 }
 
 func partyDebugReportGroupKey(event partyDebugEvent) string {

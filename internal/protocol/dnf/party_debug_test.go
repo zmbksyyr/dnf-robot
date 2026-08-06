@@ -3,6 +3,7 @@ package dnf
 import (
 	"bytes"
 	"compress/zlib"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strings"
@@ -241,7 +242,7 @@ func TestPartyDebugReportKeepsCompleteFailedPacketAndSeparatesDistinctFailures(t
 	result := StopPartyDebug()
 	joined := strings.Join(result.ReportLines, "\n")
 	for _, raw := range [][]byte{first, second} {
-		want := fmt.Sprintf("RAW[64]=%x", raw)
+		want := fmt.Sprintf("B64[64]=%s", base64.RawStdEncoding.EncodeToString(raw))
 		if !strings.Contains(joined, want) {
 			t.Fatalf("report did not retain complete failed packet %q:\n%s", want, joined)
 		}
@@ -251,5 +252,32 @@ func TestPartyDebugReportKeepsCompleteFailedPacketAndSeparatesDistinctFailures(t
 	}
 	if len(result.ReportLines) > 36 || len(joined) > 10*1024 {
 		t.Fatalf("complete packet report exceeded one page: lines=%d bytes=%d\n%s", len(result.ReportLines), len(joined), joined)
+	}
+}
+
+func TestPartyDebugReportReservesPacketsForPendingTransport(t *testing.T) {
+	if current := globalPartyDebug.active.Load(); current != nil {
+		stopPartyDebugSession(current, partyDebugStopUser)
+		<-current.done
+	}
+	StartPartyDebug()
+	recordPartyDebugPacket(17000422, 0, "RX", "GAME", "INVITE", "OBSERVED", "request_id=5", []byte{7})
+	recordPartyDebugPacket(17000422, 0, "TX", "GAME", "ACCEPT", "OK", "request_id=5", []byte{11})
+	recordPartyDebugPacket(17000422, 0, "RX", "GAME", "SNAPSHOT", "OK", "members=2", []byte{11, 2})
+	for index := 0; index < 10; index++ {
+		recordPartyDebugPacket(uint32(17001000+index), 0, "--", "CORE", fmt.Sprintf("FAIL_%d", index), "FAIL", "synthetic priority failure", []byte{byte(index)})
+	}
+	recordPartyDebugPacket(17000422, 18000000, "RX", "UDP", "TQOS.S1", "ACCEPTED", "route=1 seq=98 slot=0", []byte{1, 2, 3})
+	recordPartyDebugPacket(17000422, 18000000, "TX", "UDP", "TQOS.S2", "OK", "route=1 seq=99 slot=1", []byte{4, 5, 6})
+	recordPartyDebugPacket(17000422, 18000000, "RX", "UDP", "TQOS.ACK", "ACCEPTED", "route=1 ack_next=100", []byte{0, 1, 2})
+	result := StopPartyDebug()
+	joined := strings.Join(result.ReportLines, "\n")
+	for _, want := range []string{"TQOS.S1", "seq=98", "TQOS.S2", "seq=99", "TQOS.ACK", "ack_next=100"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("pending transport packet %q was omitted:\n%s", want, joined)
+		}
+	}
+	if len(result.ReportLines) > 36 || len(joined) > 10*1024 {
+		t.Fatalf("pending transport report exceeded one page: lines=%d bytes=%d\n%s", len(result.ReportLines), len(joined), joined)
 	}
 }
