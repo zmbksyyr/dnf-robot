@@ -329,6 +329,8 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 		}
 		if !stackable {
 			item.SetKey = deriveItemSetKey(itemPath, body, item)
+		} else if strings.Contains(strings.ToLower(item.Slot), "recipe") {
+			item.RecipeTargetID = parseRecipeTargetID(body)
 		}
 		if item.ID > 0 && (item.ItemType > 0 || stackable) {
 			out = append(out, item)
@@ -342,6 +344,19 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func parseRecipeTargetID(body string) int {
+	values := pvfSectionInts(body, "int data")
+	if len(values) == 0 {
+		return 0
+	}
+	materialCount := values[0]
+	targetIndex := 2*materialCount + 2
+	if materialCount < 0 || targetIndex < 0 || targetIndex >= len(values) {
+		return 0
+	}
+	return values[targetIndex]
 }
 
 func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogItem {

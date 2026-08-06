@@ -73,9 +73,10 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 		t.Fatalf("client-incompatible equipment survived iteminfo filtering: %q", got)
 	}
 	assertLineContains(t, lines, "35500001 ", "10205")
-	assertLineHasToken(t, lines, "35500001 ", 2, "1")
+	assertLineHasToken(t, lines, "35500001 ", 2, "0")
 	assertLineHasToken(t, lines, "35500001 ", 3, "1")
-	assertLineHasToken(t, lines, "35500001 ", 12, "1")
+	assertLineHasToken(t, lines, "35500001 ", 9, "1")
+	assertLineHasToken(t, lines, "35500001 ", 12, "0")
 	assertLineHasToken(t, lines, "35500001 ", 13, "70")
 	assertLineContains(t, lines, "28237 ", "10106")
 	assertLineContains(t, lines, "37603 ", "10604")
@@ -89,6 +90,63 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 	assertLineContains(t, lines, "2610030 ", "33001")
 	assertLineContains(t, lines, "2700001 ", "33001")
 	assertLineContains(t, lines, "2700002 ", "33002")
+}
+
+func TestApplyRawItemInfoSearchFieldsPreservesFineCategoryAndJobs(t *testing.T) {
+	generated := []string{"1", "2", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "70", "`item`", "`name`", "32100"}
+	raw := []string{"1", "2", "0", "1", "0", "0", "0", "0", "0", "0", "0", "0", "0", "70", "`raw`", "`raw2`", "32105"}
+	if !applyRawItemInfoSearchFields(generated, raw) {
+		t.Fatal("valid raw search fields were not preserved")
+	}
+	if generated[3] != "1" || generated[2] != "0" || generated[4] != "0" || generated[16] != "32105" {
+		t.Fatalf("preserved search fields = %v", generated)
+	}
+}
+
+func TestGeneratedItemInfoJobFlagsUsePVFJobs(t *testing.T) {
+	fields := generatedItemInfoJobFlags(shared.EquipmentCatalogItem{UseJob: []int{2, 6}}, false)
+	for index, value := range fields {
+		want := "0"
+		if index == 2 || index == 6 {
+			want = "1"
+		}
+		if value != want {
+			t.Fatalf("job flag %d = %q, want %q: %v", index, value, want, fields)
+		}
+	}
+}
+
+func TestGeneratedRecipeItemInfoCategoryUsesTargetEquipment(t *testing.T) {
+	equipment := map[int]shared.EquipmentCatalogItem{
+		100: {ID: 100, Slot: "weapon", Path: "equipment/character/fighter/weapon/boxglove/item.equ"},
+		101: {ID: 101, Slot: "coat", Path: "equipment/character/common/jacket/leather/item.equ"},
+		102: {ID: 102, Slot: "support", Path: "equipment/character/common/item.equ"},
+		103: {ID: 103, Slot: "magic stone", Path: "equipment/character/common/item.equ"},
+	}
+	for _, tt := range []struct {
+		target int
+		want   int
+	}{{100, 31003}, {101, 31103}, {102, 31302}, {103, 31303}} {
+		item := shared.EquipmentCatalogItem{Slot: "recipe", RecipeTargetID: tt.target}
+		if got := generatedRecipeItemInfoCategory(item, equipment); got != tt.want {
+			t.Fatalf("recipe target %d category = %d, want %d", tt.target, got, tt.want)
+		}
+	}
+}
+
+func TestGeneratedStackableFineCategories(t *testing.T) {
+	for _, tt := range []struct {
+		item shared.EquipmentCatalogItem
+		want int
+	}{
+		{shared.EquipmentCatalogItem{Slot: "throw", Path: "stackable/throw/new.stk"}, 13003},
+		{shared.EquipmentCatalogItem{Slot: "set", Path: "stackable/throw/trap.stk"}, 13003},
+		{shared.EquipmentCatalogItem{Slot: "quest receive", Path: "stackable/quest/new.stk"}, 13005},
+	} {
+		if got := generatedStackableItemInfoCategory(tt.item); got != tt.want {
+			t.Fatalf("item %#v category = %d, want %d", tt.item, got, tt.want)
+		}
+	}
 }
 
 func assertLineContains(t *testing.T, lines []string, prefix, want string) {

@@ -426,6 +426,7 @@ func formatPVFItemInfoDAT(text string) string {
 
 func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.EquipmentCatalogItem) string {
 	raw := parsePVFItemInfoRows(formatPVFItemInfoDAT(rawText))
+	equipmentByID := make(map[int]shared.EquipmentCatalogItem, len(equipment))
 	type row struct {
 		id   int
 		text string
@@ -441,7 +442,10 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 			clientIncompatible[item.ID] = true
 			continue
 		}
-		rows = append(rows, row{id: item.ID, text: strings.Join(generatedItemInfoFields(item, false), " ")})
+		equipmentByID[item.ID] = item
+		fields := generatedItemInfoFields(item, false)
+		applyRawItemInfoSearchFields(fields, raw[item.ID])
+		rows = append(rows, row{id: item.ID, text: strings.Join(fields, " ")})
 		seen[item.ID] = true
 	}
 	for _, item := range stackable {
@@ -449,8 +453,11 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 			continue
 		}
 		fields := generatedItemInfoFields(item, true)
-		if category := rawProfessionalStackableCategory(item, raw[item.ID]); category != "" {
-			fields[len(fields)-1] = category
+		categoryPreserved := applyRawItemInfoSearchFields(fields, raw[item.ID])
+		if !categoryPreserved {
+			if category := generatedRecipeItemInfoCategory(item, equipmentByID); category != 0 {
+				fields[len(fields)-1] = strconv.Itoa(category)
+			}
 		}
 		rows = append(rows, row{id: item.ID, text: strings.Join(fields, " ")})
 		seen[item.ID] = true
@@ -530,6 +537,28 @@ func generatedItemInfoJobFlags(item shared.EquipmentCatalogItem, stackable bool)
 	for i := range flags {
 		flags[i] = "1"
 	}
+	if len(item.UseJob) == 0 {
+		return flags
+	}
+	for _, job := range item.UseJob {
+		if job == 100 {
+			return flags
+		}
+	}
+	restricted := make([]string, len(flags))
+	for i := range restricted {
+		restricted[i] = "0"
+	}
+	found := false
+	for _, job := range item.UseJob {
+		if job >= 0 && job < len(restricted) {
+			restricted[job] = "1"
+			found = true
+		}
+	}
+	if found {
+		return restricted
+	}
 	return flags
 }
 
@@ -591,6 +620,10 @@ func generatedStackableItemInfoCategory(item shared.EquipmentCatalogItem) int {
 		return 13001
 	case strings.HasPrefix(path, "stackable/recipe/") || strings.Contains(slot, "recipe"):
 		return 31305
+	case strings.HasPrefix(path, "stackable/throw/") || slot == "throw" || slot == "set":
+		return 13003
+	case strings.Contains(slot, "quest"):
+		return 13005
 	case strings.HasPrefix(path, "stackable/professional/potion/"):
 		return 33001
 	case strings.HasPrefix(path, "stackable/professional/puppet/") || strings.HasPrefix(path, "stackable/professional/common/") && strings.Contains(path, "doll"):
@@ -606,15 +639,58 @@ func generatedStackableItemInfoCategory(item shared.EquipmentCatalogItem) int {
 	}
 }
 
-func rawProfessionalStackableCategory(item shared.EquipmentCatalogItem, raw []string) string {
-	if !strings.HasPrefix(normalizePVFPath(item.Path), "stackable/professional/") || len(raw) != 17 {
-		return ""
+func applyRawItemInfoSearchFields(generated, raw []string) bool {
+	if len(generated) != 17 || len(raw) != 17 {
+		return false
+	}
+	validFlags := true
+	for i := 2; i <= 12; i++ {
+		if raw[i] != "0" && raw[i] != "1" {
+			validFlags = false
+			break
+		}
+	}
+	if validFlags {
+		copy(generated[2:13], raw[2:13])
 	}
 	category, err := strconv.Atoi(raw[16])
-	if err != nil || category < 33001 || category > 33004 {
-		return ""
+	if err != nil || category <= 0 || category > 65535 {
+		return false
 	}
-	return raw[16]
+	generated[16] = raw[16]
+	return true
+}
+
+func generatedRecipeItemInfoCategory(item shared.EquipmentCatalogItem, equipment map[int]shared.EquipmentCatalogItem) int {
+	if item.RecipeTargetID <= 0 {
+		return 0
+	}
+	target, ok := equipment[item.RecipeTargetID]
+	if !ok {
+		return 0
+	}
+	path := normalizePVFPath(target.Path)
+	parts := strings.Split(path, "/")
+	switch normalizeEquipmentTypeName(target.Slot) {
+	case "weapon":
+		if character := equipmentCharacterCategoryCode(parts); character > 0 {
+			return 31001 + character
+		}
+	case "amulet", "necklace":
+		return 31202
+	case "wrist", "bracelet":
+		return 31203
+	case "ring":
+		return 31204
+	case "support":
+		return 31302
+	case "magicstone":
+		return 31303
+	}
+	if armorClass := armorCategoryClass(parts); armorClass >= 0 {
+		return 31102 + armorClass
+	}
+	return 31305
 }
 
 func equipmentCharacterCategoryCode(parts []string) int {

@@ -33,6 +33,8 @@ type EquipmentCatalogItem struct {
 	StackLimit    int    `json:"stack_limit,omitempty"`
 	UseJob        []int  `json:"use_job,omitempty"`
 
+	RecipeTargetID int `json:"recipe_target_id,omitempty"`
+
 	// ClientIncompatible marks an item whose script uses fields that this DP2
 	// client cannot parse safely. Every generated-item consumer must reject it.
 	ClientIncompatible bool `json:"client_incompatible,omitempty"`

@@ -19,6 +19,13 @@ func assertIntSlice(t *testing.T, got, want []int) {
 	}
 }
 
+func TestParseRecipeTargetID(t *testing.T) {
+	body := "[int data]\n5 27014 1 3037 431 3024 1 3029 16 3047 4 1 27020 1 0\n[/int data]"
+	if got := parseRecipeTargetID(body); got != 27020 {
+		t.Fatalf("recipe target ID = %d, want 27020", got)
+	}
+}
+
 func TestEquipmentTypeRecognizesTitleAndMagicStone(t *testing.T) {
 	if got := equipmentType("[title name]"); got != 2 {
 		t.Fatalf("title name type got %d want 2", got)
