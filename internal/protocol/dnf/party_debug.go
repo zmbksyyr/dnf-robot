@@ -1,9 +1,11 @@
 package dnf
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +22,10 @@ const (
 	partyDebugDataBudget  = 7 * 1024 * 1024
 	partyDebugQueueSize   = 4096
 	partyDebugEventCost   = 160
+	partyDebugRawLimit    = 256
+	partyDebugRawHead     = 128
+	partyDebugRawTail     = 32
+	partyDebugNormalRaw   = 32
 )
 
 type partyDebugEvent struct {
@@ -245,7 +251,22 @@ func partyDebugSampleKey(event partyDebugEvent) string {
 	case "INVITE", "INVITE_PARSE", "ACCEPT", "PARTY_PENDING", "SNAPSHOT", "PARTY_CLEAR":
 		key += "|" + event.note
 	}
+	if partyDebugNeedsDistinctRaw(event) {
+		key += "|raw=" + partyDebugRawFingerprint(event.raw)
+	}
 	return key
+}
+
+func partyDebugNeedsDistinctRaw(event partyDebugEvent) bool {
+	return event.decision == "FAIL" && len(event.raw) > 0
+}
+
+func partyDebugRawFingerprint(raw []byte) string {
+	if len(raw) == 0 {
+		return "-"
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:6])
 }
 
 func partyDebugSuppress(session *partyDebugSession, kind string) {
@@ -400,8 +421,8 @@ type partyDebugAttempt struct {
 }
 
 func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEvent, suppression string) []string {
-	lines := []string{fmt.Sprintf("PARTY DEBUG DUR=%dms DATA=%d/%d KEPT=%d SUPPRESSED=%d DROPPED=%d STOP=%s",
-		status.ElapsedMS, status.BytesUsed, status.LimitBytes, len(events), status.Suppressed, status.Dropped, valueOr(status.StopReason, "UNKNOWN"))}
+	lines := []string{fmt.Sprintf("PARTY DEBUG BUILD=%s DUR=%dms DATA=%d/%d KEPT=%d SUPPRESSED=%d DROPPED=%d STOP=%s",
+		partyDebugBuildID(), status.ElapsedMS, status.BytesUsed, status.LimitBytes, len(events), status.Suppressed, status.Dropped, valueOr(status.StopReason, "UNKNOWN"))}
 	if len(events) == 0 {
 		return append(lines, "RESULT=NO_DATA  BREAK=NO_PARTY_EVENT_CAPTURED")
 	}
@@ -482,10 +503,37 @@ func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEv
 	}
 	lines = append(lines, partyDebugTransportLines(robots, displayAttempts)...)
 	lines = append(lines, partyDebugMemberLines(status, critical, 4)...)
-	lines = append(lines, "FLOW: FIRST..LAST UID>PEER DIR CH KIND COUNT LEN DECISION NOTE RAW")
+	lines = append(lines, "PACKETS: FIRST..LAST UID>PEER DIR CH KIND COUNT LEN DECISION NOTE RAW")
 	lines = append(lines, compactPartyDebugEvents(status, critical)...)
 	lines = append(lines, buildPartyDebugChecks(status, critical)...)
 	return lines
+}
+
+func partyDebugBuildID() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "UNKNOWN"
+	}
+	revision := ""
+	modified := false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if revision == "" {
+		return "UNKNOWN"
+	}
+	if len(revision) > 8 {
+		revision = revision[:8]
+	}
+	if modified {
+		revision += "*"
+	}
+	return revision
 }
 
 func buildPartyDebugAttempts(events []partyDebugEvent) []*partyDebugAttempt {
@@ -596,7 +644,17 @@ func partyDebugAttemptLine(attempt *partyDebugAttempt) string {
 	return fmt.Sprintf("A%d R%d JOIN=%s RELAY=%s READY=%s CLEAR=%s I>A=%s A>J=%s J>R=%s STAGE=%s ERR=%s",
 		attempt.index, attempt.uid, yesNo(attempt.snapshot != nil), yesNo(attempt.relay != nil), yesNo(attempt.ready != nil), yesNo(attempt.clear != nil),
 		partyDebugDuration(attempt.invite, attempt.accept), partyDebugDuration(attempt.accept, attempt.snapshot),
-		partyDebugDuration(attempt.snapshot, attempt.ready), partyDebugAttemptStage(attempt), compactPartyDebugText(valueOr(attempt.failure, "-"), 100))
+		partyDebugDuration(attempt.snapshot, attempt.ready), partyDebugAttemptStage(attempt), partyDebugFailureKind(attempt.failure))
+}
+
+func partyDebugFailureKind(failure string) string {
+	if failure == "" {
+		return "-"
+	}
+	if index := strings.IndexByte(failure, ':'); index >= 0 {
+		return failure[:index]
+	}
+	return failure
 }
 
 func partyDebugDuration(first, second *partyDebugEvent) string {
@@ -632,7 +690,7 @@ func partyDebugAttemptStage(attempt *partyDebugAttempt) string {
 }
 
 func partyDebugTransportLines(robots map[uint32]*partyDebugRobotSummary, attempts []*partyDebugAttempt) []string {
-	lines := []string{"TRANSPORT: UID UDP S3 S0 S1 S2 ACK READY RECOVERED FINAL"}
+	lines := []string{}
 	seen := map[uint32]bool{}
 	for _, attempt := range attempts {
 		if seen[attempt.uid] {
@@ -643,10 +701,20 @@ func partyDebugTransportLines(robots map[uint32]*partyDebugRobotSummary, attempt
 		if summary == nil {
 			continue
 		}
+		hasTransport := attempt.snapshot != nil || summary.ready || summary.ackTX != 0 || summary.ackRX != 0
+		for state := 0; state < len(summary.stateTX); state++ {
+			hasTransport = hasTransport || summary.stateTX[state] != 0 || summary.stateRX[state] != 0
+		}
+		if !hasTransport {
+			continue
+		}
+		if len(lines) == 0 {
+			lines = append(lines, "TRANSPORT: UID UDP S3 S0 S1 S2 ACK READY RECOVERED FINAL")
+		}
 		lines = append(lines, fmt.Sprintf("R%d UDP=%d/%d S3=%d/%d S0=%d/%d S1=%d/%d S2=%d/%d ACK=%d/%d READY=%s REC=%d FINAL=%s",
 			attempt.uid, summary.udpTX, summary.udpRX, summary.stateTX[3], summary.stateRX[3], summary.stateTX[0], summary.stateRX[0],
 			summary.stateTX[1], summary.stateRX[1], summary.stateTX[2], summary.stateRX[2], summary.ackTX, summary.ackRX,
-			yesNo(summary.ready), summary.recovered, compactPartyDebugText(valueOr(summary.failure, "-"), 80)))
+			yesNo(summary.ready), summary.recovered, partyDebugFailureKind(summary.failure)))
 	}
 	return lines
 }
@@ -795,20 +863,14 @@ func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebug
 	lines := make([]string, 0, len(selected)+1)
 	for _, group := range selected {
 		event := group.event
-		raw := "-"
-		if len(event.raw) > 0 {
-			raw = hex.EncodeToString(event.raw)
-			if len(raw) > 96 {
-				raw = raw[:96] + "..."
-			}
-		}
+		raw := partyDebugReportRaw(event)
 		first := group.first.Sub(started).Milliseconds()
 		last := group.last.Sub(started).Milliseconds()
 		count := fmt.Sprintf("%d", group.count)
 		if group.seen > uint64(group.count) {
 			count += "+"
 		}
-		lines = append(lines, fmt.Sprintf("+%d..%d R%d>P%d %s %s %-16s N=%s L=%d %s %s RAW=%s",
+		lines = append(lines, fmt.Sprintf("+%d..%d R%d>P%d %s %s %-16s N=%s L=%d %s %s %s",
 			first, last, event.uid, event.peer, valueOr(event.direction, "--"), valueOr(event.channel, "CORE"),
 			event.kind, count, len(event.raw), valueOr(event.decision, "OBS"), compactPartyDebugText(valueOr(event.note, "-"), 160), raw))
 	}
@@ -818,10 +880,40 @@ func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebug
 	return lines
 }
 
+func partyDebugReportRaw(event partyDebugEvent) string {
+	if len(event.raw) == 0 {
+		return "RAW=-"
+	}
+	limit := partyDebugNormalRaw
+	if event.decision == "FAIL" || event.decision == "TIMEOUT" {
+		limit = partyDebugRawLimit
+	}
+	if len(event.raw) <= limit {
+		return fmt.Sprintf("RAW[%d]=%s", len(event.raw), hex.EncodeToString(event.raw))
+	}
+	if limit == partyDebugNormalRaw {
+		return fmt.Sprintf("RAW[%d]=%s...(+%dB)", len(event.raw), hex.EncodeToString(event.raw[:limit]), len(event.raw)-limit)
+	}
+	head := partyDebugRawHead
+	tail := partyDebugRawTail
+	if head+tail > len(event.raw) {
+		head = len(event.raw)
+		tail = 0
+	}
+	raw := hex.EncodeToString(event.raw[:head])
+	if tail > 0 {
+		raw += "..." + hex.EncodeToString(event.raw[len(event.raw)-tail:])
+	}
+	return fmt.Sprintf("RAW[%d]=%s(+%dB)", len(event.raw), raw, len(event.raw)-head-tail)
+}
+
 func partyDebugReportGroupKey(event partyDebugEvent) string {
 	key := fmt.Sprintf("%d|%d|%s|%s|%s|%s|%d", event.uid, event.peer, event.direction, event.channel, event.kind, event.decision, event.route)
 	if event.kind == "SNAPSHOT" || event.kind == "PARTY_CLEAR" {
 		key += "|" + event.note
+	}
+	if partyDebugNeedsDistinctRaw(event) {
+		key += "|raw=" + partyDebugRawFingerprint(event.raw)
 	}
 	return key
 }
@@ -876,23 +968,27 @@ func buildPartyDebugChecks(status shared.PartyDebugStatus, events []partyDebugEv
 		byKey[key] = len(groups)
 		groups = append(groups, checkGroup{first: event.at, last: event.at, event: event, count: seen, recovered: recovered})
 	}
-	lines := []string{"CHECKS:"}
+	lines := []string{"ISSUES:"}
 	const maxChecks = 3
 	for index, group := range groups {
 		if index >= maxChecks {
-			lines = append(lines, fmt.Sprintf("CHECKS_OMITTED=%d", len(groups)-maxChecks))
+			lines = append(lines, fmt.Sprintf("ISSUES_OMITTED=%d", len(groups)-maxChecks))
 			break
 		}
 		statusText := "FINAL"
 		if group.recovered {
 			statusText = "RECOVERED"
 		}
-		lines = append(lines, fmt.Sprintf("CHECK %s R%d>P%d %s/%s N=%d +%d..%d STATUS=%s NOTE=%s", group.event.decision,
+		role := "FOLLOWUP"
+		if index == 0 {
+			role = "ROOT"
+		}
+		lines = append(lines, fmt.Sprintf("ISSUE %s %s R%d>P%d %s/%s N=%d +%d..%d STATUS=%s NOTE=%s", role, group.event.decision,
 			group.event.uid, group.event.peer, group.event.channel, group.event.kind, group.count,
 			group.first.Sub(started).Milliseconds(), group.last.Sub(started).Milliseconds(), statusText, compactPartyDebugText(valueOr(group.event.note, "-"), 140)))
 	}
 	if len(groups) == 0 {
-		lines = append(lines, "CHECK OK NO_EXPLICIT_PARSE_SEND_OR_ROUTE_FAILURE")
+		lines = append(lines, "ISSUE OK NO_EXPLICIT_PARSE_SEND_OR_ROUTE_FAILURE")
 	}
 	return lines
 }

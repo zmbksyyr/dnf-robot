@@ -29,7 +29,7 @@ func TestPartyDebugCapturesAndBuildsDenseReport(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	joined := strings.Join(result.ReportLines, "\n")
-	for _, want := range []string{"RESULT=SUCCESS", "INV", "TQOS_READY", "request_id=7"} {
+	for _, want := range []string{"PARTY DEBUG BUILD=", "RESULT=SUCCESS", "INV", "TQOS_READY", "request_id=7"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("report missing %q:\n%s", want, joined)
 		}
@@ -57,7 +57,7 @@ func TestPartyDebugSeparatesAttemptsMemberChangesAndRecoveredDrops(t *testing.T)
 	for _, want := range []string{
 		"RESULT=PARTIAL JOIN=1/2", "A1 R17000003 JOIN=OK", "STAGE=COMPLETE_CLEARED",
 		"A2 R17000003 JOIN=-", "STAGE=CLEARED_BEFORE_JOIN", "members=2", "members=3",
-		"STATUS=RECOVERED", "PARTY_CLEAR",
+		"STATUS=RECOVERED", "PARTY_CLEAR", "ISSUES:",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("report missing %q:\n%s", want, joined)
@@ -211,11 +211,45 @@ func TestPartyDebugVolumeStaysBoundedAcrossLongRepeatedTraffic(t *testing.T) {
 				t.Fatalf("%s report missing %q:\n%s", name, want, joined)
 			}
 		}
-		if count := strings.Count(joined, "CHECK FAIL"); count != 1 {
+		if count := strings.Count(joined, "ISSUE ROOT FAIL"); count != 1 {
 			t.Fatalf("%s repeated failures were not aggregated: count=%d\n%s", name, count, joined)
 		}
 	}
 	if len(short.ReportLines) != len(long.ReportLines) {
 		t.Fatalf("duration-equivalent repeated traffic changed report height: short=%d long=%d", len(short.ReportLines), len(long.ReportLines))
+	}
+}
+
+func TestPartyDebugReportKeepsCompleteFailedPacketAndSeparatesDistinctFailures(t *testing.T) {
+	if current := globalPartyDebug.active.Load(); current != nil {
+		stopPartyDebugSession(current, partyDebugStopUser)
+		<-current.done
+	}
+	first := make([]byte, 64)
+	second := make([]byte, 64)
+	for index := range first {
+		first[index] = byte(index)
+		second[index] = byte(index)
+	}
+	second[len(second)-1] = 0xff
+
+	StartPartyDebug()
+	recordPartyDebugPacket(17000044, 0, "RX", "GAME", "INVITE", "OBSERVED", "request_id=5", []byte{7, 1})
+	recordPartyDebugPacket(17000044, 0, "TX", "GAME", "ACCEPT", "OK", "request_id=5", []byte{11, 1})
+	recordPartyDebugPacket(17000044, 0, "RX", "GAME", "SNAPSHOT_PARSE", "FAIL", "invalid first", first)
+	recordPartyDebugPacket(17000044, 0, "RX", "GAME", "SNAPSHOT_PARSE", "FAIL", "invalid second", second)
+	result := StopPartyDebug()
+	joined := strings.Join(result.ReportLines, "\n")
+	for _, raw := range [][]byte{first, second} {
+		want := fmt.Sprintf("RAW[64]=%x", raw)
+		if !strings.Contains(joined, want) {
+			t.Fatalf("report did not retain complete failed packet %q:\n%s", want, joined)
+		}
+	}
+	if count := strings.Count(joined, "SNAPSHOT_PARSE"); count < 2 {
+		t.Fatalf("distinct failed packets were merged: count=%d\n%s", count, joined)
+	}
+	if len(result.ReportLines) > 36 || len(joined) > 10*1024 {
+		t.Fatalf("complete packet report exceeded one page: lines=%d bytes=%d\n%s", len(result.ReportLines), len(joined), joined)
 	}
 }
