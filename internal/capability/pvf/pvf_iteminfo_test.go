@@ -31,7 +31,9 @@ func TestFormatPVFItemInfoDAT(t *testing.T) {
 func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) {
 	raw := "2675336 2 1 1 1 1 1 1 1 1 1 1 1 1 `百萬金幣` `金币` 13002\r\n" +
 		"3100060 0 1 1 1 1 1 1 1 1 1 1 1 90 `raw` `raw2` 99999\r\n" +
-		"101030240 0 1 1 1 1 1 1 1 1 1 1 1 75 `bad` `bad2` 10103\r\n"
+		"101030240 0 1 1 1 1 1 1 1 1 1 1 1 75 `bad` `bad2` 10103\r\n" +
+		"2600471 2 1 1 1 1 1 1 1 1 1 1 1 1 `doll` `doll2` 33002\r\n" +
+		"2610030 1 1 1 1 1 1 1 1 1 1 1 1 1 `material` `material2` 33001\r\n"
 	got := formatExtendedPVFItemInfoDAT(raw, []shared.EquipmentCatalogItem{
 		{ID: 101030240, ItemType: 1, Slot: "weapon", ClientIncompatible: true},
 		{ID: 3100060, Name: "無法編碼的名稱", Name2: "无法编码的名称", Level: 90, Rarity: 4, ItemType: 8, Slot: "amulet", Path: "equipment/ancient/halin/3100060.equ"},
@@ -43,10 +45,14 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 		{ID: 100050203, Level: 85, Rarity: 4, ItemType: 3, Slot: "coat", Path: "equipment/character/common/jacket/cloth/100050203.equ"},
 	}, []shared.EquipmentCatalogItem{
 		{ID: 5057, Level: 85, Rarity: 1, Slot: "recipe", Path: "stackable/recipe/rcp_cloth_piece2.stk"},
+		{ID: 2600471, Level: 1, Rarity: 2, Slot: "expert town potion", Path: "stackable/professional/common/doll_shop1.stk"},
+		{ID: 2610030, Level: 1, Rarity: 1, Slot: "material expert job", Path: "stackable/professional/material/crystallization_magical.stk"},
+		{ID: 2700001, Level: 1, Rarity: 2, Slot: "waste", Path: "stackable/professional/potion/new_potion.stk"},
+		{ID: 2700002, Level: 1, Rarity: 2, Slot: "expert town potion", Path: "stackable/professional/puppet/new_puppet.stk"},
 	})
 	lines := strings.Split(strings.TrimSpace(got), "\r\n")
-	if len(lines) != 9 {
-		t.Fatalf("lines = %d, want 9: %q", len(lines), got)
+	if len(lines) != 13 {
+		t.Fatalf("lines = %d, want 13: %q", len(lines), got)
 	}
 	for _, b := range []byte(got) {
 		if b >= 0x80 {
@@ -79,6 +85,10 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 	assertLineHasToken(t, lines, "100050203 ", 13, "70")
 	assertLineContains(t, lines, "5057 ", "31305")
 	assertLineHasToken(t, lines, "5057 ", 13, "70")
+	assertLineContains(t, lines, "2600471 ", "33002")
+	assertLineContains(t, lines, "2610030 ", "33001")
+	assertLineContains(t, lines, "2700001 ", "33001")
+	assertLineContains(t, lines, "2700002 ", "33002")
 }
 
 func assertLineContains(t *testing.T, lines []string, prefix, want string) {

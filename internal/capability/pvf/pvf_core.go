@@ -448,7 +448,11 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 		if item.ID <= 0 {
 			continue
 		}
-		rows = append(rows, row{id: item.ID, text: strings.Join(generatedItemInfoFields(item, true), " ")})
+		fields := generatedItemInfoFields(item, true)
+		if category := rawProfessionalStackableCategory(item, raw[item.ID]); category != "" {
+			fields[len(fields)-1] = category
+		}
+		rows = append(rows, row{id: item.ID, text: strings.Join(fields, " ")})
 		seen[item.ID] = true
 	}
 	for id, fields := range raw {
@@ -587,6 +591,10 @@ func generatedStackableItemInfoCategory(item shared.EquipmentCatalogItem) int {
 		return 13001
 	case strings.HasPrefix(path, "stackable/recipe/") || strings.Contains(slot, "recipe"):
 		return 31305
+	case strings.HasPrefix(path, "stackable/professional/potion/"):
+		return 33001
+	case strings.HasPrefix(path, "stackable/professional/puppet/") || strings.HasPrefix(path, "stackable/professional/common/") && strings.Contains(path, "doll"):
+		return 33002
 	case strings.HasPrefix(path, "stackable/monstercard/") || strings.Contains(slot, "material expert job"):
 		return 33004
 	case strings.HasPrefix(path, "stackable/professional/bead/") || strings.Contains(slot, "enchant waste"):
@@ -596,6 +604,17 @@ func generatedStackableItemInfoCategory(item shared.EquipmentCatalogItem) int {
 	default:
 		return 13006
 	}
+}
+
+func rawProfessionalStackableCategory(item shared.EquipmentCatalogItem, raw []string) string {
+	if !strings.HasPrefix(normalizePVFPath(item.Path), "stackable/professional/") || len(raw) != 17 {
+		return ""
+	}
+	category, err := strconv.Atoi(raw[16])
+	if err != nil || category < 33001 || category > 33004 {
+		return ""
+	}
+	return raw[16]
 }
 
 func equipmentCharacterCategoryCode(parts []string) int {
