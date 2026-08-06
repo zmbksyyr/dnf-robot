@@ -302,6 +302,26 @@ func TestPlanAuctionEquipmentUsesSingleRecordPrice(t *testing.T) {
 	}
 }
 
+func TestPlanAuctionEquipmentAllowsZeroUpgrade(t *testing.T) {
+	app := testApp(t)
+	app.cfg.Restock.UpgradeMin = 0
+	app.cfg.Restock.UpgradeMax = 0
+	result := &PlanResult{}
+	catalog := map[uint32]catalogItem{
+		31056: {ItemID: 31056, Name: "weapon", Kind: "equipment", Attach: "trade", Slot: "weapon"},
+	}
+	app.planAuction([]restockRow{{
+		ItemID: 31056, SystemPrice: 88888, Quantity: 1, StackSize: 1, Enabled: true,
+	}}, catalog, map[uint32]int{}, map[uint32]int{}, result)
+
+	if len(result.Actions) != 1 {
+		t.Fatalf("actions = %d, want 1", len(result.Actions))
+	}
+	if result.Actions[0].Upgrade != 0 {
+		t.Fatalf("equipment upgrade = %d, want 0", result.Actions[0].Upgrade)
+	}
+}
+
 func TestPlanAuctionEquipmentKeepsExplicitEndurance(t *testing.T) {
 	app := testApp(t)
 	result := &PlanResult{}

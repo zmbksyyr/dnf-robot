@@ -148,7 +148,7 @@ func (a *App) appendNormalAuctionActions(plan normalAuctionPlan, occ map[uint32]
 			}
 			upgrade = plan.Row.Upgrade
 			if upgrade <= 0 {
-				upgrade = a.randomRange(cfg.Restock.UpgradeMin, cfg.Restock.UpgradeMax)
+				upgrade = a.randomUpgradeRange(cfg.Restock.UpgradeMin, cfg.Restock.UpgradeMax)
 			}
 		}
 		unit := a.auctionUnitPriceFor(plan.Row.ItemID, plan.Row.SystemPrice, plan.IsEquipment, plan.BatchInflate, upgrade)
@@ -320,4 +320,17 @@ func randRange(rng *rand.Rand, min, max int) int {
 		max = min
 	}
 	return min + rng.Intn(max-min+1)
+}
+
+func (a *App) randomUpgradeRange(min, max int) int {
+	if min < 0 {
+		min = 0
+	}
+	if max < min {
+		max = min
+	}
+	a.randMu.Lock()
+	value := min + a.rand.Intn(max-min+1)
+	a.randMu.Unlock()
+	return value
 }
