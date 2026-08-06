@@ -254,8 +254,15 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 			}
 			pathJob = jobFromEquipmentPath(entry.Path)
 		}
+		equipmentTypeSeen := false
 		for i, line := range lines {
 			lowerLine := strings.ToLower(line)
+			if !stackable && !equipmentTypeSeen && strings.HasPrefix(lowerLine, "[add ") && strings.HasSuffix(lowerLine, "]") {
+				// This DP2 client stops parsing when an extended [add ...] property
+				// appears before [equipment type]. The missing type becomes sentinel
+				// 26, which the auction UI uses as an out-of-bounds array index.
+				item.ClientIncompatible = true
+			}
 			if stackable {
 				switch {
 				case strings.Contains(lowerLine, "not") && strings.Contains(lowerLine, "trade"):
@@ -291,6 +298,7 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 			case "[stack limit]":
 				item.StackLimit = atoi(nextLine(lines, i))
 			case "[equipment type]":
+				equipmentTypeSeen = true
 				slot := cleanPVFString(nextLine(lines, i))
 				if typ := equipmentType(slot); typ > 0 {
 					item.Slot = slot
@@ -308,12 +316,6 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 				item.FieldImage = cleanPVFString(nextLine(lines, i))
 			case "[need material]":
 				item.NeedMaterial = true
-			case "[add cast speed]":
-				// This DP2 client stops parsing an equipment script at this tag.
-				// Fields after it remain zeroed, including the auction UI equipment
-				// class, which becomes sentinel 26 and is then used to index a
-				// 26-element array (valid indexes 0..25), crashing the client.
-				item.ClientIncompatible = true
 			case "[sub type]":
 				item.SubType = atoi(nextLine(lines, i))
 			case "[expiration date]", "[usable period]":

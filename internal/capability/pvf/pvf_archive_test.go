@@ -20,23 +20,35 @@ func TestOpenPVFRejectsTruncatedFileTreeEntry(t *testing.T) {
 	}
 }
 
-func TestExtractItemListMarksUnsupportedAddCastSpeed(t *testing.T) {
-	archive := &pvfArchive{files: map[string]*pvfFile{
-		"equipment/equipment.lst": {
-			Name: "equipment/equipment.lst",
-			Data: []byte("101030240 `character/swordman/weapon/hsword/101030240.equ`"),
-		},
-		"equipment/character/swordman/weapon/hsword/101030240.equ": {
-			Name: "equipment/character/swordman/weapon/hsword/101030240.equ",
-			Data: []byte("[name]\r\n`bad weapon`\r\n[rarity]\r\n1\r\n[equipment type]\r\n`weapon`\r\n[add cast speed]\r\n20\r\n"),
-		},
-	}}
+func TestExtractItemListMarksPreTypeAddPropertiesIncompatible(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "add cast speed before type", body: "[add cast speed]\r\n20\r\n[equipment type]\r\n`weapon`\r\n", want: true},
+		{name: "add physical attack before type", body: "[add physical attack]\r\n27\r\n[equipment type]\r\n`weapon`\r\n", want: true},
+		{name: "add property after type", body: "[equipment type]\r\n`weapon`\r\n[add absolute damage]\r\n10\r\n", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			archive := &pvfArchive{files: map[string]*pvfFile{
+				"equipment/equipment.lst": {
+					Name: "equipment/equipment.lst",
+					Data: []byte("101030240 `character/swordman/weapon/hsword/101030240.equ`"),
+				},
+				"equipment/character/swordman/weapon/hsword/101030240.equ": {
+					Name: "equipment/character/swordman/weapon/hsword/101030240.equ",
+					Data: []byte("[name]\r\n`weapon`\r\n" + tc.body),
+				},
+			}}
 
-	items := extractItemList(archive, "equipment/equipment.lst", "equipment/", false)
-	if len(items) != 1 {
-		t.Fatalf("items = %d, want 1", len(items))
-	}
-	if !items[0].ClientIncompatible {
-		t.Fatal("[add cast speed] equipment was not marked client-incompatible")
+			items := extractItemList(archive, "equipment/equipment.lst", "equipment/", false)
+			if len(items) != 1 {
+				t.Fatalf("items = %d, want 1", len(items))
+			}
+			if items[0].ClientIncompatible != tc.want {
+				t.Fatalf("ClientIncompatible = %v, want %v", items[0].ClientIncompatible, tc.want)
+			}
+		})
 	}
 }
