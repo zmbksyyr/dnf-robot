@@ -103,7 +103,7 @@ func FilterAvatarSupportedJobs(jobs []int, items []shared.EquipmentCatalogItem, 
 	}
 	eligible := make([]shared.EquipmentCatalogItem, 0)
 	for _, item := range items {
-		if item.ID == 0 || item.Expire || !AvatarRenderable(item) {
+		if item.ID == 0 || item.Expire || !shared.ClientCompatibleEquipment(item) || !AvatarRenderable(item) {
 			continue
 		}
 		if _, ok := wantedTypes[item.ItemType]; ok {
@@ -153,7 +153,7 @@ func SelectEquipment(items []shared.EquipmentCatalogItem, level int, job int, rc
 	}
 	for _, item := range items {
 		slot, wanted := slotByItemType[item.ItemType]
-		if !wanted || item.ID == 0 || item.Expire || item.Level > level {
+		if !wanted || item.ID == 0 || item.Expire || !shared.ClientCompatibleEquipment(item) || item.Level > level {
 			continue
 		}
 		if rc.EquipRarityMax > 0 && (item.Rarity < rc.EquipRarityMin || item.Rarity > rc.EquipRarityMax) {
@@ -210,7 +210,7 @@ func SelectAvatar(items []shared.EquipmentCatalogItem, job int, rc robotconfig.R
 	}
 	for _, item := range items {
 		slot, wanted := slotByItemType[item.ItemType]
-		if !wanted || item.ID == 0 || item.Expire || !AvatarRenderable(item) || !AvatarUsableByJob(item, job) {
+		if !wanted || item.ID == 0 || item.Expire || !shared.ClientCompatibleEquipment(item) || !AvatarRenderable(item) || !AvatarUsableByJob(item, job) {
 			continue
 		}
 		candidatesBySlot[slot] = append(candidatesBySlot[slot], item)

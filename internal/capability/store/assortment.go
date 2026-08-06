@@ -62,7 +62,7 @@ func BuildItemPool(equipment, stackable []shared.EquipmentCatalogItem, intensify
 		// The tested DFGamer store validator accepts equipment types 1..10.
 		// Later support/magic-stone types can exist in PVF but are rejected by
 		// CPrivateStore::CheckValidItem with CMD 90 error 0x11.
-		if item.ID <= 0 || item.ItemType < 1 || item.ItemType > 10 || item.Expire || item.NoTrade || item.TradeBlock {
+		if item.ID <= 0 || item.ItemType < 1 || item.ItemType > 10 || item.Expire || !shared.ClientCompatibleEquipment(item) || item.NoTrade || item.TradeBlock {
 			continue
 		}
 		if item.CanTrade != nil && !*item.CanTrade {

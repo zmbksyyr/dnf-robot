@@ -11,6 +11,7 @@ import (
 func TestBuildItemPoolClassifiesTradeablePVFItems(t *testing.T) {
 	pool := BuildItemPool([]shared.EquipmentCatalogItem{
 		{ID: 100, ItemType: 1, Attach: "sealing", Durability: 18},
+		{ID: 105, ItemType: 1, Attach: "sealing", Durability: 18, ClientIncompatible: true},
 		{ID: 101, ItemType: 3, Attach: "trade"},
 		{ID: 102, ItemType: 4, Attach: "sealing", NoTrade: true},
 		{ID: 103, ItemType: 11, Attach: "sealing"},

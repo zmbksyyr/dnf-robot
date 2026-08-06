@@ -437,7 +437,7 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 		if item.ID <= 0 {
 			continue
 		}
-		if item.ClientIncompatible {
+		if !shared.ClientCompatibleEquipment(item) {
 			clientIncompatible[item.ID] = true
 			continue
 		}

@@ -69,6 +69,7 @@ func TestEquipmentSetSelectionKeepsHighestScore(t *testing.T) {
 
 func TestSelectEquipmentScansCatalogAcrossConfiguredSlots(t *testing.T) {
 	items := []shared.EquipmentCatalogItem{
+		{ID: 100, ItemType: 1, Level: 100, UseJob: []int{1}, ClientIncompatible: true},
 		{ID: 101, ItemType: 1, Level: 50, UseJob: []int{1}},
 		{ID: 102, ItemType: 1, Level: 90, UseJob: []int{1}},
 		{ID: 103, ItemType: 1, Level: 100, UseJob: []int{1}},
@@ -86,6 +87,7 @@ func TestSelectEquipmentScansCatalogAcrossConfiguredSlots(t *testing.T) {
 
 func TestSelectAvatarScansCatalogAcrossConfiguredSlots(t *testing.T) {
 	items := []shared.EquipmentCatalogItem{
+		{ID: 99, ItemType: 20, Name: "unsafe hat", UseJob: []int{1}, ClientIncompatible: true},
 		{ID: 100, ItemType: 20, Name: "hat", UseJob: []int{1}},
 		{ID: 101, ItemType: 20, Name: "other hat", UseJob: []int{2}},
 		{ID: 200, ItemType: 21, Name: "hair", UseJob: []int{2}},
@@ -144,6 +146,22 @@ func TestFilterAvatarSupportedJobsKeepsConfiguredJobsWithoutAvatarCatalog(t *tes
 	got := FilterAvatarSupportedJobs([]int{1, 8}, []shared.EquipmentCatalogItem{{ID: 100, ItemType: 1}}, robotconfig.RuntimeConfig{MinAvatarSlots: 8})
 	if len(got) != 2 || got[0] != 1 || got[1] != 8 {
 		t.Fatalf("supported jobs = %v, want configured fallback", got)
+	}
+}
+
+func TestFilterAvatarSupportedJobsDoesNotCountClientIncompatibleSlots(t *testing.T) {
+	items := make([]shared.EquipmentCatalogItem, 0, 16)
+	for slot := 0; slot < 8; slot++ {
+		items = append(items, shared.EquipmentCatalogItem{ID: 1000 + slot, ItemType: 20 + slot, Name: "safe job avatar", UseJob: []int{8}})
+	}
+	for slot := 0; slot < 7; slot++ {
+		items = append(items, shared.EquipmentCatalogItem{ID: 2000 + slot, ItemType: 20 + slot, Name: "partial job avatar", UseJob: []int{1}})
+	}
+	items = append(items, shared.EquipmentCatalogItem{ID: 2007, ItemType: 27, Name: "unsafe job avatar", UseJob: []int{1}, ClientIncompatible: true})
+
+	got := FilterAvatarSupportedJobs([]int{1, 8}, items, robotconfig.RuntimeConfig{MinAvatarSlots: 8})
+	if len(got) != 1 || got[0] != 8 {
+		t.Fatalf("supported jobs = %v, want [8]", got)
 	}
 }
 

@@ -34,8 +34,15 @@ type EquipmentCatalogItem struct {
 	UseJob        []int  `json:"use_job,omitempty"`
 
 	// ClientIncompatible marks an item whose script uses fields that this DP2
-	// client cannot parse safely. Such items must not enter iteminfo or markets.
+	// client cannot parse safely. Every generated-item consumer must reject it.
 	ClientIncompatible bool `json:"client_incompatible,omitempty"`
+}
+
+// ClientCompatibleEquipment reports whether generated equipment may be sent
+// to this DP2 client. Keep compatibility policy separate from consumer-specific
+// eligibility rules so every equipment path honors the same PVF marker.
+func ClientCompatibleEquipment(item EquipmentCatalogItem) bool {
+	return !item.ClientIncompatible
 }
 
 type MapCatalogItem struct {
