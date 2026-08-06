@@ -79,3 +79,22 @@ func TestApplyListingConfigLockedDoesNotChangeRuntimeParameters(t *testing.T) {
 		t.Fatalf("runtime parameters changed: auto=%+v restock=%+v", cfg.Auto, cfg.Restock)
 	}
 }
+
+func TestApplyListingConfigAcceptsBlockedItemRanges(t *testing.T) {
+	app := testApp(t)
+	app.configPath = appPaths(app).MarketConfig()
+	expression := "1-3,8-10"
+	cfg, err := app.applyListingConfigLocked(ConfigUpdateRequest{BlockedItemIDExpression: &expression})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []uint32{1, 2, 3, 8, 9, 10}
+	if len(cfg.Restock.BlockedItemIDs) != len(want) {
+		t.Fatalf("blocked IDs = %v, want %v", cfg.Restock.BlockedItemIDs, want)
+	}
+	for index := range want {
+		if cfg.Restock.BlockedItemIDs[index] != want[index] {
+			t.Fatalf("blocked IDs = %v, want %v", cfg.Restock.BlockedItemIDs, want)
+		}
+	}
+}

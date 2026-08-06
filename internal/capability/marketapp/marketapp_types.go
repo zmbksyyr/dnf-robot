@@ -154,6 +154,7 @@ type ConfigUpdateRequest struct {
 	EquipmentTradePolicy     *string  `json:"equipment_trade_policy,omitempty"`
 	OtherTradePolicy         *string  `json:"other_trade_policy,omitempty"`
 	BlockedItemIDs           []uint32 `json:"blocked_item_ids,omitempty"`
+	BlockedItemIDExpression  *string  `json:"blocked_item_id_expression,omitempty"`
 	IntervalMS               *int     `json:"interval_ms,omitempty"`
 	InitialDelayMS           *int     `json:"initial_delay_ms,omitempty"`
 	AutoMaxActions           *int     `json:"auto_max_actions,omitempty"`

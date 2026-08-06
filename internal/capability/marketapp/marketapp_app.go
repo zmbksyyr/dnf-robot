@@ -390,7 +390,14 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	if req.OtherTradePolicy != nil {
 		cfg.Restock.OtherTradePolicy = strings.TrimSpace(*req.OtherTradePolicy)
 	}
-	if req.BlockedItemIDs != nil {
+	if req.BlockedItemIDExpression != nil {
+		blocked, err := decodeBlockedItemIDs(*req.BlockedItemIDExpression)
+		if err != nil {
+			a.jobMu.Unlock()
+			return Status{}, err
+		}
+		cfg.Restock.BlockedItemIDs = blocked
+	} else if req.BlockedItemIDs != nil {
 		cfg.Restock.BlockedItemIDs = normalizeBlockedItemIDs(req.BlockedItemIDs)
 	}
 	if req.IntervalMS != nil {

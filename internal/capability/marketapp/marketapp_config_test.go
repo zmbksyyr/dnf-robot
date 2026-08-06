@@ -112,6 +112,24 @@ func TestMarketConfigRoundTripsBlockedItemIDs(t *testing.T) {
 	}
 }
 
+func TestBlockedItemIDRangesParseAndEncode(t *testing.T) {
+	ids, err := decodeBlockedItemIDs("1, 2 3\n8-50，55,56")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 48 || ids[0] != 1 || ids[3] != 8 || ids[len(ids)-1] != 56 {
+		t.Fatalf("decoded blocked IDs = %v", ids)
+	}
+	if got := encodeBlockedItemIDs(ids); got != "1-3,8-50,55-56" {
+		t.Fatalf("encoded blocked IDs = %q", got)
+	}
+	for _, invalid := range []string{"0", "5-3", "1-2-3", "x", "1-100001"} {
+		if _, err := decodeBlockedItemIDs(invalid); err == nil {
+			t.Fatalf("invalid blocked expression %q was accepted", invalid)
+		}
+	}
+}
+
 func TestLoadConfigRejectsInvalidCurrentINI(t *testing.T) {
 	dir := t.TempDir()
 	path := layout.New(dir).MarketConfig()

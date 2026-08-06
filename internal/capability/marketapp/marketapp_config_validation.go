@@ -87,12 +87,15 @@ func validateMarketConfig(cfg Config) error {
 		return fmt.Errorf("auction_price.other_trade_policy must be permissive or strict")
 	}
 	seenBlocked := make(map[uint32]struct{}, len(r.BlockedItemIDs))
-	for _, itemID := range r.BlockedItemIDs {
+	for index, itemID := range r.BlockedItemIDs {
 		if itemID == 0 {
 			return fmt.Errorf("auction_price.blocked_item_ids values must be positive")
 		}
 		if _, exists := seenBlocked[itemID]; exists {
 			return fmt.Errorf("auction_price.blocked_item_ids contains duplicate item ID %d", itemID)
+		}
+		if index > 0 && r.BlockedItemIDs[index-1] > itemID {
+			return fmt.Errorf("auction_price.blocked_item_ids must be sorted")
 		}
 		seenBlocked[itemID] = struct{}{}
 	}

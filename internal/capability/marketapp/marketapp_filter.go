@@ -1,6 +1,9 @@
 package marketapp
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 func marketCandidate(item catalogItem) bool {
 	return item.ItemID != 0 && item.Kind != "blocked" && !isAvatarEquipment(item) && (specialAuctionKind(item) != "" || !isRiskyPVFItem(item))
@@ -77,12 +80,9 @@ func qualityFilterEnabled(cfg Config) bool {
 }
 
 func blockedAuctionItemWithConfig(itemID uint32, cfg Config) bool {
-	for _, blockedID := range cfg.Restock.BlockedItemIDs {
-		if blockedID == itemID {
-			return true
-		}
-	}
-	return false
+	ids := cfg.Restock.BlockedItemIDs
+	index := sort.Search(len(ids), func(index int) bool { return ids[index] >= itemID })
+	return index < len(ids) && ids[index] == itemID
 }
 
 func (a *App) marketRarityAllowed(item catalogItem) bool {

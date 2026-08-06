@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"robot/internal/foundation/atomicfile"
 	foundationconfig "robot/internal/foundation/config"
@@ -152,7 +153,7 @@ func writeMarketConfig(path string, c Config) error {
 		"# 允许自动补货上架的其他物品稀有度数字，只允许 0 到 9。", "other_allowed_rarities = " + c.Restock.OtherAllowedRarities,
 		"# 装备交易策略：permissive 或 strict。", "equipment_trade_policy = " + c.Restock.EquipmentTradePolicy,
 		"# 其他物品交易策略：permissive 或 strict。", "other_trade_policy = " + c.Restock.OtherTradePolicy,
-		"# 禁止自动或指定补货上架的物品 ID，使用逗号分隔；保存设置重建后会回收已有机器人库存。", "blocked_item_ids = " + joinUint32s(c.Restock.BlockedItemIDs),
+		"# 禁止自动或指定补货上架的物品 ID；支持逗号、空格、换行和 8-50 范围写法。", "blocked_item_ids = " + encodeBlockedItemIDs(c.Restock.BlockedItemIDs),
 		"# 堆叠物品的候选数量，使用逗号分隔；实际数量不会超过 PVF stack_limit。", "stack_sizes = " + joinInts(c.Restock.StackSizes),
 		"# 每种缺货装备最少生成的拍卖记录数。", fmt.Sprintf("equipment_qty_min = %d", c.Restock.EquipmentQtyMin),
 		"# 每种缺货装备最多生成的拍卖记录数。", fmt.Sprintf("equipment_qty_max = %d", c.Restock.EquipmentQtyMax),
@@ -248,23 +249,47 @@ func joinInts(v []int) string {
 }
 
 func decodeBlockedItemIDs(raw string) ([]uint32, error) {
-	values := splitStrings(raw)
+	values := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '，' || unicode.IsSpace(r)
+	})
 	out := make([]uint32, 0, len(values))
-	seen := make(map[uint32]struct{}, len(values))
 	for _, value := range values {
-		parsed, err := strconv.ParseUint(value, 10, 32)
-		if err != nil || parsed == 0 {
+		parts := strings.Split(value, "-")
+		if len(parts) > 2 {
+			return nil, fmt.Errorf("auction_price.blocked_item_ids contains invalid range %q", value)
+		}
+		start, err := parseBlockedItemID(parts[0])
+		if err != nil {
 			return nil, fmt.Errorf("auction_price.blocked_item_ids contains invalid item ID %q", value)
 		}
-		id := uint32(parsed)
-		if _, exists := seen[id]; exists {
-			continue
+		end := start
+		if len(parts) == 2 {
+			end, err = parseBlockedItemID(parts[1])
+			if err != nil || end < start {
+				return nil, fmt.Errorf("auction_price.blocked_item_ids contains invalid range %q", value)
+			}
 		}
-		seen[id] = struct{}{}
-		out = append(out, id)
+		if uint64(end)-uint64(start)+1 > maxBlockedItemIDs || len(out)+int(uint64(end)-uint64(start)+1) > maxBlockedItemIDs {
+			return nil, fmt.Errorf("auction_price.blocked_item_ids expands beyond %d item IDs", maxBlockedItemIDs)
+		}
+		for id := start; ; id++ {
+			out = append(out, id)
+			if id == end {
+				break
+			}
+		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out, nil
+	return normalizeBlockedItemIDs(out), nil
+}
+
+const maxBlockedItemIDs = 100000
+
+func parseBlockedItemID(value string) (uint32, error) {
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 32)
+	if err != nil || parsed == 0 {
+		return 0, fmt.Errorf("invalid item ID")
+	}
+	return uint32(parsed), nil
 }
 
 func normalizeBlockedItemIDs(values []uint32) []uint32 {
@@ -281,10 +306,22 @@ func normalizeBlockedItemIDs(values []uint32) []uint32 {
 	return out[:write]
 }
 
-func joinUint32s(values []uint32) string {
+func encodeBlockedItemIDs(values []uint32) string {
+	values = normalizeBlockedItemIDs(values)
 	out := make([]string, 0, len(values))
-	for _, value := range values {
-		out = append(out, strconv.FormatUint(uint64(value), 10))
+	for index := 0; index < len(values); {
+		start := values[index]
+		end := start
+		for index+1 < len(values) && values[index+1] == end+1 {
+			index++
+			end = values[index]
+		}
+		if end == start {
+			out = append(out, strconv.FormatUint(uint64(start), 10))
+		} else {
+			out = append(out, fmt.Sprintf("%d-%d", start, end))
+		}
+		index++
 	}
 	return strings.Join(out, ",")
 }
