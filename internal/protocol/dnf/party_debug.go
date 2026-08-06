@@ -495,7 +495,7 @@ func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEv
 		lines = append(lines, "SUPPRESS "+suppression)
 	}
 	displayAttempts := partyDebugDisplayAttempts(attempts, 4)
-	lines = append(lines, "ATTEMPTS: ID UID JOIN RELAY READY CLEAR I>A A>J J>R STAGE ERROR")
+	lines = append(lines, "ATTEMPTS: ID UID JOIN RELAY READY CLEAR I>A A>J J>R STAGE ALERT")
 	for _, attempt := range displayAttempts {
 		lines = append(lines, partyDebugAttemptLine(attempt))
 	}
@@ -506,7 +506,7 @@ func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEv
 	lines = append(lines, partyDebugMemberLines(status, critical, 4)...)
 	lines = append(lines, "PKTS: ID FIRST..LAST UID>PEER DIR/CH KIND N LEN DEC NOTE DATA")
 	lines = append(lines, compactPartyDebugEvents(status, critical, attempts)...)
-	lines = append(lines, buildPartyDebugChecks(status, critical)...)
+	lines = append(lines, buildPartyDebugChecks(status, critical, attempts)...)
 	return lines
 }
 
@@ -642,10 +642,19 @@ func partyDebugDisplayAttempts(attempts []*partyDebugAttempt, limit int) []*part
 }
 
 func partyDebugAttemptLine(attempt *partyDebugAttempt) string {
-	return fmt.Sprintf("A%d R%d JOIN=%s RELAY=%s READY=%s CLEAR=%s I>A=%s A>J=%s J>R=%s STAGE=%s ERR=%s",
+	alert, failure := partyDebugAttemptAlert(attempt)
+	return fmt.Sprintf("A%d R%d JOIN=%s RELAY=%s READY=%s CLEAR=%s I>A=%s A>J=%s J>R=%s STAGE=%s %s=%s",
 		attempt.index, attempt.uid, yesNo(attempt.snapshot != nil), yesNo(attempt.relay != nil), yesNo(attempt.ready != nil), yesNo(attempt.clear != nil),
 		partyDebugDuration(attempt.invite, attempt.accept), partyDebugDuration(attempt.accept, attempt.snapshot),
-		partyDebugDuration(attempt.snapshot, attempt.ready), partyDebugAttemptStage(attempt), partyDebugFailureKind(attempt.failure))
+		partyDebugDuration(attempt.snapshot, attempt.ready), partyDebugAttemptStage(attempt), alert, failure)
+}
+
+func partyDebugAttemptAlert(attempt *partyDebugAttempt) (string, string) {
+	failure := partyDebugFailureKind(attempt.failure)
+	if failure == "ROUTE_DEGRADED" && attempt.ready != nil {
+		return "WARN", failure
+	}
+	return "ERR", failure
 }
 
 func partyDebugFailureKind(failure string) string {
@@ -905,7 +914,7 @@ func compactPartyDebugEvents(status shared.PartyDebugStatus, events []partyDebug
 			partyDebugKindShort(event.kind), count, len(event.raw), valueOr(event.decision, "OBS"), compactPartyDebugText(valueOr(event.note, "-"), 150), raw))
 	}
 	if len(groups) > len(selected) {
-		lines = append(lines, fmt.Sprintf("FLOW_OMITTED_GROUPS=%d", len(groups)-len(selected)))
+		lines = append(lines, fmt.Sprintf("PKTS_OMITTED_GROUPS=%d", len(groups)-len(selected)))
 	}
 	return lines
 }
@@ -1031,7 +1040,7 @@ func partyDebugEventPriority(event partyDebugEvent) int {
 	}
 }
 
-func buildPartyDebugChecks(status shared.PartyDebugStatus, events []partyDebugEvent) []string {
+func buildPartyDebugChecks(status shared.PartyDebugStatus, events []partyDebugEvent, attempts []*partyDebugAttempt) []string {
 	started, _ := time.Parse(time.RFC3339Nano, status.StartedAt)
 	type checkGroup struct {
 		first     time.Time
@@ -1063,6 +1072,16 @@ func buildPartyDebugChecks(status shared.PartyDebugStatus, events []partyDebugEv
 		byKey[key] = len(groups)
 		groups = append(groups, checkGroup{first: event.at, last: event.at, event: event, count: seen, recovered: recovered})
 	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].recovered != groups[j].recovered {
+			return !groups[i].recovered
+		}
+		left, right := partyDebugIssuePriority(groups[i].event), partyDebugIssuePriority(groups[j].event)
+		if left != right {
+			return left < right
+		}
+		return groups[i].first.Before(groups[j].first)
+	})
 	lines := []string{"ISSUES:"}
 	const maxChecks = 3
 	for index, group := range groups {
@@ -1078,7 +1097,11 @@ func buildPartyDebugChecks(status shared.PartyDebugStatus, events []partyDebugEv
 		if index == 0 {
 			role = "ROOT"
 		}
-		lines = append(lines, fmt.Sprintf("ISSUE %s %s R%d>P%d %s/%s N=%d +%d..%d STATUS=%s NOTE=%s", role, group.event.decision,
+		decision := group.event.decision
+		if group.event.kind == "ROUTE_DEGRADED" && partyDebugAttemptReadyBefore(group.event, attempts) {
+			decision = "WARN"
+		}
+		lines = append(lines, fmt.Sprintf("ISSUE %s %s R%d>P%d %s/%s N=%d +%d..%d STATUS=%s NOTE=%s", role, decision,
 			group.event.uid, group.event.peer, group.event.channel, group.event.kind, group.count,
 			group.first.Sub(started).Milliseconds(), group.last.Sub(started).Milliseconds(), statusText, compactPartyDebugText(valueOr(group.event.note, "-"), 140)))
 	}
@@ -1086,6 +1109,33 @@ func buildPartyDebugChecks(status shared.PartyDebugStatus, events []partyDebugEv
 		lines = append(lines, "ISSUE OK NO_EXPLICIT_PARSE_SEND_OR_ROUTE_FAILURE")
 	}
 	return lines
+}
+
+func partyDebugIssuePriority(event partyDebugEvent) int {
+	switch event.decision {
+	case "TIMEOUT":
+		return 0
+	case "FAIL":
+		return 1
+	case "DROP":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func partyDebugAttemptReadyBefore(event partyDebugEvent, attempts []*partyDebugAttempt) bool {
+	for index := len(attempts) - 1; index >= 0; index-- {
+		attempt := attempts[index]
+		if attempt.uid != event.uid || attempt.invite == nil || event.at.Before(attempt.invite.at) {
+			continue
+		}
+		if attempt.clear != nil && event.at.After(attempt.clear.at) {
+			continue
+		}
+		return attempt.ready != nil && !event.at.Before(attempt.ready.at)
+	}
+	return false
 }
 
 func compactPartyDebugText(value string, limit int) string {

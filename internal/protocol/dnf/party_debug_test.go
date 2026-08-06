@@ -281,3 +281,27 @@ func TestPartyDebugReportReservesPacketsForPendingTransport(t *testing.T) {
 		t.Fatalf("pending transport report exceeded one page: lines=%d bytes=%d\n%s", len(result.ReportLines), len(joined), joined)
 	}
 }
+
+func TestPartyDebugReportPrioritizesFinalWarningOverRecoveredDrop(t *testing.T) {
+	if current := globalPartyDebug.active.Load(); current != nil {
+		stopPartyDebugSession(current, partyDebugStopUser)
+		<-current.done
+	}
+	StartPartyDebug()
+	recordPartyDebugPacket(17000188, 0, "RX", "GAME", "INVITE", "OBSERVED", "request_id=5", []byte{7})
+	recordPartyDebugPacket(17000188, 0, "TX", "GAME", "ACCEPT", "OK", "request_id=5", []byte{11})
+	recordPartyDebugPacket(17000188, 0, "RX", "GAME", "SNAPSHOT", "OK", "members=2", []byte{11, 2})
+	recordPartyDebugPacket(17000188, 0, "RX", "UDP", "PEER_LOOKUP", "DROP", "sender_slot=1", []byte{2, 1})
+	recordPartyDebugPacket(17000188, 18000000, "--", "CORE", "TQOS_READY", "OK", "route=2", nil)
+	recordPartyDebugPacket(17000188, 18000000, "--", "CORE", "ROUTE_DEGRADED", "FAIL", "route=1 state2 ack timeout", nil)
+	result := StopPartyDebug()
+	joined := strings.Join(result.ReportLines, "\n")
+	for _, want := range []string{"STAGE=COMPLETE WARN=ROUTE_DEGRADED", "ISSUE ROOT WARN", "CORE/ROUTE_DEGRADED", "ISSUE FOLLOWUP DROP", "STATUS=RECOVERED"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("report missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "FLOW_OMITTED_GROUPS") {
+		t.Fatalf("report retained obsolete omitted label:\n%s", joined)
+	}
+}
