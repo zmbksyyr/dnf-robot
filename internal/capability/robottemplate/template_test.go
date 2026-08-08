@@ -1,6 +1,10 @@
 package robottemplate
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestSafeShoutMessage(t *testing.T) {
 	if got := SafeShoutMessage(" \x01hello "); got != "hello" {
@@ -8,6 +12,23 @@ func TestSafeShoutMessage(t *testing.T) {
 	}
 	if got := SafeShoutMessage(""); got != "hello" {
 		t.Fatalf("empty shout got %q want hello", got)
+	}
+}
+
+func TestSafeShoutMessageUsesProtocolLimitWithoutSplittingUTF8(t *testing.T) {
+	if got := SafeShoutMessage(strings.Repeat("a", 300)); len(got) != 255 {
+		t.Fatalf("ASCII shout length got %d want 255", len(got))
+	}
+
+	got := SafeShoutMessage(strings.Repeat("喊", 100))
+	if !utf8.ValidString(got) {
+		t.Fatal("Chinese shout was truncated inside a UTF-8 character")
+	}
+	if count := utf8.RuneCountInString(got); count != 85 {
+		t.Fatalf("Chinese shout characters got %d want 85", count)
+	}
+	if len(got) != 255 {
+		t.Fatalf("Chinese shout bytes got %d want 255", len(got))
 	}
 }
 

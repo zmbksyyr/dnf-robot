@@ -44,7 +44,9 @@ func SafeShoutMessage(msg string) string {
 	if msg == "" {
 		return "hello"
 	}
-	const maxBytes = 72
+	// World-shout packets store the message length in one byte. Keep the
+	// shared local/world sanitizer within that limit without splitting UTF-8.
+	const maxBytes = 255
 	var b strings.Builder
 	for _, r := range msg {
 		if r < 0x20 {
