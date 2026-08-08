@@ -26,6 +26,7 @@ var marketConfigKeys = map[string]map[string]bool{
 		"equipment_qty_min": true, "equipment_qty_max": true,
 		"equipment_level_min": true, "equipment_level_max": true,
 		"equip_inflate_min": true, "equip_inflate_max": true,
+		"level_price_rate": true, "rarity_price_rate": true,
 		"upgrade_min": true, "upgrade_max": true, "upgrade_price_rate": true,
 		"rand_low": true, "rand_high": true, "custom_price_enabled": true, "custom_price_file": true,
 		"max_actions": true, "max_concurrent": true, "max_result_actions": true, "per_item_delay_ms": true,
@@ -149,7 +150,8 @@ func validateMarketValue(section, key, value string) error {
 		if _, err := strconv.Atoi(value); err != nil {
 			return fmt.Errorf("must be an integer")
 		}
-	case "auction_price.upgrade_price_rate", "auction_price.rand_low", "auction_price.rand_high",
+	case "auction_price.level_price_rate", "auction_price.rarity_price_rate",
+		"auction_price.upgrade_price_rate", "auction_price.rand_low", "auction_price.rand_high",
 		"auction_collect.in_range_probability", "auction_collect.out_of_range_probability":
 		parsed, err := strconv.ParseFloat(value, 64)
 		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {

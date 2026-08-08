@@ -40,6 +40,8 @@ type RestockCfg struct {
 	EquipmentLevelMax        int               `json:"equipment_level_max"`
 	EquipInflateMin          int               `json:"equipment_inflate_min"`
 	EquipInflateMax          int               `json:"equipment_inflate_max"`
+	LevelPriceRate           float64           `json:"level_price_rate"`
+	RarityPriceRate          float64           `json:"rarity_price_rate"`
 	UpgradeMin               int               `json:"upgrade_min"`
 	UpgradeMax               int               `json:"upgrade_max"`
 	UpgradePriceRate         float64           `json:"upgrade_price_rate"`
@@ -170,6 +172,8 @@ type ConfigUpdateRequest struct {
 	EquipmentQtyMax          *int     `json:"equipment_qty_max,omitempty"`
 	EquipInflateMin          *int     `json:"equip_inflate_min,omitempty"`
 	EquipInflateMax          *int     `json:"equip_inflate_max,omitempty"`
+	LevelPriceRate           *float64 `json:"level_price_rate,omitempty"`
+	RarityPriceRate          *float64 `json:"rarity_price_rate,omitempty"`
 	EquipmentLevelMin        *int     `json:"equipment_level_min,omitempty"`
 	EquipmentLevelMax        *int     `json:"equipment_level_max,omitempty"`
 	UpgradeMin               *int     `json:"upgrade_min,omitempty"`

@@ -162,6 +162,12 @@ func (a *App) applyListingConfigLocked(req ConfigUpdateRequest) (Config, error) 
 	if req.EquipInflateMax != nil {
 		cfg.Restock.EquipInflateMax = *req.EquipInflateMax
 	}
+	if req.LevelPriceRate != nil {
+		cfg.Restock.LevelPriceRate = *req.LevelPriceRate
+	}
+	if req.RarityPriceRate != nil {
+		cfg.Restock.RarityPriceRate = *req.RarityPriceRate
+	}
 	if req.UpgradeMin != nil {
 		cfg.Restock.UpgradeMin = *req.UpgradeMin
 	}

@@ -40,6 +40,11 @@ func TestLoadConfigCreatesCommentedINIInConfDirectory(t *testing.T) {
 	if !strings.Contains(text, "blocked_item_ids = ") {
 		t.Fatalf("generated INI lacks blocked item IDs setting:\n%s", text)
 	}
+	for _, recommended := range []string{"equip_inflate_min = 1", "equip_inflate_max = 2", "level_price_rate = 0.15", "rarity_price_rate = 0.3"} {
+		if !strings.Contains(text, recommended) {
+			t.Fatalf("generated INI lacks recommended pricing setting %q:\n%s", recommended, text)
+		}
+	}
 	if strings.Contains(text, "quality_filter =") || strings.Contains(text, "blocked_rarities =") {
 		t.Fatalf("generated INI still contains legacy rarity settings:\n%s", text)
 	}
@@ -152,6 +157,8 @@ equipment_level_min = 40
 equipment_level_max = 70
 equip_inflate_min = 4
 equip_inflate_max = 7
+level_price_rate = 0.2
+rarity_price_rate = 0.4
 upgrade_min = 6
 upgrade_max = 11
 upgrade_price_rate = 0.12
@@ -175,7 +182,7 @@ out_of_range_probability = 0.02
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Restock.EquipmentLevelMin != 40 || cfg.Restock.EquipmentLevelMax != 70 || cfg.Restock.EquipInflateMin != 4 || cfg.Restock.UpgradePriceRate != 0.12 || !cfg.Restock.CustomPriceEnabled {
+	if cfg.Restock.EquipmentLevelMin != 40 || cfg.Restock.EquipmentLevelMax != 70 || cfg.Restock.EquipInflateMin != 4 || cfg.Restock.LevelPriceRate != 0.2 || cfg.Restock.RarityPriceRate != 0.4 || cfg.Restock.UpgradePriceRate != 0.12 || !cfg.Restock.CustomPriceEnabled {
 		t.Fatalf("pricing config=%+v", cfg.Restock)
 	}
 	if cfg.Collector.Enabled || !cfg.Collector.PriceRangeEnabled || cfg.Collector.InRangeProbability != 0.9 || cfg.Collector.OutRangeProbability != 0.02 {

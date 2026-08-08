@@ -121,6 +121,12 @@ func validateMarketConfig(cfg Config) error {
 	if r.EquipInflateMin <= 0 || r.EquipInflateMin > marketConfigMaxInflate || r.EquipInflateMax < r.EquipInflateMin || r.EquipInflateMax > marketConfigMaxInflate {
 		return fmt.Errorf("auction_price equipment multipliers must satisfy 1 <= min <= max <= %d", marketConfigMaxInflate)
 	}
+	if !finiteInRange(r.LevelPriceRate, 0, marketConfigMaxRate) {
+		return fmt.Errorf("auction_price.level_price_rate must be finite and in 0..%d", marketConfigMaxRate)
+	}
+	if !finiteInRange(r.RarityPriceRate, 0, marketConfigMaxRate) {
+		return fmt.Errorf("auction_price.rarity_price_rate must be finite and in 0..%d", marketConfigMaxRate)
+	}
 	if r.UpgradeMin < 0 || r.UpgradeMin > marketConfigMaxUpgrade || r.UpgradeMax < r.UpgradeMin || r.UpgradeMax > marketConfigMaxUpgrade {
 		return fmt.Errorf("auction_price upgrades must satisfy 0 <= min <= max <= %d", marketConfigMaxUpgrade)
 	}

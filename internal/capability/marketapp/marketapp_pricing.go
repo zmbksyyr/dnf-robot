@@ -20,27 +20,31 @@ func (a *App) price(base int32) int32 {
 }
 
 func (a *App) auctionUnitPrice(base int32, isEquipment bool, batchInflate float64, upgrade int) int32 {
-	return a.auctionUnitPriceFor(0, base, isEquipment, batchInflate, upgrade)
+	kind := "stackable"
+	if isEquipment {
+		kind = "equipment"
+	}
+	return a.auctionUnitPriceFor(catalogItem{Kind: kind}, base, batchInflate, upgrade)
 }
 
-func (a *App) auctionUnitPriceFor(itemID uint32, base int32, isEquipment bool, batchInflate float64, upgrade int) int32 {
+func (a *App) auctionUnitPriceFor(item catalogItem, base int32, batchInflate float64, upgrade int) int32 {
 	cfg := a.configSnapshot()
-	if itemID > 0 {
-		if priceRange, ok := a.customPriceRange(itemID); ok {
+	if item.ItemID > 0 {
+		if priceRange, ok := a.customPriceRange(item.ItemID); ok {
 			return a.randomPriceInRange(priceRange.MinPrice, priceRange.MaxPrice)
 		}
-	}
-	if !isEquipment {
-		return a.price(base)
 	}
 	if base <= 0 {
 		base = 1000
 	}
-	if batchInflate <= 0 {
-		batchInflate = 1
+	price := float64(base) * auctionQualityPriceFactor(item, cfg.Restock)
+	if item.Kind == "equipment" {
+		if batchInflate <= 0 {
+			batchInflate = 1
+		}
+		price *= batchInflate
+		price *= 1 + float64(upgrade)*cfg.Restock.UpgradePriceRate
 	}
-	price := float64(base) * batchInflate
-	price *= 1 + float64(upgrade)*cfg.Restock.UpgradePriceRate
 	low, high := cfg.Restock.RandLow, cfg.Restock.RandHigh
 	if low > 0 && high > 0 && low != high {
 		if high < low {
@@ -78,6 +82,7 @@ func (a *App) auctionPriceBounds(item catalogItem) (int32, int32) {
 	}
 	base := float64(marketBasePrice(item))
 	cfg := a.configSnapshot()
+	base *= auctionQualityPriceFactor(item, cfg.Restock)
 	lowRand, highRand := cfg.Restock.RandLow, cfg.Restock.RandHigh
 	if lowRand <= 0 {
 		lowRand = 1
@@ -95,6 +100,20 @@ func (a *App) auctionPriceBounds(item catalogItem) (int32, int32) {
 		}
 	}
 	return boundedAuctionPrice(low), boundedAuctionPrice(high)
+}
+
+func auctionQualityPriceFactor(item catalogItem, cfg RestockCfg) float64 {
+	levelSteps := item.Level / 5
+	if levelSteps < 0 {
+		levelSteps = 0
+	}
+	rarity := item.Rarity
+	if rarity < 0 {
+		rarity = 0
+	}
+	levelFactor := 1 + float64(levelSteps)*cfg.LevelPriceRate
+	rarityFactor := 1 + float64(rarity)*cfg.RarityPriceRate
+	return levelFactor * rarityFactor
 }
 
 func boundedAuctionPrice(price float64) int32 {

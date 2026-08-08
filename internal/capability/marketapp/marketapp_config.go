@@ -33,7 +33,8 @@ func DefaultConfig() Config {
 		Restock: RestockCfg{
 			Comments: defaultRestockComments(), EquipmentAllowedRarities: defaultEquipmentRarities, OtherAllowedRarities: defaultOtherRarities,
 			EquipmentTradePolicy: tradePolicyPermissive, OtherTradePolicy: tradePolicyPermissive, StackSizes: []int{500, 1000, 2000},
-			EquipmentQtyMin: 2, EquipmentQtyMax: 5, EquipInflateMin: 5, EquipInflateMax: 8,
+			EquipmentQtyMin: 2, EquipmentQtyMax: 5, EquipInflateMin: 1, EquipInflateMax: 2,
+			LevelPriceRate: 0.15, RarityPriceRate: 0.30,
 			UpgradeMin: 7, UpgradeMax: 13, UpgradePriceRate: 0.08, RandLow: 0.9, RandHigh: 1.1,
 			MaxActions: defaultMarketMaxActions, MaxConcurrent: 8, MaxResultActions: 200,
 		},
@@ -106,6 +107,8 @@ func decodeMarketINI(ini *foundationconfig.INIConfig) (Config, error) {
 	c.Restock.EquipmentLevelMax = ini.GetInt("auction_price", "equipment_level_max", d.Restock.EquipmentLevelMax)
 	c.Restock.EquipInflateMin = ini.GetInt("auction_price", "equip_inflate_min", d.Restock.EquipInflateMin)
 	c.Restock.EquipInflateMax = ini.GetInt("auction_price", "equip_inflate_max", d.Restock.EquipInflateMax)
+	c.Restock.LevelPriceRate = iniFloat(ini, "auction_price", "level_price_rate", d.Restock.LevelPriceRate)
+	c.Restock.RarityPriceRate = iniFloat(ini, "auction_price", "rarity_price_rate", d.Restock.RarityPriceRate)
 	c.Restock.UpgradeMin = ini.GetInt("auction_price", "upgrade_min", d.Restock.UpgradeMin)
 	c.Restock.UpgradeMax = ini.GetInt("auction_price", "upgrade_max", d.Restock.UpgradeMax)
 	c.Restock.UpgradePriceRate = iniFloat(ini, "auction_price", "upgrade_price_rate", d.Restock.UpgradePriceRate)
@@ -161,6 +164,8 @@ func writeMarketConfig(path string, c Config) error {
 		"# 允许上架的最高装备等级；0 表示不限制最高等级。", fmt.Sprintf("equipment_level_max = %d", c.Restock.EquipmentLevelMax),
 		"# 装备基础价格的最小随机倍率。", fmt.Sprintf("equip_inflate_min = %d", c.Restock.EquipInflateMin),
 		"# 装备基础价格的最大随机倍率。", fmt.Sprintf("equip_inflate_max = %d", c.Restock.EquipInflateMax),
+		"# 物品每提高 5 级相对基础价格增加的比例；0.15 表示增加 15%。", "level_price_rate = " + formatFloat(c.Restock.LevelPriceRate),
+		"# 物品每提高 1 级稀有度相对基础价格增加的比例；0.3 表示增加 30%。", "rarity_price_rate = " + formatFloat(c.Restock.RarityPriceRate),
 		"# 装备随机强化的最低等级。", fmt.Sprintf("upgrade_min = %d", c.Restock.UpgradeMin),
 		"# 装备随机强化的最高等级。", fmt.Sprintf("upgrade_max = %d", c.Restock.UpgradeMax),
 		"# 每级强化的价格加成比例；0.08 表示每级增加 8%。", "upgrade_price_rate = " + formatFloat(c.Restock.UpgradePriceRate),
