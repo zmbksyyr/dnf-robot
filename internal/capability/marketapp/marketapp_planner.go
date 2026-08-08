@@ -22,7 +22,9 @@ func (a *App) planAuction(rows []restockRow, catalog map[uint32]catalogItem, hav
 			continue
 		}
 		row, item := auctionPlanRow(row, catalog)
-		if blockedAuctionItemWithConfig(row.ItemID, a.configSnapshot()) {
+		cfg := a.configSnapshot()
+		allowed := allowedAuctionItemWithConfig(row.ItemID, cfg)
+		if !allowed && blockedAuctionItemWithConfig(row.ItemID, cfg) {
 			result.Skipped = append(result.Skipped, SkippedItem{Market: marketNameAuction, ItemID: row.ItemID, Name: item.Name, Reason: "item_id_blocked"})
 			continue
 		}
@@ -60,6 +62,9 @@ func (a *App) equipmentLevelSkipReason(item catalogItem) string {
 		return ""
 	}
 	cfg := a.configSnapshot()
+	if allowedAuctionItemWithConfig(item.ItemID, cfg) {
+		return ""
+	}
 	if minLevel := cfg.Restock.EquipmentLevelMin; minLevel > 0 && item.Level < minLevel {
 		return "equipment_level_below_min"
 	}

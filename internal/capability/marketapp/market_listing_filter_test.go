@@ -77,6 +77,43 @@ func TestBlockedItemIDsOverrideListingAndExplicitTargets(t *testing.T) {
 	}
 }
 
+func TestAllowedItemIDsBypassUserListingFilters(t *testing.T) {
+	blocked := false
+	cfg := DefaultConfig()
+	cfg.Restock.AllowedItemIDs = []uint32{1002}
+	cfg.Restock.BlockedItemIDs = []uint32{1002}
+	cfg.Restock.EquipmentAllowedRarities = "0"
+	cfg.Restock.EquipmentTradePolicy = tradePolicyStrict
+	cfg.Restock.EquipmentLevelMin = 40
+	cfg.Restock.EquipmentLevelMax = 70
+	item := catalogItem{ItemID: 1002, Kind: "equipment", Slot: "weapon", Attach: "trade", Level: 5, Rarity: 5, NoTrade: true, CanAuction: &blocked}
+
+	if !marketListingAllowedWithConfig(item, cfg) {
+		t.Fatal("allowed item ID did not bypass blacklist, rarity, level, and strict trade filters")
+	}
+	app := testApp(t)
+	app.cfg = cfg
+	result := &PlanResult{}
+	app.planAuction([]restockRow{{ItemID: 1002, SystemPrice: 1000, Quantity: 1, StackSize: 1, Enabled: true}}, map[uint32]catalogItem{1002: item}, map[uint32]int{}, map[uint32]int{}, result)
+	if len(result.Actions) != 1 || len(result.Skipped) != 0 {
+		t.Fatalf("allowed item plan result = %#v", result)
+	}
+}
+
+func TestAllowedItemIDsDoNotBypassUnsafeItemTypes(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Restock.AllowedItemIDs = []uint32{1002}
+	item := catalogItem{ItemID: 1002, Kind: "equipment", ItemType: 23, Slot: "coatavatar", Rarity: 9}
+	if marketListingAllowedWithConfig(item, cfg) {
+		t.Fatal("allowed item ID bypassed avatar safety filter")
+	}
+	app := testApp(t)
+	app.cfg = cfg
+	if app.marketCandidate(item) {
+		t.Fatal("allowed item ID bypassed hard market candidate safety filter")
+	}
+}
+
 func TestStrictTradePolicyBlocksAccountAttach(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Restock.EquipmentTradePolicy = tradePolicyStrict

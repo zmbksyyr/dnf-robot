@@ -400,6 +400,16 @@ func (a *App) UpdateConfig(req ConfigUpdateRequest) (Status, error) {
 	} else if req.BlockedItemIDs != nil {
 		cfg.Restock.BlockedItemIDs = normalizeBlockedItemIDs(req.BlockedItemIDs)
 	}
+	if req.AllowedItemIDExpression != nil {
+		allowed, err := decodeAllowedItemIDs(*req.AllowedItemIDExpression)
+		if err != nil {
+			a.jobMu.Unlock()
+			return Status{}, err
+		}
+		cfg.Restock.AllowedItemIDs = allowed
+	} else if req.AllowedItemIDs != nil {
+		cfg.Restock.AllowedItemIDs = normalizeAllowedItemIDs(req.AllowedItemIDs)
+	}
 	if req.IntervalMS != nil {
 		cfg.Auto.IntervalMS = *req.IntervalMS
 	}

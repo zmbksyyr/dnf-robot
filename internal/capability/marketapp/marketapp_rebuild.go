@@ -141,6 +141,15 @@ func (a *App) applyListingConfigLocked(req ConfigUpdateRequest) (Config, error) 
 	} else if req.BlockedItemIDs != nil {
 		cfg.Restock.BlockedItemIDs = normalizeBlockedItemIDs(req.BlockedItemIDs)
 	}
+	if req.AllowedItemIDExpression != nil {
+		allowed, err := decodeAllowedItemIDs(*req.AllowedItemIDExpression)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Restock.AllowedItemIDs = allowed
+	} else if req.AllowedItemIDs != nil {
+		cfg.Restock.AllowedItemIDs = normalizeAllowedItemIDs(req.AllowedItemIDs)
+	}
 	if req.StackSizes != nil {
 		cfg.Restock.StackSizes = append([]int(nil), req.StackSizes...)
 	}

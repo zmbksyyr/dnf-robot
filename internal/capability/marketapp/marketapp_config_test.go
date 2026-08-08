@@ -40,6 +40,9 @@ func TestLoadConfigCreatesCommentedINIInConfDirectory(t *testing.T) {
 	if !strings.Contains(text, "blocked_item_ids = ") {
 		t.Fatalf("generated INI lacks blocked item IDs setting:\n%s", text)
 	}
+	if !strings.Contains(text, "allowed_item_ids = ") {
+		t.Fatalf("generated INI lacks allowed item IDs setting:\n%s", text)
+	}
 	for _, recommended := range []string{"equip_inflate_min = 1", "equip_inflate_max = 2", "level_price_rate = 0.15", "rarity_price_rate = 0.3"} {
 		if !strings.Contains(text, recommended) {
 			t.Fatalf("generated INI lacks recommended pricing setting %q:\n%s", recommended, text)
@@ -105,6 +108,7 @@ func TestMarketConfigRoundTripsBlockedItemIDs(t *testing.T) {
 	path := layout.New(dir).MarketConfig()
 	cfg := DefaultConfig()
 	cfg.Restock.BlockedItemIDs = []uint32{100, 300}
+	cfg.Restock.AllowedItemIDs = []uint32{200, 400}
 	if err := writeMarketConfig(path, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +118,9 @@ func TestMarketConfigRoundTripsBlockedItemIDs(t *testing.T) {
 	}
 	if got := loaded.Restock.BlockedItemIDs; len(got) != 2 || got[0] != 100 || got[1] != 300 {
 		t.Fatalf("blocked item IDs = %v, want [100 300]", got)
+	}
+	if got := loaded.Restock.AllowedItemIDs; len(got) != 2 || got[0] != 200 || got[1] != 400 {
+		t.Fatalf("allowed item IDs = %v, want [200 400]", got)
 	}
 }
 
@@ -132,6 +139,19 @@ func TestBlockedItemIDRangesParseAndEncode(t *testing.T) {
 		if _, err := decodeBlockedItemIDs(invalid); err == nil {
 			t.Fatalf("invalid blocked expression %q was accepted", invalid)
 		}
+	}
+}
+
+func TestAllowedItemIDRangesParseAndEncode(t *testing.T) {
+	ids, err := decodeAllowedItemIDs("1-3,8,9,10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := encodeAllowedItemIDs(ids); got != "1-3,8-10" {
+		t.Fatalf("encoded allowed IDs = %q", got)
+	}
+	if _, err := decodeAllowedItemIDs("10-8"); err == nil || !strings.Contains(err.Error(), "allowed_item_ids") {
+		t.Fatalf("invalid allowed expression error = %v", err)
 	}
 }
 

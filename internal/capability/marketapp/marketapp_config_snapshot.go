@@ -39,6 +39,7 @@ func cloneConfig(cfg Config) Config {
 	out.ItemInfoTargets = append([]string(nil), cfg.ItemInfoTargets...)
 	out.Restock.Comments = cloneStringMap(cfg.Restock.Comments)
 	out.Restock.BlockedItemIDs = append([]uint32(nil), cfg.Restock.BlockedItemIDs...)
+	out.Restock.AllowedItemIDs = append([]uint32(nil), cfg.Restock.AllowedItemIDs...)
 	out.Restock.StackSizes = append([]int(nil), cfg.Restock.StackSizes...)
 	out.Cera.Comments = cloneStringMap(cfg.Cera.Comments)
 	out.Cera.Items = append([]ceraRow(nil), cfg.Cera.Items...)

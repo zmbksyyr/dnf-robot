@@ -40,6 +40,7 @@ func TestUpdateConfigKeepsIndependentActionLimits(t *testing.T) {
 		RarityPriceRate:        &rarityRate,
 		StackSizes:             []int{100, 500},
 		BlockedItemIDs:         []uint32{300, 100, 300, 0},
+		AllowedItemIDs:         []uint32{400, 200, 400, 0},
 		RestockPerItemDelayMS:  &delay,
 	}); err != nil {
 		t.Fatal(err)
@@ -58,6 +59,9 @@ func TestUpdateConfigKeepsIndependentActionLimits(t *testing.T) {
 	}
 	if got := app.cfg.Restock.BlockedItemIDs; len(got) != 2 || got[0] != 100 || got[1] != 300 {
 		t.Fatalf("blocked item IDs = %v, want [100 300]", got)
+	}
+	if got := app.cfg.Restock.AllowedItemIDs; len(got) != 2 || got[0] != 200 || got[1] != 400 {
+		t.Fatalf("allowed item IDs = %v, want [200 400]", got)
 	}
 }
 
@@ -106,6 +110,25 @@ func TestApplyListingConfigAcceptsBlockedItemRanges(t *testing.T) {
 	for index := range want {
 		if cfg.Restock.BlockedItemIDs[index] != want[index] {
 			t.Fatalf("blocked IDs = %v, want %v", cfg.Restock.BlockedItemIDs, want)
+		}
+	}
+}
+
+func TestApplyListingConfigAcceptsAllowedItemRanges(t *testing.T) {
+	app := testApp(t)
+	app.configPath = appPaths(app).MarketConfig()
+	expression := "2-4,9-11"
+	cfg, err := app.applyListingConfigLocked(ConfigUpdateRequest{AllowedItemIDExpression: &expression})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []uint32{2, 3, 4, 9, 10, 11}
+	if len(cfg.Restock.AllowedItemIDs) != len(want) {
+		t.Fatalf("allowed IDs = %v, want %v", cfg.Restock.AllowedItemIDs, want)
+	}
+	for index := range want {
+		if cfg.Restock.AllowedItemIDs[index] != want[index] {
+			t.Fatalf("allowed IDs = %v, want %v", cfg.Restock.AllowedItemIDs, want)
 		}
 	}
 }

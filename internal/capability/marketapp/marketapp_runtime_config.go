@@ -22,7 +22,7 @@ var marketConfigKeys = map[string]map[string]bool{
 		"id_base": true, "buyer_base": true, "owner_name": true, "cera_name": true, "rotate_every": true,
 	},
 	"auction_price": {
-		"equipment_allowed_rarities": true, "other_allowed_rarities": true, "equipment_trade_policy": true, "other_trade_policy": true, "blocked_item_ids": true, "stack_sizes": true,
+		"equipment_allowed_rarities": true, "other_allowed_rarities": true, "equipment_trade_policy": true, "other_trade_policy": true, "blocked_item_ids": true, "allowed_item_ids": true, "stack_sizes": true,
 		"equipment_qty_min": true, "equipment_qty_max": true,
 		"equipment_level_min": true, "equipment_level_max": true,
 		"equip_inflate_min": true, "equip_inflate_max": true,
@@ -184,6 +184,10 @@ func validateMarketValue(section, key, value string) error {
 		}
 	case "auction_price.blocked_item_ids":
 		if _, err := decodeBlockedItemIDs(value); err != nil {
+			return err
+		}
+	case "auction_price.allowed_item_ids":
+		if _, err := decodeAllowedItemIDs(value); err != nil {
 			return err
 		}
 	case "cera.items":

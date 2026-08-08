@@ -33,6 +33,7 @@ type RestockCfg struct {
 	EquipmentTradePolicy     string            `json:"equipment_trade_policy"`
 	OtherTradePolicy         string            `json:"other_trade_policy"`
 	BlockedItemIDs           []uint32          `json:"blocked_item_ids"`
+	AllowedItemIDs           []uint32          `json:"allowed_item_ids"`
 	StackSizes               []int             `json:"stack_sizes"`
 	EquipmentQtyMin          int               `json:"equipment_qty_min"`
 	EquipmentQtyMax          int               `json:"equipment_qty_max"`
@@ -157,6 +158,8 @@ type ConfigUpdateRequest struct {
 	OtherTradePolicy         *string  `json:"other_trade_policy,omitempty"`
 	BlockedItemIDs           []uint32 `json:"blocked_item_ids,omitempty"`
 	BlockedItemIDExpression  *string  `json:"blocked_item_id_expression,omitempty"`
+	AllowedItemIDs           []uint32 `json:"allowed_item_ids,omitempty"`
+	AllowedItemIDExpression  *string  `json:"allowed_item_id_expression,omitempty"`
 	IntervalMS               *int     `json:"interval_ms,omitempty"`
 	InitialDelayMS           *int     `json:"initial_delay_ms,omitempty"`
 	AutoMaxActions           *int     `json:"auto_max_actions,omitempty"`

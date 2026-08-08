@@ -19,7 +19,13 @@ func (a *App) marketListingAllowed(item catalogItem) bool {
 }
 
 func marketListingAllowedWithConfig(item catalogItem, cfg Config) bool {
-	if item.ItemID == 0 || blockedAuctionItemWithConfig(item.ItemID, cfg) || item.Kind == "blocked" || isAvatarEquipment(item) || !marketRarityAllowedWithConfig(item, cfg) {
+	if item.ItemID == 0 || item.Kind == "blocked" || isAvatarEquipment(item) {
+		return false
+	}
+	if allowedAuctionItemWithConfig(item.ItemID, cfg) {
+		return true
+	}
+	if blockedAuctionItemWithConfig(item.ItemID, cfg) || !marketRarityAllowedWithConfig(item, cfg) {
 		return false
 	}
 	if item.Kind == "equipment" {
@@ -80,7 +86,14 @@ func qualityFilterEnabled(cfg Config) bool {
 }
 
 func blockedAuctionItemWithConfig(itemID uint32, cfg Config) bool {
-	ids := cfg.Restock.BlockedItemIDs
+	return configuredItemIDContains(cfg.Restock.BlockedItemIDs, itemID)
+}
+
+func allowedAuctionItemWithConfig(itemID uint32, cfg Config) bool {
+	return configuredItemIDContains(cfg.Restock.AllowedItemIDs, itemID)
+}
+
+func configuredItemIDContains(ids []uint32, itemID uint32) bool {
 	index := sort.Search(len(ids), func(index int) bool { return ids[index] >= itemID })
 	return index < len(ids) && ids[index] == itemID
 }
