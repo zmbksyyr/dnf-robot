@@ -18,7 +18,10 @@ import (
 	foundationconfig "robot/internal/foundation/config"
 )
 
-const gameMaxUserCacheTTL = 30 * time.Second
+const (
+	gameMaxUserCacheTTL = 30 * time.Second
+	gameMaxUserLimit    = 600
+)
 
 var (
 	maxUserValuePattern   = regexp.MustCompile(`(?m)^\s*max_user_num\s*=\s*([0-9]+)\s*$`)
@@ -68,8 +71,8 @@ func (s *Server) handleMaxUser(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		if req.MaxUserNum <= 0 || req.MaxUserNum > 1000000 {
-			writeJSON(w, map[string]interface{}{"ok": false, "error": "max_user_num must be between 1 and 1000000"})
+		if req.MaxUserNum <= 0 || req.MaxUserNum > gameMaxUserLimit {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "max_user_num must be between 1 and 600"})
 			return
 		}
 		files, changed, err := s.writeMaxUserNum(req.MaxUserNum)
@@ -78,13 +81,11 @@ func (s *Server) handleMaxUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		running := dfGameRRunning()
-		out := map[string]interface{}{"ok": true, "max_user_num": req.MaxUserNum, "files": files, "changed": changed, "running": running, "restart_required": changed && running}
+		out := map[string]interface{}{"ok": true, "max_user_num": req.MaxUserNum, "files": files, "changed": changed, "running": running, "restart_required": changed}
 		if !changed {
 			out["message"] = "max_user_num already configured"
-		} else if running {
-			out["message"] = "max_user_num updated; df_game_r is running, restart df_game_r for the change to take effect"
 		} else {
-			out["message"] = "max_user_num updated"
+			out["message"] = "max_user_num updated; restart /root/run for the change to take effect"
 		}
 		writeJSON(w, out)
 	default:

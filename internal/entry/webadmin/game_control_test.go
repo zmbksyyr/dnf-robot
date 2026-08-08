@@ -2,7 +2,10 @@ package webadmin
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +13,21 @@ import (
 	"robot/internal/foundation/atomicfile"
 	"robot/internal/foundation/config"
 )
+
+func TestMaxUserHandlerRejectsValuesAboveGameLimit(t *testing.T) {
+	server := New(&config.SysConfig{}, "", "")
+	request := httptest.NewRequest(http.MethodPost, "/api/max-user", bytes.NewBufferString(`{"max_user_num":601}`))
+	response := httptest.NewRecorder()
+
+	server.handleMaxUser(response, request)
+	var body map[string]interface{}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["ok"] != false || body["error"] != "max_user_num must be between 1 and 600" {
+		t.Fatalf("response = %#v", body)
+	}
+}
 
 func TestWriteMaxUserNumIsAtomicAndIdempotent(t *testing.T) {
 	root := t.TempDir()

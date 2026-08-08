@@ -205,6 +205,21 @@ func TestPortsDialogUsesStandardFooter(t *testing.T) {
 	}
 }
 
+func TestMaxOnlineIsCappedAndDocumentsServiceRestart(t *testing.T) {
+	for _, want := range []string{
+		`id="maxButton"`,
+		`id="maxUserNum" type="number" min="1" max="600"`,
+		`oninput="clampMaxUserInput(this)"`,
+		"function clampMaxUserInput(input){if(Number(input?.value)>600)input.value='600'}",
+		"Maximum is 600. Changes take effect after restarting /root/run.",
+		"最大为 600，修改后需重启 /root/run 生效。",
+	} {
+		if !strings.Contains(indexHTML+appJS+i18nJS, want) {
+			t.Fatalf("Max online limit or restart note is missing %q", want)
+		}
+	}
+}
+
 func TestMarketFieldsUseOneCompactAlignment(t *testing.T) {
 	for _, want := range []string{
 		"dialog.market .formgrid{grid-template-columns:160px minmax(0,1fr)}",
