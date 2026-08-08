@@ -211,8 +211,9 @@ func TestMaxOnlineIsCappedAndDocumentsServiceRestart(t *testing.T) {
 		`id="maxUserNum" type="number" min="1" max="600"`,
 		`oninput="clampMaxUserInput(this)"`,
 		"function clampMaxUserInput(input){if(Number(input?.value)>600)input.value='600'}",
-		"Maximum is 600. Changes take effect after restarting /root/run.",
-		"最大为 600，修改后需重启 /root/run 生效。",
+		"directory.<br>Maximum is 600. Changes take effect after restarting /root/run.",
+		"directory.&#10;Maximum is 600. Changes take effect after restarting /root/run.",
+		"max_user_num。\\n最大为 600，修改后需重启 /root/run 生效。",
 	} {
 		if !strings.Contains(indexHTML+appJS+i18nJS, want) {
 			t.Fatalf("Max online limit or restart note is missing %q", want)
