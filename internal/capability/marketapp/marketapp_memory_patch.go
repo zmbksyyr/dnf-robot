@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 
+	"robot/internal/foundation/hostprofile"
 	processfoundation "robot/internal/foundation/process"
 )
 
@@ -39,24 +41,47 @@ type locatedAuctionMemoryPatch struct {
 	before     byte
 }
 
+func platformAuctionPatchSpecs() []auctionMemoryPatchSpec {
+	if runtime.GOOS != "windows" || hostprofile.Current().MemoryModel != "refine-banks-31" {
+		return auctionMemoryPatchSpecs
+	}
+	result := append([]auctionMemoryPatchSpec(nil), auctionMemoryPatchSpecs...)
+	for i := range result {
+		switch result[i].name {
+		case "refine_average_price_valid":
+			result[i].value = 7
+		case "refine_search_valid":
+			result[i].value = 31
+		}
+	}
+	return result
+}
+
+func auctionMemoryTarget(pid int) string {
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf("Windows process %d memory", pid)
+	}
+	return fmt.Sprintf("/proc/%d/mem", pid)
+}
+
 // InspectAuctionMemoryPatch reads the running auction process without changing it.
 // It deliberately uses the same version-aware signatures as the writer so web
 // diagnostics cannot drift back to a separate fixed-address implementation.
 func InspectAuctionMemoryPatch() (AuctionMemoryPatchResult, error) {
-	if err := marketPlatformError(); err != nil {
+	if err := marketMemoryPlatformError(); err != nil {
 		return AuctionMemoryPatchResult{}, err
 	}
 	pid, err := pidOfAuction()
 	if err != nil {
 		return AuctionMemoryPatchResult{}, err
 	}
-	result := AuctionMemoryPatchResult{PID: pid, Target: fmt.Sprintf("/proc/%d/mem", pid)}
+	result := AuctionMemoryPatchResult{PID: pid, Target: auctionMemoryTarget(pid)}
 	segments, err := executableSegments(pid, "df_auction_r")
 	if err != nil {
 		return result, err
 	}
 	err = processfoundation.WithMemoryFile(pid, false, segments[0].start, func(mem processfoundation.MemoryFile, _ bool) error {
-		for _, spec := range auctionMemoryPatchSpecs {
+		for _, spec := range platformAuctionPatchSpecs() {
 			entry := AuctionMemoryPatchEntry{Name: spec.name, Expect: spec.expect, Value: spec.value}
 			address, err := locateAuctionPatchAddress(mem, segments, spec)
 			if err != nil {
@@ -98,7 +123,7 @@ func (a *App) PatchAuctionMemory(AuctionMemoryPatchRequest) (AuctionMemoryPatchR
 }
 
 func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
-	if err := marketPlatformError(); err != nil {
+	if err := marketMemoryPlatformError(); err != nil {
 		return AuctionMemoryPatchResult{}, err
 	}
 	pid, err := pidOfAuction()
@@ -107,7 +132,7 @@ func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
 	}
 	result := AuctionMemoryPatchResult{
 		PID:    pid,
-		Target: fmt.Sprintf("/proc/%d/mem", pid),
+		Target: auctionMemoryTarget(pid),
 	}
 	segments, err := executableSegments(pid, "df_auction_r")
 	if err != nil {
@@ -116,7 +141,7 @@ func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
 	err = processfoundation.WithMemoryFile(pid, true, segments[0].start, func(mem processfoundation.MemoryFile, _ bool) error {
 		plans := make([]locatedAuctionMemoryPatch, 0, len(auctionMemoryPatchSpecs))
 		preflightOK := true
-		for _, spec := range auctionMemoryPatchSpecs {
+		for _, spec := range platformAuctionPatchSpecs() {
 			entry := AuctionMemoryPatchEntry{
 				Name:   spec.name,
 				Expect: spec.expect,
@@ -264,6 +289,17 @@ type memorySegment struct {
 }
 
 func executableSegments(pid int, name string) ([]memorySegment, error) {
+	if runtime.GOOS == "windows" {
+		ranges, err := hostprofile.ImageSegments(pid, name)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]memorySegment, 0, len(ranges))
+		for _, r := range ranges {
+			result = append(result, memorySegment{r[0], r[1]})
+		}
+		return result, nil
+	}
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/maps", pid))
 	if err != nil {
 		return nil, err
@@ -296,6 +332,23 @@ func executableSegments(pid int, name string) ([]memorySegment, error) {
 func locateAuctionPatchAddress(mem io.ReaderAt, segments []memorySegment, spec auctionMemoryPatchSpec) (int64, error) {
 	if len(spec.pattern) == 0 || spec.targetOffset < 0 || spec.targetOffset >= len(spec.pattern) {
 		return 0, fmt.Errorf("%s has invalid pattern", spec.name)
+	}
+	if runtime.GOOS == "windows" && hostprofile.Current().MemoryModel == "refine-banks-31" {
+		service, _ := hostprofile.ServiceFor("auction")
+		if service.ImageSHA256 != "b31eafd5068b450929133365f071fc2d0dedc7a8a5b80f9c81da44ce4008290c" {
+			return 0, fmt.Errorf("banked refine model requires the supported auction ELF hash")
+		}
+		// The host has already verified the mapped ELF identity. A short scan
+		// can also match another original predicate with the same new limit;
+		// verify this version's full instruction context at its known address.
+		window := make([]byte, len(spec.pattern))
+		if _, err := mem.ReadAt(window, spec.fallbackAddr-int64(spec.targetOffset)); err != nil {
+			return 0, err
+		}
+		if !patchPatternMatch(window, spec) {
+			return 0, fmt.Errorf("%s original instructions differ at 0x%x", spec.name, spec.fallbackAddr)
+		}
+		return spec.fallbackAddr, nil
 	}
 	matches := make([]int64, 0, 1)
 	for _, segment := range segments {
@@ -351,6 +404,9 @@ func isSupportedAuctionPatchOriginal(spec auctionMemoryPatchSpec, value byte) bo
 }
 
 func pidOfAuction() (int, error) {
+	if runtime.GOOS != "linux" {
+		return marketServicePIDForHost("auction")
+	}
 	out, err := exec.Command("pidof", "df_auction_r").Output()
 	if err != nil {
 		return 0, fmt.Errorf("df_auction_r pid not found: %w", err)

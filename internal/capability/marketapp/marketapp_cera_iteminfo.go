@@ -8,7 +8,9 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
+	"robot/internal/capability/pvf"
 	"robot/internal/foundation/atomicfile"
 )
 
@@ -19,17 +21,63 @@ func loadItemInfoRows(paths []string) (map[uint32][]byte, error) {
 		if path == "" {
 			continue
 		}
-		_, err := scanItemInfoFile(path, func(id uint32, line []byte) bool {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read native iteminfo %s: %w", path, err)
+		}
+		utf8Names := utf8.Valid(data)
+		var rowError error
+		scanItemInfoLines(data, func(id uint32, line []byte) bool {
 			if rows[id] == nil {
-				rows[id] = append([]byte(nil), bytes.TrimRight(line, "\r\n")...)
+				line = bytes.TrimRight(line, "\r\n")
+				if utf8Names {
+					line, rowError = big5ItemInfoRow(id, line)
+				}
+				if rowError != nil {
+					return true
+				}
+				rows[id] = append([]byte(nil), line...)
 			}
 			return false
 		})
-		if err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read native iteminfo %s: %w", path, err)
+		if rowError != nil {
+			return nil, fmt.Errorf("read native iteminfo %s: %w", path, rowError)
 		}
 	}
 	return rows, nil
+}
+
+func big5ItemInfoRow(id uint32, line []byte) ([]byte, error) {
+	var result bytes.Buffer
+	name := 0
+	for len(line) > 0 {
+		start := bytes.IndexByte(line, '`')
+		if start < 0 {
+			result.Write(line)
+			break
+		}
+		result.Write(line[:start])
+		line = line[start+1:]
+		end := bytes.IndexByte(line, '`')
+		if end < 0 {
+			return nil, fmt.Errorf("item %d has an unterminated name", id)
+		}
+		if end == 0 {
+			result.WriteString("``")
+		} else {
+			prefix := "item"
+			if name > 0 {
+				prefix = "name2"
+			}
+			result.WriteString(pvf.EncodeItemInfoName(string(line[:end]), prefix, int(id)))
+		}
+		name++
+		line = line[end+1:]
+	}
+	return result.Bytes(), nil
 }
 
 // mergeItemInfoOverlay keeps the PVF row for duplicate IDs and restores only

@@ -13,6 +13,7 @@ var (
 	openEvent           = kernel32.NewProc("OpenEventW")
 	waitForSingleObject = kernel32.NewProc("WaitForSingleObject")
 	closeHandle         = kernel32.NewProc("CloseHandle")
+	setEvent            = kernel32.NewProc("SetEvent")
 )
 
 const (
@@ -44,4 +45,21 @@ func WaitForStopEvent(name string) (<-chan struct{}, error) {
 		}
 	}()
 	return ch, nil
+}
+
+func SignalReadyEvent(name string) error {
+	ptr, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return err
+	}
+	h, _, openErr := openEvent.Call(eventModifyState, 0, uintptr(unsafe.Pointer(ptr)))
+	if h == 0 {
+		return fmt.Errorf("open ready event: %w", openErr)
+	}
+	defer closeHandle.Call(h)
+	ok, _, callErr := setEvent.Call(h)
+	if ok == 0 {
+		return fmt.Errorf("signal ready event: %w", callErr)
+	}
+	return nil
 }

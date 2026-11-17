@@ -32,7 +32,7 @@ type pvfManifest struct {
 // Bump when the exported catalog semantics change. Version 5 adds creature
 // rows sourced from etc/iteminfo.dat so robot creation can select pets even
 // when the PVF has no standalone equipment/creature/*.equ entry.
-const pvfExportVersion = 5
+const pvfExportVersion = 6
 
 const pvfSkillStateExportVersion = 2
 
@@ -476,8 +476,8 @@ func formatExtendedPVFItemInfoDAT(rawText string, equipment, stackable []shared.
 			continue
 		}
 		fields = append([]string(nil), fields...)
-		fields[14] = encodedItemInfoName(unquoteItemInfoName(fields[14]), "item", id)
-		fields[15] = encodedItemInfoName(unquoteItemInfoName(fields[15]), "name2", id)
+		fields[14] = EncodeItemInfoName(unquoteItemInfoName(fields[14]), "item", id)
+		fields[15] = EncodeItemInfoName(unquoteItemInfoName(fields[15]), "name2", id)
 		rows = append(rows, row{id: id, text: strings.Join(fields, " ")})
 		seen[id] = true
 	}
@@ -499,7 +499,9 @@ func asciiItemInfoName(prefix string, id int) string {
 
 // Taiwan Auction and Point consume ItemInfo names as Big5 bytes. Keep unsafe
 // names on an ASCII fallback so one unsupported rune cannot corrupt the file.
-func encodedItemInfoName(name, fallbackPrefix string, id int) string {
+// EncodeItemInfoName uses the legacy service's Big5 name representation and
+// its safe ASCII fallback for characters or delimiter bytes it cannot accept.
+func EncodeItemInfoName(name, fallbackPrefix string, id int) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return asciiItemInfoName(fallbackPrefix, id)
@@ -507,6 +509,27 @@ func encodedItemInfoName(name, fallbackPrefix string, id int) string {
 	encoded, err := charset.EncodeBig5String(name)
 	if err != nil || len(encoded) == 0 || len(encoded) > 120 {
 		return asciiItemInfoName(fallbackPrefix, id)
+	}
+	// x/text implements the web Big5 repertoire, including HKSCS extensions.
+	// The original services use glibc BIG5, which accepts the base repertoire.
+	// Keep the existing ASCII fallback for names outside that repertoire.
+	for i := 0; i < len(encoded); i++ {
+		lead := encoded[i]
+		if lead < 0x80 {
+			continue
+		}
+		if i+1 == len(encoded) {
+			return asciiItemInfoName(fallbackPrefix, id)
+		}
+		i++
+		trail := encoded[i]
+		if lead < 0xa1 || lead > 0xf9 ||
+			(trail < 0x40 || trail > 0xfe || (trail > 0x7e && trail < 0xa1)) ||
+			(lead == 0xa3 && trail > 0xbf) ||
+			(lead == 0xc6 && trail > 0x7e) || lead == 0xc7 || lead == 0xc8 ||
+			(lead == 0xf9 && trail > 0xd5) {
+			return asciiItemInfoName(fallbackPrefix, id)
+		}
 	}
 	for _, b := range encoded {
 		if b == '`' || b < 0x20 || b == 0x7f {
@@ -557,8 +580,8 @@ func generatedItemInfoFields(item shared.EquipmentCatalogItem, stackable bool) [
 	}
 	fields = append(fields,
 		strconv.Itoa(level),
-		encodedItemInfoName(item.Name, "item", item.ID),
-		encodedItemInfoName(item.Name2, "name2", item.ID),
+		EncodeItemInfoName(item.Name, "item", item.ID),
+		EncodeItemInfoName(item.Name2, "name2", item.ID),
 		strconv.Itoa(generatedItemInfoCategory(item, stackable)),
 	)
 	return fields

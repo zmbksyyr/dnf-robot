@@ -9,3 +9,5 @@ var ErrStopEventUnsupported = errors.New("named stop events are only supported o
 func WaitForStopEvent(_ string) (<-chan struct{}, error) {
 	return nil, ErrStopEventUnsupported
 }
+
+func SignalReadyEvent(_ string) error { return ErrStopEventUnsupported }

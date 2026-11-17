@@ -104,6 +104,14 @@ func EnsureRuntimeKeypair(cfg *config.SysConfig) {
 	}
 }
 
+// CheckGameKeypair only validates the external game's pair, deriving a missing
+// public key from its private key through the existing standalone path. It
+// never prepares Robot-owned files or selects a different default pair.
+func CheckGameKeypair(gameBinary string) error {
+	_, _, err := ensureGameKeypair(&config.SysConfig{DFGameR: gameBinary})
+	return err
+}
+
 func ReleaseDefault(cfg *config.SysConfig) (KeypairStatus, error) {
 	invalidateStatusCache()
 	if err := writeDefaultKeypairToGameAndConfig(cfg); err != nil {

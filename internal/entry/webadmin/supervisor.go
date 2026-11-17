@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"syscall"
 	"time"
 
 	"robot/internal/foundation/config"
@@ -25,7 +24,13 @@ func StartSupervisor(cfg *config.SysConfig) func() {
 			if cmd == nil {
 				return
 			}
+			requestStop, release, err := prepareWebShutdown(cmd)
+			if err != nil {
+				foundationlog.Robotf("web admin shutdown channel failed: %v\n", err)
+				return
+			}
 			if err := cmd.Start(); err != nil {
+				release()
 				foundationlog.Robotf("web admin start failed: %v\n", err)
 				select {
 				case <-stop:
@@ -44,8 +49,8 @@ func StartSupervisor(cfg *config.SysConfig) func() {
 			select {
 			case <-stop:
 				if cmd.Process != nil {
-					if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-						foundationlog.Robotf("web admin SIGTERM failed pid=%d err=%v\n", pid, err)
+					if err := requestStop(); err != nil {
+						foundationlog.Robotf("web admin stop request failed pid=%d err=%v\n", pid, err)
 					}
 					select {
 					case <-waitCh:
@@ -55,8 +60,10 @@ func StartSupervisor(cfg *config.SysConfig) func() {
 						<-waitCh
 					}
 				}
+				release()
 				return
 			case err := <-waitCh:
+				release()
 				foundationlog.Robotf("web admin exited pid=%d err=%v; restarting\n", pid, err)
 				select {
 				case <-stop:

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"robot/internal/capability/pvf"
 	"robot/internal/foundation/layout"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -375,9 +374,6 @@ func (a *App) currentItemInfoEntries() (map[uint32]itemInfoEntry, string, error)
 }
 
 func (a *App) auctionServiceLoadedItemInfo(path string) error {
-	if runtime.GOOS != "linux" {
-		return nil
-	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -390,7 +386,7 @@ func (a *App) auctionServiceLoadedItemInfo(path string) error {
 	if pid <= 0 {
 		return nil
 	}
-	started, err := linuxProcessStartTime(pid)
+	started, err := marketProcessStartTime(pid)
 	if err != nil {
 		return err
 	}

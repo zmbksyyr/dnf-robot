@@ -44,7 +44,17 @@ func runMain() int {
 	webConfigStdin := flag.Bool("web-config-stdin", false, "read the parent runtime config snapshot from stdin")
 	configDirFlag := flag.String("config-dir", "", "instance-owned Robot config directory")
 	stopEventFlag := flag.String("stop-event", "", "Windows named event used for graceful stop")
+	readyEventFlag := flag.String("ready-event", "", "Windows event signaled after managed initialization")
+	checkGameKeysFlag := flag.String("check-game-keypair", "", "validate the key pair beside this game binary, then exit")
 	flag.Parse()
+	if *checkGameKeysFlag != "" {
+		if err := keypair.CheckGameKeypair(*checkGameKeysFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "game key pair invalid: %v\n", err)
+			return 1
+		}
+		fmt.Println("game key pair valid")
+		return 0
+	}
 	if boundedLogSinkRequested() {
 		if err := runBoundedLogSink(os.Stdin); err != nil {
 			fmt.Fprintf(os.Stderr, "bounded log sink failed: %v\n", err)
@@ -54,7 +64,7 @@ func runMain() int {
 	}
 
 	if *webAdminMode {
-		if err := runWebAdmin(*robotAddr, *webAddr, *webConfigStdin); err != nil {
+		if err := runWebAdmin(*robotAddr, *webAddr, *webConfigStdin, *stopEventFlag); err != nil {
 			fmt.Fprintf(os.Stderr, "web admin failed: %v\n", err)
 			return 1
 		}
@@ -100,7 +110,6 @@ func runMain() int {
 	}
 	dnf.LogString(fmt.Sprintf("HOST_PROFILE adapter=%s market_owner=%s created=%t path=%s\n", profile.Adapter, profile.MarketOwner, createdProfile, paths.HostProfile()))
 	hostprofile.Configure(profile)
-	tcpapi.SetHostProfile(profile)
 	dnf.LogString(fmt.Sprintf("NETWORK_CONFIG game=%s:%d setting=%s login_ip=%s relay=%s:%d auction=%s:%d point=%s:%d service_root=%s run_script=%s\n",
 		cfg.RobotConnectIP, cfg.RobotGamePort, cfg.RobotConnectIPSetting, cfg.RobotInnerIP,
 		cfg.RelayHost, cfg.RelayPort, cfg.AuctionHost, cfg.AuctionPort, cfg.PointHost, cfg.PointPort, cfg.ServiceRoot, cfg.ServiceRunScript))
@@ -235,6 +244,12 @@ func runMain() int {
 		}
 		dnf.LogString(fmt.Sprintf("STOP_EVENT_READY name=%s\n", *stopEventFlag))
 	}
+	if *readyEventFlag != "" {
+		if err := process.SignalReadyEvent(*readyEventFlag); err != nil {
+			dnf.LogString(fmt.Sprintf("READY_EVENT_FAILED err=%v\n", err))
+			return 1
+		}
+	}
 	if stopCh == nil {
 		<-sigCh
 	} else {
@@ -249,7 +264,7 @@ func runMain() int {
 	return 0
 }
 
-func runWebAdmin(robotAddr, webAddr string, configFromStdin bool) error {
+func runWebAdmin(robotAddr, webAddr string, configFromStdin bool, stopEvent string) error {
 	var cfg *config.SysConfig
 	if configFromStdin {
 		cfg = &config.SysConfig{}
@@ -276,6 +291,19 @@ func runWebAdmin(robotAddr, webAddr string, configFromStdin bool) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if stopEvent != "" {
+		stopped, err := process.WaitForStopEvent(stopEvent)
+		if err != nil {
+			return err
+		}
+		go func() {
+			select {
+			case <-stopped:
+				stop()
+			case <-ctx.Done():
+			}
+		}()
+	}
 	if err := webadmin.New(cfg, robotAddr, webAddr).Serve(ctx); err != nil {
 		return err
 	}

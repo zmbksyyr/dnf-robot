@@ -95,7 +95,7 @@ func TestFormatExtendedPVFItemInfoDATKeepsRawAndGeneratesPVFItems(t *testing.T) 
 }
 
 func TestEncodedItemInfoNameUsesBig5AndFallsBackSafely(t *testing.T) {
-	got := encodedItemInfoName("粗布襯衫", "item", 10000)
+	got := EncodeItemInfoName("粗布襯衫", "item", 10000)
 	if got == "`item_10000`" {
 		t.Fatal("Big5-compatible PVF name used the fallback")
 	}
@@ -103,13 +103,18 @@ func TestEncodedItemInfoNameUsesBig5AndFallsBackSafely(t *testing.T) {
 	if err != nil || string(decoded) != "粗布襯衫" {
 		t.Fatalf("decoded name = %q err=%v", decoded, err)
 	}
-	if got := encodedItemInfoName("emoji 🚀", "item", 7); got != "`item_7`" {
+	if got := EncodeItemInfoName("emoji 🚀", "item", 7); got != "`item_7`" {
 		t.Fatalf("unencodable name = %q", got)
 	}
-	if got := encodedItemInfoName("bad`name", "item", 8); got != "`item_8`" {
+	for _, name := range []string{"食人魔药水", "针"} {
+		if got := EncodeItemInfoName(name, "item", 11); got != "`item_11`" {
+			t.Fatalf("HKSCS-only name %q was not rejected: %q", name, got)
+		}
+	}
+	if got := EncodeItemInfoName("bad`name", "item", 8); got != "`item_8`" {
 		t.Fatalf("structurally unsafe name = %q", got)
 	}
-	if got := encodedItemInfoName("鋼鐵亡靈長袍", "item", 10577); got != "`item_10577`" {
+	if got := EncodeItemInfoName("鋼鐵亡靈長袍", "item", 10577); got != "`item_10577`" {
 		t.Fatalf("Big5 delimiter byte was not rejected: %q", got)
 	}
 	assertEncodedItemInfoName(t, "有空格 的名稱", 9)
@@ -117,7 +122,7 @@ func TestEncodedItemInfoNameUsesBig5AndFallsBackSafely(t *testing.T) {
 
 func assertEncodedItemInfoName(t *testing.T, name string, id int) {
 	t.Helper()
-	got := encodedItemInfoName(name, "item", id)
+	got := EncodeItemInfoName(name, "item", id)
 	decoded, _, err := transform.Bytes(traditionalchinese.Big5.NewDecoder(), []byte(strings.Trim(got, "`")))
 	if err != nil || string(decoded) != name {
 		t.Fatalf("encoded name %q decoded = %q, err=%v", name, decoded, err)

@@ -7,13 +7,24 @@ import (
 	"robot/internal/foundation/hostprofile"
 )
 
-// marketPlatformError is intentionally small and shared by every operation
-// that needs Linux process discovery or /proc memory access. Windows Robot is
-// still useful for its API, database and PVF features, but it must not report
-// the Linux-only market maintenance as completed.
+// Linux keeps its original process implementation. Windows requires an
+// explicit host profile before any process or memory operation is offered.
 func marketPlatformError() error {
 	if runtime.GOOS != "linux" {
-		return fmt.Errorf("market process and memory maintenance requires Linux; host adapter %q is not supported", hostprofile.Current().Adapter)
+		if hostprofile.WindowsSupported() {
+			return nil
+		}
+		return fmt.Errorf("host adapter %q has no complete Windows service contract", hostprofile.Current().Adapter)
+	}
+	return nil
+}
+
+func marketMemoryPlatformError() error {
+	if runtime.GOOS != "linux" {
+		if hostprofile.WindowsSupported() && hostprofile.Current().Capabilities["memory_patch"] {
+			return nil
+		}
+		return fmt.Errorf("host profile does not support market process memory patches")
 	}
 	return nil
 }

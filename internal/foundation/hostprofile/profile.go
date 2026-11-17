@@ -21,16 +21,14 @@ import (
 const currentVersion = 1
 
 type Service struct {
-	ProcessName         string   `json:"process_name,omitempty"`
-	Executable          string   `json:"executable,omitempty"`
-	CommandLineContains string   `json:"command_line_contains,omitempty"`
-	Port                int      `json:"port,omitempty"`
-	PIDFile             string   `json:"pid_file,omitempty"`
-	Image               string   `json:"image,omitempty"`
-	ImageSHA256         string   `json:"image_sha256,omitempty"`
-	Start               []string `json:"start,omitempty"`
-	Directory           string   `json:"directory,omitempty"`
-	StopEvent           string   `json:"stop_event,omitempty"`
+	ProcessName string   `json:"process_name,omitempty"`
+	Executable  string   `json:"executable,omitempty"`
+	PIDFile     string   `json:"pid_file,omitempty"`
+	Image       string   `json:"image,omitempty"`
+	ImageSHA256 string   `json:"image_sha256,omitempty"`
+	Start       []string `json:"start,omitempty"`
+	Directory   string   `json:"directory,omitempty"`
+	StopEvent   string   `json:"stop_event,omitempty"`
 }
 
 var active struct {
@@ -51,6 +49,7 @@ type Profile struct {
 	Services     map[string]Service `json:"services"`
 	Capabilities map[string]bool    `json:"capabilities"`
 	MarketOwner  string             `json:"market_owner,omitempty"`
+	MemoryModel  string             `json:"memory_model,omitempty"`
 }
 
 func Default(cfg *config.SysConfig) Profile {
@@ -88,11 +87,8 @@ func Validate(p Profile) error {
 		return fmt.Errorf("host profile services are missing")
 	}
 	for name, service := range p.Services {
-		if strings.TrimSpace(name) == "" || (strings.TrimSpace(service.ProcessName) == "" && strings.TrimSpace(service.Executable) == "" && strings.TrimSpace(service.CommandLineContains) == "") {
+		if strings.TrimSpace(name) == "" || (strings.TrimSpace(service.ProcessName) == "" && strings.TrimSpace(service.Executable) == "") {
 			return fmt.Errorf("host profile service %q has no process identity", name)
-		}
-		if service.Port < 0 || service.Port > 65535 {
-			return fmt.Errorf("host profile service %q has invalid port", name)
 		}
 	}
 	if p.MarketOwner != "" && p.MarketOwner != "robot" && p.MarketOwner != "controller" {

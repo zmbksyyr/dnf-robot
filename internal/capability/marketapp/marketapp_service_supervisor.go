@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"robot/internal/foundation/hostprofile"
 )
 
 const (
@@ -154,10 +156,16 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 		return false
 	}
 	status.StartedAt = time.Now()
-	cmdline := marketServiceShellCommand(service.bin, service.args)
-	cmd := exec.Command("/bin/sh", "-c", cmdline)
-	cmd.Dir = service.dir
-	out, err := cmd.CombinedOutput()
+	var out []byte
+	var err error
+	if runtime.GOOS == "windows" {
+		err = hostprofile.StartService(service.name, filepath.Join(a.configDir, "logs", service.name+"-host.log"))
+	} else {
+		cmdline := marketServiceShellCommand(service.bin, service.args)
+		cmd := exec.Command("/bin/sh", "-c", cmdline)
+		cmd.Dir = service.dir
+		out, err = cmd.CombinedOutput()
+	}
 	if err != nil {
 		status.Status = MarketServiceStatusStartFailed
 		status.Message = err.Error()
@@ -166,7 +174,13 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 		return false
 	}
 	a.appendLog(LogEvent{Type: "market_service", Market: service.name, Status: marketLogStatusStart, Message: fmt.Sprintf("addr=%s source=%s output=%s", service.addr, service.source, strings.TrimSpace(string(out)))})
-	deadline := time.Now().Add(30 * time.Second)
+	startupTimeout := 30 * time.Second
+	if runtime.GOOS == "windows" {
+		// A cold ELF host also loads its Linux libraries and converts the full
+		// index. Keep Linux's existing deadline and allow that Windows startup.
+		startupTimeout = 120 * time.Second
+	}
+	deadline := time.Now().Add(startupTimeout)
 	for time.Now().Before(deadline) {
 		if tcpReady(service.addr, 500*time.Millisecond) {
 			status.Listening = true
@@ -323,7 +337,7 @@ func (a *App) refreshMarketServiceStatus(service marketServiceSpec) {
 }
 
 func (a *App) marketServiceStaleItemInfoReason(service marketServiceSpec, pid int) string {
-	if runtime.GOOS != "linux" || pid <= 0 {
+	if pid <= 0 {
 		return ""
 	}
 	path := a.itemInfoTargetForService(service.name)
@@ -334,7 +348,7 @@ func (a *App) marketServiceStaleItemInfoReason(service marketServiceSpec, pid in
 	if err != nil {
 		return ""
 	}
-	started, err := linuxProcessStartTime(pid)
+	started, err := marketProcessStartTime(pid)
 	if err != nil {
 		return ""
 	}
@@ -430,8 +444,8 @@ func marketServicesToRestore(services []marketServiceSpec, running map[string]bo
 }
 
 func (a *App) restartMarketServicesAfterItemInfo(running map[string]bool) error {
-	if runtime.GOOS != "linux" {
-		return marketPlatformError()
+	if runtime.GOOS != "linux" && !hostprofile.WindowsSupported() {
+		return fmt.Errorf("host profile does not support market service lifecycle")
 	}
 	a.serviceMu.Lock()
 	defer a.serviceMu.Unlock()

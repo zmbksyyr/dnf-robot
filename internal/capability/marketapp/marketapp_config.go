@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"robot/internal/foundation/atomicfile"
 	foundationconfig "robot/internal/foundation/config"
+	"robot/internal/foundation/hostprofile"
 	"robot/internal/foundation/layout"
 )
 
@@ -23,12 +26,24 @@ const (
 	tradePolicyStrict                = "strict"
 )
 
+func defaultItemInfoTargets() []string {
+	if runtime.GOOS == "windows" && hostprofile.WindowsSupported() {
+		var paths []string
+		for _, name := range []string{"auction", "point"} {
+			service, _ := hostprofile.ServiceFor(name)
+			paths = append(paths, filepath.Join(filepath.Dir(service.Image), "iteminfo.dat"))
+		}
+		return paths
+	}
+	return []string{"/home/neople/auction/iteminfo.dat", "/home/neople/point/iteminfo.dat", "/home/dxf/auction/iteminfo.dat", "/home/dxf/point/iteminfo.dat"}
+}
+
 func DefaultConfig() Config {
 	return Config{
 		GameDB:    "taiwan_cain_2nd",
 		AuctionDB: "taiwan_cain_auction_gold", CeraDB: "taiwan_cain_auction_cera",
 		AuctionHost: "127.0.0.1", AuctionPort: 30803, CeraHost: "127.0.0.1", CeraPort: 30603,
-		ItemInfoTargets: []string{"/home/neople/auction/iteminfo.dat", "/home/neople/point/iteminfo.dat", "/home/dxf/auction/iteminfo.dat", "/home/dxf/point/iteminfo.dat"},
+		ItemInfoTargets: defaultItemInfoTargets(),
 		SystemOwner:     SystemOwner{IDBase: 90000001, BuyerBase: 90100001, OwnerName: "market", CeraName: "gold", RotateEvery: 10},
 		Collector:       CollectorCfg{Enabled: true, MaxConcurrent: 8, InRangeProbability: 0.8, OutRangeProbability: 0.05},
 		Restock: RestockCfg{

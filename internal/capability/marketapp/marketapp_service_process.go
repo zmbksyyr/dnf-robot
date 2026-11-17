@@ -10,11 +10,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"robot/internal/foundation/hostprofile"
 )
 
 func (a *App) dfGameRRunning() bool {
 	if runtime.GOOS != "linux" {
-		return false
+		pid, err := marketServicePIDForHost("game")
+		return err == nil && pid > 0
 	}
 	name := filepath.Base(strings.TrimSpace(a.dfGameR))
 	if name == "." || name == "/" || name == "" {
@@ -28,7 +31,25 @@ func (a *App) dfGameRRunning() bool {
 	return err == nil && len(strings.Fields(string(out))) > 0
 }
 
+func marketServicePIDForHost(name string) (int, error) {
+	pid, err := hostprofile.ProcessID(name)
+	if err == nil && pid == 0 {
+		err = fmt.Errorf("host service %s is not running", name)
+	}
+	return pid, err
+}
+
+func marketProcessStartTime(pid int) (time.Time, error) {
+	if runtime.GOOS == "windows" {
+		return hostprofile.ProcessStartTime(pid)
+	}
+	return linuxProcessStartTime(pid)
+}
+
 func (a *App) stopMarketServiceForItemInfo(name, addr, bin string) error {
+	if runtime.GOOS != "linux" {
+		return hostprofile.StopService(name)
+	}
 	process := filepath.Base(strings.TrimSpace(bin))
 	if process == "" || process == "." || process == "/" {
 		return fmt.Errorf("%s stop failed: invalid process name %q", name, bin)
@@ -54,6 +75,16 @@ func (a *App) stopMarketServiceForItemInfo(name, addr, bin string) error {
 }
 
 func marketServicePID(bin string) int {
+	if runtime.GOOS != "linux" {
+		for _, name := range []string{"auction", "point"} {
+			s, ok := hostprofile.ServiceFor(name)
+			if ok && filepath.Clean(s.Image) == filepath.Clean(bin) {
+				pid, _ := hostprofile.ProcessID(name)
+				return pid
+			}
+		}
+		return 0
+	}
 	name := filepath.Base(strings.TrimSpace(bin))
 	if name == "" || name == "." || name == "/" {
 		return 0

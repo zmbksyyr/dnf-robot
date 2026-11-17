@@ -170,7 +170,7 @@ func (a *App) runAutoOnce(ctx context.Context) {
 	cfg := a.configSnapshot()
 	a.ensureMarketTables(time.Now())
 	if marketOwnedByController() {
-		message := "market maintenance is owned by the dnf-native controller"
+		message := "market maintenance is owned by the host controller"
 		a.appendLog(LogEvent{Type: "auto", Status: marketLogStatusSkipped, Message: message})
 		for _, market := range cfg.Auto.Markets {
 			a.markMarketPolicyBlocked(market, message)

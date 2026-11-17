@@ -6,7 +6,38 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"robot/internal/foundation/charset"
 )
+
+func TestItemInfoOverlayNormalizesUTF8NamesAndPreservesBig5(t *testing.T) {
+	dir := t.TempDir()
+	utf := filepath.Join(dir, "utf8.dat")
+	if err := os.WriteFile(utf, []byte("1001 2 `百萬金幣` `` 13002\n1002 2 `emoji 🚀` `` 13002\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := loadItemInfoRows([]string{utf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := charset.EncodeBig5String("百萬金幣")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(rows[1001], encoded) || !bytes.Contains(rows[1002], []byte("`item_1002`")) {
+		t.Fatalf("rows=%q", rows)
+	}
+	big5 := filepath.Join(dir, "big5.dat")
+	original := append([]byte("1001 2 `"), encoded...)
+	original = append(original, []byte("` `` 13002")...)
+	if err := os.WriteFile(big5, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = loadItemInfoRows([]string{big5})
+	if err != nil || !bytes.Equal(rows[1001], original) {
+		t.Fatalf("Big5 changed: %q %v", rows[1001], err)
+	}
+}
 
 func TestMergeItemInfoOverlayUsesPVFAndRetainsOriginalOnlyRows(t *testing.T) {
 	pvf := []byte("1001 0 `pvf_only`\r\n2675336 2 `pvf_gold`\r\n")

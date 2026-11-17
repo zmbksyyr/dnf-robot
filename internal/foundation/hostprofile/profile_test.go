@@ -31,10 +31,10 @@ func TestValidateRejectsUnknownMarketOwner(t *testing.T) {
 	}
 }
 
-func TestValidateAllowsCommandLineIdentity(t *testing.T) {
+func TestValidateRejectsMissingProcessIdentity(t *testing.T) {
 	p := Default(nil)
-	p.Services["game"] = Service{CommandLineContains: "df_game_r"}
-	if err := Validate(p); err != nil {
-		t.Fatalf("command-line service identity rejected: %v", err)
+	p.Services["game"] = Service{}
+	if err := Validate(p); err == nil {
+		t.Fatal("service without a process identity accepted")
 	}
 }
