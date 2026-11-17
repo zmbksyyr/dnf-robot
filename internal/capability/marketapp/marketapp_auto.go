@@ -169,6 +169,21 @@ func (a *App) runAutoOnceSafely(ctx context.Context) {
 func (a *App) runAutoOnce(ctx context.Context) {
 	cfg := a.configSnapshot()
 	a.ensureMarketTables(time.Now())
+	if marketOwnedByController() {
+		message := "market maintenance is owned by the dnf-native controller"
+		a.appendLog(LogEvent{Type: "auto", Status: marketLogStatusSkipped, Message: message})
+		for _, market := range cfg.Auto.Markets {
+			a.markMarketPolicyBlocked(market, message)
+		}
+		return
+	}
+	if err := marketPlatformError(); err != nil {
+		a.appendLog(LogEvent{Type: "auto", Status: marketLogStatusFailed, Message: err.Error()})
+		for _, market := range cfg.Auto.Markets {
+			a.markMarketPolicyBlocked(market, err.Error())
+		}
+		return
+	}
 	markets := cfg.Auto.Markets
 	if len(markets) == 0 {
 		markets = []string{marketNameAuction, marketNameCera}

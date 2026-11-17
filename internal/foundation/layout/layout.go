@@ -8,7 +8,9 @@ import (
 )
 
 // Paths is the single source of truth for every Robot-owned runtime file.
-// Root is always the config directory next to the Robot executable.
+// Root is the instance-owned Robot runtime directory. Standalone launches
+// default to the directory next to the executable; managed launches may pass
+// an explicit instance directory.
 type Paths struct {
 	Root      string
 	Conf      string
@@ -58,6 +60,16 @@ func FromExecutable(executable string) (Paths, error) {
 	return paths, nil
 }
 
+// FromConfigDir anchors Robot runtime files to an explicit instance directory.
+// The directory is never inferred from the current working directory.
+func FromConfigDir(root string) (Paths, error) {
+	paths := New(root)
+	if !paths.Valid() {
+		return Paths{}, fmt.Errorf("invalid config directory %q", root)
+	}
+	return paths, nil
+}
+
 func (p Paths) Ensure() error {
 	if !p.Valid() {
 		return fmt.Errorf("config root must be absolute")
@@ -76,6 +88,7 @@ func (p Paths) Ensure() error {
 func (p Paths) MainConfig() string         { return categorizedPath(p.Conf, "config.ini") }
 func (p Paths) RobotConfig() string        { return categorizedPath(p.Conf, "robot_config.ini") }
 func (p Paths) MarketConfig() string       { return categorizedPath(p.Conf, "market_config.ini") }
+func (p Paths) HostProfile() string        { return categorizedPath(p.Conf, "host-profile.json") }
 func (p Paths) MarketPrices() string       { return categorizedPath(p.Conf, "market_item_price_ranges.json") }
 func (p Paths) MailboxGuard() string       { return categorizedPath(p.Conf, "compat.json") }
 func (p Paths) PartyCompatibility() string { return categorizedPath(p.Conf, "party_compat.json") }

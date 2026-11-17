@@ -43,6 +43,9 @@ type locatedAuctionMemoryPatch struct {
 // It deliberately uses the same version-aware signatures as the writer so web
 // diagnostics cannot drift back to a separate fixed-address implementation.
 func InspectAuctionMemoryPatch() (AuctionMemoryPatchResult, error) {
+	if err := marketPlatformError(); err != nil {
+		return AuctionMemoryPatchResult{}, err
+	}
 	pid, err := pidOfAuction()
 	if err != nil {
 		return AuctionMemoryPatchResult{}, err
@@ -95,6 +98,9 @@ func (a *App) PatchAuctionMemory(AuctionMemoryPatchRequest) (AuctionMemoryPatchR
 }
 
 func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
+	if err := marketPlatformError(); err != nil {
+		return AuctionMemoryPatchResult{}, err
+	}
 	pid, err := pidOfAuction()
 	if err != nil {
 		return AuctionMemoryPatchResult{}, err

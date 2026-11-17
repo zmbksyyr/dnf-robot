@@ -33,7 +33,7 @@ func boundedLogSettings() (int64, int, error) {
 	if maxBytes > 0 && backups > 0 {
 		return maxBytes, backups, nil
 	}
-	configPath, _, err := runtimeConfigPaths()
+	configPath, _, err := runtimeConfigPaths("")
 	if err != nil {
 		return 0, 0, fmt.Errorf("resolve bounded log config: %w", err)
 	}

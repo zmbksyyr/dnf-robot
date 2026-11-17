@@ -14,7 +14,7 @@ import (
 
 func (a *App) dfGameRRunning() bool {
 	if runtime.GOOS != "linux" {
-		return true
+		return false
 	}
 	name := filepath.Base(strings.TrimSpace(a.dfGameR))
 	if name == "." || name == "/" || name == "" {

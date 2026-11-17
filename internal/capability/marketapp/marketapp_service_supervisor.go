@@ -431,8 +431,7 @@ func marketServicesToRestore(services []marketServiceSpec, running map[string]bo
 
 func (a *App) restartMarketServicesAfterItemInfo(running map[string]bool) error {
 	if runtime.GOOS != "linux" {
-		a.appendLog(LogEvent{Type: "iteminfo_restart", Status: marketLogStatusSkipped, Message: "market service restart is linux only"})
-		return nil
+		return marketPlatformError()
 	}
 	a.serviceMu.Lock()
 	defer a.serviceMu.Unlock()

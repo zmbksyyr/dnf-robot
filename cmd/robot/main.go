@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"robot/internal/entry/webadmin"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/filewatch"
+	"robot/internal/foundation/hostprofile"
 	"robot/internal/foundation/layout"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/foundation/network"
@@ -40,6 +42,8 @@ func runMain() int {
 	robotAddr := flag.String("robot-addr", "", "robot TCP address for web admin")
 	webAddr := flag.String("web-addr", "", "web admin listen address")
 	webConfigStdin := flag.Bool("web-config-stdin", false, "read the parent runtime config snapshot from stdin")
+	configDirFlag := flag.String("config-dir", "", "instance-owned Robot config directory")
+	stopEventFlag := flag.String("stop-event", "", "Windows named event used for graceful stop")
 	flag.Parse()
 	if boundedLogSinkRequested() {
 		if err := runBoundedLogSink(os.Stdin); err != nil {
@@ -59,7 +63,7 @@ func runMain() int {
 
 	dnf.PrintfGreen("robot starting...\n")
 
-	configPath, configDir, err := runtimeConfigPaths()
+	configPath, configDir, err := runtimeConfigPaths(*configDirFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "resolve config path error: %v\n", err)
 		return 1
@@ -88,6 +92,15 @@ func runMain() int {
 		dnf.LogClose()
 	}()
 	dnf.LogString(fmt.Sprintf("ROBOT_CONFIG path=%s config_dir=%s\n", configPath, cfg.ConfigDir))
+	profile, createdProfile, err := hostprofile.LoadOrDetect(paths.HostProfile(), cfg)
+	if err != nil {
+		dnf.LogString(fmt.Sprintf("HOST_PROFILE_LOAD_FAILED path=%s err=%v\n", paths.HostProfile(), err))
+		dnf.PrintfRed("host profile load failed: %v\n", err)
+		return 1
+	}
+	dnf.LogString(fmt.Sprintf("HOST_PROFILE adapter=%s market_owner=%s created=%t path=%s\n", profile.Adapter, profile.MarketOwner, createdProfile, paths.HostProfile()))
+	hostprofile.Configure(profile)
+	tcpapi.SetHostProfile(profile)
 	dnf.LogString(fmt.Sprintf("NETWORK_CONFIG game=%s:%d setting=%s login_ip=%s relay=%s:%d auction=%s:%d point=%s:%d service_root=%s run_script=%s\n",
 		cfg.RobotConnectIP, cfg.RobotGamePort, cfg.RobotConnectIPSetting, cfg.RobotInnerIP,
 		cfg.RelayHost, cfg.RelayPort, cfg.AuctionHost, cfg.AuctionPort, cfg.PointHost, cfg.PointPort, cfg.ServiceRoot, cfg.ServiceRunScript))
@@ -213,7 +226,24 @@ func runMain() int {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
-	<-sigCh
+	var stopCh <-chan struct{}
+	if *stopEventFlag != "" {
+		stopCh, err = process.WaitForStopEvent(*stopEventFlag)
+		if err != nil {
+			dnf.LogString(fmt.Sprintf("STOP_EVENT_LOAD_FAILED name=%s err=%v\n", *stopEventFlag, err))
+			return 1
+		}
+		dnf.LogString(fmt.Sprintf("STOP_EVENT_READY name=%s\n", *stopEventFlag))
+	}
+	if stopCh == nil {
+		<-sigCh
+	} else {
+		select {
+		case <-sigCh:
+		case <-stopCh:
+			dnf.LogString("STOP_EVENT_RECEIVED\n")
+		}
+	}
 
 	logRobotActionf("robot stopping...\n")
 	return 0
@@ -227,7 +257,7 @@ func runWebAdmin(robotAddr, webAddr string, configFromStdin bool) error {
 			return fmt.Errorf("decode parent runtime config snapshot: %w", err)
 		}
 	} else {
-		configPath, configDir, err := runtimeConfigPaths()
+		configPath, configDir, err := runtimeConfigPaths("")
 		if err != nil {
 			return fmt.Errorf("resolve config path: %w", err)
 		}
@@ -252,12 +282,17 @@ func runWebAdmin(robotAddr, webAddr string, configFromStdin bool) error {
 	return nil
 }
 
-func runtimeConfigPaths() (string, string, error) {
+func runtimeConfigPaths(override string) (string, string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", "", err
 	}
-	paths, err := layout.FromExecutable(exe)
+	var paths layout.Paths
+	if strings.TrimSpace(override) != "" {
+		paths, err = layout.FromConfigDir(override)
+	} else {
+		paths, err = layout.FromExecutable(exe)
+	}
 	if err != nil {
 		return "", "", err
 	}

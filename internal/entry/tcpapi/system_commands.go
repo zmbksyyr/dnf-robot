@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"runtime/pprof"
 
+	"robot/internal/foundation/hostprofile"
 	"robot/internal/scheduler"
 )
 
@@ -41,6 +42,8 @@ func handleSystemCommand(cmd, pkt string, manager *scheduler.RobotManager) (stri
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.OperationStatus()}), true
 	case "systemStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.SystemStatus()}), true
+	case "hostProfileStatus":
+		return wrapResult(map[string]interface{}{"ok": true, "result": hostprofile.Current()}), true
 	case "systemAnnouncement":
 		return monitorAnnouncement(pkt, manager, scheduler.SystemAnnouncementWebNoticeSingle), true
 	case "goroutineDump":
