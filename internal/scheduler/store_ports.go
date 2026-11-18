@@ -258,6 +258,7 @@ func (e storeMaintenanceEnv) RobotLocations() ([]shared.MapLocation, error) {
 func (e storeMaintenanceEnv) ResetPrivateStore(uid int) {
 	if e.manager.doll != nil {
 		e.manager.doll.ResetPrivateStore(uid)
+		e.manager.invalidateRuntimeStatusCache()
 	}
 }
 

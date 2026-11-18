@@ -4,8 +4,66 @@ import (
 	"testing"
 	"time"
 
+	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 )
+
+type manualAttachRuntime struct {
+	partyWaitRuntime
+	logins           int
+	loginBeforeStore bool
+}
+
+func (r *manualAttachRuntime) OnlineNoConfirm(uid int) robotcap.ActionResult {
+	r.logins++
+	return r.partyWaitRuntime.OnlineNoConfirm(uid)
+}
+
+func (r *manualAttachRuntime) Store(uid int) robotcap.ActionResult {
+	r.loginBeforeStore = r.logins != 0
+	return r.partyWaitRuntime.Store(uid)
+}
+
+func TestManualAttachmentWaitsForExplicitLogin(t *testing.T) {
+	runtime := &manualAttachRuntime{}
+	a := NewActor(1, ModeManual, runtime)
+	a.resetForUID(101)
+	for i := 0; i < 3; i++ {
+		a.tick(time.Now().Add(time.Duration(i) * time.Second))
+	}
+	if snap := a.snapshot(); snap.OnlineDesired || snap.State != StateOffline || runtime.logins != 0 {
+		t.Fatalf("attachment logged in before a command: %+v logins=%d", snap, runtime.logins)
+	}
+	if result := a.handleCommand(CommandOnline); !result.OK {
+		t.Fatalf("online command failed: %+v", result)
+	}
+	a.tick(time.Now())
+	if runtime.logins != 1 || !a.snapshot().OnlineDesired {
+		t.Fatalf("explicit online did not log in: snapshot=%+v logins=%d", a.snapshot(), runtime.logins)
+	}
+}
+
+func TestManualStoreDoesNotPreloginButRetainsOnlineIntent(t *testing.T) {
+	runtime := &manualAttachRuntime{}
+	a := NewActor(1, ModeManual, runtime)
+	a.resetForUID(101)
+	a.tick(time.Now())
+	result := a.handleCommand(CommandStore)
+	if !result.OK || runtime.stores != 1 || runtime.loginBeforeStore || !a.snapshot().OnlineDesired {
+		t.Fatalf("store result=%+v stores=%d preliminary_login=%t snapshot=%+v", result, runtime.stores, runtime.loginBeforeStore, a.snapshot())
+	}
+}
+
+func TestAutomaticAdoptionLogsInAttachedOfflineManualActor(t *testing.T) {
+	runtime := &manualAttachRuntime{}
+	a := NewActor(1, ModeManual, runtime)
+	a.resetForUID(101)
+	a.SetMode(ModeAuto)
+	a.tick(time.Now())
+	if !a.snapshot().OnlineDesired || runtime.logins != 1 {
+		t.Fatalf("automatic adoption did not start login: %+v logins=%d", a.snapshot(), runtime.logins)
+	}
+}
 
 func TestOfflineActorKeepsUIDAttached(t *testing.T) {
 	a := NewActor(1, ModeAuto, &partyWaitRuntime{})

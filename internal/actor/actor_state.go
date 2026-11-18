@@ -31,10 +31,14 @@ func (a *Actor) resetForUID(uid int) {
 	a.busy = false
 	a.busyKind = ""
 	a.releaseRequested = false
-	a.onlineDesired = uid > 0
+	// A manual attachment reserves ownership; its explicit command decides
+	// when to log in. Otherwise attaching a batch bypasses the login/store pace.
+	a.onlineDesired = uid > 0 && a.mode == ModeAuto
 	a.quarantined = false
-	if uid > 0 {
+	if a.onlineDesired {
 		a.state = StateAssigned
+	} else if uid > 0 {
+		a.state = StateOffline
 	} else {
 		a.state = StateIdle
 	}
@@ -239,6 +243,12 @@ func (a *Actor) modeValue() Mode {
 
 func (a *Actor) SetMode(mode Mode) {
 	a.stateMu.Lock()
+	if a.mode != mode && mode == ModeAuto && a.uid > 0 {
+		a.onlineDesired = true
+		if a.state == StateOffline {
+			a.state = StateAssigned
+		}
+	}
 	a.mode = mode
 	a.stateMu.Unlock()
 }

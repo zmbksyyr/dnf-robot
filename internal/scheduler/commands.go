@@ -114,7 +114,54 @@ func (m *RobotManager) ShoutBothManaged(req robotcap.CommandRequest) (robotcap.C
 func (m *RobotManager) StoreManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {
 	m.mutationMu.RLock()
 	defer m.mutationMu.RUnlock()
-	return m.actorCommandManaged(req, actormodel.CommandStore, "store")
+	registry, robots, rc, early, err := m.prepareUserActorCommand(req, "store", true)
+	if err != nil || early != nil {
+		return resultOrZero(early), err
+	}
+	return m.storeActors(registry, robots, rc), nil
+}
+
+func (m *RobotManager) storeActors(registry actorRegistry, robots []robotcap.Info, rc robotconfig.RuntimeConfig) robotcap.CommandResult {
+	// A store command includes offline preparation, login and server replies.
+	// Independent actors can wait together, within the existing store limit.
+	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
+	items := make([]robotcap.ActionResult, len(robots))
+	accepted := make([]bool, len(robots))
+	slots := make(chan struct{}, normalizedStoreConcurrent(rc))
+	var work sync.WaitGroup
+	for i, robot := range robots {
+		slots <- struct{}{}
+		if m.isShuttingDown() {
+			<-slots
+			for j := i; j < len(robots); j++ {
+				items[j] = robotActionResult(robots[j], false, robotcap.ActionStateCancelled, "robot is shutting down")
+			}
+			break
+		}
+		work.Add(1)
+		go func(i int, robot robotcap.Info) {
+			defer work.Done()
+			defer func() { <-slots }()
+			items[i], accepted[i] = registry.Command(robot.UID, actormodel.CommandStore, timeout)
+		}(i, robot)
+	}
+	work.Wait()
+	result := robotcap.NewCommandResult(len(robots))
+	for i, robot := range robots {
+		item := items[i]
+		item.CID = robot.CID
+		if accepted[i] && item.OK {
+			result.Accepted++
+			if item.State != robotcap.ActionStatePending {
+				result.Confirmed++
+			}
+			result.Robots = append(result.Robots, item)
+		} else {
+			result.Failed++
+			result.Robots = append(result.Robots, failedActorResult(robot, item, "store actor command failed"))
+		}
+	}
+	return result
 }
 
 func (m *RobotManager) LogoutManaged(req robotcap.CommandRequest) (robotcap.CommandResult, error) {

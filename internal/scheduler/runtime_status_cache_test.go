@@ -24,6 +24,30 @@ type mapStatusRuntime struct {
 
 type storeStartingRuntime struct{ mapStatusRuntime }
 
+func (r *storeStartingRuntime) ResetPrivateStore(uid int) bool {
+	st := r.statuses[uid]
+	st.RobotType = 0
+	st.StoreCreated, st.StoreCreateRejected, st.StoreDisplayAck, st.StoreDisplayRejected = false, false, false, false
+	st.LastStoreError = 0
+	r.statuses[uid] = st
+	return true
+}
+
+func TestStoreCleanupDoesNotPublishCachedPendingState(t *testing.T) {
+	runtime := &storeStartingRuntime{mapStatusRuntime{statuses: map[int]robotcap.RuntimeStatus{
+		1001: {UID: 1001, StateName: robotcap.RuntimeStateRunning, RobotType: 2, StoreCreateRejected: true, LastStoreError: 0x3e},
+	}}}
+	manager := NewRobotManager(nil, nil, runtime)
+	if manager.runtimeStatusMap()[1001].RobotType != 2 {
+		t.Fatal("pending store was not cached")
+	}
+	(storeMaintenanceEnv{manager: manager}).ResetPrivateStore(1001)
+	st := manager.runtimeStatusMap()[1001]
+	if st.RobotType != 0 || st.StoreCreateRejected || st.LastStoreError != 0 {
+		t.Fatalf("cleanup still publishes the failed store: %+v", st)
+	}
+}
+
 func (r *storeStartingRuntime) StartPrivateStore(uid int, _ string) bool {
 	st := r.statuses[uid]
 	st.StoreCreated, st.StoreCreateRejected, st.StoreDisplayAck, st.StoreDisplayRejected = false, false, false, false

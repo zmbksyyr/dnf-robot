@@ -78,6 +78,7 @@ func (a *Actor) handleCommand(cmd Command) robotcap.ActionResult {
 		// own confirmed login. A preliminary login here makes the workflow log
 		// straight back out and can leave some DFGamer variants reusing the old
 		// inventory snapshot on the second login.
+		a.setOnlineDesired(true)
 		res := a.runtime.Store(uid)
 		if res.OK {
 			rc := a.runtime.Config()
