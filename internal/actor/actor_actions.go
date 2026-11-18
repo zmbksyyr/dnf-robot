@@ -159,10 +159,13 @@ func (a *Actor) tick(now time.Time) {
 		foundationlog.Robotf("[Actor] store_expire_recovered slot=%d uid=%d grace=%s\n", a.slotIDValue(), uid, grace)
 	}
 	if isStore && a.storeExpired(now) {
+		var result robotcap.ActionResult
 		a.runBusy("store_expire", func() {
-			a.runtime.ExpireStore(uid)
+			result = a.runtime.ExpireStore(uid)
 		})
-		a.clearStoreUntil()
+		if result.State != robotcap.ActionStateStoreBusy {
+			a.clearStoreUntil()
+		}
 		return
 	}
 	if a.modeValue() != ModeAuto {

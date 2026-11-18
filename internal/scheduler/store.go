@@ -167,6 +167,12 @@ func (m *RobotManager) restoreAutoNormalOnline(info robotcap.Info, rc robotconfi
 	}
 	result, err := m.sessionService().Online(robotcap.CommandRequest{UIDs: []int{normal.UID}}, true, rc)
 	recovered := err == nil && result.Confirmed == 1
+	if recovered {
+		// The session ACK can precede town entry. Keep the store slot until
+		// the original character is running, including its inventory load.
+		_, err = m.waitCharacterRunning(normal.UID, nil)
+		recovered = err == nil
+	}
 	elapsedMS := time.Since(started).Milliseconds()
 	if !recovered {
 		robotLogf("[AutoStore] uid=%d restore_normal_online_failed reason=%s confirmed=%d failed=%d elapsed_ms=%d err=%v\n",

@@ -14,6 +14,38 @@ type storeCleanupCall struct {
 	reason string
 }
 
+type deferredExpiryRuntime struct {
+	*partyWaitRuntime
+	busy bool
+}
+
+func (r *deferredExpiryRuntime) ExpireStore(uid int) robotcap.ActionResult {
+	r.expires++
+	if r.busy {
+		return robotcap.ActionResult{UID: uid, State: robotcap.ActionStateStoreBusy}
+	}
+	return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateStoreExpired}
+}
+
+func TestExpiredStoreRetriesWithoutLosingDeadlineWhenBudgetIsBusy(t *testing.T) {
+	runtime := &deferredExpiryRuntime{partyWaitRuntime: &partyWaitRuntime{
+		status: robotcap.RuntimeStatus{UID: 101, CID: 201, StateName: robotcap.RuntimeStateRunning, RobotType: 2},
+	}, busy: true}
+	a := NewActor(1, ModeAuto, runtime)
+	a.resetForUID(101)
+	now := time.Now()
+	a.setStoreUntil(now.Add(-time.Second))
+	a.tick(now)
+	if runtime.expires != 1 || !a.storeExpired(now) {
+		t.Fatal("busy expiry lost its deadline instead of leaving the stall online")
+	}
+	runtime.busy = false
+	a.tick(now)
+	if runtime.expires != 2 || !a.storeUntilMissing() {
+		t.Fatal("expiry did not retry and clear the deadline after completion")
+	}
+}
+
 type storeCleanupRuntime struct {
 	*partyWaitRuntime
 	cleanups []storeCleanupCall

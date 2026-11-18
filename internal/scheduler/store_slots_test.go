@@ -2,10 +2,27 @@ package scheduler
 
 import (
 	"testing"
+	"time"
 
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 )
+
+func TestStoreExpirySharesPreparationBudgetBeforeAnyLogout(t *testing.T) {
+	manager := testRobotManagerWithConfig(t, "[auto]\nauto_target_online_count = 600\n")
+	manager.runtimeStatusCache = map[int]robotcap.RuntimeStatus{
+		17000001: {UID: 17000001, CID: 2001, StateName: robotcap.RuntimeStateRunning, RobotType: 2},
+	}
+	manager.runtimeStatusCacheAt = time.Now()
+	manager.autoStoreActive = normalizedStoreConcurrent(manager.loadRobotConfig())
+	result := NewRobotRuntime(manager).ExpireStore(17000001)
+	if result.OK || result.State != robotcap.ActionStateStoreBusy {
+		t.Fatalf("expiry bypassed the active preparation budget: %+v", result)
+	}
+	if manager.autoStats.StoreExpired != 0 {
+		t.Fatal("deferred expiry was counted as completed")
+	}
+}
 
 func TestAutoStoreSlotLimitChangePreservesActiveCount(t *testing.T) {
 	manager := &RobotManager{}
