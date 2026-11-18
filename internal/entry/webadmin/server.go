@@ -105,8 +105,14 @@ func (s *Server) Serve(ctx context.Context) error {
 	if host, _, err := net.SplitHostPort(s.webAddr); err == nil && (host == "" || host == "0.0.0.0" || host == "::") {
 		foundationlog.Robotf("WEB_SECURITY_WARNING reason=all_interfaces addr=%s\n", s.webAddr)
 	}
+	return s.serveHTTP(ctx, server)
+}
+
+func (s *Server) serveHTTP(ctx context.Context, server *http.Server) error {
 	serveDone := make(chan struct{})
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		select {
 		case <-ctx.Done():
 			s.stopServerScript()
@@ -123,6 +129,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	}()
 	err := server.ListenAndServe()
 	close(serveDone)
+	// ListenAndServe returns as soon as Shutdown closes its listener. The Web
+	// child must stay alive until active handlers have sent their responses.
+	<-shutdownDone
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
