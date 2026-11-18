@@ -253,3 +253,18 @@ Go 全仓测试、双平台构建、Linux Actor/Scheduler 定向回归及旧代�
 `../x/dnf-gm-output/evidence/store-batch-final-summary.json`、
 `store-batch-before-after.json` 及对应原始业务记录。本轮无宿主专用分支，
 未改原 ELF 或 Native 运行时。
+
+## 摆摊会话拒绝补充验证（2026-11-19）
+
+沿用上述 Windows Native、授权 Linux 原 ELF 和独立数据库副本，直接使用
+Robot 真实登录、CMD 88 创建及正常保存/下线协议，不通过调度器补齐授权。
+同一满级无公会角色、固定合法坐标在两端分别得到：无权限 `0x3f`，有权限
+创建成功，交易处罚 `0x72`。账号相关行均事先备份、验证恢复，全部离线后
+逐表恢复并核对；不代表覆盖所有账号保护或新的 600 人负载。
+
+既有生产分类保持不变。扩展 store 回归，确认 `0x3f`/`0x72` 不触发换点、
+不污染持久化选点数据，另一个账号仍可取得该点；两平台 store 包测试通过。
+双端不能同时占用 Windows 回环监听，避免 WSL 转发接错目标；最终测试分开
+运行，另核对监听及同库实际在线状态，首次串连结果不计入结论。证据索引为
+Native 仓库外 `../x/dnf-gm-output/evidence/store-session-final-summary.json`。
+本阶段仅补测试与记录，没有更改正式 Robot 运行文件。

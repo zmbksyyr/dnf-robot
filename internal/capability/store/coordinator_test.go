@@ -85,6 +85,8 @@ func TestStoreErrReasonRetryClassification(t *testing.T) {
 		{reason: "store_err_0x3e", want: true},
 		{reason: StoreReasonErr052, want: true},
 		{reason: StoreReasonErr011, want: false},
+		{reason: "store_err_0x3f", want: false},
+		{reason: "store_err_0x72", want: false},
 		{reason: "store_err_0x7f", want: false},
 		{reason: StoreReasonRuntimeStopped, want: false},
 	}
@@ -95,24 +97,28 @@ func TestStoreErrReasonRetryClassification(t *testing.T) {
 	}
 }
 
-func TestStoreErr011DoesNotPollutePointExploration(t *testing.T) {
-	configDir := t.TempDir()
-	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
-	c := newTestPointCoordinator(configDir, nil)
-	first, ok := c.Claim(1001)
-	if !ok {
-		t.Fatalf("first claim failed")
-	}
-	c.Report(1001, first, false, StoreReasonErr011)
-	c.Flush()
+func TestStoreSessionErrorsDoNotPollutePointExploration(t *testing.T) {
+	for _, reason := range []string{StoreReasonErr011, "store_err_0x3f", "store_err_0x72"} {
+		t.Run(reason, func(t *testing.T) {
+			configDir := t.TempDir()
+			writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
+			c := newTestPointCoordinator(configDir, nil)
+			first, ok := c.Claim(1001)
+			if !ok {
+				t.Fatal("first claim failed")
+			}
+			c.Report(1001, first, false, reason)
+			c.Flush()
 
-	reloaded := newTestPointCoordinator(configDir, nil)
-	next, ok := reloaded.Claim(1002)
-	if !ok {
-		t.Fatalf("second claim failed")
-	}
-	if next.PointID != first.PointID || next.Source != PointSourceUnknown {
-		t.Fatalf("0x11 polluted point state: got point=%s source=%s want point=%s source=%s", next.PointID, next.Source, first.PointID, PointSourceUnknown)
+			reloaded := newTestPointCoordinator(configDir, nil)
+			next, ok := reloaded.Claim(1002)
+			if !ok {
+				t.Fatal("second claim failed")
+			}
+			if next.PointID != first.PointID || next.Source != PointSourceUnknown {
+				t.Fatalf("%s polluted point state: got point=%s source=%s want point=%s source=%s", reason, next.PointID, next.Source, first.PointID, PointSourceUnknown)
+			}
+		})
 	}
 }
 
