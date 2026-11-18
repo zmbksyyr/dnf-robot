@@ -157,6 +157,9 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 				continue
 			}
 			st, ok := status[result.Robots[i].UID]
+			if ok && (st.StoreCreateRejected || st.StoreDisplayRejected) {
+				continue
+			}
 			if !ok || !st.StoreDisplayAck {
 				allDone = false
 				break
@@ -179,6 +182,9 @@ func (w Workflow) Store(req robotcap.CommandRequest) (robotcap.CommandResult, er
 		} else {
 			result.Robots[i].State = robotcap.ActionStateNotConfirmed
 			result.Robots[i].Message = "store state not confirmed"
+			if st, ok := status[result.Robots[i].UID]; ok && (st.StoreCreateRejected || st.StoreDisplayRejected) {
+				result.Robots[i].Message = StoreErrReason(st.LastStoreError)
+			}
 			result.Failed++
 			env.FinishStoreState(result.Robots[i].UID, result.Robots[i].CID, StoreReasonNotConfirmed)
 		}
@@ -216,7 +222,7 @@ func (w Workflow) AutoUntilSuccess(st robotcap.RuntimeStatus, rc robotconfig.Run
 	points := env.StorePoints()
 	finalReason := StoreReasonFailed
 	attempts := 0
-	allowedPosition := func(pos Position) bool { return shared.GenericAreaAllowed(info.GuildID, pos.Village) }
+	allowedPosition := func(pos Position) bool { return shared.StoreAreaAllowed(info.GuildID, pos.Village) }
 	firstPos, ok := points.ClaimForItemStoreWhere(info.UID, rc.AutoStoreDurationSec, allowedPosition)
 	if !ok {
 		points.Flush()

@@ -31,14 +31,14 @@ func TestFilterGenericAreaMapsKeepsGuildAgitForNonMembers(t *testing.T) {
 	}
 }
 
-func TestDisjointAreaPolicyKeepsMovementAndGuildRules(t *testing.T) {
+func TestStoreAreaPolicyKeepsMovementAndGuildRules(t *testing.T) {
 	for _, guildID := range []int{0, -1, 2} {
-		if DisjointAreaAllowed(guildID, 7) {
-			t.Fatalf("disjoint store allowed in village 7 for guild %d", guildID)
+		if StoreAreaAllowed(guildID, 7) {
+			t.Fatalf("store allowed in village 7 for guild %d", guildID)
 		}
 		for _, village := range []int{1, 6, GuildAgitVillage, 9} {
-			if got, want := DisjointAreaAllowed(guildID, village), GenericAreaAllowed(guildID, village); got != want {
-				t.Fatalf("guild %d village %d: disjoint=%v movement=%v", guildID, village, got, want)
+			if got, want := StoreAreaAllowed(guildID, village), GenericAreaAllowed(guildID, village); got != want {
+				t.Fatalf("guild %d village %d: store=%v movement=%v", guildID, village, got, want)
 			}
 		}
 		if !GenericAreaAllowed(guildID, 7) {

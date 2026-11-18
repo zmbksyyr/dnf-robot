@@ -79,7 +79,7 @@ func TestExtractPVFLevelExpStopsAtFirstDecrease(t *testing.T) {
 	}
 }
 
-func TestPVFExportsCurrentInvalidatesOldSkillStateSchema(t *testing.T) {
+func TestPVFExportsCurrentInvalidatesOldSchemas(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string][]byte{
 		"equipment_catalog.json": []byte(`[{"item_type": 20}]`),
@@ -100,6 +100,14 @@ func TestPVFExportsCurrentInvalidatesOldSkillStateSchema(t *testing.T) {
 	}
 	manifestPath := filepath.Join(dir, "pvf_manifest.json")
 	old := want
+	old.Version = pvfExportVersion - 1
+	if err := WriteJSON(manifestPath, old); err != nil {
+		t.Fatal(err)
+	}
+	if pvfExportsCurrent(manifestPath, want, dir) {
+		t.Fatal("old catalog schema was treated as current")
+	}
+	old = want
 	old.SkillStateVersion = 0
 	if err := WriteJSON(manifestPath, old); err != nil {
 		t.Fatal(err)

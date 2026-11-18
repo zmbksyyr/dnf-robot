@@ -107,6 +107,59 @@ func (e *cancellingWorkflowEnv) RestoreAutoNormalOnline(info robotcap.Info, _ ro
 
 func (e *cancellingWorkflowEnv) Logf(string, ...interface{}) {}
 
+func TestAutoItemStoreSkipsForbiddenVillage(t *testing.T) {
+	dir := t.TempDir()
+	writeStoreMapCatalog(t, dir, []shared.MapCatalogItem{{Village: 7, Area: 1, Use: true}})
+	env := &cancellingWorkflowEnv{points: newTestPointCoordinator(dir, nil)}
+	got := (Workflow{Env: env}).AutoUntilSuccess(robotcap.RuntimeStatus{UID: 1001}, robotconfig.RuntimeConfig{}, nil)
+	if got != AutoAttemptBusy || env.finished != 0 || env.started != 0 {
+		t.Fatalf("forbidden village reached session preparation: result=%v finished=%d started=%d", got, env.finished, env.started)
+	}
+}
+
+type rejectedManualStoreEnv struct {
+	WorkflowEnv
+	started     bool
+	statusCalls int
+	finished    int
+}
+
+func (*rejectedManualStoreEnv) SelectRobots(robotcap.CommandRequest) ([]robotcap.Info, error) {
+	return []robotcap.Info{{UID: 1001, CID: 2001}}, nil
+}
+func (*rejectedManualStoreEnv) Config() robotconfig.RuntimeConfig {
+	return robotconfig.RuntimeConfig{StoreConfirmTimeoutSec: 1}
+}
+func (*rejectedManualStoreEnv) BeginStoreBusy(int) bool                           { return true }
+func (*rejectedManualStoreEnv) EndStoreBusy(int)                                  {}
+func (*rejectedManualStoreEnv) WaitAccountOffline(int, func() bool) (bool, error) { return false, nil }
+func (*rejectedManualStoreEnv) EnsureStoreInventoryAndStall(robotcap.Info, robotconfig.RuntimeConfig) error {
+	return nil
+}
+func (*rejectedManualStoreEnv) InvalidateCharacterCache(int) error { return nil }
+func (*rejectedManualStoreEnv) Online(robotcap.CommandRequest, bool) (robotcap.CommandResult, error) {
+	return robotcap.CommandResult{Robots: []robotcap.ActionResult{{UID: 1001, OK: true, State: robotcap.ActionStateRunning}}}, nil
+}
+func (*rejectedManualStoreEnv) StoreTitle(int, robotconfig.RuntimeConfig) string { return "test" }
+func (e *rejectedManualStoreEnv) StartPrivateStore(int, string) bool             { e.started = true; return true }
+func (*rejectedManualStoreEnv) MarkStoreStarted(int) error                       { return nil }
+func (e *rejectedManualStoreEnv) FinishStoreState(int, int, string)              { e.finished++ }
+func (e *rejectedManualStoreEnv) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {
+	e.statusCalls++
+	if !e.started {
+		return nil
+	}
+	return map[int]robotcap.RuntimeStatus{1001: {StateName: robotcap.RuntimeStateRunning, StoreCreateRejected: true, LastStoreError: 0x3e}}
+}
+
+func TestManualStoreReportsExplicitRejectionWithoutWaitingForTimeout(t *testing.T) {
+	env := &rejectedManualStoreEnv{}
+	result, err := (Workflow{Env: env}).Store(robotcap.CommandRequest{UIDs: []int{1001}})
+	if err != nil || result.Failed != 1 || result.Confirmed != 0 || len(result.Robots) != 1 || result.Robots[0].Message != "store_err_0x3e" || env.statusCalls > 3 || env.finished != 1 {
+		t.Fatalf("result=%+v err=%v status calls=%d finished=%d", result, err, env.statusCalls, env.finished)
+	}
+}
+
 func TestAutoStoreCancellationRestoresAfterOfflineBarrier(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, Use: true}})

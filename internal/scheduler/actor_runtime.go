@@ -232,7 +232,7 @@ func (r *RobotRuntime) autoDisjointStore(uid int, st robotcap.RuntimeStatus, sho
 	}
 	var failureState storecap.AttemptFailureState
 	reuseSession := false
-	allowedPosition := func(pos storecap.Position) bool { return shared.DisjointAreaAllowed(info.GuildID, pos.Village) }
+	allowedPosition := func(pos storecap.Position) bool { return shared.StoreAreaAllowed(info.GuildID, pos.Village) }
 	for try := 1; try <= tries; try++ {
 		if shouldStop != nil && shouldStop() {
 			points.DiscardAttemptFailure(uid, &failureState)

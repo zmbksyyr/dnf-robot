@@ -203,3 +203,26 @@ Windows 核对账号全离线，Linux 独立 SQL 连续 15 秒确认全离线。
 `graceful-save-active-windows.private.json`、
 `robot-shutdown-graceful-save-active-linux.private.json`、
 `robot-graceful-save-all-tests.log` 和 `graceful-save-linux-tests.log`。
+
+## 摆摊区域权限与明确拒绝（2026-11-19）
+
+只读参考 rednf 的区域装载、交易检查与普通摊创建逻辑后，独立核对固定原 ELF：
+`0x08e2b451` 为 `[use private store]`，区域权限关闭时 `0x086c4614` 返回
+`0x3e`；普通摊在 `0x085c54b1` 检查村庄 7。参考文件哈希、原 ELF 反汇编和
+独立实现差异记录于 Native 仓库外 `store-permission-source-study.json`。
+
+Robot 的 PVF 导出现在读取区域交易开关，关闭时同时排除普通摊选点与探测，
+保留普通移动；导出版本升为 8，旧目录自动重建。原分解摊村庄策略改名为公共
+`StoreAreaAllowed`，普通自动摊同样排除村庄 7。没有修改原 ELF 或复制参考实现。
+手动摆摊遇到明确的创建／展示拒绝时结束等待，并返回实际错误码。
+
+Windows 10 x64 19044 Native 与授权的 Linux 5.10.16.3 WSL2 原版 ELF 副本
+分开运行满级测试角色：各 8 个相同坐标，村庄 7、根特皇宫均返回 `0x3e`，其余
+6 点展示确认成功。包括过去曾被拒绝的根特、悬空海港、素喃坐标，不能因一次
+`0x3e` 将其永久屏蔽。该定点对照不覆盖所有地图或会话状态，也不是新一轮
+600 人负载测试。Go 全仓测试、双平台构建与旧生产代码 overlay 回归通过。
+
+原始记录为 `store-permission-{windows,linux}-actual-final.private.json`。
+Windows 定点业务完成后，辅助清理的重复批量登出与停服发生重叠，原失败保留；
+随后停下 game，按快照恢复并逐表复核，记录为
+`store-permission-windows-cleanup-recovery.json`。Linux 收尾自动恢复并复核快照。

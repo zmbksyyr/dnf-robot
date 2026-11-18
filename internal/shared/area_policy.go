@@ -9,9 +9,9 @@ func GenericAreaAllowed(guildID, village int) bool {
 	return guildID == 0 || village != GuildAgitVillage
 }
 
-// DisjointAreaAllowed also excludes village 7: the original game rejects
-// disjoint stores there before checking coordinates. Movement remains allowed.
-func DisjointAreaAllowed(guildID, village int) bool {
+// StoreAreaAllowed also excludes village 7: the original game rejects both
+// item and disjoint stores there before checking coordinates.
+func StoreAreaAllowed(guildID, village int) bool {
 	return village != 7 && GenericAreaAllowed(guildID, village)
 }
 

@@ -29,9 +29,9 @@ type pvfManifest struct {
 	Runtime           interface{} `json:"runtime,omitempty"`
 }
 
-// Version 7 decodes complete text samples and resolves n_string references.
-// Rebuild older catalogs automatically, including cached town and item names.
-const pvfExportVersion = 7
+// Version 8 also honors each town area's private-store permission. Rebuild old
+// catalogs automatically so previously exported forbidden areas are excluded.
+const pvfExportVersion = 8
 
 const pvfSkillStateExportVersion = 2
 

@@ -160,6 +160,38 @@ func TestParseTownAreasMarksExplicitPVP(t *testing.T) {
 	}
 }
 
+func TestExtractMapListHonorsPrivateStoreFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name, flag, kind string
+		store, probe     bool
+	}{
+		{"default normal", "", "normal", true, false},
+		{"disabled normal", "`[use private store]`\n0\n", "normal", false, false},
+		{"disabled probe", "`[use private store]`\n0\n", "pub", false, false},
+		{"enabled normal", "`[use private store]`\n1\n", "normal", true, false},
+		{"nonzero normal", "[use private store] -2\n", "normal", true, false},
+		{"enabled probe", "`[use private store]`\n1\n", "pub", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &pvfArchive{files: map[string]*pvfFile{
+				"town/town.lst": {Data: []byte("1 `Example.twn`")},
+				"town/example.twn": {Data: []byte("[name]\n`Example`\n[area]\n0 `Example/Ready.map`\n" +
+					tc.flag + "`[" + tc.kind + "]`\n[/area]\n[end]\n")},
+				"map/example/ready.map": {Data: []byte("[virtual movable area]\n10 20 300 100\n[/virtual movable area]\n")},
+			}}
+			maps := extractMapList(a, "town/town.lst", "town/")
+			if len(maps) != 1 {
+				t.Fatalf("maps=%+v", maps)
+			}
+			m := maps[0]
+			if !m.Use || !*m.NormalEligible || *m.StoreEligible != tc.store || *m.StoreProbe != tc.probe {
+				t.Fatalf("use=%v normal=%v store=%v probe=%v; want movement preserved, store=%v probe=%v",
+					m.Use, *m.NormalEligible, *m.StoreEligible, *m.StoreProbe, tc.store, tc.probe)
+			}
+		})
+	}
+}
+
 func TestTownMapMovableBoundsUsesVirtualRectangles(t *testing.T) {
 	body := "[town movable area]\n10 100 20 40 2 1 500 120 30 50 2 2\n" +
 		"900 140 40 20 3 0\n[/town movable area]\n" +

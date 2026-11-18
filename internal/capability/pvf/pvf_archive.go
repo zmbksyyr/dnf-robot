@@ -446,8 +446,8 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 			rectangles := townMapMovableRectangles(mapBody)
 			xMin, xMax, yMin, yMax, coordinateReady := townMapMovableBounds(mapBody)
 			normalEligible := coordinateReady && area.Kind != "pvp"
-			storeEligible := coordinateReady && area.Kind == "normal"
-			storeProbe := coordinateReady && area.Kind == "other"
+			storeEligible := coordinateReady && area.UsePrivateStore && area.Kind == "normal"
+			storeProbe := coordinateReady && area.UsePrivateStore && area.Kind == "other"
 			out = append(out, shared.MapCatalogItem{
 				Village: entry.ID, VillageName: villageName, Area: area.ID, Level: level,
 				XMin: xMin, XMax: xMax, YMin: yMin, YMax: yMax, Rectangles: rectangles, Use: coordinateReady, Gate: area.Gate,
