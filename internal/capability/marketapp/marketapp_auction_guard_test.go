@@ -56,7 +56,7 @@ func TestUpsertAuctionSearchGuardUpgradesLegacyBlock(t *testing.T) {
 	}
 }
 
-func TestAuctionSearchGuardOnlyOverlaysTrackedSocketData(t *testing.T) {
+func TestAuctionSearchGuardPreservesSocketsWithoutNativeItemDereference(t *testing.T) {
 	source := auctionSearchGuardSource
 	for _, forbidden := range []string{
 		"Interceptor.attach",
@@ -70,19 +70,19 @@ func TestAuctionSearchGuardOnlyOverlaysTrackedSocketData(t *testing.T) {
 	if !strings.Contains(source, "Interceptor.replace(target, replacement)") {
 		t.Fatal("guard must install only its explicit replacement")
 	}
-	check := strings.Index(source, "socketData.add(0).readU8() === 0")
-	copy := strings.Index(source, "Memory.copy(src.add(106 + 137 * i), socketData, 30)")
-	if check < 0 || copy < 0 || check > copy {
-		t.Fatal("guard must verify a DP2 socket record before overlaying native bytes")
+	for _, unsafeCall := range []string{
+		"CItem_getItemGroupName",
+		"CDataManager_find_item",
+	} {
+		if strings.Contains(source, unsafeCall) {
+			t.Fatalf("guard must not dereference untrusted native item data: %q", unsafeCall)
+		}
+	}
+	if !strings.Contains(source, "api_get_jewel_socket_data(mysql_frida, equipmentId)") || !strings.Contains(source, "Memory.copy(src.add(106 + 137 * i), socketData, 30)") {
+		t.Fatal("socket overlay was lost")
 	}
 	if !strings.Contains(source, "return nativeSearch(dispatcher, user, src, a4)") {
 		t.Fatal("guard must finish through the native auction search function")
-	}
-	if !strings.Contains(source, "if (equipmentId <= 1)") {
-		t.Fatal("guard must skip DP2 lookups for ordinary Robot equipment sentinels")
-	}
-	if !strings.Contains(source, "if (overlayActive)") || !strings.Contains(source, "overlayActive = false") {
-		t.Fatal("guard must bypass socket overlay when the native search callback re-enters")
 	}
 }
 

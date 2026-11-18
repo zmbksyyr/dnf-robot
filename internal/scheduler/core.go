@@ -188,10 +188,20 @@ func (m *RobotManager) BeginBackgroundWork() (func(), bool) {
 	return func() { once.Do(m.backgroundWG.Done) }, true
 }
 
-func (m *RobotManager) stopAndWaitBackgroundWork() {
+func (m *RobotManager) RequestShutdown() {
 	m.backgroundMu.Lock()
 	m.shuttingDown = true
 	m.backgroundMu.Unlock()
+}
+
+func (m *RobotManager) isShuttingDown() bool {
+	m.backgroundMu.Lock()
+	defer m.backgroundMu.Unlock()
+	return m.shuttingDown
+}
+
+func (m *RobotManager) stopAndWaitBackgroundWork() {
+	m.RequestShutdown()
 	m.backgroundWG.Wait()
 }
 

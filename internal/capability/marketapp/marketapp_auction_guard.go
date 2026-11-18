@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+
+	"robot/internal/foundation/hostprofile"
 	"strings"
 
 	"robot/internal/foundation/atomicfile"
@@ -21,7 +25,7 @@ const auctionSearchGuardBackupCount = 3
 const auctionSearchGuardSource = auctionSearchGuardBegin + `
 function DP2_AUCTION_SEARCH_HOOK_GUARD_REPLACE(target, ignoredReplacement) {
     var root = (typeof globalThis !== 'undefined') ? globalThis : this;
-    var key = '__dp2_auction_search_hook_guard_v6__';
+    var key = '__dp2_auction_search_hook_guard_v7__';
     if (root[key]) {
         return;
     }
@@ -34,62 +38,33 @@ function DP2_AUCTION_SEARCH_HOOK_GUARD_REPLACE(target, ignoredReplacement) {
         ['pointer', 'pointer', 'pointer', 'int'],
         { abi: 'sysv' }
     );
+    // Packet reads raise JS exceptions on invalid memory. Do not call CItem
+    // methods here: absent PVF items return NULL and the old hook crashed the
+    // process before JavaScript could catch it. Socket rows are sufficient to
+    // decide whether an equipment instance has an overlay.
     var overlayActive = false;
     var replacement = new NativeCallback(function (dispatcher, user, src, a4) {
-        if (overlayActive) {
-            return nativeSearch(dispatcher, user, src, a4);
-        }
+        if (overlayActive) return nativeSearch(dispatcher, user, src, a4);
         overlayActive = true;
         try {
             try {
-                if (!src.isNull() &&
-                    typeof G_CDataManager === 'function' &&
-                    typeof CDataManager_find_item === 'function' &&
-                    typeof CItem_getItemGroupName === 'function' &&
-                    typeof api_get_jewel_socket_data === 'function') {
+                if (!src.isNull() && typeof api_get_jewel_socket_data === 'function' &&
+                    typeof mysql_frida !== 'undefined') {
                     var count = src.add(5).readU8();
                     if (count <= 100) {
                         for (var i = 0; i < count; i++) {
                             var itemId = src.add(54 + 137 * i).readU32();
-                            if (itemId === 0) {
-                                continue;
-                            }
                             var equipmentId = src.add(76 + 137 * i).readU32();
-
-                            // Robot-created ordinary equipment uses 1 as its
-                            // no-instance sentinel. It can never reference a
-                            // DP2 jewel row, so avoid a synchronous SQL lookup
-                            // for every result while users rapidly change pages.
-                            if (equipmentId <= 1) {
-                                continue;
-                            }
-                            var item = CDataManager_find_item(G_CDataManager(), itemId);
-                            if (item.isNull()) {
-                                continue;
-                            }
-                            var group = CItem_getItemGroupName(item);
-                            if (group <= 0 || group >= 59) {
-                                continue;
-                            }
+                            if (itemId === 0 || equipmentId <= 1) continue;
                             var socketData = api_get_jewel_socket_data(mysql_frida, equipmentId);
-
-                            // api_get_jewel_socket_data always allocates a buffer.
-                            // Byte zero is its actual "record exists" indicator.
-                            // Preserve native bytes for normal/untracked equipment.
-                            if (socketData.isNull() || socketData.add(0).readU8() === 0) {
-                                continue;
-                            }
-                            Memory.copy(src.add(106 + 137 * i), socketData, 30);
+                            if (!socketData.isNull() && socketData.readU8() !== 0)
+                                Memory.copy(src.add(106 + 137 * i), socketData, 30);
                         }
                     }
                 }
-            } catch (e) {
-                console.log('[dp2 guard] socket overlay skipped: ' + e);
-            }
+            } catch (e) { console.log('[dp2 guard] socket overlay skipped: ' + e); }
             return nativeSearch(dispatcher, user, src, a4);
-        } finally {
-            overlayActive = false;
-        }
+        } finally { overlayActive = false; }
     }, 'int', ['pointer', 'pointer', 'pointer', 'int']);
 
     Interceptor.replace(target, replacement);
@@ -99,13 +74,22 @@ function DP2_AUCTION_SEARCH_HOOK_GUARD_REPLACE(target, ignoredReplacement) {
 
 `
 
+// AuctionSearchGuardPath follows the existing service-root convention on the
+// Windows ELF host; ordinary Linux installations keep their original path.
+func AuctionSearchGuardPath(serviceRoot string) string {
+	if runtime.GOOS == "windows" && hostprofile.Enabled() && serviceRoot != "" {
+		return filepath.Join(filepath.Dir(filepath.Dir(serviceRoot)), "dp2", "df_game_r.js")
+	}
+	return defaultDFGameRJSPath
+}
+
 func (a *App) InstallAuctionSearchGuard(req AuctionSearchGuardRequest) (AuctionSearchGuardResult, error) {
 	a.patchMu.Lock()
 	defer a.patchMu.Unlock()
 
 	path := strings.TrimSpace(req.Path)
 	if path == "" {
-		path = defaultDFGameRJSPath
+		path = AuctionSearchGuardPath(a.serviceRoot)
 	}
 	result := AuctionSearchGuardResult{Path: path}
 	if strings.TrimSpace(a.configDir) == "" {

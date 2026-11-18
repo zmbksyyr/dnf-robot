@@ -8,12 +8,14 @@ import (
 	"math/rand"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/filewatch"
+	"robot/internal/foundation/hostprofile"
 	"robot/internal/foundation/layout"
 	"robot/internal/foundation/lockhub"
 	"robot/internal/foundation/logfile"
@@ -211,6 +213,12 @@ func New(db *sql.DB, sys *config.SysConfig, executors ActionExecutorFactory) (*A
 		lifecycleCancel:    lifecycleCancel,
 	}
 	app.setConfig(cfg)
+	if runtime.GOOS == "windows" && hostprofile.Enabled() {
+		if _, err := app.InstallAuctionSearchGuard(AuctionSearchGuardRequest{}); err != nil {
+			lifecycleCancel()
+			return nil, fmt.Errorf("prepare auction search guard: %w", err)
+		}
+	}
 	app.refreshCustomPriceRanges()
 	app.itemInfo = app.ensureConfiguredCeraItemInfo()
 	app.ensureMarketTables(time.Now())

@@ -123,6 +123,11 @@ func TestPartyPeerLifecycle(t *testing.T) {
 
 func TestSetPartyPeersKeepsAccountOnlyRobotPeers(t *testing.T) {
 	vo := &RobotVo{State: StateRun}
+	vo.mu.Lock()
+	defer func() {
+		vo.stopPartySupervisorUnsafe()
+		vo.mu.Unlock()
+	}()
 	vo.setPartyPeersUnsafe([]partyIPPeer{
 		{uniqueID: 7, accID: 18000000, slot: 0, slotKnown: true},
 		{accID: 17000026, slot: 2, slotKnown: true},
@@ -162,6 +167,11 @@ func TestPartySelfSnapshotMergesAnonymousEndpointUpdate(t *testing.T) {
 
 func TestPartyRealtimeIdentityCompletesPartialIPSnapshot(t *testing.T) {
 	vo := &RobotVo{UID: 17000026, State: StateRun}
+	vo.mu.Lock()
+	defer func() {
+		vo.stopPartySupervisorUnsafe()
+		vo.mu.Unlock()
+	}()
 	vo.rememberPartyRealtimeIdentitiesUnsafe([]partyRealtimeIdentity{
 		{uniqueID: 0x1111, slot: 0},
 		{uniqueID: 0x2222, slot: 2},
@@ -187,6 +197,11 @@ func TestPartyRealtimeIdentityCompletesPartialIPSnapshot(t *testing.T) {
 
 func TestPartyRealtimePacketDispatchCompletesPeerIdentities(t *testing.T) {
 	vo := &RobotVo{UID: 17000026, State: StateRun, Cipher: newPartyTestCipher(t)}
+	vo.mu.Lock()
+	defer func() {
+		vo.stopPartySupervisorUnsafe()
+		vo.mu.Unlock()
+	}()
 	vo.partySelfPeer = partyIPPeer{accID: 17000026, slot: 2, slotKnown: true, port: 46000}
 	vo.partyPeers[0] = partyIPPeer{accID: 18000000, slot: 0, slotKnown: true, port: 5063}
 	vo.partyPeers[1] = partyIPPeer{accID: 17000027, slot: 3, slotKnown: true, port: 47000}
@@ -215,6 +230,11 @@ func TestPartyRealtimePacketDispatchCompletesPeerIdentities(t *testing.T) {
 
 func TestPartyRealtimeRosterMovesSlotsAndRemovesDepartedMember(t *testing.T) {
 	vo := &RobotVo{UID: 17000026, State: StateRun}
+	vo.mu.Lock()
+	defer func() {
+		vo.stopPartySupervisorUnsafe()
+		vo.mu.Unlock()
+	}()
 	vo.partySelfPeer = partyIPPeer{uniqueID: 0x2222, accID: 17000026, slot: 1, slotKnown: true}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
 	vo.partyPeers[1] = partyIPPeer{uniqueID: 0x3333, accID: 17000027, slot: 2, slotKnown: true}
@@ -242,6 +262,11 @@ func TestPartyRealtimeRosterMovesSlotsAndRemovesDepartedMember(t *testing.T) {
 
 func TestPartyRealtimeUnknownMemberPreventsRecovery(t *testing.T) {
 	vo := &RobotVo{UID: 17000026, State: StateRun, partyHumanObserved: true}
+	vo.mu.Lock()
+	defer func() {
+		vo.stopPartySupervisorUnsafe()
+		vo.mu.Unlock()
+	}()
 	vo.partySelfPeer = partyIPPeer{uniqueID: 0x2222, accID: 17000026, slot: 1, slotKnown: true}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
 	identities := []partyRealtimeIdentity{

@@ -100,7 +100,7 @@ func setPartyCompat(port int, cfg partyCompatConfig, enable bool) (partyCompatSt
 	return status, nil
 }
 
-func gamePIDForPort(port int) (int, error) {
+func gamePIDForPortLinux(port int) (int, error) {
 	data, err := exec.Command("ss", "-lntp").Output()
 	if err != nil {
 		return 0, fmt.Errorf("read listening ports: %w", err)

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"robot/internal/capability/robotconfig"
 	"robot/internal/foundation/atomicfile"
@@ -58,6 +59,15 @@ func (s *Server) handleGameEndpoint(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRestartRobot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if runtime.GOOS == "windows" {
+		raw, err := callRobot(s.robotAddr, "restartRobot", nil, 5*time.Second, s.cfg.MaxResponseBytes)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, parseRobotResult(raw))
 		return
 	}
 	exe, err := os.Executable()

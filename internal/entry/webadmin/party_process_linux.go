@@ -35,3 +35,5 @@ func withStoppedProcess(pid int, fn func() error) (err error) {
 	}
 	return fn()
 }
+
+func gamePIDForPort(port int) (int, error) { return gamePIDForPortLinux(port) }

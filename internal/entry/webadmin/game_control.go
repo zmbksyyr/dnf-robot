@@ -10,6 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+
+	"robot/internal/foundation/hostprofile"
 	"strconv"
 	"strings"
 	"time"
@@ -95,6 +98,9 @@ func (s *Server) handleMaxUser(w http.ResponseWriter, r *http.Request) {
 			out["message"] = "max_user_num already configured"
 		} else {
 			out["message"] = "max_user_num updated; restart /root/run for the change to take effect"
+			if runtime.GOOS == "windows" {
+				out["message"] = "max_user_num updated; restart the game service for the change to take effect"
+			}
 		}
 		writeJSON(w, out)
 	default:
@@ -103,6 +109,10 @@ func (s *Server) handleMaxUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
+	if runtime.GOOS == "windows" && r.Method != http.MethodGet {
+		writeJSON(w, map[string]interface{}{"ok": false, "supported": false, "error": "server scripts are managed by the Windows service controller"})
+		return
+	}
 	if r.Method == http.MethodGet {
 		writeJSON(w, s.serverScriptSnapshot())
 		return
@@ -145,6 +155,7 @@ func (s *Server) handleServerScript(w http.ResponseWriter, r *http.Request) {
 }
 
 type serverScriptStatus struct {
+	Supported  bool   `json:"supported"`
 	OK         bool   `json:"ok"`
 	Running    bool   `json:"running"`
 	Action     string `json:"action,omitempty"`
@@ -160,6 +171,7 @@ func (s *Server) serverScriptSnapshot() serverScriptStatus {
 	defer s.serverScriptMu.Unlock()
 	status := s.serverScript
 	status.OK = true
+	status.Supported = runtime.GOOS != "windows"
 	return status
 }
 
@@ -356,6 +368,10 @@ func (s *Server) gameCfgPaths() ([]string, error) {
 }
 
 func dfGameRRunning() bool {
+	if runtime.GOOS == "windows" {
+		pid, err := hostprofile.ProcessID("game")
+		return err == nil && pid > 0
+	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return false
@@ -427,6 +443,21 @@ func (s *Server) invalidateGameMaxUserCache() {
 }
 
 func gameConfigNameForPort(port int) (string, bool) {
+	if runtime.GOOS == "windows" {
+		if _, err := gamePIDForPort(port); err != nil {
+			return "", false
+		}
+		service, ok := hostprofile.ServiceFor("game")
+		if !ok {
+			return "", false
+		}
+		for i, arg := range service.Start {
+			if arg == "--run" && i+4 < len(service.Start) {
+				return service.Start[i+4], true
+			}
+		}
+		return "", false
+	}
 	cmd := exec.Command("ss", "-lntp")
 	data, err := cmd.Output()
 	if err != nil || len(data) == 0 {

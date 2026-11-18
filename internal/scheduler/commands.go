@@ -5,6 +5,7 @@ import (
 	actormodel "robot/internal/actor"
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
+	"sync"
 	"time"
 )
 
@@ -19,13 +20,25 @@ func (m *RobotManager) OnlineManaged(req robotcap.CommandRequest) (robotcap.Comm
 	}
 	result := robotcap.NewCommandResult(len(robots))
 	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
+	rate := robotconfig.OnlineStartRateForNeed(len(robots), rc)
+	var nextStart time.Time
 	for _, robot := range robots {
+		if m.isShuttingDown() {
+			return result, fmt.Errorf("online cancelled: robot is shutting down")
+		}
 		if !registry.HasUID(robot.UID) {
 			if !registry.AttachUID(robot.UID, 10*time.Second) {
 				result.Failed++
 				result.Robots = append(result.Robots, actorFullResult(robot, "online"))
 				continue
 			}
+		}
+		status, exists := m.runtimeStatus(robot.UID)
+		if rate > 0 && (!exists || !robotcap.ActiveRuntimeStatus(status)) {
+			if delay := time.Until(nextStart); delay > 0 {
+				time.Sleep(delay)
+			}
+			nextStart = time.Now().Add(time.Second / time.Duration(rate))
 		}
 		item, ok := registry.Command(robot.UID, actormodel.CommandOnline, timeout)
 		item.CID = robot.CID
@@ -113,8 +126,28 @@ func (m *RobotManager) LogoutManaged(req robotcap.CommandRequest) (robotcap.Comm
 	}
 	result := robotcap.NewCommandResult(len(robots))
 	timeout := time.Duration(rc.SystemManualActionTimeoutSec) * time.Second
-	for _, robot := range robots {
-		item, ok := registry.LogoutUID(robot.UID, timeout)
+	// Each actor owns its session. Drain independent actors concurrently so a
+	// 600-user stop does not accumulate every per-account logout wait in series.
+	items := make([]robotcap.ActionResult, len(robots))
+	accepted := make([]bool, len(robots))
+	var work sync.WaitGroup
+	slots := make(chan struct{}, 16)
+	for i, robot := range robots {
+		slots <- struct{}{}
+		if m.isShuttingDown() {
+			<-slots
+			break
+		}
+		work.Add(1)
+		go func(i int, robot robotcap.Info) {
+			defer work.Done()
+			defer func() { <-slots }()
+			items[i], accepted[i] = registry.LogoutUID(robot.UID, timeout)
+		}(i, robot)
+	}
+	work.Wait()
+	for i, robot := range robots {
+		item, ok := items[i], accepted[i]
 		item.CID = robot.CID
 		if ok && item.OK {
 			result.Accepted++
@@ -164,7 +197,7 @@ func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, acti
 		return nil, nil, robotconfig.RuntimeConfig{}, nil, err
 	}
 	rc := m.loadRobotConfig()
-	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+	if busy, reason := m.userActorCommandBusy(registry, rc, action); busy {
 		return nil, nil, rc, rejectedCommandResult(robots, robotcap.ActionStateSchedulerBusy, reason), nil
 	}
 	missing := make([]robotcap.Info, 0)
@@ -179,7 +212,7 @@ func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, acti
 	if !attachInManual || m.autoActionsEnabled(rc) {
 		return nil, nil, rc, rejectedCommandResult(robots, robotcap.ActionStateUIDNotAttached, fmt.Sprintf("%s requires actor attachment", action)), nil
 	}
-	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+	if busy, reason := m.userActorCommandBusy(registry, rc, action); busy {
 		return nil, nil, rc, rejectedCommandResult(robots, robotcap.ActionStateSchedulerBusy, reason), nil
 	}
 	end := m.beginActorContainerOp("manual_attach")
@@ -205,12 +238,15 @@ func (m *RobotManager) prepareUserActorCommand(req robotcap.CommandRequest, acti
 	return registry, robots, rc, nil, nil
 }
 
-func (m *RobotManager) userActorCommandBusy(registry actorRegistry, rc robotconfig.RuntimeConfig) (bool, string) {
+func (m *RobotManager) userActorCommandBusy(registry actorRegistry, rc robotconfig.RuntimeConfig, action string) (bool, string) {
 	if op, _, active := m.structuralOperation(); active {
 		return true, schedulerReasonStructuralPrefix + op
 	}
 	if op, _, active := m.actorContainerOperation(); active {
 		return true, schedulerReasonActorPrefix + op
+	}
+	if action == "logout" {
+		return false, ""
 	}
 	snapshots := registry.actorSnapshots()
 	manual := !m.autoActionsEnabled(rc)

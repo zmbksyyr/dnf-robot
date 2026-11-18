@@ -12,12 +12,20 @@ import (
 
 type offlineSessionRepository struct {
 	missingSchemaRepository
-	calls int
+	calls   int
+	online  bool
+	checked chan struct{}
 }
 
 func (r *offlineSessionRepository) AccountOnline(int) (bool, error) {
 	r.calls++
-	return false, nil
+	if r.checked != nil {
+		select {
+		case r.checked <- struct{}{}:
+		default:
+		}
+	}
+	return r.online, nil
 }
 
 func (*offlineSessionRepository) Stats() sql.DBStats { return sql.DBStats{} }
@@ -34,7 +42,9 @@ func TestSessionReloginWaitsForSameUID(t *testing.T) {
 	m.markSessionLogout(17000001, time.Now())
 
 	started := time.Now()
-	m.waitSessionRelogin([]shared.RuntimeOnlineUser{{UID: 17000001}})
+	if err := m.waitSessionRelogin([]shared.RuntimeOnlineUser{{UID: 17000001}}); err != nil {
+		t.Fatal(err)
+	}
 	if elapsed := time.Since(started); elapsed < 30*time.Millisecond {
 		t.Fatalf("same uid relogin waited %s, want at least 30ms", elapsed)
 	}
@@ -46,9 +56,71 @@ func TestSessionReloginDoesNotDelayOtherUID(t *testing.T) {
 	m.markSessionLogout(17000001, time.Now())
 
 	started := time.Now()
-	m.waitSessionRelogin([]shared.RuntimeOnlineUser{{UID: 17000002}})
+	if err := m.waitSessionRelogin([]shared.RuntimeOnlineUser{{UID: 17000002}}); err != nil {
+		t.Fatal(err)
+	}
 	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
 		t.Fatalf("unrelated uid relogin waited %s", elapsed)
+	}
+}
+
+func TestShutdownInterruptsPendingSessionRelogin(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "")
+	m.markSessionLogout(17000001, time.Now())
+	done := make(chan error, 1)
+	go func() { done <- m.waitSessionRelogin([]shared.RuntimeOnlineUser{{UID: 17000001}}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("same uid did not wait: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	m.RequestShutdown()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("relogin error=%v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not interrupt the relogin safety wait")
+	}
+	// Even an unrelated UID must not start a new session after shutdown.
+	if err := m.waitSessionRelogin([]shared.RuntimeOnlineUser{{UID: 17000002}}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("new session after shutdown error=%v", err)
+	}
+}
+
+func TestShutdownAbortsOfflineCleanupWithoutGrantingWriteBoundary(t *testing.T) {
+	repo := &offlineSessionRepository{online: true, checked: make(chan struct{}, 1)}
+	m := testRobotManagerWithConfig(t, "")
+	m.database = repo
+	m.markSessionLogout(17000001, time.Now())
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.waitAccountOffline(17000001, nil)
+		done <- err
+	}()
+	select {
+	case <-repo.checked:
+	case <-time.After(time.Second):
+		t.Fatal("offline cleanup did not start")
+	}
+	m.RequestShutdown()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cleanup error=%v, want cancellation rather than permission to write", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not interrupt cleanup with a nil callback")
+	}
+	if remaining := m.sessionReleaseRemaining(17000001); remaining <= 0 {
+		t.Fatal("cancellation cleared the account safety boundary")
+	}
+	if _, err := m.offlineCharacterForWrite(17000001, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("new write workflow after shutdown error=%v", err)
+	}
+	if _, err := m.waitCharacterRunning(17000001, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("running-state wait after shutdown error=%v", err)
 	}
 }
 

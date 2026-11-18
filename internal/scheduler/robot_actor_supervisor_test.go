@@ -238,12 +238,12 @@ func TestUserActorCommandBusyFollowsAutoAndManualPolicy(t *testing.T) {
 	rc := robotconfig.RuntimeConfig{AutoActions: true, AutoTargetOnlineCount: 2}
 
 	m.autoEnabled = true
-	if busy, reason := m.userActorCommandBusy(registry, rc); !busy || reason != "auto_filling actors=0 target=2" {
+	if busy, reason := m.userActorCommandBusy(registry, rc, "online"); !busy || reason != "auto_filling actors=0 target=2" {
 		t.Fatalf("auto under target busy=%v reason=%q", busy, reason)
 	}
 
 	m.autoEnabled = false
-	if busy, reason := m.userActorCommandBusy(registry, rc); busy {
+	if busy, reason := m.userActorCommandBusy(registry, rc, "online"); busy {
 		t.Fatalf("manual empty container should be available, reason=%q", reason)
 	}
 }
@@ -255,8 +255,11 @@ func TestUserActorCommandBusyRejectsContainerTransitions(t *testing.T) {
 
 	for _, state := range []actormodel.State{actormodel.StateAssigned, actormodel.StateOnline, actormodel.StateReleasing} {
 		registry := snapshotActorRegistry{snapshots: []actormodel.Snapshot{{UID: 101, State: state}}}
-		if busy, reason := m.userActorCommandBusy(registry, rc); !busy || reason != "actor_state="+string(state) {
+		if busy, reason := m.userActorCommandBusy(registry, rc, "online"); !busy || reason != "actor_state="+string(state) {
 			t.Fatalf("state %s busy=%v reason=%q", state, busy, reason)
+		}
+		if busy, reason := m.userActorCommandBusy(registry, rc, "logout"); busy {
+			t.Fatalf("logout must be available during %s, reason=%q", state, reason)
 		}
 	}
 }

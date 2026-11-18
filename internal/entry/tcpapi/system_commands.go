@@ -32,8 +32,20 @@ func (w *cappedProfileBuffer) Write(p []byte) (int, error) {
 	return written, nil
 }
 
+var requestRestart func()
+
+// SetRestartRequest is installed before the TCP listener starts. It belongs
+// to the process lifecycle, not to the robot or market business services.
+func SetRestartRequest(request func()) { requestRestart = request }
+
 func handleSystemCommand(cmd, pkt string, manager *scheduler.RobotManager) (string, bool) {
 	switch cmd {
+	case "restartRobot":
+		if runtime.GOOS != "windows" || requestRestart == nil {
+			return wrapResult(map[string]interface{}{"ok": false, "error": "runtime restart is unavailable"}), true
+		}
+		requestRestart()
+		return wrapResult(map[string]interface{}{"ok": true, "message": "robot restart queued"}), true
 	case "autoStatus":
 		return wrapResult(map[string]interface{}{"ok": true, "result": manager.AutoStatus()}), true
 	case "schedulerStatus":

@@ -2,10 +2,23 @@ package robotaction
 
 import (
 	"testing"
+	"time"
 
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 )
+
+func TestOnlineConfirmationStopsWithoutClaimingSuccessDuringShutdown(t *testing.T) {
+	service := SessionService{Env: &directLogoutEnv{}, Cancelled: func() bool { return true }}
+	result := robotcap.NewCommandResult(1)
+	result.Accepted = 1
+	result.Robots = []robotcap.ActionResult{{UID: 17000001, State: robotcap.ActionStateAccepted}}
+	started := time.Now()
+	service.ConfirmAccepted(&result, time.Minute)
+	if time.Since(started) > time.Second || result.Confirmed != 0 || result.Failed != 1 {
+		t.Fatalf("cancelled confirmation = %+v", result)
+	}
+}
 
 func TestOnlinePayloadKeepsDatabaseCIDSeparateFromCharacterSlot(t *testing.T) {
 	service := SessionService{Env: &directLogoutEnv{}}

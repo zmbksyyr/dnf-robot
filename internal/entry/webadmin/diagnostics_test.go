@@ -248,3 +248,17 @@ func TestPartyAccountRangeCheckWarnsForEmptyRobotList(t *testing.T) {
 		t.Fatalf("status = %s message=%s, want warn", check.Status, check.Message)
 	}
 }
+
+func TestNetstatLocalPortSupportsWindowsEndpoints(t *testing.T) {
+	for _, address := range []string{"0.0.0.0:10011", "127.0.0.1:10011", "[::]:10011", "[::1]:10011"} {
+		port, ok := netstatLocalPort(address)
+		if !ok || port != 10011 {
+			t.Fatalf("%s: %d %t", address, port, ok)
+		}
+	}
+	for _, address := range []string{"*:*", "127.0.0.1", "[::]:0", "x:65536", "x:bad"} {
+		if _, ok := netstatLocalPort(address); ok {
+			t.Fatalf("accepted %s", address)
+		}
+	}
+}

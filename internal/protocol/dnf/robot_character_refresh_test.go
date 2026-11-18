@@ -101,6 +101,7 @@ func TestCharacterRefreshAcceptsFlagOneAckWithoutBody(t *testing.T) {
 func TestPartyRecoveryAckClearsPartyAndReselectsCharacter(t *testing.T) {
 	conn := &captureSessionConn{}
 	robot := NewRobotVo(nil)
+	robot.mu.Lock()
 	robot.Cipher = crypt.NewDNFCipher()
 	if err := robot.Cipher.Initialize(make([]byte, 334)); err != nil {
 		t.Fatal(err)
@@ -126,11 +127,21 @@ func TestPartyRecoveryAckClearsPartyAndReselectsCharacter(t *testing.T) {
 		t.Fatal("party state survived the server ACK")
 	}
 	conn.written = nil
+	robot.mu.Unlock()
 
 	deadline := time.Now().Add(2 * time.Second)
-	for robot.State != StateLogin && time.Now().Before(deadline) {
+	for {
+		robot.mu.Lock()
+		if robot.State == StateLogin && robot.SelectCharacSent || !time.Now().Before(deadline) {
+			break
+		}
+		robot.mu.Unlock()
 		time.Sleep(10 * time.Millisecond)
 	}
+	defer func() {
+		robot.partyRecoveryEpoch++
+		robot.mu.Unlock()
+	}()
 	if robot.State != StateLogin || !robot.SelectCharacSent {
 		t.Fatalf("character was not automatically reselected: state=%d sent=%t", robot.State, robot.SelectCharacSent)
 	}

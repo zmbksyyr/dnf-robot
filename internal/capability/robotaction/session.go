@@ -10,7 +10,8 @@ import (
 )
 
 type SessionService struct {
-	Env SessionEnv
+	Env       SessionEnv
+	Cancelled func() bool
 }
 
 type SessionEnv interface {
@@ -231,7 +232,12 @@ func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout ti
 		timeout = 60 * time.Second
 	}
 	deadline := time.Now().Add(timeout)
+	cancelled := false
 	for time.Now().Before(deadline) {
+		if s.Cancelled != nil && s.Cancelled() {
+			cancelled = true
+			break
+		}
 		confirmed := 0
 		status := s.Env.RuntimeStatusMap()
 		for _, robot := range result.Robots {
@@ -264,6 +270,10 @@ func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout ti
 				result.Robots[i].State = robotcap.ActionStateRunning
 			}
 			result.Confirmed++
+		} else if cancelled {
+			result.Robots[i].State = robotcap.ActionStateCancelled
+			result.Robots[i].Message = "robot is shutting down"
+			result.Failed++
 		} else {
 			result.Robots[i].State = robotcap.ActionStatePending
 			result.Robots[i].Message = "not confirmed running"

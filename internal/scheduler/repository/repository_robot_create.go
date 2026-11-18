@@ -452,9 +452,16 @@ func (r *SQLRepository) CopyTemplateDefaults(cid int) error {
 		return err
 	}
 	queries := []string{
-		"UPDATE taiwan_cain.charac_info dst JOIN taiwan_cain.charac_info src SET dst.element_resist=src.element_resist,dst.spec_property=src.spec_property,dst.VIP=src.VIP,dst.create_time=src.create_time WHERE dst.charac_no=? AND src.charac_no=?",
+		"UPDATE taiwan_cain.charac_info dst JOIN taiwan_cain.charac_info src SET dst.element_resist=src.element_resist,dst.spec_property=src.spec_property,dst.create_time=src.create_time WHERE dst.charac_no=? AND src.charac_no=?",
 		"UPDATE taiwan_cain.charac_stat dst JOIN taiwan_cain.charac_stat src SET dst.tutorial_flag=src.tutorial_flag,dst.escalade_tutorial_flag=src.escalade_tutorial_flag,dst.open_flag=src.open_flag,dst.luck_point=src.luck_point WHERE dst.charac_no=? AND src.charac_no=?",
 		"UPDATE taiwan_cain_2nd.skill dst JOIN taiwan_cain_2nd.skill src SET dst.skill_slot=src.skill_slot,dst.skill_slot_2nd=src.skill_slot_2nd,dst.skill_command=src.skill_command,dst.script_version=src.script_version WHERE dst.charac_no=? AND src.charac_no=?",
+	}
+	var vipColumn int
+	if err := r.QueryRow("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='taiwan_cain' AND TABLE_NAME='charac_info' AND COLUMN_NAME='VIP'").Scan(&vipColumn); err != nil {
+		return err
+	}
+	if vipColumn > 0 {
+		queries[0] = strings.Replace(queries[0], "dst.create_time=", "dst.VIP=src.VIP,dst.create_time=", 1)
 	}
 	for _, query := range queries {
 		if _, err := r.Exec(query, cid, src); err != nil {

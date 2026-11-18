@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"net"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,6 +19,10 @@ const (
 	robotSocketReadBufferSize = 32 * 1024
 	robotSocketWriteTimeout   = 2 * time.Second
 )
+
+var robotSocketReadBufferPool = sync.Pool{New: func() interface{} {
+	return make([]byte, robotSocketReadBufferSize)
+}}
 
 type robotDialFunc func(gameIP string, gamePort int, localIP string) (net.Conn, error)
 type robotDialContextFunc func(ctx context.Context, gameIP string, gamePort int, localIP string) (net.Conn, error)
@@ -477,6 +482,19 @@ func (r *RobotVo) closeOutUnsafe() {
 	r.clearPartyPendingUnsafe()
 	r.recvBuffer = nil
 	r.recvSize = 0
+	// A RobotVo can outlive its socket briefly while the scheduler removes the
+	// lease. Drop all packet, inventory and party caches at the lifecycle
+	// boundary so a 500+ robot run does not retain per-session state after a
+	// disconnect or cleanup operation.
+	r.InfanMap = nil
+	r.LastStoreDisplay = nil
+	r.storeDisplayCandidates = nil
+	r.storeDisplayRetryPlans = nil
+	r.townEntityPositions = nil
+	r.partyDungeonFollow = nil
+	r.partySkillCandidates = nil
+	r.partySkillLoad = nil
+	r.resetPartyTQOSTransportUnsafe()
 	r.invalidateTradeQuoteUnsafe()
 	r.clearTradeUnsafe()
 	r.State = StateStop
@@ -647,7 +665,8 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 		}
 		r.finishReadLoop(conn)
 	}()
-	buf := make([]byte, robotSocketReadBufferSize)
+	buf := robotSocketReadBufferPool.Get().([]byte)
+	defer robotSocketReadBufferPool.Put(buf)
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {

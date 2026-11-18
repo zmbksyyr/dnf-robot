@@ -357,11 +357,17 @@ func (r *RobotRuntime) tryDisjointPositionInCurrentSession(info robotcap.Info, s
 
 func (r *RobotRuntime) waitDisjointPositionResult(info robotcap.Info, shouldStop func() bool, allowCompatibilitySend bool) (bool, string) {
 	deadline := time.Now().Add(20 * time.Second)
+	if allowCompatibilitySend {
+		// OnlineDisjoint queues a full login. Use the normal login budget until
+		// StateRun, then start the separate machine acknowledgement window.
+		// Charging both stages to 20s cancelled healthy logins under 550+ load.
+		deadline = time.Now().Add(time.Duration(r.Config().OnlineConfirmTimeoutMS) * time.Millisecond)
+	}
 	sawRunning := false
 	runningSince := time.Time{}
 	compatibilitySendTried := !allowCompatibilitySend
 	for time.Now().Before(deadline) {
-		if shouldStop != nil && shouldStop() {
+		if r.manager.isShuttingDown() || (shouldStop != nil && shouldStop()) {
 			return false, "cancelled"
 		}
 		if st, ok := r.manager.runtimeStatus(info.UID); ok {
@@ -385,6 +391,7 @@ func (r *RobotRuntime) waitDisjointPositionResult(info robotcap.Info, shouldStop
 			sawRunning = true
 			if runningSince.IsZero() {
 				runningSince = time.Now()
+				deadline = runningSince.Add(20 * time.Second)
 			}
 			if st.RobotType == 3 && st.DisjointActive {
 				return true, ""

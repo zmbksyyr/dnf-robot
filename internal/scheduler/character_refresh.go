@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -20,6 +21,9 @@ type characterRefreshRuntime interface {
 // caller may safely update character-owned database rows without an arbitrary
 // logout delay.
 func (m *RobotManager) refreshCharacterForWrite(uid int, shouldStop func() bool) (bool, error) {
+	if m.isShuttingDown() {
+		return true, context.Canceled
+	}
 	runtime, ok := m.doll.(characterRefreshRuntime)
 	if !ok {
 		return false, fmt.Errorf("runtime does not support character refresh")
@@ -30,6 +34,9 @@ func (m *RobotManager) refreshCharacterForWrite(uid int, shouldStop func() bool)
 	cancelled := false
 	deadline := time.Now().Add(12 * time.Second)
 	for time.Now().Before(deadline) {
+		if m.isShuttingDown() {
+			return true, context.Canceled
+		}
 		if shouldStop != nil && shouldStop() {
 			// Once command 7 has been sent, keep consuming its ACK so callers can
 			// always close the refresh cycle by re-selecting the character.
@@ -50,6 +57,9 @@ func (m *RobotManager) refreshCharacterForWrite(uid int, shouldStop func() bool)
 }
 
 func (m *RobotManager) resumeCharacterAfterWrite(uid int, shouldStop func() bool) (bool, error) {
+	if m.isShuttingDown() {
+		return true, context.Canceled
+	}
 	runtime, ok := m.doll.(characterRefreshRuntime)
 	if !ok {
 		return false, fmt.Errorf("runtime does not support character refresh")
@@ -71,6 +81,9 @@ func (m *RobotManager) waitForCharacterRunning(uid int, shouldStop func() bool, 
 	cancelled := false
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
+		if m.isShuttingDown() {
+			return true, context.Canceled
+		}
 		if shouldStop != nil && shouldStop() {
 			// Entry is already in flight. Reach a stable state before reporting the
 			// cancellation so cleanup can use the normal save/logout boundary.
@@ -93,6 +106,9 @@ func (m *RobotManager) waitForCharacterRunning(uid int, shouldStop func() bool, 
 // and unloaded; the following logout releases account-level caches such as
 // IsPermissionPrivateStore before database preparation begins.
 func (m *RobotManager) offlineCharacterForWrite(uid int, shouldStop func() bool) (bool, error) {
+	if m.isShuttingDown() {
+		return true, context.Canceled
+	}
 	st, exists := m.runtimeStatusMapFresh()[uid]
 	cancelled := false
 	if exists {

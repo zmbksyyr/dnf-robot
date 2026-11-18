@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -64,16 +65,42 @@ func runMain() int {
 	}
 
 	if *webAdminMode {
-		if err := runWebAdmin(*robotAddr, *webAddr, *webConfigStdin, *stopEventFlag); err != nil {
+		if err := runWebAdmin(*robotAddr, *webAddr, *webConfigStdin, *stopEventFlag, *configDirFlag); err != nil {
 			fmt.Fprintf(os.Stderr, "web admin failed: %v\n", err)
 			return 1
 		}
 		return 0
 	}
 
+	var stopCh <-chan struct{}
+	if *stopEventFlag != "" {
+		var err error
+		stopCh, err = process.WaitForStopEvent(*stopEventFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "stop event: %v\n", err)
+			return 1
+		}
+	}
+	readyEvent := *readyEventFlag
+	for {
+		code := runRobot(*configDirFlag, readyEvent, stopCh)
+		if code != robotRestartRequested {
+			return code
+		}
+		// The external controller owns this one-shot startup handshake and may
+		// close its event after initial readiness. Internal restarts keep the PID.
+		readyEvent = ""
+	}
+}
+
+const robotRestartRequested = -1
+
+// Recreate owned runtime resources in the same Windows process. This preserves
+// an external controller's PID, job and stop handle without a host-specific API.
+func runRobot(configOverride, readyEvent string, stopCh <-chan struct{}) (status int) {
 	dnf.PrintfGreen("robot starting...\n")
 
-	configPath, configDir, err := runtimeConfigPaths(*configDirFlag)
+	configPath, configDir, err := runtimeConfigPaths(configOverride)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "resolve config path error: %v\n", err)
 		return 1
@@ -154,6 +181,7 @@ func runMain() int {
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
+			status = 1
 			dnf.LogString(fmt.Sprintf("DATABASE_CLOSE_FAILED err=%v\n", err))
 			dnf.PrintfRed("database close error: %v\n", err)
 		}
@@ -166,6 +194,7 @@ func runMain() int {
 	manager := scheduler.NewRobotManager(schedulerrepo.NewSQLRepository(db), cfg, robotSvc)
 	defer func() {
 		if err := manager.Shutdown(); err != nil {
+			status = 1
 			dnf.LogString(fmt.Sprintf("ROBOT_MANAGER_SHUTDOWN_FAILED err=%v\n", err))
 			dnf.PrintfRed("robot manager shutdown error: %v\n", err)
 		}
@@ -204,6 +233,15 @@ func runMain() int {
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.RobotPort)
 	tcpServer := network.NewTCPServer(addr)
 	tcpServer.SetLimits(256, 90*time.Second, 15*time.Second)
+	restartCh := make(chan struct{}, 1)
+	if runtime.GOOS == "windows" {
+		tcpapi.SetRestartRequest(func() {
+			select {
+			case restartCh <- struct{}{}:
+			default:
+			}
+		})
+	}
 	tcpServer.OnMessage(func(clientID string, raw []byte) {
 		response := tcpapi.HandlePacket(clientID, string(raw), manager)
 		if response != "" {
@@ -219,6 +257,7 @@ func runMain() int {
 	}
 	defer func() {
 		if err := tcpServer.Close(); err != nil {
+			status = 1
 			dnf.LogString(fmt.Sprintf("TCP_SERVER_CLOSE_FAILED err=%v\n", err))
 			dnf.PrintfRed("tcp server close error: %v\n", err)
 		}
@@ -227,6 +266,7 @@ func runMain() int {
 	stopWebAdmin := webadmin.StartSupervisor(cfg)
 	defer stopWebAdmin()
 	manager.StartAutoActions()
+	defer manager.RequestShutdown()
 	if marketApp.Config().Auto.Enabled {
 		marketApp.StartAuto()
 	}
@@ -235,36 +275,28 @@ func runMain() int {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
-	var stopCh <-chan struct{}
-	if *stopEventFlag != "" {
-		stopCh, err = process.WaitForStopEvent(*stopEventFlag)
-		if err != nil {
-			dnf.LogString(fmt.Sprintf("STOP_EVENT_LOAD_FAILED name=%s err=%v\n", *stopEventFlag, err))
-			return 1
-		}
-		dnf.LogString(fmt.Sprintf("STOP_EVENT_READY name=%s\n", *stopEventFlag))
-	}
-	if *readyEventFlag != "" {
-		if err := process.SignalReadyEvent(*readyEventFlag); err != nil {
+	if readyEvent != "" {
+		if err := process.SignalReadyEvent(readyEvent); err != nil {
 			dnf.LogString(fmt.Sprintf("READY_EVENT_FAILED err=%v\n", err))
 			return 1
 		}
 	}
-	if stopCh == nil {
-		<-sigCh
-	} else {
-		select {
-		case <-sigCh:
-		case <-stopCh:
-			dnf.LogString("STOP_EVENT_RECEIVED\n")
-		}
+	select {
+	case <-sigCh:
+	case <-stopCh:
+		dnf.LogString("STOP_EVENT_RECEIVED\n")
+	case <-restartCh:
+		// Let the queued HTTP/TCP response leave before shutting down Web.
+		time.Sleep(300 * time.Millisecond)
+		logRobotActionf("robot restarting runtime...\n")
+		return robotRestartRequested
 	}
 
 	logRobotActionf("robot stopping...\n")
 	return 0
 }
 
-func runWebAdmin(robotAddr, webAddr string, configFromStdin bool, stopEvent string) error {
+func runWebAdmin(robotAddr, webAddr string, configFromStdin bool, stopEvent, configOverride string) error {
 	var cfg *config.SysConfig
 	if configFromStdin {
 		cfg = &config.SysConfig{}
@@ -272,7 +304,7 @@ func runWebAdmin(robotAddr, webAddr string, configFromStdin bool, stopEvent stri
 			return fmt.Errorf("decode parent runtime config snapshot: %w", err)
 		}
 	} else {
-		configPath, configDir, err := runtimeConfigPaths("")
+		configPath, configDir, err := runtimeConfigPaths(configOverride)
 		if err != nil {
 			return fmt.Errorf("resolve config path: %w", err)
 		}
@@ -282,6 +314,15 @@ func runWebAdmin(robotAddr, webAddr string, configFromStdin bool, stopEvent stri
 		}
 		loaded.ConfigDir = configDir
 		cfg = loaded
+	}
+	// Web runs in another process and must load the same host identity before
+	// inspecting or patching service memory. The parent's globals are not shared.
+	if runtime.GOOS == "windows" {
+		profile, _, err := hostprofile.LoadOrDetect(layout.New(cfg.ConfigDir).HostProfile(), cfg)
+		if err != nil {
+			return fmt.Errorf("load web host profile: %w", err)
+		}
+		hostprofile.Configure(profile)
 	}
 	if robotAddr == "" {
 		robotAddr = fmt.Sprintf("127.0.0.1:%d", cfg.RobotPort)

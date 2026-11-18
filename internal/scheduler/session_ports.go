@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -24,6 +25,11 @@ func (m *RobotManager) waitAccountOffline(uid int, shouldStop func() bool) (bool
 	deadline := time.Now().Add(30 * time.Second)
 	offlineStarted := time.Time{}
 	for time.Now().Before(deadline) {
+		// Shutdown abandons the workflow, not the save barrier. Return an error
+		// because cleanup callers may ignore the ordinary cancellation flag.
+		if m.isShuttingDown() {
+			return true, context.Canceled
+		}
 		if shouldStop != nil && shouldStop() {
 			return true, nil
 		}
@@ -82,7 +88,7 @@ func (m *RobotManager) sessionReleaseRemaining(uid int) time.Duration {
 }
 
 func (m *RobotManager) sessionService() robotaction.SessionService {
-	return robotaction.SessionService{Env: sessionActionEnv{manager: m}}
+	return robotaction.SessionService{Env: sessionActionEnv{manager: m}, Cancelled: m.isShuttingDown}
 }
 
 type sessionActionEnv struct {
@@ -160,7 +166,9 @@ func (e sessionActionEnv) SendOnline(userinfos []shared.RuntimeOnlineUser) error
 			userinfos[index].BirthGateArea = userinfos[index].BirthArea
 		}
 	}
-	e.manager.waitSessionRelogin(userinfos)
+	if err := e.manager.waitSessionRelogin(userinfos); err != nil {
+		return err
+	}
 	return e.manager.doll.Online(userinfos)
 }
 
@@ -224,15 +232,18 @@ func (m *RobotManager) clearSessionLogout(uid int) {
 	m.sessionMu.Unlock()
 }
 
-func (m *RobotManager) waitSessionRelogin(userinfos []shared.RuntimeOnlineUser) {
+func (m *RobotManager) waitSessionRelogin(userinfos []shared.RuntimeOnlineUser) error {
 	if m == nil || len(userinfos) == 0 {
-		return
+		return nil
 	}
 	delay := m.sessionReloginDelay
 	if delay <= 0 {
 		delay = 15 * time.Second
 	}
 	for {
+		if m.isShuttingDown() {
+			return context.Canceled
+		}
 		now := time.Now()
 		wait := time.Duration(0)
 		m.sessionMu.Lock()
@@ -253,7 +264,10 @@ func (m *RobotManager) waitSessionRelogin(userinfos []shared.RuntimeOnlineUser) 
 		}
 		m.sessionMu.Unlock()
 		if wait <= 0 {
-			return
+			return nil
+		}
+		if wait > 100*time.Millisecond {
+			wait = 100 * time.Millisecond
 		}
 		time.Sleep(wait)
 	}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -19,7 +20,9 @@ import (
 	"robot/internal/capability/marketapp"
 	"robot/internal/foundation/config"
 	"robot/internal/foundation/dbstatus"
+	"robot/internal/foundation/hostprofile"
 	"robot/internal/foundation/layout"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -262,7 +265,8 @@ func (b *diagnosticsBuilder) addMarketSection() {
 	if runScript == "" {
 		runScript = diagnosticsServerRunPath
 	}
-	checks = append(checks, auctionGuardCheck(diagnosticsDFGameRJSPath, runScript))
+	guardPath := marketapp.AuctionSearchGuardPath(b.cfg.ServiceRoot)
+	checks = append(checks, auctionGuardCheck(guardPath, runScript))
 	checks = append(checks, auctionMemoryPatchReadOnlyCheck())
 	b.addSection("Market", checks...)
 }
@@ -353,6 +357,9 @@ type listeningPort struct {
 }
 
 func listeningProcessPorts() (map[int]listeningPort, error) {
+	if runtime.GOOS == "windows" {
+		return listeningProcessPortsWindows()
+	}
 	commands := [][]string{{"ss", "-lntp"}, {"netstat", "-lntp"}}
 	var out []byte
 	var err error
@@ -387,6 +394,86 @@ func listeningProcessPorts() (map[int]listeningPort, error) {
 		result[port] = entry
 	}
 	return result, nil
+}
+
+// listeningProcessPortsWindows reads the native netstat format. Windows does
+// not ship ss, and invoking it on every diagnostics refresh caused a false
+// "inspection failed" loop even while the game port was listening.
+func listeningProcessPortsWindows() (map[int]listeningPort, error) {
+	out, err := exec.Command("netstat", "-ano").Output()
+	if err != nil {
+		return nil, fmt.Errorf("netstat unavailable: %w", err)
+	}
+	// Netstat gives PIDs but omits names. Read actual Windows image names so
+	// both the Robot API parent and Web worker retain their real identity.
+	tasks, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+	if err != nil {
+		return nil, fmt.Errorf("tasklist unavailable: %w", err)
+	}
+	names := make(map[int]string)
+	records, err := csv.NewReader(strings.NewReader(string(tasks))).ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("parse tasklist: %w", err)
+	}
+	for _, row := range records {
+		if len(row) < 2 {
+			continue
+		}
+		if pid, err := strconv.Atoi(row[1]); err == nil {
+			names[pid] = row[0]
+		}
+	}
+	result := map[int]listeningPort{}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || !strings.EqualFold(fields[0], "TCP") {
+			continue
+		}
+		if len(fields) < 5 || !strings.EqualFold(fields[3], "LISTENING") {
+			continue
+		}
+		port, ok := netstatLocalPort(fields[1])
+		if !ok {
+			continue
+		}
+		pid, _ := strconv.Atoi(fields[4])
+		result[port] = listeningPort{Port: port, PID: pid, Process: names[pid], Line: strings.TrimSpace(line)}
+	}
+	if runtime.GOOS == "windows" {
+		for name, service := range hostprofile.Current().Services {
+			pid, err := hostprofile.ProcessID(name)
+			if err != nil || pid <= 0 {
+				continue
+			}
+			process := service.ProcessName
+			if process == "" {
+				process = filepath.Base(service.Image)
+			}
+			for port, entry := range result {
+				if entry.PID == pid {
+					entry.Process = process
+					result[port] = entry
+				}
+			}
+		}
+		for port, entry := range result {
+			if entry.PID == os.Getpid() {
+				entry.Process = "robot"
+				result[port] = entry
+			}
+		}
+	}
+	return result, nil
+}
+
+func netstatLocalPort(address string) (int, bool) {
+	address = strings.TrimSpace(address)
+	idx := strings.LastIndex(address, ":")
+	if idx < 0 || idx+1 >= len(address) {
+		return 0, false
+	}
+	port, err := strconv.Atoi(strings.Trim(address[idx+1:], "[]"))
+	return port, err == nil && port > 0 && port <= 65535
 }
 
 var netstatProcessPattern = regexp.MustCompile(`([0-9]+)/([A-Za-z0-9_.-]+)`)
@@ -712,6 +799,21 @@ func portDialCheck(name, host string, port int) diagnosticsCheck {
 }
 
 func udpListeningCheck(name string, port int) diagnosticsCheck {
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("netstat", "-ano", "-p", "udp").Output()
+		if err != nil {
+			return diagnosticsCheck{Name: name, Status: diagWarn, Message: err.Error(), Expected: port}
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && strings.EqualFold(fields[0], "UDP") {
+				if localPort, ok := netstatLocalPort(fields[1]); ok && localPort == port {
+					return diagnosticsCheck{Name: name, Status: diagOK, Message: "udp port is listening", Observed: strings.TrimSpace(line)}
+				}
+			}
+		}
+		return diagnosticsCheck{Name: name, Status: diagError, Message: "udp port is not listening", Expected: port}
+	}
 	out, err := exec.Command("ss", "-lunp").Output()
 	if err != nil {
 		return diagnosticsCheck{Name: name, Status: diagWarn, Message: err.Error(), Expected: port}
