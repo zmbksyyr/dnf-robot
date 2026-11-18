@@ -21,7 +21,13 @@ type characterRefreshRuntime interface {
 // caller may safely update character-owned database rows without an arbitrary
 // logout delay.
 func (m *RobotManager) refreshCharacterForWrite(uid int, shouldStop func() bool) (bool, error) {
-	if m.isShuttingDown() {
+	return m.returnToCharacterSelect(uid, shouldStop, false)
+}
+
+// A normal logout can finish the original game's save while shutting down.
+// Only the write workflow treats shutdown as cancellation of its write permit.
+func (m *RobotManager) returnToCharacterSelect(uid int, shouldStop func() bool, logout bool) (bool, error) {
+	if !logout && m.isShuttingDown() {
 		return true, context.Canceled
 	}
 	runtime, ok := m.doll.(characterRefreshRuntime)
@@ -34,7 +40,7 @@ func (m *RobotManager) refreshCharacterForWrite(uid int, shouldStop func() bool)
 	cancelled := false
 	deadline := time.Now().Add(12 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.isShuttingDown() {
+		if !logout && m.isShuttingDown() {
 			return true, context.Canceled
 		}
 		if shouldStop != nil && shouldStop() {

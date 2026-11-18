@@ -95,6 +95,27 @@ type sessionActionEnv struct {
 	manager *RobotManager
 }
 
+func (e sessionActionEnv) WaitAccountLogout(uid int) error {
+	// Local TCP closure precedes the game's asynchronous account cleanup.
+	// Retain the logout concurrency slot until the server reports it offline,
+	// preventing a growing queue of closed users still receiving broadcasts.
+	// This is load control, not the stronger boundary authorizing data writes.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		online, err := e.manager.schemaRepo().AccountOnline(uid)
+		if err != nil {
+			return err
+		}
+		if !online {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("server account logout timed out uid=%d", uid)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func (e sessionActionEnv) CountRuntimeRunning() int {
 	return e.manager.countRuntimeRunning()
 }
@@ -150,6 +171,16 @@ func (e sessionActionEnv) PrepareOnlineRobot(info robotcap.Info, rc robotconfig.
 }
 
 func (e sessionActionEnv) SendLogout(uid int) error {
+	// Keep the socket readable until the original game has saved and unloaded
+	// its character. Closing it first makes town departure broadcasts target
+	// already closed sockets while the server is still processing logout.
+	if _, ok := e.manager.doll.(characterRefreshRuntime); ok && !e.manager.doll.PartyActive(uid) {
+		if st, exists := e.manager.runtimeStatusMapFresh()[uid]; exists && st.StateName == robotcap.RuntimeStateRunning {
+			if _, err := e.manager.returnToCharacterSelect(uid, nil, true); err != nil {
+				return err
+			}
+		}
+	}
 	err := e.manager.doll.Logout(uid)
 	if err == nil {
 		e.manager.markSessionLogout(uid, time.Now())

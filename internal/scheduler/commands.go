@@ -131,7 +131,7 @@ func (m *RobotManager) LogoutManaged(req robotcap.CommandRequest) (robotcap.Comm
 	items := make([]robotcap.ActionResult, len(robots))
 	accepted := make([]bool, len(robots))
 	var work sync.WaitGroup
-	slots := make(chan struct{}, 16)
+	slots := make(chan struct{}, actorLogoutConcurrency)
 	for i, robot := range robots {
 		slots <- struct{}{}
 		if m.isShuttingDown() {

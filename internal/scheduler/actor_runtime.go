@@ -17,14 +17,20 @@ import (
 )
 
 type RobotRuntime struct {
-	manager  *RobotManager
-	uidLocks *lockhub.RefHub
+	manager     *RobotManager
+	uidLocks    *lockhub.RefHub
+	logoutSlots chan struct{}
 }
+
+// A 600-actor stop must not close every game connection in one burst. Keep the
+// slot through local close and server account logout confirmation, allowing
+// the original game loop to process other requests while cleanup catches up.
+const actorLogoutConcurrency = 16
 
 var _ actormodel.RobotRuntime = (*RobotRuntime)(nil)
 
 func NewRobotRuntime(manager *RobotManager) *RobotRuntime {
-	return &RobotRuntime{manager: manager, uidLocks: lockhub.NewRefHub()}
+	return &RobotRuntime{manager: manager, uidLocks: lockhub.NewRefHub(), logoutSlots: make(chan struct{}, actorLogoutConcurrency)}
 }
 
 func (r *RobotRuntime) Config() robotconfig.RuntimeConfig {
@@ -80,8 +86,14 @@ func (r *RobotRuntime) OnlineNoConfirm(uid int) robotcap.ActionResult {
 
 func (r *RobotRuntime) Logout(uid int) robotcap.ActionResult {
 	return r.run(uid, func() robotcap.ActionResult {
+		r.logoutSlots <- struct{}{}
+		defer func() { <-r.logoutSlots }()
 		res, err := r.manager.sessionService().LogoutUID(uid)
-		return firstActionResult(uid, res, err)
+		result := firstActionResult(uid, res, err)
+		if result.State == robotcap.ActionStateFailed {
+			robotLogf("[Actor] logout_confirmation_failed uid=%d err=%s\n", uid, result.Message)
+		}
+		return result
 	})
 }
 

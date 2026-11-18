@@ -9,7 +9,9 @@ import (
 )
 
 const (
-	defaultSupervisorShutdownTimeout = 15 * time.Second
+	// 600 sessions at 16 concurrent 500 ms confirmations need about 19 seconds.
+	// Leave time for cleanup while staying below the controller's 30-second wait.
+	defaultSupervisorShutdownTimeout = 25 * time.Second
 	defaultSupervisorForceGrace      = 2 * time.Second
 	shutdownActorLogLimit            = 20
 )

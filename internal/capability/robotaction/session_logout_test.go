@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
@@ -17,6 +18,9 @@ type directLogoutEnv struct {
 	logoutUIDs    []int
 	invalidated   []int
 	invalidateErr error
+	waitLogoutErr error
+	waitEntered   chan struct{}
+	waitRelease   chan struct{}
 	events        []string
 	freshStatus   map[int]robotcap.RuntimeStatus
 }
@@ -64,6 +68,15 @@ func (e *directLogoutEnv) InvalidateCharacterCache(uid int) error {
 	return e.invalidateErr
 }
 
+func (e *directLogoutEnv) WaitAccountLogout(uid int) error {
+	e.events = append(e.events, "account_offline")
+	if e.waitEntered != nil {
+		close(e.waitEntered)
+		<-e.waitRelease
+	}
+	return e.waitLogoutErr
+}
+
 func TestLogoutUIDBypassesRepositoryAndCachedStatus(t *testing.T) {
 	env := &directLogoutEnv{}
 	result, err := (SessionService{Env: env}).LogoutUID(17000001)
@@ -82,11 +95,61 @@ func TestLogoutUIDBypassesRepositoryAndCachedStatus(t *testing.T) {
 	if len(env.invalidated) != 1 || env.invalidated[0] != 17000001 {
 		t.Fatalf("invalidated uids = %v", env.invalidated)
 	}
-	if got, want := strings.Join(env.events, ","), "logout,status,invalidate"; got != want {
+	if got, want := strings.Join(env.events, ","), "logout,status,account_offline,invalidate"; got != want {
 		t.Fatalf("events = %q, want %q", got, want)
 	}
 	if result.Confirmed != 1 || len(result.Robots) != 1 || !result.Robots[0].OK || result.Robots[0].State != robotcap.ActionStateClosed {
 		t.Fatalf("logout result = %+v", result)
+	}
+}
+
+func TestLogoutUIDWaitsForServerBeforeConfirmingOrInvalidating(t *testing.T) {
+	env := &directLogoutEnv{waitEntered: make(chan struct{}), waitRelease: make(chan struct{})}
+	t.Cleanup(func() { close(env.waitRelease) })
+	results := make(chan robotcap.CommandResult, 1)
+	go func() {
+		result, _ := (SessionService{Env: env}).LogoutUID(17000001)
+		results <- result
+	}()
+	select {
+	case <-env.waitEntered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("logout never waited for the server")
+	}
+	if len(env.invalidated) != 0 {
+		t.Fatal("character cache invalidated while server account was still online")
+	}
+	select {
+	case result := <-results:
+		t.Fatalf("logout returned before server confirmation: %+v", result)
+	default:
+	}
+	env.waitRelease <- struct{}{}
+	select {
+	case result := <-results:
+		if result.Confirmed != 1 || result.Failed != 0 || len(env.invalidated) != 1 {
+			t.Fatalf("server-confirmed logout result = %+v, invalidations = %v", result, env.invalidated)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("logout did not finish after server confirmation")
+	}
+}
+
+func TestLogoutUIDDoesNotConfirmWhenServerQueryFails(t *testing.T) {
+	env := &directLogoutEnv{waitLogoutErr: errors.New("account query unavailable")}
+	result, err := (SessionService{Env: env}).LogoutUID(17000001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Accepted != 1 || result.Confirmed != 0 || result.Failed != 1 || len(env.invalidated) != 0 {
+		t.Fatalf("logout result = %+v, invalidations = %v", result, env.invalidated)
+	}
+	if got, want := strings.Join(env.events, ","), "logout,status,account_offline"; got != want {
+		t.Fatalf("events = %q, want %q", got, want)
+	}
+	item := result.Robots[0]
+	if item.OK || item.State != robotcap.ActionStateFailed || !strings.Contains(item.Message, "account query unavailable") {
+		t.Fatalf("logout item = %+v", item)
 	}
 }
 

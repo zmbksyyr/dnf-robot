@@ -12,9 +12,11 @@ import (
 
 type offlineSessionRepository struct {
 	missingSchemaRepository
-	calls   int
-	online  bool
-	checked chan struct{}
+	calls         int
+	online        bool
+	checked       chan struct{}
+	onlineSamples []bool
+	accountErr    error
 }
 
 func (r *offlineSessionRepository) AccountOnline(int) (bool, error) {
@@ -25,7 +27,35 @@ func (r *offlineSessionRepository) AccountOnline(int) (bool, error) {
 		default:
 		}
 	}
-	return r.online, nil
+	if len(r.onlineSamples) > 0 {
+		online := r.onlineSamples[0]
+		r.onlineSamples = r.onlineSamples[1:]
+		return online, r.accountErr
+	}
+	return r.online, r.accountErr
+}
+
+func TestLogoutConfirmationWaitsForServerEvenDuringShutdown(t *testing.T) {
+	repo := &offlineSessionRepository{onlineSamples: []bool{true, true, false}}
+	m := testRobotManagerWithConfig(t, "")
+	m.database = repo
+	m.RequestShutdown()
+	if err := (sessionActionEnv{manager: m}).WaitAccountLogout(17000001); err != nil {
+		t.Fatal(err)
+	}
+	if repo.calls != 3 {
+		t.Fatalf("server confirmation used %d queries, want 3", repo.calls)
+	}
+}
+
+func TestLogoutConfirmationPreservesDatabaseError(t *testing.T) {
+	want := errors.New("account database unavailable")
+	repo := &offlineSessionRepository{accountErr: want}
+	m := testRobotManagerWithConfig(t, "")
+	m.database = repo
+	if err := (sessionActionEnv{manager: m}).WaitAccountLogout(17000001); !errors.Is(err, want) {
+		t.Fatalf("confirmation error = %v, want %v", err, want)
+	}
 }
 
 func (*offlineSessionRepository) Stats() sql.DBStats { return sql.DBStats{} }

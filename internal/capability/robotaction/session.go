@@ -25,6 +25,7 @@ type SessionEnv interface {
 	SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error)
 	SendLogout(uid int) error
 	SendOnline(userinfos []shared.RuntimeOnlineUser) error
+	WaitAccountLogout(uid int) error
 }
 
 type sessionLoginIPEnv interface {
@@ -182,6 +183,12 @@ func (s SessionService) logoutRobots(robots []robotcap.Info) robotcap.CommandRes
 		if _, ok := status[uid]; ok {
 			result.Robots[i].State = robotcap.ActionStatePending
 			result.Robots[i].Message = "runtime connection still exists"
+			continue
+		}
+		if err := s.Env.WaitAccountLogout(uid); err != nil {
+			result.Robots[i].State = robotcap.ActionStateFailed
+			result.Robots[i].Message = fmt.Sprintf("runtime closed but server logout confirmation failed: %v", err)
+			result.Failed++
 			continue
 		}
 		if err := s.Env.InvalidateCharacterCache(uid); err != nil {
