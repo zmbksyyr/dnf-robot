@@ -131,3 +131,28 @@ Windows 自动行为排空约 50.05 秒，Linux 约 30.03 秒；game 秒级时�
 Linux 为授权的同机 WSL 独立对照，并非产品依赖或裸机基准。最终收据为 Native
 仓库外 `x/dnf-gm-output/evidence/stall-cache-final-summary.json`、两端原始负载 JSON
 及 `stall-cache-windows-console.json`；首轮旧错误缓存的失败日志亦保留。
+
+## 自动分解摊的村庄限制（2026-11-18）
+
+Native 联调日志仍出现村庄 7 的分解摊请求及 `0xbe` 拒绝。只读查阅用户提供的
+rednf `ExpertJobLink4/OnCreateDisjointStore.inc` 后，独立核对固定原 game
+（SHA-256 `da417c5e65918f655afcddb6edfdaf2fa1e77b2f208e5aa397f021fa23b79979`）：
+`CDisjointer::OnCreateDisjointStore` 在 `0x085d2d6d` 比较村庄 7，随后返回
+`0xbe`，尚未进入坐标检查。该规则不是位置重试能够修复的错误。
+
+公共选点增加 `DisjointAreaAllowed`，只让自动分解摊排除此村庄，并沿用原公会
+目的地限制。普通移动与普通摆摊继续使用 `GenericAreaAllowed`；不修改原 ELF、
+数据库或配置，不增加宿主差异开关。Windows 的 shared/scheduler/store 测试及
+Linux 的 shared/scheduler 测试通过。该公共修复同时用于两个宿主，不代表本轮
+再次完成 Linux 全部游戏业务回归。
+
+来源文件哈希、原 ELF 反汇编与独立实现差异保存在 Native 仓库外
+`../x/dnf-gm-output/evidence/disjoint-village7-source-study.json`、
+`disjoint-village7-original-disassembly.log`，Linux 测试收据为
+`sysinfo-robot-linux-policy.json`；未引入参考代码或编译产物。
+
+最终 Windows 独立副本与 Native 查询优化候选一同运行 600 目标、120 秒混合
+负载，稳态 595–600 在线，摆摊 81 次成功/0 次失败、移动 3442/0。期间 44 条
+分解摊尝试/成功日志没有村庄 7，实际运行的 Robot 哈希与新构建一致；自动行为
+正常排空，game 时钟恢复。混合负载包含随机地图，不据此宣称全部位置零失败。
+收据为 `sysinfo-final-summary.json` 及 `tls-call-load-sysinfo-robot.private.json`。
