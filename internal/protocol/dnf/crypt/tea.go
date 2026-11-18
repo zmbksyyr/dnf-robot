@@ -46,9 +46,10 @@ func (t *TeaCipher) encryptBlock(in, out []byte) {
 	sum := uint32(0)
 	delta := uint32(0x9E3779B9)
 	for n := 0; n < 32; n++ {
+		// The protocol's CTEA uses XTEA: advance the sum between its half rounds.
+		y += (((z << 4) ^ (z >> 5)) + z) ^ (sum + t.key[sum&3])
 		sum += delta
-		y += ((z << 4) ^ (z >> 5)) + z ^ sum + t.key[sum&3]
-		z += ((y << 4) ^ (y >> 5)) + y ^ sum + t.key[(sum>>11)&3]
+		z += (((y << 4) ^ (y >> 5)) + y) ^ (sum + t.key[(sum>>11)&3])
 	}
 	storeU32BE(out[0:4], y)
 	storeU32BE(out[4:8], z)
@@ -60,9 +61,9 @@ func (t *TeaCipher) decryptBlock(in, out []byte) {
 	sum := uint32(0xC6EF3720)
 	delta := uint32(0x9E3779B9)
 	for n := 0; n < 32; n++ {
-		z -= ((y << 4) ^ (y >> 5)) + y ^ sum + t.key[(sum>>11)&3]
+		z -= (((y << 4) ^ (y >> 5)) + y) ^ (sum + t.key[(sum>>11)&3])
 		sum -= delta
-		y -= ((z << 4) ^ (z >> 5)) + z ^ sum + t.key[sum&3]
+		y -= (((z << 4) ^ (z >> 5)) + z) ^ (sum + t.key[sum&3])
 	}
 	storeU32BE(out[0:4], y)
 	storeU32BE(out[4:8], z)
