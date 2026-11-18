@@ -493,8 +493,8 @@ func TestBuildPackedPointSetShiftsAroundPermanentRestriction(t *testing.T) {
 		{ID: "360", Village: 3, Area: 0, X: 360, Y: 0},
 	}
 	packed := buildPackedPointSet(points)
-	if packed["0"] || !packed["120"] || !packed["240"] || !packed["360"] {
-		t.Fatalf("packed set = %+v, want 120, 240, and 360", packed)
+	if packed["0"] || !packed["120"] || packed["240"] || !packed["360"] {
+		t.Fatalf("packed set = %+v, want noncolliding points 120 and 360", packed)
 	}
 }
 
@@ -558,17 +558,17 @@ func TestStorePointCoordinatorAllowsEveryOtherGeneratedRow(t *testing.T) {
 	}
 }
 
-func TestStorePointCoordinatorAllowsAdjacentGeneratedColumn(t *testing.T) {
+func TestStorePointCoordinatorSkipsCollidingGeneratedColumn(t *testing.T) {
 	configDir := t.TempDir()
-	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: PointXStep, YMin: 0, YMax: 0, Use: true}})
+	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 1, XMax: 1 + PointXStep*2, YMin: 0, YMax: 0, Use: true}})
 	c := newTestPointCoordinator(configDir, nil)
 	first, ok := c.Claim(1001)
 	if !ok {
 		t.Fatal("first claim failed")
 	}
 	second, ok := c.Claim(1002)
-	if !ok || second.X-first.X != PointXStep {
-		t.Fatalf("adjacent generated column was unavailable: first=%+v second=%+v ok=%v", first, second, ok)
+	if !ok || second.X-first.X != PointXStep*2 {
+		t.Fatalf("expected next noncolliding column: first=%+v second=%+v ok=%v", first, second, ok)
 	}
 }
 

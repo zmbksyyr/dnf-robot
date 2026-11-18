@@ -23,6 +23,38 @@ func TestStorePositionRequiresAreaSetForProbeCoordinate(t *testing.T) {
 	}
 }
 
+type relocationWorkflowEnv struct {
+	WorkflowEnv
+	points *PointCoordinator
+	moved  bool
+	x, y   int
+}
+
+func (*relocationWorkflowEnv) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {
+	return map[int]robotcap.RuntimeStatus{7: {Village: 3, Area: 0, X: 100, Y: 200}}
+}
+func (e *relocationWorkflowEnv) StorePoints() *PointCoordinator                 { return e.points }
+func (*relocationWorkflowEnv) Logf(string, ...interface{})                      {}
+func (*relocationWorkflowEnv) StoreTitle(int, robotconfig.RuntimeConfig) string { return "test" }
+func (*relocationWorkflowEnv) StartPrivateStore(int, string) bool               { return false }
+func (e *relocationWorkflowEnv) SetAreaFrom(_ int, _, _ int, x, y int, _, _ int) bool {
+	e.moved, e.x, e.y = true, x, y
+	return false // Confirm the move is attempted before any store is created.
+}
+
+func TestRetryStorePositionMovesToNewCoordinateWithinSameArea(t *testing.T) {
+	dir := t.TempDir()
+	writeStoreMapCatalog(t, dir, []shared.MapCatalogItem{{Village: 3, Area: 0, Use: true}})
+	env := &relocationWorkflowEnv{points: newTestPointCoordinator(dir, nil)}
+	ok, reason := (Workflow{Env: env}).tryPosition(
+		robotcap.Info{UID: 7, Village: 3, Area: 0, X: 340, Y: 280},
+		robotconfig.RuntimeConfig{}, 2, false, nil,
+	)
+	if !env.moved || env.x != 340 || env.y != 280 || ok || reason != StoreReasonSetAreaFailed {
+		t.Fatalf("retry moved=%t to=%d/%d result=%t/%s", env.moved, env.x, env.y, ok, reason)
+	}
+}
+
 type cancellingWorkflowEnv struct {
 	WorkflowEnv
 	points   *PointCoordinator

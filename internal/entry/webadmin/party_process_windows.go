@@ -4,20 +4,20 @@ package webadmin
 
 import (
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
 
 	"robot/internal/foundation/hostprofile"
+	"robot/internal/foundation/process"
 )
 
 func gamePIDForPort(port int) (int, error) {
 	if port <= 0 || port > 65535 {
 		return 0, fmt.Errorf("invalid game port %d", port)
 	}
-	data, err := exec.Command("netstat", "-ano", "-p", "tcp").Output()
+	data, err := process.BackgroundCommand("netstat", "-ano", "-p", "tcp").Output()
 	if err != nil {
 		return 0, fmt.Errorf("read listening ports: %w", err)
 	}

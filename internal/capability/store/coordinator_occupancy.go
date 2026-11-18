@@ -11,7 +11,9 @@ const (
 	// Adjacent generated columns are 120 units apart. Vertically, keep one row
 	// between active stalls: 80-unit neighbors collide, while 160-unit rows
 	// preserve the denser layout proven by live capacity tests.
-	pointOccupancyConflictX = PointXStep - 1
+	// Both stall types have a 160-wide collision rectangle in the supported
+	// original ELF. Touching edges collide too; a 120-wide grid cell is unsafe.
+	pointOccupancyConflictX = 160
 	pointOccupancyConflictY = PointYStep*2 - 1
 	pointOccupancyCellX     = pointOccupancyConflictX + 1
 	pointOccupancyCellY     = pointOccupancyConflictY + 1

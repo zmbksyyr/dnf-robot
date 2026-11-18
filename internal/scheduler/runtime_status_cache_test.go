@@ -22,6 +22,37 @@ type mapStatusRuntime struct {
 	sliceCalls atomic.Int32
 }
 
+type storeStartingRuntime struct{ mapStatusRuntime }
+
+func (r *storeStartingRuntime) StartPrivateStore(uid int, _ string) bool {
+	st := r.statuses[uid]
+	st.StoreCreated, st.StoreCreateRejected, st.StoreDisplayAck, st.StoreDisplayRejected = false, false, false, false
+	st.LastStoreError = 0
+	r.statuses[uid] = st
+	return true
+}
+
+func TestStoreRetryDoesNotReuseCachedRejection(t *testing.T) {
+	runtime := &storeStartingRuntime{mapStatusRuntime{statuses: map[int]robotcap.RuntimeStatus{
+		17000001: {UID: 17000001, StateName: robotcap.RuntimeStateRunning, StoreCreateRejected: true, LastStoreError: 0x3e},
+	}}}
+	manager := NewRobotManager(nil, nil, runtime)
+	env := storeWorkflowEnv{manager: manager}
+	if !env.RuntimeStatusMap()[17000001].StoreCreateRejected {
+		t.Fatal("failed attempt was not cached")
+	}
+	if !env.StartPrivateStore(17000001, "retry") {
+		t.Fatal("retry did not start")
+	}
+	status := env.RuntimeStatusMap()[17000001]
+	if status.StoreCreateRejected || status.LastStoreError != 0 {
+		t.Fatalf("new attempt consumed old cached rejection: %+v", status)
+	}
+	if got := runtime.mapCalls.Load(); got != 2 {
+		t.Fatalf("status refreshes=%d want 2", got)
+	}
+}
+
 func (r *mapStatusRuntime) RuntimeStatus() []robotcap.RuntimeStatus {
 	r.sliceCalls.Add(1)
 	return nil

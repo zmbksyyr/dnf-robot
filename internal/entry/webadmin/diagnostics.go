@@ -22,6 +22,7 @@ import (
 	"robot/internal/foundation/dbstatus"
 	"robot/internal/foundation/hostprofile"
 	"robot/internal/foundation/layout"
+	"robot/internal/foundation/process"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -400,13 +401,13 @@ func listeningProcessPorts() (map[int]listeningPort, error) {
 // not ship ss, and invoking it on every diagnostics refresh caused a false
 // "inspection failed" loop even while the game port was listening.
 func listeningProcessPortsWindows() (map[int]listeningPort, error) {
-	out, err := exec.Command("netstat", "-ano").Output()
+	out, err := process.BackgroundCommand("netstat", "-ano").Output()
 	if err != nil {
 		return nil, fmt.Errorf("netstat unavailable: %w", err)
 	}
 	// Netstat gives PIDs but omits names. Read actual Windows image names so
 	// both the Robot API parent and Web worker retain their real identity.
-	tasks, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+	tasks, err := process.BackgroundCommand("tasklist", "/FO", "CSV", "/NH").Output()
 	if err != nil {
 		return nil, fmt.Errorf("tasklist unavailable: %w", err)
 	}
@@ -800,7 +801,7 @@ func portDialCheck(name, host string, port int) diagnosticsCheck {
 
 func udpListeningCheck(name string, port int) diagnosticsCheck {
 	if runtime.GOOS == "windows" {
-		out, err := exec.Command("netstat", "-ano", "-p", "udp").Output()
+		out, err := process.BackgroundCommand("netstat", "-ano", "-p", "udp").Output()
 		if err != nil {
 			return diagnosticsCheck{Name: name, Status: diagWarn, Message: err.Error(), Expected: port}
 		}

@@ -13,6 +13,18 @@ import (
 	"robot/internal/shared"
 )
 
+func TestStallOccupancyIncludesTouchingHorizontalEdges(t *testing.T) {
+	first := GridPoint{Village: 3, Area: 0, X: 100, Y: 200}
+	for _, dx := range []int{120, 159, 160, 161, 240} {
+		second := first
+		second.X += dx
+		want := dx <= 160
+		if got := positionsConflict(first, second); got != want {
+			t.Fatalf("horizontal distance=%d conflict=%t want=%t", dx, got, want)
+		}
+	}
+}
+
 func TestStorePointCoordinatorKeepsSuccessfulOccupancyAfterClaimExpires(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{Village: 3, Area: 0, XMin: 0, XMax: 0, YMin: 0, YMax: 0, Use: true}})
@@ -119,7 +131,7 @@ func TestStorePointCoordinatorCoalescesActiveOccupancyWrites(t *testing.T) {
 	configDir := t.TempDir()
 	writeStoreMapCatalog(t, configDir, []shared.MapCatalogItem{{
 		Village: 3, Area: 0,
-		XMin: 1, XMax: 1 + PointXStep*(occupancyCount-1),
+		XMin: 1, XMax: 1 + PointXStep*2*(occupancyCount-1),
 		YMin: 1, YMax: 1, Use: true,
 	}})
 	coordinator := newTestPointCoordinator(configDir, nil)

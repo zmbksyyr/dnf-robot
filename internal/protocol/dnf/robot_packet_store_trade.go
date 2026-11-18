@@ -60,6 +60,7 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 				// successful create state or a following CMD 90 acknowledgement.
 				r.StoreCreateRejected = true
 				r.LastStoreError = storeErr
+				foundationlog.Robotf("[STORE_CMD88_NACK] uid=%d error=0x%02x village=%d area=%d x=%d y=%d\n", r.UID, storeErr, r.CurVillage, r.CurArea, r.CurX, r.CurY)
 			}
 		case 90:
 			if value == 1 {

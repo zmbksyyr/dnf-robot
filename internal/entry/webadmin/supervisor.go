@@ -10,6 +10,7 @@ import (
 
 	"robot/internal/foundation/config"
 	foundationlog "robot/internal/foundation/log"
+	"robot/internal/foundation/process"
 )
 
 const webAdminShutdownTimeout = 6 * time.Second
@@ -92,7 +93,7 @@ func newCommand(cfg *config.SysConfig) *exec.Cmd {
 		foundationlog.Robotf("web admin config snapshot failed: %v\n", err)
 		return nil
 	}
-	cmd := exec.Command(exe, "--web-admin", "--web-config-stdin", "--robot-addr", robotAddr, "--web-addr", webAddr)
+	cmd := process.BackgroundCommand(exe, "--web-admin", "--web-config-stdin", "--robot-addr", robotAddr, "--web-addr", webAddr)
 	cmd.Stdin = bytes.NewReader(snapshot)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

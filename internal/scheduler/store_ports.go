@@ -105,7 +105,13 @@ func (e storeWorkflowEnv) SetAreaFrom(uid int, village, area int, x, y int, from
 }
 
 func (e storeWorkflowEnv) StartPrivateStore(uid int, title string) bool {
-	return e.manager.doll.StartPrivateStore(uid, title)
+	if !e.manager.doll.StartPrivateStore(uid, title) {
+		return false
+	}
+	// StartPrivateStore synchronously clears the previous attempt's result.
+	// The workflow must not immediately consume its cached rejection again.
+	e.manager.invalidateRuntimeStatusCache()
+	return true
 }
 
 func (e storeWorkflowEnv) StoreTitle(uid int, rc robotconfig.RuntimeConfig) string {

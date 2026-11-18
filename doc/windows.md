@@ -89,3 +89,45 @@ Windows 的同一测试实例正常停止 Robot 单模块后换候选、重新�
 `go test ./...`、Windows/Linux amd64 无 CGO 构建通过；实际证据位于仓库外
 `../x/dnf-gm-output/evidence/encoding/`。不将本轮名称修复解释为此前全部负载及
 客户端业务重新跑过。
+
+## 摆摊碰撞与后台子进程（2026-11-18）
+
+用户指定的 rednf 仅用于只读理解位置逻辑，查阅
+`CVillageObjectMgr/register_object.inc`、`CVillageObjectMgr.h`、
+`CPrivateStoreMgr/CPrivateStorePos_1.inc` 和
+`ProfessionDisjointer/CDisjointMachine.inc`。随后独立核对 SHA-256 为
+`da417c5e65918f655afcddb6edfdaf2fa1e77b2f208e5aa397f021fa23b79979`
+的原 game：普通摊构造函数 `0x085cb7fc`、分解摊构造函数 `0x085d1ae8`、
+矩形判断 `0x085cb492` 确认两类对象均为 160×100，接触边界也判碰撞。
+来源文件哈希与原 ELF 反汇编保留在仓库外
+`x/dnf-gm-output/evidence/stall-position-source-study.json` 及
+`stall-*-original-disassembly.log`；未引入参考代码、脚本、补丁或产物。
+
+Robot 原有网格横向步长 120，占位检查也只排斥到 119，会允许两个碰撞框重叠。
+现在保留网格和既有纵向间隔，横向占位范围修正为包含 160；正常网格因此隔列选点。
+普通摊首次登录仍使用准备坐标，后续换点复用会话时，在同区域也发送原有移动请求。
+创建失败日志增加实际区域、坐标和服务端错误码；成功仍要求原服务的创建、展示确认。
+这两项为公共调度修正，同时用于 Windows 和 Linux，不修改原 ELF。
+
+Linux 实测进一步复现重试读取旧错误：底层已同步清除上次拒绝结果，调度层仍可能
+命中 2 秒缓存，因而在新回包前判失败。成功启动新普通摊尝试后现立即使该缓存失效，
+与分解摊已有处理一致；不延长确认期限或伪造成功。回归用原生产源码 overlay
+复现、当前源码通过，证据为 `stall-cache-regression-before-after.json`。
+
+Windows 的 Web 子进程和 netstat/tasklist 诊断命令统一以 DETACHED_PROCESS 启动，
+保留标准输入输出、命名停止事件和原有监督逻辑。Linux 使用原来的 exec.Command，
+没有新增配置、启动脚本或外部 GUI 依赖。Windows 实际诊断刷新与重开后均未发现
+控制台所属 conhost 或可见黑窗；重开后原 game 未重启，实际登录、移动、登出通过。
+
+最终三项公共摆摊修复完成后，Windows Native 与 Linux 原 ELF 独立副本均完成
+600 目标、120 秒稳态混合测试：在线范围分别为 593–600、597–600；排空后累计
+摆摊成功／失败分别为 84／3、79／3，移动为 3468／0、3340／0。Linux 日志实际
+出现普通摊与分解摊换点后成功。两端正常排空、整套停服；Windows 最终版本再次
+连续刷新三次真实诊断，没有所属 conhost 或可见黑窗。全仓测试及双平台构建通过。
+
+Windows 自动行为排空约 50.05 秒，Linux 约 30.03 秒；game 秒级时钟最大积压
+分别为 35.86、6.01 秒。剩余位置拒绝与 Windows 高峰积压继续处理，不能据这次
+随机地图与动态策略负载推导所有位置零失败，或宣称已达到 Linux 原生性能。
+Linux 为授权的同机 WSL 独立对照，并非产品依赖或裸机基准。最终收据为 Native
+仓库外 `x/dnf-gm-output/evidence/stall-cache-final-summary.json`、两端原始负载 JSON
+及 `stall-cache-windows-console.json`；首轮旧错误缓存的失败日志亦保留。

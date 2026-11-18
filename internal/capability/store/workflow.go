@@ -364,6 +364,9 @@ func (w Workflow) finishAndRestoreAutoNormal(info robotcap.Info, rc robotconfig.
 
 func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, try int, forceCoordinate bool, shouldStop func() bool) (bool, string) {
 	env := w.Env
+	// The first login already uses the prepared position. Later attempts reuse
+	// that session, so a new point must also move within the current area.
+	forceCoordinate = forceCoordinate || try > 1
 	if shouldStop != nil && shouldStop() {
 		return false, StoreReasonCancelled
 	}
@@ -377,7 +380,7 @@ func (w Workflow) tryPosition(info robotcap.Info, rc robotconfig.RuntimeConfig, 
 			return false, StoreReasonSetAreaFailed
 		}
 		if forceCoordinate && stAfterOnline.Village == info.Village && stAfterOnline.Area == info.Area {
-			env.Logf("[StoreProbe] relocate uid=%d village=%d area=%d from=%d/%d to=%d/%d\n", info.UID, info.Village, info.Area, stAfterOnline.X, stAfterOnline.Y, info.X, info.Y)
+			env.Logf("[AutoStore] relocate uid=%d try=%d village=%d area=%d from=%d/%d to=%d/%d\n", info.UID, try, info.Village, info.Area, stAfterOnline.X, stAfterOnline.Y, info.X, info.Y)
 		}
 		areaSet := env.SetAreaFrom(info.UID, info.Village, info.Area, info.X, info.Y, stAfterOnline.Village, stAfterOnline.Area)
 		if !areaSet {
