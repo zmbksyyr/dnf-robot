@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	"robot/internal/foundation/charset"
 	"robot/internal/foundation/filebackup"
 )
 
@@ -229,25 +228,9 @@ func readPVFStringTable(raw []byte, dataStart int, entry pvfPatchEntry) ([]strin
 	if err != nil {
 		return nil, err
 	}
-	if len(data) < 8 {
-		return nil, fmt.Errorf("stringtable.bin too small")
-	}
-	count := int(binary.LittleEndian.Uint32(data[0:4]))
-	if count <= 0 || 4+count*4 > len(data) {
+	out := decodeStringTable(data)
+	if len(out) == 0 {
 		return nil, fmt.Errorf("stringtable.bin invalid count")
-	}
-	out := make([]string, count)
-	for i := 0; i < count; i++ {
-		start := int(binary.LittleEndian.Uint32(data[4+i*4 : 8+i*4]))
-		endOff := 8 + i*4
-		if endOff+4 > len(data) {
-			break
-		}
-		end := int(binary.LittleEndian.Uint32(data[endOff : endOff+4]))
-		if start < 0 || end < start || end+4 > len(data) {
-			continue
-		}
-		out[i] = cleanPVFTableString(charset.DecodePVFBytes(data[start+4 : end+4]))
 	}
 	return out, nil
 }

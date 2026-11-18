@@ -21,6 +21,7 @@ type pvfFile struct {
 type pvfArchive struct {
 	files      map[string]*pvfFile
 	stringList []string
+	nstrings   map[uint32]map[string]string
 }
 
 func openPVF(path string) (*pvfArchive, error) {
@@ -106,25 +107,86 @@ func openPVF(path string) (*pvfArchive, error) {
 	return archive, nil
 }
 
-func (a *pvfArchive) loadStringTable() {
-	f := a.files["stringtable.bin"]
-	if f == nil || len(f.Data) < 8 {
-		return
+func decodeStringTable(data []byte) []string {
+	if len(data) < 8 {
+		return nil
 	}
-	count := int(binary.LittleEndian.Uint32(f.Data[0:4]))
-	if count <= 0 || len(f.Data) < 8 || count > (len(f.Data)-8)/4 {
-		return
+	count := int(binary.LittleEndian.Uint32(data[:4]))
+	if count <= 0 || count > (len(data)-8)/4 {
+		return nil
 	}
-	a.stringList = make([]string, count)
-	for i := 0; i < count; i++ {
-		start := int(binary.LittleEndian.Uint32(f.Data[4+i*4 : 8+i*4]))
-		endOff := 8 + i*4
-		end := int(binary.LittleEndian.Uint32(f.Data[endOff : endOff+4]))
-		if end < start || start > len(f.Data)-4 || end > len(f.Data)-4 {
+	entry := func(i int) []byte {
+		start := int(binary.LittleEndian.Uint32(data[4+i*4 : 8+i*4]))
+		end := int(binary.LittleEndian.Uint32(data[8+i*4 : 12+i*4]))
+		if start < (count+1)*4 || end < start || end > len(data)-4 {
+			return nil
+		}
+		return data[start+4 : end+4]
+	}
+	// Early entries can be all ASCII or untranslated Korean. Sample complete
+	// strings throughout the table instead of guessing each short name.
+	stride := count / 4096
+	if stride < 1 {
+		stride = 1
+	}
+	sample := make([]byte, 0, 262144)
+	for i := 0; i < count && len(sample) < cap(sample); i += stride {
+		text := entry(i)
+		if len(text)+1 > cap(sample)-len(sample) {
 			continue
 		}
-		a.stringList[i] = cleanPVFTableString(charset.DecodePVFBytes(f.Data[start+4 : end+4]))
+		sample = append(sample, text...)
+		sample = append(sample, '\n')
 	}
+	encodingName := charset.DetectPVFEncoding(sample)
+	out := make([]string, count)
+	for i := range out {
+		out[i] = cleanPVFTableString(charset.DecodePVFEncoding(entry(i), encodingName))
+	}
+	return out
+}
+
+func (a *pvfArchive) loadStringTable() {
+	if f := a.files["stringtable.bin"]; f != nil {
+		a.stringList = decodeStringTable(f.Data)
+	}
+}
+
+// Type 9 selects an n_string dictionary; the following type 10 supplies its
+// key. Resolve it before exposing script text to catalog consumers.
+func (a *pvfArchive) nstring(id uint32, key string) string {
+	if a.nstrings == nil {
+		a.nstrings = make(map[uint32]map[string]string)
+	}
+	values, loaded := a.nstrings[id]
+	if !loaded {
+		values = make(map[string]string)
+		a.nstrings[id] = values
+		for _, entry := range parsePVFList(a.text("n_string.lst")) {
+			if uint32(entry.ID) != id {
+				continue
+			}
+			f := a.files[normalizePVFPath(entry.Path)]
+			if f == nil {
+				break
+			}
+			text := strings.TrimPrefix(charset.DecodePVFBytes(f.Data), "\ufeff")
+			for _, line := range strings.Split(text, "\n") {
+				line = strings.TrimRight(line, "\r\x00")
+				if strings.HasPrefix(strings.TrimSpace(line), "//") {
+					continue
+				}
+				if k, v, ok := strings.Cut(line, ">"); ok {
+					values[k] = v
+				}
+			}
+			break
+		}
+	}
+	if value, ok := values[key]; ok {
+		return value
+	}
+	return "ErrorString"
 }
 
 func extractPVFData(a *pvfArchive) ([]shared.EquipmentCatalogItem, []shared.EquipmentCatalogItem, []shared.MapCatalogItem) {
@@ -465,6 +527,16 @@ func (a *pvfArchive) decodeScript(data []byte) string {
 			b.WriteByte('`')
 			b.WriteString(a.lookupString(int(val)))
 			b.WriteString("`\t\n")
+		case 9:
+			if i+10 <= len(data) && data[i+5] == 10 {
+				key := a.lookupString(int(binary.LittleEndian.Uint32(data[i+6 : i+10])))
+				b.WriteByte('`')
+				b.WriteString(a.nstring(uint32(val), key))
+				b.WriteString("`\r\n")
+				i += 5
+			} else {
+				b.WriteString("ErrorString\r\n")
+			}
 		case 10:
 			b.WriteString(a.lookupString(int(val)))
 			b.WriteString("\r\n")

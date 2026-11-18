@@ -545,9 +545,9 @@ func parsePVFList(text string) []pvfListEntry {
 	}
 	var out []pvfListEntry
 	for i := 0; i+1 < len(fields); i += 2 {
-		id := atoi(fields[i])
+		id, err := strconv.Atoi(fields[i])
 		path := normalizePVFPath(fields[i+1])
-		if id > 0 && path != "" {
+		if err == nil && id >= 0 && path != "" {
 			out = append(out, pvfListEntry{ID: id, Path: path})
 		}
 	}

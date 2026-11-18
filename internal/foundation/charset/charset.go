@@ -2,6 +2,7 @@ package charset
 
 import (
 	"fmt"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -20,31 +21,50 @@ func EncodeBig5String(s string) ([]byte, error) {
 }
 
 type textCodec struct {
-	name   string
-	encode *encoding.Encoder
-	decode *encoding.Decoder
+	name     string
+	encoding encoding.Encoding
 }
 
 var pvfCodecs = []textCodec{
-	{name: "big5", encode: traditionalchinese.Big5.NewEncoder(), decode: traditionalchinese.Big5.NewDecoder()},
-	{name: "gbk", encode: simplifiedchinese.GBK.NewEncoder(), decode: simplifiedchinese.GBK.NewDecoder()},
+	{name: "big5", encoding: traditionalchinese.Big5},
+	{name: "gbk", encoding: simplifiedchinese.GBK},
 }
 
-func DecodePVFBytes(raw []byte) string {
-	best := string(raw)
-	bestScore := readableScore(best)
+// DetectPVFEncoding scores complete text, never archive indexes. Callers with a
+// string table sample across its entries and keep this choice for short names.
+func DetectPVFEncoding(raw []byte) string {
+	if utf8.Valid(raw) {
+		return "utf8"
+	}
+	best, bestScore := "gbk", -int(^uint(0)>>1)
 	for _, codec := range pvfCodecs {
-		s, _, err := transform.String(codec.decode, string(raw))
+		s, _, err := transform.Bytes(codec.encoding.NewDecoder(), raw)
 		if err != nil {
 			continue
 		}
-		score := readableScore(s)
+		score := readableScore(string(s))
 		if score > bestScore {
-			best = s
-			bestScore = score
+			best, bestScore = codec.name, score
 		}
 	}
 	return best
+}
+
+func DecodePVFEncoding(raw []byte, encodingName string) string {
+	if encodingName == "utf8" {
+		return string(raw)
+	}
+	for _, codec := range pvfCodecs {
+		if codec.name == encodingName {
+			s, _, _ := transform.Bytes(codec.encoding.NewDecoder(), raw)
+			return string(s)
+		}
+	}
+	return string(raw)
+}
+
+func DecodePVFBytes(raw []byte) string {
+	return DecodePVFEncoding(raw, DetectPVFEncoding(raw))
 }
 
 func UTF8AsWindows1252String(s string) string {
@@ -197,10 +217,13 @@ func readableScore(s string) int {
 	score := 0
 	for _, r := range s {
 		switch {
-		case r == utf8.RuneError:
+		case r == utf8.RuneError || unicode.Is(unicode.Co, r):
 			score -= 20
 		case unicode.Is(unicode.Han, r):
 			score += 6
+			if strings.ContainsRune("的一是在不了有人這这个們们說说國国時时會会後后對对過过發发無无經经當当與与學学進进種种將将還还見见沒没從从給给兩两點点萬万龍龙劍剑鬥斗復复幣币師师裝装备級级護护體体靈灵聖圣", r) {
+				score += 4
+			}
 		case r >= 32 && r < 127:
 			score += 1
 		case unicode.IsLetter(r), unicode.IsNumber(r):
