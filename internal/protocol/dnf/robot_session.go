@@ -216,6 +216,9 @@ type RobotVo struct {
 	partyDungeonEnteredAt       time.Time
 	partyDungeonLastAt          time.Time
 	partyDungeonFlags           byte
+	partyDungeonLegacySkills    bool
+	partySkillInfoKnown         bool
+	partySkillLevels            [256]byte
 	partySkillNextAt            time.Time
 	partySkillRecoverAt         time.Time
 	partySkillBlockedUntil      time.Time
@@ -401,6 +404,8 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.CurY = uint16(info.BirthPos[3])
 	r.GateArea = uint8(info.GateArea)
 	r.Cipher = crypt.NewDNFCipher()
+	r.partySkillInfoKnown = false
+	r.partySkillLevels = [256]byte{}
 	r.MoveType = 5
 	r.SelectCharacSent = false
 	r.ReturnSelectPending = false

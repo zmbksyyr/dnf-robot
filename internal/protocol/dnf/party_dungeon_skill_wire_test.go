@@ -1,0 +1,82 @@
+package dnf
+
+import (
+	"bytes"
+	"encoding/binary"
+	"testing"
+	"time"
+)
+
+func TestFollowRejectsCapturedMonsterControlledByLeader(t *testing.T) {
+	for _, tc := range []struct {
+		raw    string
+		leader uint16
+	}{
+		{"01040072b23aa47f6f7c5d546f7f797e7c7e6e012f3f7e3e793a7e7e393d5a848181", 7},
+		{"015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000", 0xf4a1},
+	} {
+		if _, _, ok := rewritePartyDungeonBody(mustPartyHex(t, tc.raw), tc.leader, 6); ok {
+			t.Fatal("monster controller was rewritten as a player")
+		}
+	}
+}
+
+func TestFollowRejectsMonsterWithSameNumericIDAsLeader(t *testing.T) {
+	body := mustPartyHex(t, "01040072b23aa47f6f7c5d546f7f797e7c7e6e012f3f7e3e793a7e7e393d5a848181")
+	plain := append([]byte(nil), body[7:]...)
+	for i := range plain {
+		plain[i] ^= 0x7e
+	}
+	binary.LittleEndian.PutUint16(plain[3:5], 7)
+	checksum := partyPayloadChecksum(plain)
+	copy(body[3:7], checksum[:])
+	for i, value := range plain {
+		body[7+i] = value ^ 0x7e
+	}
+	if _, _, ok := rewritePartyDungeonBody(body, 7, 6); ok {
+		t.Fatal("a monster reference collided with a player reference")
+	}
+}
+
+func TestLegacySkillWireMatchesCapturedPlayerState(t *testing.T) {
+	for _, tc := range []struct {
+		raw   string
+		state byte
+		data  []byte
+		token uint16
+	}{
+		{"020500b7af53696f7f797e7d787e7e1a7e7e7a7e50b3", 3, []byte{0, 100, 0, 0, 4, 0}, 0xcd2e},
+		{"0205008d8d1e0b6f7f797e7e7e7e7eb6", 0, nil, 0xc800},
+	} {
+		body := mustPartyHex(t, tc.raw)
+		if got := buildPartyLegacySkillStateBody(7, tc.state, tc.data, tc.token); !bytes.Equal(got[:4], body[:4]) || !bytes.Equal(got[7:], body[7:]) {
+			t.Fatalf("skill body=%x want capture=%x", got, body)
+		}
+		for _, frame := range [][]byte{buildPartyUnreliablePacket(1, 0, 0, body), buildPartyReliablePacket(1, 0, 0, [][]byte{body})} {
+			vo := &RobotVo{partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 6}, partyDungeonEnteredAt: time.Now()}
+			peer := partyIPPeer{slot: 0, slotKnown: true, uniqueID: 7}
+			vo.rememberPartyDungeonActivityUnsafe(frame, 1, peer, time.Now())
+			if !vo.partyDungeonLegacySkills || partyDungeonFrameUsesLegacySkills(frame, 8) {
+				t.Fatal("legacy format selection did not use leader identity")
+			}
+			frame[len(frame)-1] ^= 1
+			if partyDungeonFrameUsesLegacySkills(frame, 7) {
+				t.Fatal("accepted corrupt checksum")
+			}
+		}
+	}
+}
+
+func TestLearnedSkillTreeMatchesCapturedOriginalNotification(t *testing.T) {
+	body := mustPartyHex(t, "11000d00a9010106010501010402180100032e0101040817010066b5020067b6020068b8010069b307006aae01006bac01006caa01006dc2090012000d00")
+	levels, ok := parsePartyLearnedSkills(body)
+	if !ok || levels[169] != 1 || levels[5] != 1 || levels[24] != 1 || levels[194] != 9 || levels[3] != 0 {
+		t.Fatalf("learned=%v ok=%t", levels, ok)
+	}
+	// Every truncation inside the active tree must leave the old snapshot alone.
+	for n := 0; n < 56; n++ {
+		if _, valid := parsePartyLearnedSkills(body[:n]); valid {
+			t.Fatalf("accepted truncated tree length=%d", n)
+		}
+	}
+}

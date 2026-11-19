@@ -76,6 +76,11 @@ func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
 }
 
 func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time) {
+	// Replayed leader states can cancel our own cast. Keep the latest position
+	// queued until the cast and its recovery have both been acknowledged.
+	if !r.partySkillRecoverAt.IsZero() || r.partyReliablePurposePendingUnsafe(0, "skill-") {
+		return
+	}
 	for len(r.partyDungeonFollow) > 0 && !now.Before(r.partyDungeonFollow[0].due) {
 		pending := r.partyDungeonFollow[0]
 		peer := r.partyPeerForSlotUnsafe(pending.peerSlot)

@@ -12,7 +12,6 @@ import (
 
 func TestRobotRewritesCapturedDungeonEnvelopeIdentity(t *testing.T) {
 	tests := []string{
-		"015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000",
 		"0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff",
 	}
 	for _, captured := range tests {
@@ -371,7 +370,7 @@ func TestPartyDungeonFollowCoalescesPendingFrames(t *testing.T) {
 		partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0xee9f},
 	}
 	vo.markPartyDungeonEnteredUnsafe(now)
-	firstBody := mustPartyHex(t, "015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000")
+	firstBody := mustPartyHex(t, "0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff")
 	secondBody := append([]byte(nil), firstBody...)
 	secondExpected, _, ok := rewritePartyDungeonBody(secondBody, peer.uniqueID, vo.partySelfPeer.uniqueID)
 	if !ok {
@@ -485,6 +484,7 @@ func TestPartyDungeonSkillAndFollowUseRecentRelayRoute(t *testing.T) {
 	if vo.partyTQOSReliableSeq[0][2] != 1 || vo.partyTQOSReliableSeq[0][1] != 0 {
 		t.Fatalf("skill route sequences=%+v", vo.partyTQOSReliableSeq[0])
 	}
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, 0), 2, vo.partyPeers[0])
 
 	vo.partyDungeonFollow = []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, body: []byte{1, 2, 3}}}
 	followPacket := make(chan []byte, 1)
@@ -496,7 +496,7 @@ func TestPartyDungeonSkillAndFollowUseRecentRelayRoute(t *testing.T) {
 	}
 }
 
-func TestReliableDungeonFollowDoesNotWaitForSkillRecovery(t *testing.T) {
+func TestReliableDungeonFollowWaitsForSkillRecovery(t *testing.T) {
 	relay, peerConn := net.Pipe()
 	defer relay.Close()
 	defer peerConn.Close()
@@ -511,12 +511,17 @@ func TestReliableDungeonFollowDoesNotWaitForSkillRecovery(t *testing.T) {
 	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
 	vo.partyDungeonFollow = []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, reliable: true, records: [][]byte{{1, 2, 3}}}}
 
+	vo.flushPartyDungeonFollowUnsafe(nil, now)
+	if len(vo.partyDungeonFollow) != 1 {
+		t.Fatal("reliable leader state interrupted skill recovery")
+	}
+	vo.partySkillRecoverAt = time.Time{}
 	followPacket := make(chan []byte, 1)
 	go func() { followPacket <- readPartyRelayPacket(t, peerConn) }()
 	vo.flushPartyDungeonFollowUnsafe(nil, now)
 	assertPartyRelayPayload(t, <-followPacket, vo.UID, vo.partyPeers[0].accID)
 	if len(vo.partyDungeonFollow) != 0 {
-		t.Fatalf("reliable follow was delayed by skill recovery: %+v", vo.partyDungeonFollow)
+		t.Fatalf("reliable follow did not resume after recovery: %+v", vo.partyDungeonFollow)
 	}
 }
 
@@ -540,6 +545,59 @@ func TestPartyDungeonSkillYieldsToPendingFollow(t *testing.T) {
 	}
 	if got := vo.partySkillNextAt.Sub(now); got != time.Second {
 		t.Fatalf("skill retry delay = %s, want 1s", got)
+	}
+}
+
+// A moving leader continuously replaces the delayed position in the follow
+// queue. That future position must not postpone a skill whose timer has fired.
+func TestPartyDungeonSkillDoesNotStarveBehindFutureMovement(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	remote := receiver.LocalAddr().(*net.UDPAddr)
+	now := time.Now()
+	vo := &RobotVo{
+		UID:                   18000001,
+		partySelfPeer:         partyIPPeer{uniqueID: 0xee9f, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt: now, partyDungeonLastAt: now,
+		partySkillNextAt: now, partySkillLoaded: true,
+		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+	}
+	peer := partyIPPeer{uniqueID: 0xf4a1, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+	vo.partyPeers[0] = peer
+	body := mustPartyHex(t, "0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff")
+	if !vo.queuePartyDungeonFollowUnsafe(buildPartyUnreliablePacket(1, 0, 0, body), peer, now) {
+		t.Fatal("position not queued")
+	}
+	vo.flushPartyRuntimeUnsafe(sender, now)
+	if vo.partySkillRecoverAt.IsZero() {
+		t.Fatal("future leader movement starved due skill")
+	}
+	if len(vo.partyDungeonFollow) != 1 {
+		t.Fatal("future position was dropped")
+	}
+	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 4096)
+	n, _, err := receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := buf[:n]
+	if packet[0] != 1 || !partyDungeonFrameContainsCommand(packet, partyDungeonEnvelopeCommand) {
+		t.Fatalf("expected actual skill transport, got %x", packet)
+	}
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, binary.LittleEndian.Uint32(packet[1:5])), 1, peer)
+	// The queued leader state must not overwrite the cast before recovery.
+	vo.flushPartyRuntimeUnsafe(sender, now.Add(vo.partyDungeonFollowDelayUnsafe()))
+	if len(vo.partyDungeonFollow) != 1 {
+		t.Fatal("leader state interrupted active skill")
 	}
 }
 

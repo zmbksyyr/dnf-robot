@@ -52,6 +52,9 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
 		return
 	}
+	if partyDungeonFrameUsesLegacySkills(frame, peer.uniqueID) {
+		r.partyDungeonLegacySkills = true
+	}
 	strongActivity := partyDungeonFrameContainsCommand(frame, 0x0004) || partyDungeonFrameContainsCommand(frame, 0x0027)
 	if !strongActivity {
 		if !partyDungeonFrameContainsCommand(frame, 0x0051) || r.partyDungeonLastAt.IsZero() || now.Sub(r.partyDungeonLastAt) > partyDungeonActivityTimeout {
@@ -87,6 +90,7 @@ func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {
 	r.partyDungeonEnteredAt = time.Time{}
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
+	r.partyDungeonLegacySkills = false
 	r.partySkillNextAt = time.Time{}
 	r.partySkillRecoverAt = time.Time{}
 	r.partySkillBlockedUntil = time.Time{}
@@ -132,9 +136,11 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	if !r.partySkillRecoverAt.IsZero() || r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
 		return
 	}
-	if len(r.partyDungeonFollow) > 0 {
-		r.partySkillNextAt = now.Add(time.Second)
-		return
+	for _, pending := range r.partyDungeonFollow {
+		if !now.Before(pending.due) {
+			r.partySkillNextAt = now.Add(time.Second)
+			return
+		}
 	}
 	r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
 	if !r.ensurePartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
@@ -148,10 +154,8 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		r.partySkillNextAt = now.Add(time.Second)
 		return
 	}
-	if r.partyReliablePendingCountUnsafe(peer.slot) > 0 {
-		r.partySkillNextAt = now.Add(time.Second)
-		return
-	}
+	// Follow traffic may occupy part of the reliable window continuously.
+	// The transport enforces its window; only another skill must finish first.
 	candidate := r.nextPartySkillCandidateUnsafe(now)
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
 		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
@@ -172,6 +176,9 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 		return false
 	}
 	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
+	if r.partyDungeonLegacySkills {
+		body = buildPartyLegacySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
+	}
 	purpose := "skill-cast"
 	if reason == "RECOVER" {
 		purpose = "skill-recover"
@@ -194,6 +201,9 @@ func (r *RobotVo) ensurePartySkillProfileUnsafe() bool {
 	}
 	if r.partySkillLoaded {
 		return true
+	}
+	if !r.partySkillInfoKnown {
+		return false
 	}
 	if r.partySkillLoading {
 		return false
@@ -253,11 +263,19 @@ func (r *RobotVo) loadPartySkillProfile(generation, catalogGeneration uint64, ui
 	r.partySkillLoaded = true
 	r.partySkillCatalogGeneration = catalogGeneration
 	r.partySkillJob = profile.job
-	r.partySkillCandidates = profile.candidates
+	r.partySkillCandidates = profile.candidates[:0]
+	for _, candidate := range profile.candidates {
+		if learned := int(r.partySkillLevels[candidate.skillIndex]); learned > 0 {
+			if candidate.level > learned {
+				candidate.level = learned
+			}
+			r.partySkillCandidates = append(r.partySkillCandidates, candidate)
+		}
+	}
 	if !r.partyDungeonEnteredAt.IsZero() && now.Sub(r.partyDungeonEnteredAt) <= partyDungeonEntryTimeout && !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= partyDungeonActivityTimeout {
 		r.partySkillNextAt = now
 	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_missing_pvf=%d skipped_path_mismatch=%d\n", uid, profile.cid, profile.job, profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, len(profile.candidates), profile.stats.SkippedMissingPVF, profile.stats.SkippedPathMismatch)
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d learned_candidates=%d skipped_missing_pvf=%d skipped_path_mismatch=%d\n", uid, profile.cid, profile.job, profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, len(r.partySkillCandidates), profile.stats.SkippedMissingPVF, profile.stats.SkippedPathMismatch)
 }
 
 func (r *RobotVo) resetPartySkillProfileUnsafe() {

@@ -34,6 +34,8 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		}
 	}
 	switch packet.typ {
+	case 19:
+		r.handleLearnedSkillsUnsafe(packet)
 	case 7:
 		if !r.handleReturnToSelectPacketUnsafe(packet) {
 			r.handlePartyPacketUnsafe(packet)

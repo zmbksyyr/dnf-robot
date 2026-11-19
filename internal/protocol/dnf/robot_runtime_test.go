@@ -56,6 +56,8 @@ func TestPartySkillProfileLoadIsSingleflightAndDoesNotHoldRobotLock(t *testing.T
 		UID:                   17000001,
 		CID:                   900001,
 		State:                 StateRun,
+		partySkillInfoKnown:   true,
+		partySkillLevels:      [256]byte{3: 1},
 		partyDungeonEnteredAt: time.Now(),
 		partyDungeonLastAt:    time.Now(),
 		partySkillLoad: func(uid uint32, cid int) (partySkillProfile, error) {
@@ -116,9 +118,11 @@ func TestPartySkillProfileResetRejectsStaleLoad(t *testing.T) {
 	release := make(chan struct{})
 	finished := make(chan struct{})
 	vo := &RobotVo{
-		UID:   17000001,
-		CID:   900001,
-		State: StateRun,
+		UID:                 17000001,
+		CID:                 900001,
+		State:               StateRun,
+		partySkillInfoKnown: true,
+		partySkillLevels:    [256]byte{3: 1},
 		partySkillLoad: func(_ uint32, cid int) (partySkillProfile, error) {
 			defer close(finished)
 			started <- struct{}{}

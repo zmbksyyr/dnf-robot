@@ -87,23 +87,21 @@ func rewritePartyDungeonRecords(body []byte, sourceUniqueID, targetUniqueID uint
 }
 
 func rewritePartyDungeonEnvelopeIdentity(payload []byte, sourceUniqueID, targetUniqueID uint16) int {
-	if len(payload) < 6 {
+	// The first reference is the actor. A later reference may be its controller
+	// (for example a monster owned by the leader), not another player identity.
+	if len(payload) < 6 || payload[0] != 0x11 || payload[1] != 0x01 || binary.LittleEndian.Uint16(payload[2:4]) != sourceUniqueID {
 		return 0
 	}
-	replacements := 0
-	for _, offset := range [...]int{2, 4} {
-		if binary.LittleEndian.Uint16(payload[offset:]) != sourceUniqueID {
-			continue
-		}
-		binary.LittleEndian.PutUint16(payload[offset:], targetUniqueID)
-		replacements++
-	}
-	return replacements
+	binary.LittleEndian.PutUint16(payload[2:4], targetUniqueID)
+	return 1
 }
 
 func rewritePartyDungeonStateIdentity(payload []byte, sourceUniqueID, targetUniqueID uint16) int {
 	const singleStateHeaderSize = 15
-	if len(payload) < singleStateHeaderSize || payload[0] != 1 {
+	if len(payload) < singleStateHeaderSize || payload[0] != 1 || binary.LittleEndian.Uint16(payload[3:5]) != sourceUniqueID {
+		return 0
+	}
+	if (payload[1] != 0x11 || payload[2] != 1) && (payload[1] != 0x81 || payload[2] != 0) {
 		return 0
 	}
 	replacements := 0
