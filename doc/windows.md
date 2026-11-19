@@ -416,3 +416,28 @@ Windows 10 IoT Enterprise LTSC x64 build 19044、Go 1.26.4、固定原 i386 ELF 
 同目录 `live-motion-review.private.json`，以及 `navigation-v3/skill-integration.private.json`。
 客户端和全部 Windows 测试服务已正常退出，外部探针、临时技能目录和客户端设置按备份
 恢复并核对，收据为 `navigation-v3/restored.private.json`。研究数据库保留，正式 3.0 未改。
+
+## 由所属角色计算伤害的攻击原语（2026-11-20）
+
+独立 Windows 测试将一名离线 Robot 临时改为鬼剑士、拔刀斩 1 级且不装备武器；
+角色信息、技能、装备和角色列表四张目标表完整备份，并先对未变更数据验证恢复。
+外部探针按已观测的协议布局独立构造物体 24337 的普通斩击分支，只发送自身身份、
+坐标和附近目标数，不发送伤害值，也不使用真人伤害夹具。客户端 PVF 物体脚本从
+所属角色读取技能与属性计算伤害。两次物体各收到 6 条怪物命中结果，第二次的 5 秒
+观察窗口内有 3 条关联该物体的怪物死亡 HP；截图可见掉落。真人没有输入攻击键，
+冰波称号已经界面卸下，未将其他来源的攻击计入此结论。
+
+重建真实怪物碰撞请求并把目标改为 Robot 的另一个独立实验没有收到对应命中结果或
+Robot HP 更新。包内其余字段语义尚未全部确认，不能据此认定碰撞协议已经正确，
+更不能直接改 HP 来替代受击。随后仅委托控制权并直接切换拔刀斩状态 23，测试客户端
+约 2 秒后崩溃，Windows APPCRASH 为 `0x4000001f`、偏移 `0x00264920`；
+时间关系已保留，根因未定。这条状态切换路径不计为通过，没有加入生产调度。
+
+环境仍为 Windows 10 IoT Enterprise LTSC x64 build 19044、Go 1.26.4、原 i386 ELF
+经 Native；本轮没有 Linux 战斗实测，也没有修改 Robot 生产源码。外部证据在相邻
+Native 仓库外 `../x/dnf-gm-output/evidence/party-combat/combat-v4/`，入口为
+`review.private.json`、`cast-review.private.json`、`client-crash/` 和 `restored.private.json`；
+连续截图为同级上层 `burst-041719/contact.png`。客户端为异常退出，服务端及 MySQL
+正常停止；四张目标表、测试包探针和客户端设置已恢复并核对，研究数据库保留。
+本阶段只证明不填伤害值的攻击原语，完整技能动作、自动攻击调度和正常受击仍未完成，
+正式 3.0 未改。
