@@ -276,3 +276,24 @@ Robot 真实登录、CMD 88 创建及正常保存/下线协议，不通过调度
 运行，另核对监听及同库实际在线状态，首次串连结果不计入结论。证据索引为
 Native 仓库外 `../x/dnf-gm-output/evidence/store-session-final-summary.json`。
 本阶段仅补测试与记录，没有更改正式 Robot 运行文件。
+
+## 摆摊购买与最新负载对照（2026-11-19）
+
+沿用生产 Robot `6525943`、固定原 i386 game、基底 PVF 和 MySQL 5.7.44，
+Windows 10 x64 build 19044 Native 与 Ubuntu 22.04.5／WSL2 Linux 5.10.16.3
+独立副本分开测试。生产 Robot 作为卖家，独立协议买家进入摊位并依次买 3 个、
+超量拒绝、买余下 997 个、售罄后拒绝；两端数量、买家金币、卖家 4% 手续费和
+正常退出／重登保存一致。目标账号各表从已验证快照恢复。该结果不替代图形客户端点击购买。
+
+600 目标、120 秒混合负载中，Linux 保持 594–600 在线，Robot 工作集约 225 MiB；
+Windows 为 596–600，Robot 全进程树约 263 MiB，但该轮退出出现 30.656 秒游戏时钟积压。
+Native 随后定位并修复兼容宿主对无关 mmap／munmap 清空权限缓存的问题；
+Robot 和 Linux 代码未因该修复改动。新宿主复测同类负载保持 596–600 在线，
+商品摊最多 33、分解摊 38，Robot 全树约 270 MiB，game 工作集约 1399 MiB，
+正常退出排空，本轮最大游戏时钟滞后 0.574 秒；新宿主上的购买与重登再次通过。
+随机负载及同机 WSL 对照不构成裸机性能比例，也不能由此排除所有退出场景。
+
+原始失败与成功记录均保留于相邻 Native 仓库外
+`../x/dnf-gm-output/evidence/store-trade/`，入口为 `summary.json`、
+`cache-range-final-load-summary.json` 和 `windows-cache-range-final/summary.private.json`。
+本阶段只补充本项目验证记录，不改 Robot 生产行为。
