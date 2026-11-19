@@ -392,3 +392,27 @@ Robot 离开真人并接近怪物。初版可靠移动记录没有得到相同�
 证据位于相邻 Native 仓库外 `../x/dnf-gm-output/evidence/party-combat/combat-v2/`，
 入口为 `final-validation.private.json`、`clean-primitive-022248/result.private.json`；
 连续截图为同级上层 `burst-020834`、`burst-021954`、`burst-022248`。正式发布包未加入探针。
+
+## 目标接近、清怪回队与技能调度联动（2026-11-20）
+
+房间内导航现接入生产跟随路径：保留仍存活、坐标有效的当前目标，避免拥挤时每次移动都换怪；
+每 200 毫秒至多移动 40 像素，接近目标并对齐纵向位置，进入攻击距离后保持位置。
+初版为维持固定偏移而被靠近的怪物不断推着后退，实机复现后已修正，未发布该中间版本。
+目标死亡后重新选怪，最后一个目标消失后靠近队长；换房清空导航状态。
+
+导航只发送自身实体和控制者的非可靠移动，发送成功才更新本地位置；没有已知坐标时沿用
+房间初始跟随，不伪造出生位置。导航活动时清除队长状态重放，施法及恢复等待期间不移动。
+本阶段没有新增控制权委托、攻击物体或 HP 写入，也没有增加宿主专用分支。
+
+Windows 10 IoT Enterprise LTSC x64 build 19044、Go 1.26.4、固定原 i386 ELF 和匹配 PVF
+的独立副本完成真实客户端测试：Robot 独立接近目标，真人清掉首房间 8 怪后自动回队，
+进入第二房间后重新接近新目标。另一轮保留原有技能调度，记录 45 次技能状态及 45 次恢复，
+施法期间没有导航移动，恢复后继续移动并随队换房。没有观察到 Robot 自身攻击物体；
+该轮真人称号冰波清怪已单独归因，不计作 Robot 攻击成果。真实攻击参数和正常受击仍待完成。
+
+完整 Go 测试、Windows/Linux amd64 构建通过，10,413 条原始移动记录、10,787 个实体
+读写逐字节一致；Linux 本阶段只有构建检查。证据位于相邻 Native 仓库外
+`../x/dnf-gm-output/evidence/party-combat/navigation-v2/validation.private.json`、
+同目录 `live-motion-review.private.json`，以及 `navigation-v3/skill-integration.private.json`。
+客户端和全部 Windows 测试服务已正常退出，外部探针、临时技能目录和客户端设置按备份
+恢复并核对，收据为 `navigation-v3/restored.private.json`。研究数据库保留，正式 3.0 未改。

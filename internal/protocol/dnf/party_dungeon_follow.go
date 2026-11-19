@@ -81,6 +81,9 @@ func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time
 	if !r.partySkillRecoverAt.IsZero() || r.partyReliablePurposePendingUnsafe(0, "skill-") {
 		return
 	}
+	if r.navigatePartyDungeonUnsafe(conn, now) {
+		return
+	}
 	for len(r.partyDungeonFollow) > 0 && !now.Before(r.partyDungeonFollow[0].due) {
 		pending := r.partyDungeonFollow[0]
 		peer := r.partyPeerForSlotUnsafe(pending.peerSlot)

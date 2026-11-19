@@ -15,8 +15,9 @@ type partyDungeonActor struct {
 }
 
 type partyDungeonWorld struct {
-	actors map[[4]byte]partyDungeonActor
-	target [4]byte
+	actors     map[[4]byte]partyDungeonActor
+	target     [4]byte
+	navigation partyDungeonNavigation
 }
 
 func partyDungeonFrameBodies(frame []byte) ([][]byte, bool) {
@@ -127,6 +128,11 @@ func (world *partyDungeonWorld) nearestMonster(position partyDungeonPosition, no
 	if position.known&3 != 3 {
 		return [4]byte{}, partyDungeonPosition{}, false
 	}
+	// Keep a live target while approaching it. Re-evaluating nearby monsters
+	// every movement tick made the Robot repeatedly cross their attack line.
+	if actor, ok := world.actors[world.target]; ok && partyDungeonMonster(world.target) && !actor.dead && actor.position.known&3 == 3 && now.Sub(actor.seenAt) <= 3*time.Second {
+		return world.target, actor.position, true
+	}
 	var selected [4]byte
 	var point partyDungeonPosition
 	best := math.Inf(1)
@@ -135,9 +141,6 @@ func (world *partyDungeonWorld) nearestMonster(position partyDungeonPosition, no
 			continue
 		}
 		distance := math.Hypot(float64(actor.position.x-position.x), 2*float64(actor.position.y-position.y))
-		if ref == world.target {
-			distance *= 0.75
-		}
 		if distance < best || distance == best && binary.LittleEndian.Uint32(ref[:]) < binary.LittleEndian.Uint32(selected[:]) {
 			selected, point, best = ref, actor.position, distance
 		}
