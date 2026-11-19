@@ -23,15 +23,16 @@ func TestOnlineConfirmationStopsWithoutClaimingSuccessDuringShutdown(t *testing.
 func TestOnlinePayloadKeepsDatabaseCIDSeparateFromCharacterSlot(t *testing.T) {
 	service := SessionService{Env: &directLogoutEnv{}}
 	got := service.onlinePayload(robotcap.Info{
-		UID: 17000001,
-		CID: 900001,
+		UID:           17000001,
+		CID:           900001,
+		CharacterSlot: 7,
 	}, 0, robotconfig.RuntimeConfig{})
 
 	if got.CID != 900001 {
 		t.Fatalf("online cid = %d, want database charac_no 900001", got.CID)
 	}
-	if got.CharacterSlot != 0 {
-		t.Fatalf("online character slot = %d, want first slot 0", got.CharacterSlot)
+	if got.CharacterSlot != 7 {
+		t.Fatalf("online character slot = %d, want resolved slot 7", got.CharacterSlot)
 	}
 }
 

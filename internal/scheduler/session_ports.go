@@ -159,6 +159,17 @@ func (e sessionActionEnv) SelectRobots(req robotcap.CommandRequest) ([]robotcap.
 }
 
 func (e sessionActionEnv) PrepareOnlineRobot(info robotcap.Info, rc robotconfig.RuntimeConfig) (robotcap.Info, error) {
+	repository, ok := e.manager.database.(interface {
+		OnlineCharacterSlot(uid, cid int) (int, error)
+	})
+	if !ok {
+		return info, fmt.Errorf("online character-list repository is unavailable")
+	}
+	slot, err := repository.OnlineCharacterSlot(info.UID, info.CID)
+	if err != nil {
+		return info, err
+	}
+	info.CharacterSlot = slot
 	if shared.GenericAreaAllowed(info.GuildID, info.Village) {
 		return info, nil
 	}

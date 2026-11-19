@@ -412,21 +412,21 @@ func rebuildCharacView(db characViewDB, uid int) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	raw := make([]byte, 36*148)
+	if len(chars) > characterViewSlots {
+		return fmt.Errorf("account uid=%d has %d characters, view supports %d", uid, len(chars), characterViewSlots)
+	}
+	raw := make([]byte, characterViewSlots*characterViewSlotBytes)
 	for slot, c := range chars {
-		if slot >= 36 {
-			break
-		}
-		off := slot * 148
+		off := slot * characterViewSlotBytes
 		binary.LittleEndian.PutUint32(raw[off:off+4], uint32(c.cid))
 		name := charset.Windows1252StringBytes(c.name)
 		if len(name) > 20 {
 			name = name[:20]
 		}
 		copy(raw[off+4:], name)
-		raw[off+28] = byte(c.lev)
-		raw[off+29] = byte(c.job)
-		raw[off+30] = byte(c.grow)
+		raw[off+24] = byte(c.job)
+		raw[off+25] = byte(c.grow)
+		binary.LittleEndian.PutUint16(raw[off+26:], uint16(c.lev))
 	}
 	var compressed bytes.Buffer
 	zw := zlib.NewWriter(&compressed)

@@ -14,18 +14,20 @@ type CreateRequest struct {
 }
 
 type Info struct {
-	UID     int    `json:"uid"`
-	CID     int    `json:"cid"`
-	GuildID int    `json:"guild_id"`
-	Name    string `json:"name"`
-	Level   int    `json:"level"`
-	Job     int    `json:"job"`
-	Grow    int    `json:"grow_type"`
-	Port    int    `json:"port"`
-	Village int    `json:"village"`
-	Area    int    `json:"area"`
-	X       int    `json:"x"`
-	Y       int    `json:"y"`
+	// Resolved from the account's persisted character list before login.
+	CharacterSlot int    `json:"-"`
+	UID           int    `json:"uid"`
+	CID           int    `json:"cid"`
+	GuildID       int    `json:"guild_id"`
+	Name          string `json:"name"`
+	Level         int    `json:"level"`
+	Job           int    `json:"job"`
+	Grow          int    `json:"grow_type"`
+	Port          int    `json:"port"`
+	Village       int    `json:"village"`
+	Area          int    `json:"area"`
+	X             int    `json:"x"`
+	Y             int    `json:"y"`
 }
 
 type EquipmentRecord struct {

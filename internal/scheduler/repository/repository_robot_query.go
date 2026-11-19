@@ -2,12 +2,68 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/binary"
+	"fmt"
 
 	robotcap "robot/internal/capability/robot"
 	"robot/internal/foundation/charset"
 	foundsql "robot/internal/foundation/sql"
 	"robot/internal/shared"
 )
+
+// The original game's account view holds 36 records of 148 bytes. The wire
+// character selector is the record index, not charac_no or its low byte.
+const characterViewSlotBytes = 148
+const characterViewSlots = 36
+
+func (r *SQLRepository) OnlineCharacterSlot(uid, cid int) (int, error) {
+	if uid <= 0 || cid <= 0 {
+		return 0, fmt.Errorf("invalid character identity uid=%d cid=%d", uid, cid)
+	}
+	var raw []byte
+	err := r.QueryRow(`SELECT UNCOMPRESS(v.info)
+FROM taiwan_cain.charac_view v
+JOIN taiwan_cain.charac_info c ON c.m_id=v.m_id AND c.charac_no=? AND c.delete_flag=0
+WHERE v.m_id=?`, cid, uid).Scan(&raw)
+	if err != nil {
+		return 0, fmt.Errorf("load character list uid=%d cid=%d: %w", uid, cid, err)
+	}
+	slot, err := characterSlot(raw, cid)
+	if err != nil {
+		return 0, fmt.Errorf("character list uid=%d cid=%d: %w", uid, cid, err)
+	}
+	return slot, nil
+}
+
+func characterSlot(raw []byte, cid int) (int, error) {
+	if cid <= 0 || len(raw) == 0 || len(raw)%characterViewSlotBytes != 0 || len(raw)/characterViewSlotBytes > characterViewSlots {
+		return 0, fmt.Errorf("invalid character list (%d bytes)", len(raw))
+	}
+	found := -1
+	gap := false
+	for slot := 0; slot < len(raw)/characterViewSlotBytes; slot++ {
+		id := binary.LittleEndian.Uint32(raw[slot*characterViewSlotBytes:])
+		if id == 0 {
+			gap = true
+			continue
+		}
+		// Login counts populated records, then loads that many from the front.
+		if gap {
+			return 0, fmt.Errorf("character list contains a gap before slot %d", slot)
+		}
+		if id != uint32(cid) {
+			continue
+		}
+		if found >= 0 {
+			return 0, fmt.Errorf("duplicate character in list")
+		}
+		found = slot
+	}
+	if found < 0 {
+		return 0, fmt.Errorf("character missing from list")
+	}
+	return found, nil
+}
 
 func (r *SQLRepository) SelectRobots(req robotcap.CommandRequest) ([]robotcap.Info, error) {
 	var rows *sql.Rows
