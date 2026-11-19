@@ -297,3 +297,20 @@ Robot 和 Linux 代码未因该修复改动。新宿主复测同类负载保持 
 `../x/dnf-gm-output/evidence/store-trade/`，入口为 `summary.json`、
 `cache-range-final-load-summary.json` 和 `windows-cache-range-final/summary.private.json`。
 本阶段只补充本项目验证记录，不改 Robot 生产行为。
+
+## GM 改名后的状态显示（2026-11-19）
+
+真实联调复现：GM 离线改名后，原游戏已读取新名，Robot 状态页仍使用创建时的登记名。
+状态查询现优先取当前所属、未删除角色的名字，角色已删除或归属不符时保留登记名并标记异常。
+沿用原联表查询，不增加数据库轮询或写入，也不要求 GM 更新 Robot 登记表。
+
+原游戏的 UTF-8 名字可经 MySQL latin1 保存。新增展示解码仅反转能完整还原为合法 UTF-8 的
+Windows-1252／Latin1 表示；普通中文及单独的西文重音文字保持原值，不修改数据库或角色槽位。
+角色选择、装备记录、喊话名字读取和状态查询共用该解码，不改变 Linux 启停、宿主适配或游戏协议。
+
+Windows Native 与原版 Linux ELF 的独立 MySQL 5.7.44 副本分别通过两种中文名字（含 20 字节上限）
+的实际 GM 输入、Robot 登录、原游戏名字访问器、在线拒绝和正常退出保存，名字与 SQL 字节一致。
+登记角色删除／归属异常的回退显示也通过。Windows 的 charset、repository、scheduler 包测试和
+两平台构建通过；Linux 测试核对实际运行镜像哈希。本轮没有新的 600 人负载或图形客户端显示结论。
+测试副本正常停服，诊断脚本、原 Robot 文件及冷库按备份恢复；失败与通过收据保留在
+相邻 Native 仓库外 `../x/dnf-gm-output/evidence/gm-rename/`。

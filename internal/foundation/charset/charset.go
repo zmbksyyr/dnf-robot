@@ -88,6 +88,24 @@ func Windows1252StringBytes(s string) []byte {
 	return out
 }
 
+// DecodeGameText reverses original-game UTF-8 bytes stored through MySQL latin1.
+// Ordinary Unicode and Western text stay unchanged; decode only a complete,
+// representable byte sequence that itself forms valid UTF-8.
+func DecodeGameText(s string) string {
+	raw := make([]byte, 0, len(s))
+	for _, r := range s {
+		b, ok := windows1252RuneToByte(r)
+		if !ok {
+			return s
+		}
+		raw = append(raw, b)
+	}
+	if !utf8.Valid(raw) {
+		return s
+	}
+	return string(raw)
+}
+
 func windows1252ByteToRune(b byte) rune {
 	switch b {
 	case 0x80:

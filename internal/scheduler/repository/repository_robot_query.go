@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	robotcap "robot/internal/capability/robot"
+	"robot/internal/foundation/charset"
 	foundsql "robot/internal/foundation/sql"
 	"robot/internal/shared"
 )
@@ -34,6 +35,7 @@ func (r *SQLRepository) SelectRobots(req robotcap.CommandRequest) ([]robotcap.In
 		if err := rows.Scan(&r.UID, &r.CID, &r.GuildID, &r.Name, &r.Village, &r.Area, &r.X, &r.Y, &r.Level, &r.Job, &r.Grow); err != nil {
 			return nil, err
 		}
+		r.Name = charset.DecodeGameText(r.Name)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -55,6 +57,7 @@ func (r *SQLRepository) RobotEquipmentRecords() ([]robotcap.EquipmentRecord, err
 		if err := rows.Scan(&record.Info.UID, &record.Info.CID, &record.Info.Name, &record.Info.Level, &record.Info.Job, &record.Info.Grow, &record.Raw); err != nil {
 			return nil, err
 		}
+		record.Info.Name = charset.DecodeGameText(record.Info.Name)
 		out = append(out, record)
 	}
 	return out, rows.Err()
@@ -79,7 +82,7 @@ LIMIT 1`, account).Scan(&village)
 func (r *SQLRepository) RobotCharacterName(uid int) (string, error) {
 	var name string
 	err := r.QueryRow("SELECT IFNULL(charac_name,'') FROM taiwan_cain.charac_info WHERE m_id=? AND delete_flag=0 ORDER BY last_play_time DESC, charac_no DESC LIMIT 1", uid).Scan(&name)
-	return name, err
+	return charset.DecodeGameText(name), err
 }
 
 func (r *SQLRepository) AliveRobotUIDs(uids []int) (map[int]bool, error) {
@@ -132,11 +135,11 @@ func (r *SQLRepository) RobotStatusRows(req robotcap.CommandRequest) ([]robotcap
 		args = append(args, req.Count)
 	}
 	query := `
-SELECT r.uid,r.cid,IFNULL(r.charac_name,''),IFNULL(r.account,''),IFNULL(c.lev,0),IFNULL(c.job,0),IFNULL(c.grow_type,0),
+SELECT r.uid,r.cid,COALESCE(c.charac_name,r.charac_name,''),IFNULL(r.account,''),IFNULL(c.lev,0),IFNULL(c.job,0),IFNULL(c.grow_type,0),
        IF(c.charac_no IS NULL,0,1),
        IFNULL(d.curvill,0),IFNULL(d.curarea,0),IFNULL(d.curx,0),IFNULL(d.cury,0)
 FROM d_starsky.robot_registry r
-LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.delete_flag=0
+LEFT JOIN taiwan_cain.charac_info c ON c.charac_no=r.cid AND c.m_id=r.uid AND c.delete_flag=0
 LEFT JOIN d_starsky.Dummylist d ON CAST(d.UID AS UNSIGNED)=r.uid
 ` + where + `
 ORDER BY r.uid` + limit
@@ -155,6 +158,7 @@ ORDER BY r.uid` + limit
 		if coreAlive == 0 {
 			item.MissingCore = true
 		}
+		item.Name = charset.DecodeGameText(item.Name)
 		out = append(out, item)
 	}
 	return out, total, rows.Err()
