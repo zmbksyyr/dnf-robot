@@ -14,7 +14,7 @@ type PartySkillMatchStats struct {
 // export for the requested job. A whitelist script path, when present, must
 // match the normalized PVF path exactly.
 func MatchPartySkillStates(job int, whitelist []PartySkillState, pvfStates []SkillState) ([]PartySkillState, PartySkillMatchStats) {
-	pvfIndex := make(map[[3]int]map[string]struct{}, len(pvfStates))
+	pvfIndex := make(map[[3]int]map[string]int, len(pvfStates))
 	for _, entry := range pvfStates {
 		if entry.Job != job || !validPartySkillKey(entry.SkillIndex, entry.State) {
 			continue
@@ -22,10 +22,10 @@ func MatchPartySkillStates(job int, whitelist []PartySkillState, pvfStates []Ski
 		key := [3]int{entry.Job, entry.SkillIndex, entry.State}
 		paths := pvfIndex[key]
 		if paths == nil {
-			paths = make(map[string]struct{})
+			paths = make(map[string]int)
 			pvfIndex[key] = paths
 		}
-		paths[normalizePartySkillScriptPath(entry.ScriptPath)] = struct{}{}
+		paths[normalizePartySkillScriptPath(entry.ScriptPath)] = entry.CooldownMS
 	}
 
 	matches := make([]PartySkillState, 0, len(whitelist))
@@ -40,9 +40,18 @@ func MatchPartySkillStates(job int, whitelist []PartySkillState, pvfStates []Ski
 			continue
 		}
 		if scriptPath := normalizePartySkillScriptPath(entry.ScriptPath); scriptPath != "" {
-			if _, ok := paths[scriptPath]; !ok {
+			cooldown, ok := paths[scriptPath]
+			if !ok {
 				stats.SkippedPathMismatch++
 				continue
+			}
+			entry.CooldownMS = cooldown
+		} else {
+			// A legacy whitelist can omit the script path. Respect the longest
+			// known baseline among its matching registrations.
+			entry.CooldownMS = 0
+			for _, cooldown := range paths {
+				entry.CooldownMS = max(entry.CooldownMS, cooldown)
 			}
 		}
 		entry.StateData = append([]byte(nil), entry.StateData...)

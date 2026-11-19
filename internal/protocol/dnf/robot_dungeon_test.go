@@ -208,10 +208,13 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 		partySkillNextAt:      now.Add(-time.Millisecond),
 		partySkillLoaded:      true,
 		partySkillJob:         8,
-		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{0x03, 0x00, 0x00}}},
+		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{0x03, 0x00, 0x00}, cooldown: 15 * time.Second}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
 	vo.flushPartyDungeonSkillUnsafe(sender, now)
+	if vo.partySkillReadyAt[3] != now.Add(15*time.Second) {
+		t.Fatalf("successful cast cooldown = %s", vo.partySkillReadyAt[3])
+	}
 
 	buf := make([]byte, 4096)
 	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))

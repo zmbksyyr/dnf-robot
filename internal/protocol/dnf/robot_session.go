@@ -229,6 +229,7 @@ type RobotVo struct {
 	partySkillCatalogGeneration uint64
 	partySkillJob               int
 	partySkillCandidates        []partySkillCandidate
+	partySkillReadyAt           map[byte]time.Time
 	partySkillLoad              partySkillProfileLoadFunc
 
 	mu     lockhub.Locker
@@ -407,6 +408,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.Cipher = crypt.NewDNFCipher()
 	r.partySkillInfoKnown = false
 	r.partySkillLevels = [256]byte{}
+	r.partySkillReadyAt = nil
 	r.MoveType = 5
 	r.SelectCharacSent = false
 	r.ReturnSelectPending = false
@@ -499,6 +501,7 @@ func (r *RobotVo) closeOutUnsafe() {
 	r.townEntityPositions = nil
 	r.partyDungeonFollow = nil
 	r.partySkillCandidates = nil
+	r.partySkillReadyAt = nil
 	r.partySkillLoad = nil
 	r.resetPartyTQOSTransportUnsafe()
 	r.invalidateTradeQuoteUnsafe()

@@ -30,6 +30,7 @@ type partySkillCandidate struct {
 	stateData  []byte
 	risk       int
 	path       string
+	cooldown   time.Duration
 }
 
 type partySkillProfile struct {
@@ -158,18 +159,34 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	}
 	// Follow traffic may occupy part of the reliable window continuously.
 	// The transport enforces its window; only another skill must finish first.
-	candidate := r.nextPartySkillCandidateUnsafe(now)
+	candidate, ready := r.nextPartySkillCandidateUnsafe(now)
+	if !ready {
+		return
+	}
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
+		if candidate.cooldown > 0 {
+			if r.partySkillReadyAt == nil {
+				r.partySkillReadyAt = make(map[byte]time.Time)
+			}
+			r.partySkillReadyAt[candidate.skillIndex] = now.Add(candidate.cooldown)
+		}
 		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d level=%d name=%s data=%x risk=%d path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.level, candidate.name, candidate.stateData, candidate.risk, candidate.path, r.partySkillRecoverAt.Sub(now))
 	}
 }
 
-func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) partySkillCandidate {
+func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandidate, bool) {
 	if len(r.partySkillCandidates) == 0 {
-		return partySkillCandidate{}
+		return partySkillCandidate{}, false
 	}
-	return r.partySkillCandidates[partySkillChoice(r.UID, now, len(r.partySkillCandidates))]
+	start := partySkillChoice(r.UID, now, len(r.partySkillCandidates))
+	for offset := range r.partySkillCandidates {
+		candidate := r.partySkillCandidates[(start+offset)%len(r.partySkillCandidates)]
+		if !now.Before(r.partySkillReadyAt[candidate.skillIndex]) {
+			return candidate, true
+		}
+	}
+	return partySkillCandidate{}, false
 }
 
 func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string) bool {
@@ -321,6 +338,7 @@ func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState
 			stateData:  append([]byte(nil), entry.StateData...),
 			risk:       entry.Risk,
 			path:       entry.ScriptPath,
+			cooldown:   time.Duration(entry.CooldownMS) * time.Millisecond,
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {

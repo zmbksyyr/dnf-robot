@@ -18,6 +18,7 @@ var (
 	pushStateRE       = regexp.MustCompile(`(?is)IRDSQRCharacter\.pushState\s*\(\s*([^,]+),\s*["']([^"']+)["']\s*,\s*["'][^"']*["']\s*,\s*([^,]+),\s*([^\)]+)\)`)
 	scriptReferenceRE = regexp.MustCompile(`(?i)["']([^"']+\.nut)["']`)
 	symbolRE          = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Z][A-Z0-9_]*)\s*(?:<-|=)\s*(-?\d+)\s*;?`)
+	skillCooldownRE   = regexp.MustCompile(`(?i)\[cool time\]([^\[]*)`)
 )
 
 func setSkillStateCatalog(entries []SkillState) {
@@ -60,6 +61,7 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 		}
 	}
 	symbols := skillStateSymbols(referenced)
+	cooldowns := extractSkillCooldowns(archive)
 	type stateKey struct {
 		job, skill, state int
 		path              string
@@ -80,7 +82,8 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 				continue
 			}
 			seen[key] = true
-			entries = append(entries, SkillState{Job: job, SkillIndex: skill, State: state, ScriptPath: path})
+			entries = append(entries, SkillState{Job: job, SkillIndex: skill, State: state, ScriptPath: path,
+				CooldownMS: cooldowns[[2]int{job, skill}]})
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -96,6 +99,42 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 		return entries[i].ScriptPath < entries[j].ScriptPath
 	})
 	return entries
+}
+
+// Read constant dungeon cooldowns through the PVF's own job/skill lists. Do
+// not use PvP values or guess level-dependent tables and script modifiers.
+func extractSkillCooldowns(archive *pvfArchive) map[[2]int]int {
+	lists := [...]string{"swordmanskill.lst", "fighterskill.lst", "gunnerskill.lst", "mageskill.lst", "priestskill.lst",
+		"atgunnerskill.lst", "thiefskill.lst", "atfighterskill.lst", "atmageskill.lst", "demonicswordman.lst", "creatormage.lst"}
+	out := make(map[[2]int]int)
+	for job, list := range lists {
+		for _, entry := range parsePVFList(archive.text("skill/" + list)) {
+			text := archive.text("skill/" + entry.Path)
+			start := strings.Index(text, "[dungeon]")
+			if start < 0 {
+				continue
+			}
+			text = text[start+len("[dungeon]"):]
+			end := strings.Index(text, "[/dungeon]")
+			if end < 0 {
+				continue
+			}
+			match := skillCooldownRE.FindStringSubmatch(text[:end])
+			if len(match) == 0 {
+				continue
+			}
+			fields := strings.Fields(match[1])
+			if len(fields) != 2 {
+				continue
+			}
+			first, e1 := strconv.Atoi(fields[0])
+			last, e2 := strconv.Atoi(fields[1])
+			if e1 == nil && e2 == nil && first > 0 && first == last {
+				out[[2]int{job, entry.ID}] = first
+			}
+		}
+	}
+	return out
 }
 
 func skillScriptPath(value string) string {

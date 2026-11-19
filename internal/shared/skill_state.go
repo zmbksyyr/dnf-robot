@@ -10,6 +10,7 @@ type SkillState struct {
 	SkillIndex int    `json:"skill_index"`
 	State      int    `json:"state"`
 	ScriptPath string `json:"script_path"`
+	CooldownMS int    `json:"cooldown_ms,omitempty"`
 }
 
 var skillStateSnapshot atomic.Value
@@ -30,6 +31,7 @@ type PartySkillState struct {
 	ScriptPath string
 	StateData  []byte
 	Risk       int
+	CooldownMS int
 }
 
 // An empty swordman slash state reproducibly terminates the client. The
