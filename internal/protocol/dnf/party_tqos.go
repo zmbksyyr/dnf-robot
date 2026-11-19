@@ -171,6 +171,7 @@ func (r *RobotVo) buildPartyTQOSRepliesUnsafe(payload []byte, route byte, peer p
 		}
 		if r.shouldFollowPartyPeerUnsafe(peer) {
 			r.rememberPartyDungeonActivityUnsafe(frame, route, peer, now)
+			r.observePartyDungeonFrameUnsafe(frame, peer, now)
 			r.queuePartyDungeonFollowUnsafe(frame, peer, now)
 		}
 		if !requestOK {
@@ -512,6 +513,7 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyDungeonEnteredAt = time.Time{}
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
+	r.partyDungeonWorld = partyDungeonWorld{}
 	r.partyDungeonLegacySkills = false
 	r.partySkillNextAt = time.Time{}
 	r.partySkillRecoverAt = time.Time{}

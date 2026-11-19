@@ -44,11 +44,36 @@ func rewritePartyDungeonBody(body []byte, sourceUniqueID, targetUniqueID uint16)
 			copy(followBody[offset:offset+len(innerChecksum)], innerChecksum[:])
 		}
 	case partyDungeonStateCommand:
+		if entries, ok := decodePartyDungeonMotion(body); ok {
+			source := partyDungeonPlayerReference(sourceUniqueID)
+			target := partyDungeonPlayerReference(targetUniqueID)
+			selected := entries[:0]
+			for _, entry := range entries {
+				if entry.entity != source {
+					continue
+				}
+				entry.entity = target
+				if entry.controller == source {
+					entry.controller = target
+				}
+				selected = append(selected, entry)
+			}
+			if len(selected) != 0 {
+				follow, valid := buildPartyDungeonMotion(selected)
+				return follow, command, valid
+			}
+		}
 		plain := followBody[7:]
 		for index := range plain {
 			plain[index] ^= 0x7e
 		}
 		checksum = partyPayloadChecksum(plain)
+		// The older 0x0081 actor reference has a separate captured layout.
+		// Preserve its single-actor handling; a malformed modern record must
+		// not fall back to fixed-offset identity replacement.
+		if len(plain) < 15 || plain[1] != 0x81 || plain[2] != 0 {
+			return nil, 0, false
+		}
 		if !bytes.Equal(body[3:7], checksum[:]) || rewritePartyDungeonStateIdentity(plain, sourceUniqueID, targetUniqueID) == 0 {
 			return nil, 0, false
 		}

@@ -125,6 +125,13 @@ func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time
 			r.partyDungeonFollowDiagAt = now.Add(5 * time.Second)
 			foundationlog.Robotf("[PARTY_DUNGEON_FOLLOW] uid=%d peer=%d slot=%d route=%d reliable=%t queued=%d delay=%s\n", r.UID, peer.accID, pending.peerSlot, route, pending.reliable, len(r.partyDungeonFollow), r.partyDungeonFollowDelayUnsafe())
 		}
+		if pending.reliable {
+			for _, body := range pending.records {
+				r.partyDungeonWorld.observe(body, now)
+			}
+		} else {
+			r.partyDungeonWorld.observe(pending.body, now)
+		}
 		r.partyDungeonFollow = r.partyDungeonFollow[1:]
 	}
 }

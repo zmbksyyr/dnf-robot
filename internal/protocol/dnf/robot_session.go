@@ -216,6 +216,7 @@ type RobotVo struct {
 	partyDungeonEnteredAt       time.Time
 	partyDungeonLastAt          time.Time
 	partyDungeonFlags           byte
+	partyDungeonWorld           partyDungeonWorld
 	partyDungeonLegacySkills    bool
 	partySkillInfoKnown         bool
 	partySkillLevels            [256]byte

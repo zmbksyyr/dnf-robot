@@ -69,6 +69,7 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 }
 
 func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
+	r.partyDungeonWorld = partyDungeonWorld{}
 	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
 		r.resetPartySkillProfileUnsafe()
 	}
@@ -90,6 +91,7 @@ func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {
 	r.partyDungeonEnteredAt = time.Time{}
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
+	r.partyDungeonWorld = partyDungeonWorld{}
 	r.partyDungeonLegacySkills = false
 	r.partySkillNextAt = time.Time{}
 	r.partySkillRecoverAt = time.Time{}
