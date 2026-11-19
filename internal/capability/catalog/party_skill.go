@@ -165,6 +165,10 @@ func parsePartySkillCatalog(data []byte) (PartySkillCatalogReport, error) {
 			report.SwitchOffCount++
 			continue
 		}
+		if err := shared.ValidatePartySkillStateData(entry.Job, entry.State, stateData); err != nil {
+			report.addPartySkillIssue(index, entry, err.Error())
+			continue
+		}
 		if entry.Level > report.EffectiveMaxSkillLevel {
 			report.OverLevelCount++
 			continue
@@ -416,12 +420,22 @@ func partySkillStateData(values []int) ([]byte, error) {
 	if len(values) > 3 {
 		return nil, fmt.Errorf("state_data has %d values, maximum is 3", len(values))
 	}
-	data := make([]byte, 0, len(values)*3)
+	data := make([]byte, 0, len(values)*4)
 	for _, value := range values {
 		if value < 0 || value > 0xffffff {
 			return nil, fmt.Errorf("state_data value %d is outside 0..16777215", value)
 		}
-		data = append(data, byte(value), byte(value>>8), byte(value>>16))
+		// Real APC skill states carry unsigned base-128 integers, most
+		// significant group first: [2, 3, 989] is 02 03 87 5d. Fixed-width
+		// little-endian values change the vector read by the client.
+		shift := 0
+		for value>>(shift+7) != 0 {
+			shift += 7
+		}
+		for ; shift > 0; shift -= 7 {
+			data = append(data, byte(value>>shift)&0x7f|0x80)
+		}
+		data = append(data, byte(value)&0x7f)
 	}
 	return data, nil
 }

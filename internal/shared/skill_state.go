@@ -1,6 +1,9 @@
 package shared
 
-import "sync/atomic"
+import (
+	"fmt"
+	"sync/atomic"
+)
 
 type SkillState struct {
 	Job        int    `json:"job"`
@@ -27,6 +30,16 @@ type PartySkillState struct {
 	ScriptPath string
 	StateData  []byte
 	Risk       int
+}
+
+// An empty swordman slash state reproducibly terminates the client. The
+// observed non-empty state avoids that failure; this check does not claim to
+// validate every skill's parameter semantics.
+func ValidatePartySkillStateData(job, state int, data []byte) error {
+	if job == 0 && state == 23 && len(data) == 0 {
+		return fmt.Errorf("swordman state 23 requires non-empty state_data")
+	}
+	return nil
 }
 
 func SetSkillStates(entries []SkillState) {

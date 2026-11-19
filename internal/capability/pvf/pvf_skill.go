@@ -14,9 +14,9 @@ import (
 type SkillState = shared.SkillState
 
 var (
-	loadStatePathRE   = regexp.MustCompile(`(?i)^sqr/character/.+load_state\.nut$`)
+	loadStatePathRE   = regexp.MustCompile(`(?i)^sqr/.+load_state\.nut$`)
 	pushStateRE       = regexp.MustCompile(`(?is)IRDSQRCharacter\.pushState\s*\(\s*([^,]+),\s*["']([^"']+)["']\s*,\s*["'][^"']*["']\s*,\s*([^,]+),\s*([^\)]+)\)`)
-	scriptReferenceRE = regexp.MustCompile(`(?i)["'](character/[^"']+\.nut)["']`)
+	scriptReferenceRE = regexp.MustCompile(`(?i)["']([^"']+\.nut)["']`)
 	symbolRE          = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Z][A-Z0-9_]*)\s*(?:<-|=)\s*(-?\d+)\s*;?`)
 )
 
@@ -53,7 +53,7 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 		}
 		loadStates = append(loadStates, text)
 		for _, match := range scriptReferenceRE.FindAllStringSubmatch(text, -1) {
-			ref := normalizePVFPath("sqr/" + match[1])
+			ref := skillScriptPath(match[1])
 			if refText := archive.text(ref); strings.TrimSpace(refText) != "" {
 				referenced[ref] = refText
 			}
@@ -71,7 +71,7 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 			job, jobOK := resolveSkillStateValue(match[1], symbols)
 			state, stateOK := resolveSkillStateValue(match[3], symbols)
 			skill, skillOK := resolveSkillStateValue(match[4], symbols)
-			path := normalizePVFPath("sqr/" + match[2])
+			path := skillScriptPath(match[2])
 			if !jobOK || !stateOK || !skillOK || job < 0 || skill <= 0 || skill > 255 || state < 0 || state > 255 || strings.TrimSpace(referenced[path]) == "" {
 				continue
 			}
@@ -96,6 +96,14 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 		return entries[i].ScriptPath < entries[j].ScriptPath
 	})
 	return entries
+}
+
+func skillScriptPath(value string) string {
+	value = normalizePVFPath(value)
+	if !strings.HasPrefix(value, "sqr/") {
+		value = "sqr/" + value
+	}
+	return value
 }
 
 func skillStateSymbols(scripts map[string]string) map[string]int {

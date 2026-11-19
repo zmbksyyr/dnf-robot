@@ -11,7 +11,9 @@
       "name": "thief_shiningcut",
       "script_path": "sqr/character/thief/1_rogue/shiningcut/shiningcut.nut",
       "state_data": [
-        3
+        3,
+        0,
+        0
       ],
       "risk": 0
     },

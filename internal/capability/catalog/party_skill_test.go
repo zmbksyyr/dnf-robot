@@ -35,7 +35,7 @@ func TestLoadPartySkillsIndexesFilteredCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := shared.PartySkillStatesForJob(6)
-	if len(got) != 1 || got[0].SkillIndex != 3 || got[0].Level != 5 || got[0].Name != "ok" || !bytes.Equal(got[0].StateData, []byte{3, 0, 0}) {
+	if len(got) != 1 || got[0].SkillIndex != 3 || got[0].Level != 5 || got[0].Name != "ok" || !bytes.Equal(got[0].StateData, []byte{3}) {
 		t.Fatalf("filtered catalog = %+v", got)
 	}
 }
@@ -264,7 +264,7 @@ func TestSyncPartySkillCatalogBuildsSwitchesFromPVF(t *testing.T) {
 		t.Fatalf("synced report = %+v", report)
 	}
 	entry := report.Entries[0]
-	if entry.Job != 1 || entry.SkillIndex != 2 || entry.Name != "verified" || entry.Level != 5 || entry.Risk != 1 || !bytes.Equal(entry.StateData, []byte{3, 0, 0}) {
+	if entry.Job != 1 || entry.SkillIndex != 2 || entry.Name != "verified" || entry.Level != 5 || entry.Risk != 1 || !bytes.Equal(entry.StateData, []byte{3}) {
 		t.Fatalf("preserved entry = %+v", entry)
 	}
 	data, err := os.ReadFile(path)
@@ -297,6 +297,54 @@ func TestSyncPartySkillCatalogBuildsSwitchesFromPVF(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second synchronization was not idempotent")
+	}
+}
+
+func TestPartySkillCatalogMatchesCapturedAPCStateVectors(t *testing.T) {
+	// Advanced Aganzo: the slash starts with 00 01; its later charged
+	// substate carries 02 03 87 5d (substate 2, weapon 3, charge 989 ms).
+	report, err := parsePartySkillCatalog([]byte(`{"enabled":true,"max_skill_level":70,"skills":[
+		{"enabled":true,"job":0,"skill_index":9,"state":23,"level":1,"state_data":[0,1]},
+		{"enabled":true,"job":0,"skill_index":9,"state":249,"level":1,"state_data":[2,3,989]}
+	]}`))
+	if err != nil || len(report.Issues) != 0 || len(report.Entries) != 2 {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+	for i, want := range [][]byte{{0, 1}, {2, 3, 0x87, 0x5d}} {
+		if !bytes.Equal(report.Entries[i].StateData, want) {
+			t.Fatalf("entry %d data=%x want captured %x", i, report.Entries[i].StateData, want)
+		}
+	}
+}
+
+func TestPartySkillCatalogRejectsEmptyEnabledSwordmanSlash(t *testing.T) {
+	report, err := parsePartySkillCatalog([]byte(`{"enabled":true,"max_skill_level":70,"skills":[
+		{"enabled":true,"job":0,"skill_index":9,"state":23,"level":1,"state_data":[]},
+		{"enabled":false,"job":0,"skill_index":9,"state":23,"level":1,"state_data":[]},
+		{"enabled":true,"job":8,"skill_index":1,"state":23,"level":1,"state_data":[]}
+	]}`))
+	if err != nil || len(report.Issues) != 1 || len(report.Entries) != 1 || report.SwitchOffCount != 1 {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+	if !strings.Contains(report.Issues[0].Reason, "requires non-empty state_data") {
+		t.Fatalf("missing actionable issue: %+v", report.Issues)
+	}
+}
+
+func TestPartySkillStateDataBase128Boundaries(t *testing.T) {
+	for _, tc := range []struct {
+		values []int
+		want   []byte
+	}{
+		{[]int{0, 127, 128}, []byte{0, 0x7f, 0x81, 0}},
+		{[]int{16383, 16384, 0xffffff}, []byte{0xff, 0x7f, 0x81, 0x80, 0, 0x87, 0xff, 0xff, 0x7f}},
+		// The captured shining cut carries three integers, including two zeros.
+		{[]int{3, 0, 0}, []byte{3, 0, 0}},
+	} {
+		got, err := partySkillStateData(tc.values)
+		if err != nil || !bytes.Equal(got, tc.want) {
+			t.Fatalf("values=%v got=%x want=%x err=%v", tc.values, got, tc.want, err)
+		}
 	}
 }
 

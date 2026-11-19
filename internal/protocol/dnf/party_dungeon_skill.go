@@ -173,6 +173,10 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) partySkillCandida
 }
 
 func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string) bool {
+	if err := shared.ValidatePartySkillStateData(r.partySkillJob, int(state), stateData); err != nil {
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d job=%d state=%d err=%v\n", reason, r.UID, r.partySkillJob, state, err)
+		return false
+	}
 	peer := r.partyPeerForSlotUnsafe(0)
 	if peer.uniqueID == 0 || r.partySelfPeer.uniqueID == 0 {
 		return false

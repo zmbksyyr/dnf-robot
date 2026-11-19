@@ -3,6 +3,7 @@ package dnf
 import (
 	"bytes"
 	"encoding/binary"
+	"net"
 	"testing"
 	"time"
 )
@@ -78,5 +79,81 @@ func TestLearnedSkillTreeMatchesCapturedOriginalNotification(t *testing.T) {
 		if _, valid := parsePartyLearnedSkills(body[:n]); valid {
 			t.Fatalf("accepted truncated tree length=%d", n)
 		}
+	}
+}
+
+func TestLegacySkillWireMatchesCapturedAPCStates(t *testing.T) {
+	// Same Aganzo cast: entry, preparation, then the 989 ms charged slash.
+	for _, tc := range []struct {
+		raw   string
+		state byte
+		data  []byte
+		token uint16
+	}{
+		{"02050092df72316f7f7f35697c7e7e7f0073", 23, []byte{0, 1}, 0x0d7e},
+		{"0205000d3d507e6f7f7f35877c7e7e7d54f0", 249, []byte{0, 3}, 0x8e2a},
+		{"0205003e8d0c756f7f7f35877a7e7c7df923ed45", 249, []byte{2, 3, 0x87, 0x5d}, 0x3b93},
+	} {
+		body := mustPartyHex(t, tc.raw)
+		got := buildPartyLegacySkillStateBody(0x4b01, tc.state, tc.data, tc.token)
+		if !bytes.Equal(got[:4], body[:4]) || !bytes.Equal(got[7:], body[7:]) {
+			t.Fatalf("APC state %d body=%x want capture=%x", tc.state, got, body)
+		}
+	}
+}
+
+func TestPartySkillRejectsEmptySlashBeforeTransport(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "envelope", true: "direct"}[legacy], func(t *testing.T) {
+			receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer receiver.Close()
+			sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sender.Close()
+			remote := receiver.LocalAddr().(*net.UDPAddr)
+			now := time.Unix(200, 0)
+			vo := &RobotVo{
+				UID: 17000001, partySkillJob: 0, partyDungeonLegacySkills: legacy,
+				partySelfPeer: partyIPPeer{uniqueID: 0x2222, slot: 1, slotKnown: true},
+			}
+			vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+			if vo.sendPartySkillStateUnsafe(sender, now, 23, nil, "CAST") {
+				t.Fatal("empty swordman slash was sent")
+			}
+			if vo.partyTQOSReliableSeq[0][1] != 0 || len(vo.partyReliablePending[0][1]) != 0 {
+				t.Fatal("rejected slash changed reliable transport")
+			}
+			for i, state := range []byte{23, 0} {
+				var data []byte
+				if state == 23 {
+					data = []byte{0, 1}
+				}
+				if !vo.sendPartySkillStateUnsafe(sender, now, state, data, "TEST") {
+					t.Fatalf("valid state %d was rejected", state)
+				}
+				buf := make([]byte, 4096)
+				if err := receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				n, _, err := receiver.ReadFromUDP(buf)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body := buildPartySkillStateBody(vo.partySelfPeer.uniqueID, state, data, partySkillToken(vo.UID, now))
+				if legacy {
+					body = buildPartyLegacySkillStateBody(vo.partySelfPeer.uniqueID, state, data, partySkillToken(vo.UID, now))
+				}
+				want := buildPartyReliablePacket(uint32(i), vo.partySelfPeer.slot, 0, [][]byte{body})
+				if !bytes.Equal(buf[:n], want) {
+					t.Fatalf("state %d packet=%x want=%x", state, buf[:n], want)
+				}
+				vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, uint32(i)), 1, vo.partyPeers[0])
+			}
+		})
 	}
 }
