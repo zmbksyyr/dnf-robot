@@ -2,6 +2,7 @@ package shared
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 )
 
@@ -29,6 +30,35 @@ func TestMatchPartySkillStatesUsesKeyAndNormalizedPath(t *testing.T) {
 	}
 	if stats.PVFMatched != 2 || stats.SkippedMissingPVF != 1 || stats.SkippedPathMismatch != 1 {
 		t.Fatalf("stats = %+v", stats)
+	}
+}
+
+func TestLegacySkillMatchKeepsLongestCooldownAtEachLevel(t *testing.T) {
+	pvf := []SkillState{
+		{Job: 8, SkillIndex: 26, State: 43, ScriptPath: "a.nut", CooldownByLevelMS: []int{10000, 5000}},
+		{Job: 8, SkillIndex: 26, State: 43, ScriptPath: "b.nut", CooldownByLevelMS: []int{3000, 9000, 12000}},
+		{Job: 8, SkillIndex: 26, State: 43, ScriptPath: "c.nut", CooldownMS: 6000},
+	}
+	got, _ := MatchPartySkillStates(8, []PartySkillState{{Job: 8, SkillIndex: 26, State: 43}}, pvf)
+	if len(got) != 1 || !reflect.DeepEqual(got[0].CooldownByLevelMS, []int{10000, 9000, 12000}) {
+		t.Fatalf("legacy path selection lost a level's cooldown: %+v", got)
+	}
+	got[0].CooldownByLevelMS[0] = 1
+	if pvf[0].CooldownByLevelMS[0] != 10000 {
+		t.Fatal("matched cooldown table aliases PVF storage")
+	}
+}
+
+func TestSkillCatalogCooldownSnapshotsRemainIndependent(t *testing.T) {
+	previous := skillStateSnapshot.Load().([]SkillState)
+	defer skillStateSnapshot.Store(previous)
+	input := []SkillState{{Job: 8, SkillIndex: 26, State: 43, CooldownByLevelMS: []int{10000, 8000}}}
+	SetSkillStates(input)
+	input[0].CooldownByLevelMS[0] = 1
+	read := SkillStatesForJob(8)
+	read[0].CooldownByLevelMS[1] = 2
+	if got := SkillStatesForJob(8); !reflect.DeepEqual(got[0].CooldownByLevelMS, []int{10000, 8000}) {
+		t.Fatalf("a caller changed the published cooldown snapshot: %+v", got)
 	}
 }
 

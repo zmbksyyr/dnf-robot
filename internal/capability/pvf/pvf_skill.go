@@ -19,6 +19,7 @@ var (
 	scriptReferenceRE = regexp.MustCompile(`(?i)["']([^"']+\.nut)["']`)
 	symbolRE          = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Z][A-Z0-9_]*)\s*(?:<-|=)\s*(-?\d+)\s*;?`)
 	skillCooldownRE   = regexp.MustCompile(`(?i)\[cool time\]([^\[]*)`)
+	skillMaxLevelRE   = regexp.MustCompile(`(?i)\[maximum level\]\s*(\d+)`)
 )
 
 func setSkillStateCatalog(entries []SkillState) {
@@ -82,8 +83,13 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 				continue
 			}
 			seen[key] = true
-			entries = append(entries, SkillState{Job: job, SkillIndex: skill, State: state, ScriptPath: path,
-				CooldownMS: cooldowns[[2]int{job, skill}]})
+			entry := SkillState{Job: job, SkillIndex: skill, State: state, ScriptPath: path}
+			if table := cooldowns[[2]int{job, skill}]; len(table) == 1 {
+				entry.CooldownMS = table[0]
+			} else {
+				entry.CooldownByLevelMS = append([]int(nil), table...)
+			}
+			entries = append(entries, entry)
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -101,15 +107,15 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 	return entries
 }
 
-// Read constant cooldowns through the PVF's own job/skill lists, applying a
-// dungeon override when present. Do not use PvP values or guess level tables.
-func extractSkillCooldowns(archive *pvfArchive) map[[2]int]int {
+// Read dungeon cooldowns through the PVF's own job/skill lists. Constant
+// values need one entry; variable endpoints use the declared maximum level.
+func extractSkillCooldowns(archive *pvfArchive) map[[2]int][]int {
 	lists := [...]string{"swordmanskill.lst", "fighterskill.lst", "gunnerskill.lst", "mageskill.lst", "priestskill.lst",
 		"atgunnerskill.lst", "thiefskill.lst", "atfighterskill.lst", "atmageskill.lst", "demonicswordman.lst", "creatormage.lst"}
-	out := make(map[[2]int]int)
+	out := make(map[[2]int][]int)
 	for job, list := range lists {
 		for _, entry := range parsePVFList(archive.text("skill/" + list)) {
-			if cooldown := dungeonSkillCooldown(archive.text("skill/" + entry.Path)); cooldown > 0 {
+			if cooldown := dungeonSkillCooldowns(archive.text("skill/" + entry.Path)); len(cooldown) > 0 {
 				out[[2]int{job, entry.ID}] = cooldown
 			}
 		}
@@ -117,12 +123,13 @@ func extractSkillCooldowns(archive *pvfArchive) map[[2]int]int {
 	return out
 }
 
-func dungeonSkillCooldown(text string) int {
+func dungeonSkillCooldowns(text string) []int {
 	// Public values apply unless the dungeon block provides its own table.
-	// Remove mode blocks before reading the public value so a PvP-only value
-	// cannot become a dungeon cooldown, regardless of section order.
+	// Other modes cannot supply the public fallback, regardless of order.
 	var dungeon []string
-	for _, mode := range []string{"dungeon", "pvp"} {
+	// Some shipped skills leave [dungeon] open through EOF. Remove other
+	// modes first so their nested values cannot be mistaken for its override.
+	for _, mode := range []string{"pvp", "death tower", "warroom", "dungeon"} {
 		open, close := "["+mode+"]", "[/"+mode+"]"
 		for {
 			start := strings.Index(text, open)
@@ -131,16 +138,19 @@ func dungeonSkillCooldown(text string) int {
 			}
 			body := start + len(open)
 			end := strings.Index(text[body:], close)
+			after := len(text)
 			if end < 0 {
-				return 0
+				end = len(text)
+			} else {
+				end += body
+				after = end + len(close)
 			}
-			end += body
 			if mode == "dungeon" {
 				if match := skillCooldownRE.FindStringSubmatch(text[body:end]); len(match) > 0 {
 					dungeon = match
 				}
 			}
-			text = text[:start] + text[end+len(close):]
+			text = text[:start] + text[after:]
 		}
 	}
 	match := dungeon
@@ -148,18 +158,42 @@ func dungeonSkillCooldown(text string) int {
 		match = skillCooldownRE.FindStringSubmatch(text)
 	}
 	if len(match) == 0 {
-		return 0
+		return nil
 	}
 	fields := strings.Fields(match[1])
 	if len(fields) != 2 {
-		return 0
+		return nil
 	}
-	first, e1 := strconv.Atoi(fields[0])
-	last, e2 := strconv.Atoi(fields[1])
-	if e1 != nil || e2 != nil || first <= 0 || first != last {
-		return 0
+	first, e1 := strconv.ParseInt(fields[0], 10, 32)
+	last, e2 := strconv.ParseInt(fields[1], 10, 32)
+	if e1 != nil || e2 != nil || first < 0 || last < 0 {
+		return nil
 	}
-	return first
+	if first == last {
+		return []int{int(first)}
+	}
+	maximum := skillMaxLevelRE.FindStringSubmatch(text)
+	if len(maximum) == 0 {
+		return nil
+	}
+	count, err := strconv.Atoi(maximum[1])
+	if err != nil || count <= 0 || count > 255 {
+		return nil
+	}
+	table := make([]int, count)
+	for i := range table {
+		if i == count-1 {
+			table[i] = int(last)
+			continue
+		}
+		// The client rounds each scalar operation to float32, then truncates
+		// the result. Integer interpolation differs even for millisecond data.
+		delta := float32(float32(last) - float32(first))
+		delta = float32(delta * float32(i))
+		delta = float32(delta / float32(count-1))
+		table[i] = int(float32(float32(first) + delta))
+	}
+	return table
 }
 
 func skillScriptPath(value string) string {

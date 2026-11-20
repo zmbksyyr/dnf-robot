@@ -23,14 +23,15 @@ const (
 )
 
 type partySkillCandidate struct {
-	skillIndex byte
-	state      byte
-	level      int
-	name       string
-	stateData  []byte
-	risk       int
-	path       string
-	cooldown   time.Duration
+	skillIndex        byte
+	state             byte
+	level             int
+	name              string
+	stateData         []byte
+	risk              int
+	path              string
+	cooldown          time.Duration
+	cooldownByLevelMS []int
 }
 
 type partySkillProfile struct {
@@ -193,15 +194,23 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		return
 	}
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
-		if candidate.cooldown > 0 {
+		if cooldown := candidate.cooldownAtLevel(); cooldown > 0 {
 			if r.partySkillReadyAt == nil {
 				r.partySkillReadyAt = make(map[byte]time.Time)
 			}
-			r.partySkillReadyAt[candidate.skillIndex] = now.Add(candidate.cooldown)
+			r.partySkillReadyAt[candidate.skillIndex] = now.Add(cooldown)
 		}
 		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d level=%d name=%s data=%x risk=%d path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.level, candidate.name, candidate.stateData, candidate.risk, candidate.path, r.partySkillRecoverAt.Sub(now))
 	}
+}
+
+func (c partySkillCandidate) cooldownAtLevel() time.Duration {
+	if len(c.cooldownByLevelMS) == 0 {
+		return c.cooldown
+	}
+	level := min(max(c.level, 1), len(c.cooldownByLevelMS))
+	return time.Duration(c.cooldownByLevelMS[level-1]) * time.Millisecond
 }
 
 func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandidate, bool) {
@@ -377,14 +386,15 @@ func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState
 	candidates := make([]partySkillCandidate, 0, len(matches))
 	for _, entry := range matches {
 		candidates = append(candidates, partySkillCandidate{
-			skillIndex: byte(entry.SkillIndex),
-			state:      byte(entry.State),
-			level:      entry.Level,
-			name:       entry.Name,
-			stateData:  append([]byte(nil), entry.StateData...),
-			risk:       entry.Risk,
-			path:       entry.ScriptPath,
-			cooldown:   time.Duration(entry.CooldownMS) * time.Millisecond,
+			skillIndex:        byte(entry.SkillIndex),
+			state:             byte(entry.State),
+			level:             entry.Level,
+			name:              entry.Name,
+			stateData:         append([]byte(nil), entry.StateData...),
+			risk:              entry.Risk,
+			path:              entry.ScriptPath,
+			cooldown:          time.Duration(entry.CooldownMS) * time.Millisecond,
+			cooldownByLevelMS: append([]int(nil), entry.CooldownByLevelMS...),
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {

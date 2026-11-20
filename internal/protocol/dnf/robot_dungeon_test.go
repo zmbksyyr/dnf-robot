@@ -208,7 +208,7 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 		partySkillNextAt:      now.Add(-time.Millisecond),
 		partySkillLoaded:      true,
 		partySkillJob:         8,
-		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{0x03, 0x00, 0x00}, cooldown: 15 * time.Second}},
+		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, level: 2, stateData: []byte{0x03, 0x00, 0x00}, cooldownByLevelMS: []int{30000, 15000, 0}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
 	vo.partyDungeonWorld = skillTargetTestWorld(vo.partySelfPeer.uniqueID, now)

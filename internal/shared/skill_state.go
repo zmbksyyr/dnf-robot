@@ -6,11 +6,12 @@ import (
 )
 
 type SkillState struct {
-	Job        int    `json:"job"`
-	SkillIndex int    `json:"skill_index"`
-	State      int    `json:"state"`
-	ScriptPath string `json:"script_path"`
-	CooldownMS int    `json:"cooldown_ms,omitempty"`
+	Job               int    `json:"job"`
+	SkillIndex        int    `json:"skill_index"`
+	State             int    `json:"state"`
+	ScriptPath        string `json:"script_path"`
+	CooldownMS        int    `json:"cooldown_ms,omitempty"`
+	CooldownByLevelMS []int  `json:"cooldown_by_level_ms,omitempty"`
 }
 
 var skillStateSnapshot atomic.Value
@@ -23,15 +24,16 @@ func init() {
 }
 
 type PartySkillState struct {
-	Job        int
-	SkillIndex int
-	State      int
-	Level      int
-	Name       string
-	ScriptPath string
-	StateData  []byte
-	Risk       int
-	CooldownMS int
+	Job               int
+	SkillIndex        int
+	State             int
+	Level             int
+	Name              string
+	ScriptPath        string
+	StateData         []byte
+	Risk              int
+	CooldownMS        int
+	CooldownByLevelMS []int
 }
 
 // An empty swordman slash state reproducibly terminates the client. The
@@ -53,6 +55,7 @@ func SkillStatesForJob(job int) []SkillState {
 	out := make([]SkillState, 0)
 	for _, entry := range entries {
 		if entry.Job == job {
+			entry.CooldownByLevelMS = append([]int(nil), entry.CooldownByLevelMS...)
 			out = append(out, entry)
 		}
 	}
@@ -60,7 +63,11 @@ func SkillStatesForJob(job int) []SkillState {
 }
 
 func cloneSkillStates(entries []SkillState) []SkillState {
-	return append([]SkillState(nil), entries...)
+	out := append([]SkillState(nil), entries...)
+	for i := range out {
+		out[i].CooldownByLevelMS = append([]int(nil), out[i].CooldownByLevelMS...)
+	}
+	return out
 }
 
 func SetPartySkillStates(entries []PartySkillState) {
@@ -78,6 +85,7 @@ func PartySkillStatesForJob(job int) []PartySkillState {
 	for _, entry := range entries {
 		if entry.Job == job {
 			entry.StateData = append([]byte(nil), entry.StateData...)
+			entry.CooldownByLevelMS = append([]int(nil), entry.CooldownByLevelMS...)
 			out = append(out, entry)
 		}
 	}
@@ -88,6 +96,7 @@ func clonePartySkillStates(entries []PartySkillState) []PartySkillState {
 	out := append([]PartySkillState(nil), entries...)
 	for i := range out {
 		out[i].StateData = append([]byte(nil), out[i].StateData...)
+		out[i].CooldownByLevelMS = append([]int(nil), out[i].CooldownByLevelMS...)
 	}
 	return out
 }

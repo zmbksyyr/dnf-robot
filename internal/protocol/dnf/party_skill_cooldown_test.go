@@ -70,3 +70,21 @@ func TestSkillCandidateGetsBaselineFromPVFMatchingPath(t *testing.T) {
 		t.Fatalf("candidate used another script's cooldown: %+v", got)
 	}
 }
+
+func TestSkillCooldownUsesLearnedLevelAfterProfileClamp(t *testing.T) {
+	whitelist := []shared.PartySkillState{{Job: 8, SkillIndex: 26, State: 43, Level: 70, ScriptPath: "sqr/test.nut"}}
+	pvf := []shared.SkillState{{Job: 8, SkillIndex: 26, State: 43, ScriptPath: "sqr/test.nut", CooldownByLevelMS: []int{10000, 8000, 6000}}}
+	candidates, _ := partySkillCandidatesFromCatalog(8, whitelist, pvf)
+	r := &RobotVo{UID: 42, State: StateRun}
+	r.partySkillLevels[26] = 2
+	r.loadPartySkillProfile(0, shared.PartySkillStateGeneration(), r.UID, 1, func(uint32, int) (partySkillProfile, error) {
+		return partySkillProfile{cid: 1, job: 8, candidates: candidates}, nil
+	})
+	if len(r.partySkillCandidates) != 1 || r.partySkillCandidates[0].level != 2 || r.partySkillCandidates[0].cooldownAtLevel() != 8*time.Second {
+		t.Fatalf("cooldown was resolved before the server's learned level: %+v", r.partySkillCandidates)
+	}
+	pvf[0].CooldownByLevelMS[1] = 1
+	if r.partySkillCandidates[0].cooldownAtLevel() != 8*time.Second {
+		t.Fatal("runtime cooldown aliases mutable catalog storage")
+	}
+}
