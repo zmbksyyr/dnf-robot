@@ -217,12 +217,25 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandid
 	if len(r.partySkillCandidates) == 0 {
 		return partySkillCandidate{}, false
 	}
-	start := partySkillChoice(r.UID, now, len(r.partySkillCandidates))
-	for offset := range r.partySkillCandidates {
-		candidate := r.partySkillCandidates[(start+offset)%len(r.partySkillCandidates)]
-		if !now.Before(r.partySkillReadyAt[candidate.skillIndex]) {
-			return candidate, true
+	// Candidates are ordered by risk. Rotating across the whole list could pick
+	// an unverified state while a lower-risk one is ready, so rotate inside the
+	// lowest risk tier that still has a ready skill and only fall through to the
+	// next tier when every entry of the previous one is cooling down.
+	for start := 0; start < len(r.partySkillCandidates); {
+		risk := r.partySkillCandidates[start].risk
+		end := start
+		for end < len(r.partySkillCandidates) && r.partySkillCandidates[end].risk == risk {
+			end++
 		}
+		tier := r.partySkillCandidates[start:end]
+		offset := partySkillChoice(r.UID, now, len(tier))
+		for i := range tier {
+			candidate := tier[(offset+i)%len(tier)]
+			if !now.Before(r.partySkillReadyAt[candidate.skillIndex]) {
+				return candidate, true
+			}
+		}
+		start = end
 	}
 	return partySkillCandidate{}, false
 }
@@ -351,7 +364,7 @@ func (r *RobotVo) loadPartySkillProfile(generation, catalogGeneration uint64, ui
 	if !r.partyDungeonEnteredAt.IsZero() && now.Sub(r.partyDungeonEnteredAt) <= partyDungeonEntryTimeout && !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= partyDungeonActivityTimeout {
 		r.partySkillNextAt = now
 	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d learned_candidates=%d skipped_missing_pvf=%d skipped_path_mismatch=%d\n", uid, profile.cid, profile.job, profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, len(r.partySkillCandidates), profile.stats.SkippedMissingPVF, profile.stats.SkippedPathMismatch)
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d auto=%t whitelist=%d pvf=%d pvf_matched=%d kept_without_pvf=%d learned_candidates=%d skipped_missing_pvf=%d skipped_path_mismatch=%d\n", uid, profile.cid, profile.job, shared.PartySkillAutoSelection(), profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, profile.stats.KeptWithoutPVF, len(r.partySkillCandidates), profile.stats.SkippedMissingPVF, profile.stats.SkippedPathMismatch)
 }
 
 func (r *RobotVo) resetPartySkillProfileUnsafe() {
@@ -382,7 +395,11 @@ func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile,
 }
 
 func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
-	matches, stats := shared.MatchPartySkillStates(job, whitelist, pvfStates)
+	return partySkillCandidatesFromCatalogMode(shared.PartySkillAutoSelection(), job, whitelist, pvfStates)
+}
+
+func partySkillCandidatesFromCatalogMode(auto bool, job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
+	matches, stats := shared.MatchPartySkillStatesMode(auto, job, whitelist, pvfStates)
 	candidates := make([]partySkillCandidate, 0, len(matches))
 	for _, entry := range matches {
 		candidates = append(candidates, partySkillCandidate{

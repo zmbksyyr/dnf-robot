@@ -86,11 +86,11 @@ func (m *RobotManager) ReloadPartySkills() (catalog.PartySkillCatalogReport, err
 		return report, &catalog.PartySkillCatalogValidationError{Issues: report.Issues}
 	}
 	if report.Enabled {
-		shared.SetPartySkillStates(report.Entries)
+		shared.SetPartySkillStatesWithMode(report.Entries, report.Auto())
 	} else {
-		shared.SetPartySkillStates(nil)
+		shared.SetPartySkillStatesWithMode(nil, report.Auto())
 	}
-	robotLogf("[RuntimeFile] applied party_skills path=%s enabled=%t entries=%d\n", path, report.Enabled, len(report.Entries))
+	robotLogf("[RuntimeFile] applied party_skills path=%s enabled=%t mode=%s entries=%d\n", path, report.Enabled, report.Mode, len(report.Entries))
 	return report, nil
 }
 

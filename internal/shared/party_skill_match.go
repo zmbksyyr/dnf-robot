@@ -6,14 +6,27 @@ import "strings"
 // candidates. The same counters are used by runtime logs and diagnostics.
 type PartySkillMatchStats struct {
 	PVFMatched          int
+	KeptWithoutPVF      int
 	SkippedMissingPVF   int
 	SkippedPathMismatch int
 }
 
-// MatchPartySkillStates returns whitelist entries that exist in the PVF skill
-// export for the requested job. A whitelist script path, when present, must
-// match the normalized PVF path exactly.
+// MatchPartySkillStates keeps the historical strict intersection: an entry only
+// becomes a candidate when the PVF export registers the same job, skill, state
+// and (when declared) script path.
 func MatchPartySkillStates(job int, whitelist []PartySkillState, pvfStates []SkillState) ([]PartySkillState, PartySkillMatchStats) {
+	return MatchPartySkillStatesMode(false, job, whitelist, pvfStates)
+}
+
+// MatchPartySkillStatesMode selects runtime candidates for the requested mode.
+//
+// The PVF exporter only recognizes registrations it can parse, which in the
+// shipped catalog covers two jobs. Auto mode therefore keeps an entry that has
+// no PVF registration when it already carries a captured protocol state vector:
+// that vector is what the client needs, and the missing registration only means
+// the cooldown and MP tables are unknown. Entries without either a PVF
+// registration or captured data stay excluded so nothing is invented.
+func MatchPartySkillStatesMode(auto bool, job int, whitelist []PartySkillState, pvfStates []SkillState) ([]PartySkillState, PartySkillMatchStats) {
 	pvfIndex := make(map[[3]int]map[string]SkillState, len(pvfStates))
 	for _, entry := range pvfStates {
 		if entry.Job != job || !validPartySkillKey(entry.SkillIndex, entry.State) {
@@ -36,6 +49,16 @@ func MatchPartySkillStates(job int, whitelist []PartySkillState, pvfStates []Ski
 		}
 		paths, ok := pvfIndex[[3]int{entry.Job, entry.SkillIndex, entry.State}]
 		if !ok {
+			if auto && len(entry.StateData) > 0 {
+				// Keep the captured vector; the cooldown and MP tables stay
+				// unknown instead of being assumed zero.
+				entry.CooldownMS = 0
+				entry.CooldownByLevelMS = nil
+				entry.StateData = append([]byte(nil), entry.StateData...)
+				matches = append(matches, entry)
+				stats.KeptWithoutPVF++
+				continue
+			}
 			stats.SkippedMissingPVF++
 			continue
 		}

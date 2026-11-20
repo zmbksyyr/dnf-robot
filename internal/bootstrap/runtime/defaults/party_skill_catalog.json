@@ -1,4 +1,5 @@
 {
+  "mode": "auto",
   "enabled": false,
   "max_skill_level": 70,
   "skills": [

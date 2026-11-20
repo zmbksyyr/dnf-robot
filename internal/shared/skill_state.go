@@ -20,6 +20,7 @@ type SkillState struct {
 var skillStateSnapshot atomic.Value
 var partySkillStateSnapshot atomic.Value
 var partySkillStateGeneration atomic.Uint64
+var partySkillAutoSelection atomic.Bool
 
 func init() {
 	skillStateSnapshot.Store([]SkillState(nil))
@@ -76,8 +77,23 @@ func cloneSkillStates(entries []SkillState) []SkillState {
 }
 
 func SetPartySkillStates(entries []PartySkillState) {
+	SetPartySkillStatesWithMode(entries, false)
+}
+
+// SetPartySkillStatesWithMode publishes the runtime skill snapshot together
+// with the selection mode that produced it, so consumers never match an entry
+// set against the wrong eligibility rule.
+func SetPartySkillStatesWithMode(entries []PartySkillState, auto bool) {
 	partySkillStateSnapshot.Store(clonePartySkillStates(entries))
+	partySkillAutoSelection.Store(auto)
 	partySkillStateGeneration.Add(1)
+}
+
+// PartySkillAutoSelection reports whether the published snapshot was built by
+// automatic selection, where a captured state vector is enough without a PVF
+// registration.
+func PartySkillAutoSelection() bool {
+	return partySkillAutoSelection.Load()
 }
 
 func PartySkillStateGeneration() uint64 {

@@ -18,6 +18,15 @@ import (
 
 const maxSafePartySkillLevel = 70
 
+// Party skill casting has two selection modes. "manual" keeps the historical
+// per-skill switches. "auto" (the shipped default) treats every entry that is
+// not explicitly disabled as a candidate so a single top-level switch is enough
+// to get automatic casting without configuring a skill list.
+const (
+	partySkillModeManual = "manual"
+	partySkillModeAuto   = "auto"
+)
+
 type partySkillCatalogEntry struct {
 	ID         string          `json:"id,omitempty"`
 	Enabled    bool            `json:"enabled"`
@@ -34,6 +43,7 @@ type partySkillCatalogEntry struct {
 }
 
 type partySkillCatalogDocument struct {
+	Mode          *string            `json:"mode,omitempty"`
 	Enabled       *bool              `json:"enabled"`
 	MaxSkillLevel *int               `json:"max_skill_level"`
 	Skills        *[]json.RawMessage `json:"skills"`
@@ -64,6 +74,7 @@ type PartySkillCatalogIssue struct {
 
 type PartySkillCatalogReport struct {
 	Enabled                 bool
+	Mode                    string
 	Entries                 []shared.PartySkillState
 	Issues                  []PartySkillCatalogIssue
 	SourceCount             int
@@ -92,6 +103,11 @@ func (e *PartySkillCatalogValidationError) Error() string {
 		suffix = fmt.Sprintf("; and %d more", remaining)
 	}
 	return fmt.Sprintf("party skill catalog has %d invalid entries: %s%s", len(e.Issues), strings.Join(details, "; "), suffix)
+}
+
+// Auto reports whether the catalog was loaded in automatic selection mode.
+func (r PartySkillCatalogReport) Auto() bool {
+	return r.Enabled && r.Mode == partySkillModeAuto
 }
 
 func LoadPartySkills(configDir string) error {
@@ -130,9 +146,11 @@ func parsePartySkillCatalog(data []byte) (PartySkillCatalogReport, error) {
 	if err != nil {
 		return PartySkillCatalogReport{}, err
 	}
+	mode := resolvePartySkillMode(raw.Mode)
 
 	report := PartySkillCatalogReport{
 		Enabled:                 *raw.Enabled,
+		Mode:                    mode,
 		SourceCount:             len(*raw.Skills),
 		ConfiguredMaxSkillLevel: *raw.MaxSkillLevel,
 		EffectiveMaxSkillLevel:  *raw.MaxSkillLevel,
@@ -161,9 +179,17 @@ func parsePartySkillCatalog(data []byte) (PartySkillCatalogReport, error) {
 			report.DisabledCount++
 			continue
 		}
+		// In auto mode the top-level switch is the only user control: every
+		// entry that is not explicitly disabled is a candidate, then the
+		// runtime narrows it to the character's job, learned skills and the
+		// current PVF. Manual mode keeps the historical per-skill switches.
 		if !entry.Enabled {
-			report.SwitchOffCount++
-			continue
+			if mode == partySkillModeAuto {
+				entry.Enabled = true
+			} else {
+				report.SwitchOffCount++
+				continue
+			}
 		}
 		if err := shared.ValidatePartySkillStateData(entry.Job, entry.State, stateData); err != nil {
 			report.addPartySkillIssue(index, entry, err.Error())
@@ -220,6 +246,7 @@ func SyncPartySkillCatalog(path, pvfPath string) (bool, error) {
 
 	entries := make([]partySkillCatalogEntry, 0, len(pvfStates))
 	seen := make(map[string]struct{}, len(pvfStates))
+	mode := resolvePartySkillMode(raw.Mode)
 	for _, state := range pvfStates {
 		key := partySkillRuntimeKey(state.Job, state.SkillIndex, state.State, state.ScriptPath)
 		if _, duplicate := seen[key]; duplicate {
@@ -229,7 +256,9 @@ func SyncPartySkillCatalog(path, pvfPath string) (bool, error) {
 		entry, ok := existing[key]
 		if !ok {
 			entry = partySkillCatalogEntry{
-				Enabled: false,
+				// Auto selection needs no per-skill switch, so a newly discovered
+				// state starts active there and only manual mode starts it off.
+				Enabled: mode == partySkillModeAuto,
 				Job:     state.Job, SkillIndex: state.SkillIndex, State: state.State,
 				Level: maxSafePartySkillLevel, ScriptPath: state.ScriptPath,
 				Name: partySkillDisplayName(state.ScriptPath), Risk: 2,
@@ -264,10 +293,11 @@ func SyncPartySkillCatalog(path, pvfPath string) (bool, error) {
 	})
 
 	out, err := json.MarshalIndent(struct {
+		Mode          string                   `json:"mode"`
 		Enabled       bool                     `json:"enabled"`
 		MaxSkillLevel int                      `json:"max_skill_level"`
 		Skills        []partySkillCatalogEntry `json:"skills"`
-	}{Enabled: *raw.Enabled, MaxSkillLevel: *raw.MaxSkillLevel, Skills: entries}, "", "  ")
+	}{Mode: mode, Enabled: *raw.Enabled, MaxSkillLevel: *raw.MaxSkillLevel, Skills: entries}, "", "  ")
 	if err != nil {
 		return false, err
 	}
@@ -324,7 +354,26 @@ func decodePartySkillCatalogDocument(data []byte) (partySkillCatalogDocument, er
 	if *raw.MaxSkillLevel < 1 || *raw.MaxSkillLevel > maxSafePartySkillLevel {
 		return partySkillCatalogDocument{}, fmt.Errorf("party skill catalog max_skill_level must be between 1 and %d", maxSafePartySkillLevel)
 	}
+	if raw.Mode != nil {
+		switch strings.ToLower(strings.TrimSpace(*raw.Mode)) {
+		case partySkillModeAuto, partySkillModeManual:
+		default:
+			return partySkillCatalogDocument{}, fmt.Errorf("party skill catalog mode must be %q or %q", partySkillModeAuto, partySkillModeManual)
+		}
+	}
 	return raw, nil
+}
+
+// resolvePartySkillMode keeps files written before the mode field existed on
+// the historical per-skill switches. New installs ship mode=auto.
+func resolvePartySkillMode(mode *string) string {
+	if mode == nil {
+		return partySkillModeManual
+	}
+	if strings.ToLower(strings.TrimSpace(*mode)) == partySkillModeAuto {
+		return partySkillModeAuto
+	}
+	return partySkillModeManual
 }
 
 func decodePartySkillCatalogEntry(index int, data []byte) (partySkillCatalogEntry, error) {
