@@ -19,6 +19,7 @@ var (
 	scriptReferenceRE = regexp.MustCompile(`(?i)["']([^"']+\.nut)["']`)
 	symbolRE          = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Z][A-Z0-9_]*)\s*(?:<-|=)\s*(-?\d+)\s*;?`)
 	skillCooldownRE   = regexp.MustCompile(`(?i)\[cool time\]([^\[]*)`)
+	skillMPCostRE     = regexp.MustCompile(`(?i)\[consume MP\]([^\[]*)`)
 	skillMaxLevelRE   = regexp.MustCompile(`(?i)\[maximum level\]\s*(\d+)`)
 )
 
@@ -63,6 +64,7 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 	}
 	symbols := skillStateSymbols(referenced)
 	cooldowns := extractSkillCooldowns(archive)
+	mpCosts := extractSkillLevelTables(archive, skillMPCostRE)
 	type stateKey struct {
 		job, skill, state int
 		path              string
@@ -84,6 +86,7 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 			}
 			seen[key] = true
 			entry := SkillState{Job: job, SkillIndex: skill, State: state, ScriptPath: path}
+			entry.BaseMPByLevel = append([]int(nil), mpCosts[[2]int{job, skill}]...)
 			if table := cooldowns[[2]int{job, skill}]; len(table) == 1 {
 				entry.CooldownMS = table[0]
 			} else {
@@ -110,13 +113,17 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 // Read dungeon cooldowns through the PVF's own job/skill lists. Constant
 // values need one entry; variable endpoints use the declared maximum level.
 func extractSkillCooldowns(archive *pvfArchive) map[[2]int][]int {
+	return extractSkillLevelTables(archive, skillCooldownRE)
+}
+
+func extractSkillLevelTables(archive *pvfArchive, field *regexp.Regexp) map[[2]int][]int {
 	lists := [...]string{"swordmanskill.lst", "fighterskill.lst", "gunnerskill.lst", "mageskill.lst", "priestskill.lst",
 		"atgunnerskill.lst", "thiefskill.lst", "atfighterskill.lst", "atmageskill.lst", "demonicswordman.lst", "creatormage.lst"}
 	out := make(map[[2]int][]int)
 	for job, list := range lists {
 		for _, entry := range parsePVFList(archive.text("skill/" + list)) {
-			if cooldown := dungeonSkillCooldowns(archive.text("skill/" + entry.Path)); len(cooldown) > 0 {
-				out[[2]int{job, entry.ID}] = cooldown
+			if table := dungeonSkillLevelValues(archive.text("skill/"+entry.Path), field); len(table) > 0 {
+				out[[2]int{job, entry.ID}] = table
 			}
 		}
 	}
@@ -124,6 +131,14 @@ func extractSkillCooldowns(archive *pvfArchive) map[[2]int][]int {
 }
 
 func dungeonSkillCooldowns(text string) []int {
+	return dungeonSkillLevelValues(text, skillCooldownRE)
+}
+
+func dungeonSkillMPCosts(text string) []int {
+	return dungeonSkillLevelValues(text, skillMPCostRE)
+}
+
+func dungeonSkillLevelValues(text string, field *regexp.Regexp) []int {
 	// Public values apply unless the dungeon block provides its own table.
 	// Other modes cannot supply the public fallback, regardless of order.
 	var dungeon []string
@@ -146,7 +161,7 @@ func dungeonSkillCooldowns(text string) []int {
 				after = end + len(close)
 			}
 			if mode == "dungeon" {
-				if match := skillCooldownRE.FindStringSubmatch(text[body:end]); len(match) > 0 {
+				if match := field.FindStringSubmatch(text[body:end]); len(match) > 0 {
 					dungeon = match
 				}
 			}
@@ -155,7 +170,7 @@ func dungeonSkillCooldowns(text string) []int {
 	}
 	match := dungeon
 	if len(match) == 0 {
-		match = skillCooldownRE.FindStringSubmatch(text)
+		match = field.FindStringSubmatch(text)
 	}
 	if len(match) == 0 {
 		return nil

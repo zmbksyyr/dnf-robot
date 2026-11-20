@@ -12,6 +12,9 @@ type SkillState struct {
 	ScriptPath        string `json:"script_path"`
 	CooldownMS        int    `json:"cooldown_ms,omitempty"`
 	CooldownByLevelMS []int  `json:"cooldown_by_level_ms,omitempty"`
+	// Base MP excludes equipment, passive and runtime skill modifiers. A nil
+	// table is unknown; one zero entry is an explicitly free base cost.
+	BaseMPByLevel []int `json:"base_mp_by_level,omitempty"`
 }
 
 var skillStateSnapshot atomic.Value
@@ -56,6 +59,7 @@ func SkillStatesForJob(job int) []SkillState {
 	for _, entry := range entries {
 		if entry.Job == job {
 			entry.CooldownByLevelMS = append([]int(nil), entry.CooldownByLevelMS...)
+			entry.BaseMPByLevel = append([]int(nil), entry.BaseMPByLevel...)
 			out = append(out, entry)
 		}
 	}
@@ -66,6 +70,7 @@ func cloneSkillStates(entries []SkillState) []SkillState {
 	out := append([]SkillState(nil), entries...)
 	for i := range out {
 		out[i].CooldownByLevelMS = append([]int(nil), out[i].CooldownByLevelMS...)
+		out[i].BaseMPByLevel = append([]int(nil), out[i].BaseMPByLevel...)
 	}
 	return out
 }

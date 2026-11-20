@@ -62,6 +62,19 @@ func TestSkillCatalogCooldownSnapshotsRemainIndependent(t *testing.T) {
 	}
 }
 
+func TestSkillCatalogBaseMPSnapshotsRemainIndependent(t *testing.T) {
+	previous := skillStateSnapshot.Load().([]SkillState)
+	defer skillStateSnapshot.Store(previous)
+	input := []SkillState{{Job: 8, SkillIndex: 1, State: 20, BaseMPByLevel: []int{6, 8, 10}}}
+	SetSkillStates(input)
+	input[0].BaseMPByLevel[0] = 100
+	read := SkillStatesForJob(8)
+	read[0].BaseMPByLevel[1] = 200
+	if got := SkillStatesForJob(8); !reflect.DeepEqual(got[0].BaseMPByLevel, []int{6, 8, 10}) {
+		t.Fatalf("a caller changed the published base MP table: %+v", got)
+	}
+}
+
 func TestMatchPartySkillStatesClonesStateData(t *testing.T) {
 	whitelist := []PartySkillState{{Job: 1, SkillIndex: 2, State: 3, StateData: []byte{1, 2, 3}}}
 	matches, _ := MatchPartySkillStates(1, whitelist, []SkillState{{Job: 1, SkillIndex: 2, State: 3}})

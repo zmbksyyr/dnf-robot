@@ -33,8 +33,8 @@ type pvfManifest struct {
 // catalogs automatically so previously exported forbidden areas are excluded.
 const pvfExportVersion = 8
 
-// Version 5 preserves level-dependent dungeon cooldowns.
-const pvfSkillStateExportVersion = 5
+// Version 6 adds base dungeon MP costs alongside level-dependent cooldowns.
+const pvfSkillStateExportVersion = 6
 
 const pvfItemInfoExportName = "iteminfo.dat"
 
