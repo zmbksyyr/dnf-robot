@@ -1969,3 +1969,31 @@ if (user->get_state() != 3) return 0x7fffffff;   // 静默丢弃
 后续如果要做 Linux 侧实机验证，建议在**真正的 Linux 主机**（而非 WSL2）上跑——那里的地址空间布局
 与当年服务器一致，大概率不会触发这个冲突。这条结论也解释了为什么 dnf-native 在 Windows 上能跑：
 它自己实现 brk，不受 Linux 栈布局影响。
+
+## 零配置技能释放：实机确认（2026-11-21）
+
+此前夹具在队长帧里会附带"旧式技能状态"（command 5），机器人因此判定队长走旧式通道、自己也用普攻
+（`[PARTY_DUNGEON_ATTACK] state=8`）。把这条帧关掉（`DNF_LIVE_LEGACY=0`）后，机器人改走**目录技能**
+路径，日志出现真实施法：
+
+```
+[PARTY_DUNGEON_SKILL] uid=17000021 job=8 skill=33 state=51 level=1 name=diehard    path=sqr/character/atmage/diehard/diehard.nut
+[PARTY_DUNGEON_SKILL] uid=17000021 job=8 skill=26 state=43 level=1 name=watercannon path=sqr/character/atmage/watercannon/watercannon.nut
+[PARTY_DUNGEON_SKILL] uid=17000021 job=8 skill=4  state=23 level=1 name=dark_change path=sqr/character/atmage/darkchange/dark_change.nut
+```
+
+配合此前记录的档案行：
+
+```
+[PARTY_DUNGEON_SKILL_PROFILE] job=8 auto=true whitelist=40 pvf=38 pvf_matched=38 learned_candidates=4
+```
+
+可以确认**"只开技能开关、零配置"在实机上是成立的**：
+
+1. 用户只把 `party_skill_catalog.json` 的 `enabled` 打开（`mode=auto`），不填任何技能；
+2. 机器人按职业从目录里自动匹配到 40 条候选、其中 38 条命中 PVF；
+3. 在自己已学的 4 条里挑一条，用 PVF 的 state 与脚本路径发出施法包；
+4. 同一个机器人会按风险等级轮换不同技能（33 / 26 / 4），不是死磕一条。
+
+顺带说明两种攻击形态的触发条件：队长用旧式通道 → 机器人普攻（四段连击）；队长不用旧式通道 →
+机器人用目录技能。两者都不是硬编码技能列表。

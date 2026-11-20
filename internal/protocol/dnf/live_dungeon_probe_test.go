@@ -560,7 +560,7 @@ func liveLeadFrames(t *testing.T, vo *RobotVo, startX, startY int) {
 			t.Logf("leader frame %d: %v", step, err)
 			return
 		}
-		if step%2 == 0 {
+		if os.Getenv("DNF_LIVE_LEGACY") != "0" && step%2 == 0 {
 			// A real leader also shows its own legacy skill state; the Robot only
 			// switches to the legacy attack transport after seeing one.
 			legacy := buildPartyLegacySkillStateBody(vo.partySelfPeer.uniqueID, 8, []byte{byte(step % 4)}, partySkillToken(vo.UID, time.Now()))
