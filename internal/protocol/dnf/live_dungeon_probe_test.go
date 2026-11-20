@@ -388,6 +388,26 @@ func TestLiveDungeonProbe(t *testing.T) {
 		if !vo.sendRaw(selectDungeon) {
 			t.Fatal("select dungeon was not sent")
 		}
+		if liveEnvInt(t, "DNF_LIVE_SCAN_DUNGEON", 0) == 1 {
+			// Which dungeon ids does the current world map accept? The reply body
+			// tells us: 8 means "not selectable here", anything else is progress.
+			for _, id := range []int{1, 2, 3, 4, 5, 6, 7, 8} {
+				probe := make([]byte, liveRequestBody)
+				probe[0], probe[1] = byte(id), byte(id>>8)
+				packet, err := buildSendPacket(16, uint16(vo.PacketID), probe, vo.Cipher)
+				if err != nil {
+					t.Fatalf("build select dungeon %d: %v", id, err)
+				}
+				vo.PacketID++
+				if !vo.sendRaw(packet) {
+					t.Logf("select dungeon %d was not sent", id)
+					break
+				}
+				t.Logf("scan: asked for dungeon %d", id)
+				time.Sleep(900 * time.Millisecond)
+			}
+			return
+		}
 		t.Logf("sent select dungeon idx=%d type=%d", dungeon, dungeonType)
 
 		// A real client acknowledges the dungeon room loading and then walks.
