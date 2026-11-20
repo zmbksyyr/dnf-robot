@@ -204,6 +204,11 @@ func TestLiveDungeonProbe(t *testing.T) {
 			candidates = append(candidates, uniqueID)
 		}
 		vo.mu.Unlock()
+		vo.mu.Lock()
+		for uniqueID, entity := range vo.townEntityPositions {
+			t.Logf("town entity %d at (%d,%d)", uniqueID, entity.x, entity.y)
+		}
+		vo.mu.Unlock()
 		t.Logf("town entities: %v", candidates)
 		for _, uniqueID := range candidates {
 			body := make([]byte, liveRequestBody)
