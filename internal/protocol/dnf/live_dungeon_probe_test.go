@@ -189,19 +189,6 @@ func TestLiveDungeonProbe(t *testing.T) {
 		t.Logf("after move: %s", liveSnapshotLine(vo))
 	}
 
-	// A real client answers the town loading notification with FinishLoad; the
-	// server keeps the user out of the dungeon-capable state until it arrives.
-	finish, err := buildSendPacket(40, uint16(vo.PacketID), buildFinishLoadingPayload(0, 0), vo.Cipher)
-	if err != nil {
-		t.Fatalf("build finish loading: %v", err)
-	}
-	vo.PacketID++
-	if !vo.sendRaw(finish) {
-		t.Fatal("finish loading was not sent")
-	}
-	t.Logf("sent finish loading")
-	time.Sleep(700 * time.Millisecond)
-
 	if areaProbe := liveEnvInt(t, "DNF_LIVE_AREA_PROBE", -1); areaProbe >= 0 {
 		// Observable check: does SetArea actually move the character? A real move
 		// changes the town entities the server broadcasts for the new area.
@@ -226,6 +213,20 @@ func TestLiveDungeonProbe(t *testing.T) {
 		t.Logf("area probe: after area %d entities=%d %s", areaProbe, townCount(), liveSnapshotLine(vo))
 		return
 	}
+
+	// A real client answers the town loading notification with FinishLoad; the
+	// server keeps the user out of the dungeon-capable state until it arrives.
+	finish, err := buildSendPacket(40, uint16(vo.PacketID), buildFinishLoadingPayload(0, 0), vo.Cipher)
+	if err != nil {
+		t.Fatalf("build finish loading: %v", err)
+	}
+	vo.PacketID++
+	if !vo.sendRaw(finish) {
+		t.Fatal("finish loading was not sent")
+	}
+	t.Logf("sent finish loading")
+	time.Sleep(700 * time.Millisecond)
+
 	// Announce where we stand: the world-map index that normal dungeon selection
 	// needs comes from the area the user reports, not from the character record.
 	setArea := make([]byte, 12)
