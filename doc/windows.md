@@ -1701,3 +1701,23 @@ $_siginfo...si_addr = 0xfff95878
 
 要真正修好 Linux 侧启动，需要在系统调用层做（seccomp/ptrace 或改 ELF 本身），成本明显高于本轮
 能覆盖的范围。当前以 Windows 实例继续推进主线，Linux 侧记录为"已知启动回归 + 根因定位完成"。
+
+## MoveMap 会被处理，但被拒（2026-11-21）
+
+给夹具加收包跟踪后看到关键反馈：**每个 MoveMap 发出后服务端都回一个 `typ=48 size=23` 的包**
+（服务端→客户端的命令包，正是 `send_to_party_cmd_error((ENUM_CMDPACKET)0x30, code)` 的形式）。
+
+对照参考实现的 `CParty::move_map`：
+
+```c
+if (m_state != 2) { send_to_party_cmd_error((ENUM_CMDPACKET)0x30, 0x13); return false; }
+...
+else if (battleField.IsClearDungeon()) { send_to_party_cmd_error(0x30, 0x13); return false; }
+```
+
+也就是说换房要求**队伍处于 state 2（房间已开始）**；我们收到错误包，说明请求被正确处理但前置状态不满足
+（最可能就是队伍仍处在加载/待开始状态，或该副本被判为已通关）。
+
+同一个响应的错误码在加密体里，本轮没能稳定复现（第二次运行时服务端没回 48 包，说明还依赖当时的队伍状态），
+下一次应把 48 包的解密体打出来，确认是 0x13 还是别的码，再据此把队伍推进到 state 2（例如补发
+FinishLoad 并等待全员加载完成）后重试过图。
