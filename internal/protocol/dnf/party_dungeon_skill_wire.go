@@ -2,6 +2,8 @@ package dnf
 
 import (
 	"encoding/binary"
+
+	foundationlog "robot/internal/foundation/log"
 )
 
 // Legacy clients put the same actor/state/data/token tuple directly in command
@@ -67,6 +69,11 @@ func validPartyLegacySkillBody(body []byte, leaderID uint16) bool {
 
 // The server's active skill tree is authoritative, including changes made
 // during a live session. Each entry is slot/index/level/command-length/command.
+//
+// A structurally sound entry that carries no level (or no skill id) describes a
+// skill the character has not learned — the live server does emit those — and
+// must be skipped rather than failing the whole packet, or one empty slot would
+// disable casting for the entire session.
 func parsePartyLearnedSkills(body []byte) ([256]byte, bool) {
 	var levels [256]byte
 	if len(body) < 3 || body[2] > 204 {
@@ -76,12 +83,19 @@ func parsePartyLearnedSkills(body []byte) ([256]byte, bool) {
 	body = body[3:]
 	var slots [204]bool
 	for i := 0; i < count; i++ {
-		if len(body) < 4 || int(body[0]) >= len(slots) || slots[body[0]] || body[1] == 0 || levels[body[1]] != 0 || body[2] == 0 || int(body[3]) > len(body)-4 {
+		if len(body) < 4 || int(body[0]) >= len(slots) || int(body[3]) > len(body)-4 {
 			return [256]byte{}, false
 		}
-		slots[body[0]] = true
-		levels[body[1]] = body[2]
-		body = body[4+int(body[3]):]
+		slot, skill, level, size := body[0], body[1], body[2], int(body[3])
+		body = body[4+size:]
+		if skill == 0 || level == 0 {
+			continue
+		}
+		if slots[slot] || levels[skill] != 0 {
+			return [256]byte{}, false
+		}
+		slots[slot] = true
+		levels[skill] = level
 	}
 	return levels, true
 }
@@ -96,9 +110,20 @@ func (r *RobotVo) handleLearnedSkillsUnsafe(packet robotInboundPacket) {
 	}
 	levels, ok := parsePartyLearnedSkills(body)
 	if !ok {
+		if !r.partySkillWireDumped {
+			r.partySkillWireDumped = true
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_SKIP] uid=%d cid=%d reason=learned-parse len=%d body=%x\n", r.UID, r.CID, len(body), body)
+		}
 		return
 	}
 	r.partySkillLevels = levels
 	r.partySkillInfoKnown = true
+	learned := 0
+	for _, level := range levels {
+		if level > 0 {
+			learned++
+		}
+	}
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_INFO] uid=%d cid=%d reason=learned-parsed learned=%d\n", r.UID, r.CID, learned)
 	r.resetPartySkillProfileUnsafe()
 }

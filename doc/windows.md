@@ -1379,3 +1379,26 @@ state 数据），两者都需要额外验证，本轮未做。
 `[PARTY_DUNGEON_SKILL_PROFILE]` 行，也没有 `[PARTY_DUNGEON_SKILL]` 施法记录，
 因此**施法与击杀仍未被证实**。下一步应确认技能档案在重启后是否真的重建
 （可在 `ensurePartySkillProfileUnsafe` 的早退分支加一条原因日志）。
+
+## 学会技能包解析被一个零级条目整包废掉（2026-11-21）
+
+定位“重启后再也不出现 `SKILL_PROFILE`”的原因：不是档案没重建，而是**技能包解析失败**。
+加诊断后拿到原始 240 字节（`reason=learned-parse`），按槽位表解出来是：
+
+```
+slot0 id4 lvl1 | slot1 id47 lvl1 data3 | ... | slot9 id235 lvl0 | ... 共 26 条
+```
+
+第 10 条正是我上一轮塞进存档的 235（**等级 0**）。旧解析器遇到 `level == 0` 直接整包返回失败，
+于是 `partySkillInfoKnown` 永远为 false，技能档案不再加载——一次“半成功”的存档改动，
+把整个施法链路静默关掉了。
+
+修复（产品代码）：结构合法但 `level == 0` 或 `id == 0` 的条目改为**跳过**，只有真正的结构
+错误（截断、重复槽位）才判整包失败。新增 3 条单测覆盖跳过/截断/重复槽位。
+
+实机复核：修复后 `[PARTY_DUNGEON_SKILL_PROFILE_INFO] reason=learned-parsed learned=25`
+（该角色实际已学 25 个技能），档案恢复加载。`learned_candidates` 仍为 0，因为目录里职业 9
+只有 235 这一条、而它是 0 级——这是目录与角色不匹配，不是解析问题。
+
+另外查清 PVF 侧状态数据的覆盖面：`skill_state_catalog.json` 只含**职业 8（38 条）与职业 10
+（8 条）**，职业 9 没有任何 state 数据。所以要实机验证施法，必须换一个**职业 8** 的机器人角色。

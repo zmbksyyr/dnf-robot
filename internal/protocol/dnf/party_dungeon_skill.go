@@ -292,6 +292,12 @@ func (r *RobotVo) ensurePartySkillProfileUnsafe() bool {
 		return true
 	}
 	if !r.partySkillInfoKnown {
+		// The learned-skill notification never parsed, so there is nothing to
+		// match the catalog against. Say so instead of failing silently.
+		if now := time.Now(); !now.Before(r.partySkillInfoDiagAt) {
+			r.partySkillInfoDiagAt = now.Add(10 * time.Second)
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_SKIP] uid=%d cid=%d reason=skill-info-unknown\n", r.UID, r.CID)
+		}
 		return false
 	}
 	if r.partySkillLoading {

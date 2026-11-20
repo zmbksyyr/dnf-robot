@@ -217,6 +217,8 @@ type RobotVo struct {
 	partyDungeonFollowDiagAt    time.Time
 	partyDungeonMoveDiagAt      time.Time
 	partyDungeonSentDiagAt      time.Time
+	partySkillInfoDiagAt         time.Time
+	partySkillWireDumped         bool
 	partyDungeonFollow          []partyDungeonFollowPending
 	partyDungeonEnteredAt       time.Time
 	partyDungeonLastAt          time.Time
