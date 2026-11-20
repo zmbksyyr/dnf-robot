@@ -225,6 +225,8 @@ type RobotVo struct {
 	partySkillLevels            [256]byte
 	partySkillNextAt            time.Time
 	partyBasicAttackNextAt      time.Time
+	partyBasicAttackStep        byte
+	partyBasicAttackTarget      [4]byte
 	partySkillRecoverAt         time.Time
 	partySkillBlockedUntil      time.Time
 	partySkillLoaded            bool

@@ -193,7 +193,11 @@ func testNormalAttackFacesOwnTargetAndWaitsForAcknowledgementBeforeRecovery(t *t
 	if len(p) != 10 || p[4] != 8 || p[7] != 0 {
 		t.Fatalf("normal attack vector changed: %x", p)
 	}
-	if r.partyBasicAttackNextAt != now.Add(partyBasicAttackInterval) || r.partySkillRecoverAt != now.Add(partySkillRecoverDelay) || len(r.partySkillReadyAt) != 0 || len(r.partyDungeonFollow) != 0 {
+	interval := partyBasicAttackInterval
+	if job == 8 {
+		interval = partyBasicComboInterval
+	}
+	if r.partyBasicAttackNextAt != now.Add(interval) || r.partySkillRecoverAt != now.Add(partySkillRecoverDelay) || len(r.partySkillReadyAt) != 0 || len(r.partyDungeonFollow) != 0 {
 		t.Fatal("normal attack did not set its recovery/cadence or altered skill cooldowns")
 	}
 	r.flushPartyDungeonSkillUnsafe(sender, now.Add(partySkillRecoverDelay))
@@ -267,13 +271,164 @@ func TestFailedNormalAttackDoesNotCommitCadenceAndRoomResetClearsIt(t *testing.T
 		t.Fatal("failed send committed attack timing")
 	}
 	r.partyBasicAttackNextAt = now.Add(time.Second)
+	r.partyBasicAttackStep, r.partyBasicAttackTarget = 2, [4]byte{0x11, 2, 1, 3}
 	r.clearPartyDungeonRuntimeUnsafe()
-	if !r.partyBasicAttackNextAt.IsZero() {
+	if !r.partyBasicAttackNextAt.IsZero() || r.partyBasicAttackStep != 0 || r.partyBasicAttackTarget != [4]byte{} {
 		t.Fatal("room reset retained attack cadence")
 	}
 	r.partyBasicAttackNextAt = now.Add(time.Second)
+	r.partyBasicAttackStep, r.partyBasicAttackTarget = 2, [4]byte{0x11, 2, 1, 3}
 	r.resetPartyTQOSTransportUnsafe()
-	if !r.partyBasicAttackNextAt.IsZero() {
+	if !r.partyBasicAttackNextAt.IsZero() || r.partyBasicAttackStep != 0 || r.partyBasicAttackTarget != [4]byte{} {
 		t.Fatal("transport reset retained attack cadence")
+	}
+}
+
+func comboTestTransport(t *testing.T, r *RobotVo) (*net.UDPConn, *net.UDPConn) {
+	t.Helper()
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { receiver.Close() })
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sender.Close() })
+	remote := receiver.LocalAddr().(*net.UDPAddr)
+	r.partyPeers[0].outerIP, r.partyPeers[0].port = remote.IP, uint16(remote.Port)
+	return sender, receiver
+}
+
+func readComboState(t *testing.T, receiver *net.UDPConn, state, step byte, records int) {
+	t.Helper()
+	buf := make([]byte, 4096)
+	receiver.SetReadDeadline(time.Now().Add(time.Second))
+	n, _, err := receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodies, ok := partyDungeonFrameBodies(buf[:n])
+	if !ok || len(bodies) != records {
+		t.Fatalf("unexpected frame: %x", buf[:n])
+	}
+	body := bodies[len(bodies)-1]
+	if !validPartyLegacySkillBody(body, 5) || body[11]^0x7e != state || state == 8 && (len(body) != 17 || body[14]^0x7e != step) {
+		t.Fatalf("unexpected combo state: %x", body)
+	}
+}
+
+func TestMaleMageFourStageComboStaysOrderedAndRecoversOnce(t *testing.T) {
+	now := time.Now()
+	r, _, enemy := basicAttackTestRobot(now)
+	r.partySkillJob = 8
+	sender, receiver := comboTestTransport(t, r)
+	for step := byte(0); step < 4; step++ {
+		r.flushPartyDungeonSkillUnsafe(sender, now)
+		readComboState(t, receiver, 8, step, 2)
+		if len(r.partySkillReadyAt) != 0 || r.partySkillRecoverAt != now.Add(partySkillRecoverDelay) {
+			t.Fatal("combo consumed an active-skill cooldown or lost recovery")
+		}
+		if step < 3 && (r.partyBasicAttackStep != step+1 || r.partyBasicAttackTarget != enemy) {
+			t.Fatal("combo lost its target or stage")
+		}
+		r.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, uint32(step)), 1, r.partyPeers[0])
+		if step < 3 {
+			sequence := r.partyTQOSReliableSeq[0][1]
+			r.flushPartyDungeonSkillUnsafe(sender, now.Add(partyBasicComboInterval-time.Nanosecond))
+			if r.partyTQOSReliableSeq[0][1] != sequence {
+				t.Fatal("combo sent before its cadence")
+			}
+			now = now.Add(partyBasicComboInterval)
+		}
+	}
+	if r.partyBasicAttackStep != 0 || r.partyBasicAttackTarget != [4]byte{} || r.partyBasicAttackNextAt != now.Add(partyBasicAttackInterval) {
+		t.Fatal("completed combo did not release its target and schedule its next start")
+	}
+	r.flushPartyDungeonSkillUnsafe(sender, now.Add(partySkillRecoverDelay))
+	readComboState(t, receiver, 0, 0, 1)
+	if !r.partySkillRecoverAt.IsZero() {
+		t.Fatal("combo did not recover after its final stage")
+	}
+}
+
+func TestMaleMageComboDoesNotAdvanceBeforeAckOrAfterFailedSend(t *testing.T) {
+	now := time.Now()
+	r, _, _ := basicAttackTestRobot(now)
+	r.partySkillJob = 8
+	sender, receiver := comboTestTransport(t, r)
+	r.flushPartyDungeonSkillUnsafe(sender, now)
+	readComboState(t, receiver, 8, 0, 2)
+	next, recoverAt := r.partyBasicAttackNextAt, r.partySkillRecoverAt
+	r.flushPartyDungeonSkillUnsafe(sender, next)
+	if r.partyBasicAttackStep != 1 || r.partyTQOSReliableSeq[0][1] != 1 || r.partySkillRecoverAt != recoverAt {
+		t.Fatal("combo advanced without acknowledgement")
+	}
+	r.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, 0), 1, r.partyPeers[0])
+	sender.Close()
+	r.flushPartyDungeonSkillUnsafe(sender, next)
+	if r.partyBasicAttackStep != 1 || r.partyBasicAttackNextAt != next || r.partySkillRecoverAt != recoverAt {
+		t.Fatal("failed combo send committed its next stage or timing")
+	}
+}
+
+func TestMaleMageComboCannotCarryAcrossTargetLossOrInterruption(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*RobotVo, [4]byte, time.Time) time.Time
+	}{
+		{"dead", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time {
+			a := r.partyDungeonWorld.actors[enemy]
+			a.dead = true
+			r.partyDungeonWorld.actors[enemy] = a
+			return now.Add(partyBasicComboInterval)
+		}},
+		{"changed-target", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time {
+			a := r.partyDungeonWorld.actors[enemy]
+			delete(r.partyDungeonWorld.actors, enemy)
+			r.partyDungeonWorld.actors[[4]byte{0x11, 2, 2, 3}] = a
+			return now.Add(partyBasicComboInterval)
+		}},
+		{"stale", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time {
+			a := r.partyDungeonWorld.actors[enemy]
+			a.seenAt = now.Add(-4 * time.Second)
+			r.partyDungeonWorld.actors[enemy] = a
+			return now.Add(partyBasicComboInterval)
+		}},
+		{"out-of-range", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time {
+			a := r.partyDungeonWorld.actors[enemy]
+			a.position.x += 500
+			r.partyDungeonWorld.actors[enemy] = a
+			return now.Add(partyBasicComboInterval)
+		}},
+		{"late", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time { return now.Add(partySkillRecoverDelay) }},
+		{"blocked", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time {
+			r.partySkillBlockedUntil = now.Add(time.Minute)
+			return now.Add(partyBasicComboInterval)
+		}},
+		{"inactive-room", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time {
+			r.partyDungeonLastAt = now.Add(-time.Minute)
+			return now.Add(partyBasicComboInterval)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			r, _, enemy := basicAttackTestRobot(now)
+			r.partySkillJob = 8
+			sender, receiver := comboTestTransport(t, r)
+			r.flushPartyDungeonSkillUnsafe(sender, now)
+			readComboState(t, receiver, 8, 0, 2)
+			r.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, 0), 1, r.partyPeers[0])
+			r.flushPartyDungeonSkillUnsafe(sender, tc.change(r, enemy, now))
+			if r.partyBasicAttackStep != 0 || r.partyBasicAttackTarget != [4]byte{} {
+				t.Fatal("partial combo survived target loss or interruption")
+			}
+			if tc.name == "late" {
+				readComboState(t, receiver, 0, 0, 1)
+			} else if r.partyTQOSReliableSeq[0][1] != 1 {
+				t.Fatal("interrupted combo sent another attack")
+			}
+		})
 	}
 }

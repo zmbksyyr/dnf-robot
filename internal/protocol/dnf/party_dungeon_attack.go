@@ -8,12 +8,16 @@ import (
 	foundationlog "robot/internal/foundation/log"
 )
 
-const partyBasicAttackInterval = 1200 * time.Millisecond
+const (
+	partyBasicAttackInterval = 1200 * time.Millisecond
+	// A real male-mage four-tap capture used approximately 312 ms between
+	// stages. Allow a little more time; this is not an animation speed formula.
+	partyBasicComboInterval = 350 * time.Millisecond
+)
 
-// Swordman and male mage use state 8 with vector [0] for their first normal
-// attack. Both were captured from real players and verified to produce hits
-// from the Robot itself. The client uses this actor's own attack information;
-// other jobs and the newer state envelope still require client verification.
+// Swordman uses its verified first swing. Male mage uses the four state-8
+// vectors [0], [1], [2], [3] captured from a real player and corresponding to
+// its four PVF attack motions. Other jobs and envelopes need verification.
 func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bool {
 	if !r.partySkillLoaded || (r.partySkillJob != 0 && r.partySkillJob != 8) || !r.partyDungeonLegacySkills || now.Before(r.partyBasicAttackNextAt) {
 		return false
@@ -24,8 +28,15 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 	}
 	self := partyDungeonPlayerReference(r.partySelfPeer.uniqueID)
 	position := r.partyDungeonWorld.actors[self].position
-	_, target, ok := r.partyDungeonWorld.nearestMonster(position, now)
+	targetID, target, ok := r.partyDungeonWorld.nearestMonster(position, now)
+	if r.partyBasicAttackStep != 0 && (!ok || targetID != r.partyBasicAttackTarget) {
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
+		return false
+	}
 	if !ok || math.Abs(float64(target.x-position.x)) > 100 || math.Abs(float64(target.y-position.y)) > 25 {
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		return false
 	}
 	// Face the selected enemy without changing position, then start the swing
@@ -35,14 +46,22 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 	if !ok {
 		return false
 	}
-	attack := buildPartyLegacySkillStateBody(r.partySelfPeer.uniqueID, 8, []byte{0}, partySkillToken(r.UID, now))
+	step := r.partyBasicAttackStep
+	attack := buildPartyLegacySkillStateBody(r.partySelfPeer.uniqueID, 8, []byte{step}, partySkillToken(r.UID, now))
 	if _, err := r.sendPartyReliableUnsafe(conn, peer, r.partyDungeonFlags, [][]byte{face, attack}, "skill-cast", now); err != nil {
 		return false
 	}
 	r.partyBasicAttackNextAt = now.Add(partyBasicAttackInterval)
+	r.partyBasicAttackStep = 0
+	r.partyBasicAttackTarget = [4]byte{}
+	if r.partySkillJob == 8 && step < 3 {
+		r.partyBasicAttackStep = step + 1
+		r.partyBasicAttackTarget = targetID
+		r.partyBasicAttackNextAt = now.Add(partyBasicComboInterval)
+	}
 	r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
 	r.partyDungeonFollow = nil
-	foundationlog.Robotf("[PARTY_DUNGEON_ATTACK] uid=%d job=%d state=8 target=%x recover_in=%s\n", r.UID, r.partySkillJob, r.partyDungeonWorld.target, partySkillRecoverDelay)
+	foundationlog.Robotf("[PARTY_DUNGEON_ATTACK] uid=%d job=%d state=8 step=%d target=%x recover_in=%s\n", r.UID, r.partySkillJob, step, targetID, partySkillRecoverDelay)
 	return true
 }
 

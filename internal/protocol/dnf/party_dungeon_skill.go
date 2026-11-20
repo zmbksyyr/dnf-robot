@@ -96,6 +96,8 @@ func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {
 	r.partyDungeonLegacySkills = false
 	r.partySkillNextAt = time.Time{}
 	r.partyBasicAttackNextAt = time.Time{}
+	r.partyBasicAttackStep = 0
+	r.partyBasicAttackTarget = [4]byte{}
 	r.partySkillRecoverAt = time.Time{}
 	r.partySkillBlockedUntil = time.Time{}
 }
@@ -108,9 +110,14 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	if r.partyDungeonLastAt.IsZero() {
 		r.partySkillNextAt = time.Time{}
 		r.partySkillRecoverAt = time.Time{}
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		return
 	}
 	if !r.partySkillRecoverAt.IsZero() && !now.Before(r.partySkillRecoverAt) {
+		// A late ACK must not resume an expired combo after recovery.
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		peer := r.partyPeerForSlotUnsafe(0)
 		if peer.slotKnown && r.partyReliablePurposePendingUnsafe(peer.slot, "skill-cast") {
 			r.partySkillRecoverAt = now.Add(partySkillRecoveryRetry)
@@ -128,6 +135,8 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	}
 	idle := now.Sub(r.partyDungeonLastAt)
 	if idle > partyDungeonActivityTimeout {
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		r.partySkillNextAt = time.Time{}
 		if idle > partyDungeonActivityTimeout+partySkillRecoveryGrace {
 			r.partySkillRecoverAt = time.Time{}
@@ -135,9 +144,14 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		return
 	}
 	if now.Before(r.partySkillBlockedUntil) {
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		return
 	}
 	if !r.partySkillRecoverAt.IsZero() {
+		if r.partyBasicAttackStep != 0 {
+			r.tryPartyBasicAttackUnsafe(conn, now)
+		}
 		return
 	}
 	if r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
@@ -327,6 +341,8 @@ func (r *RobotVo) loadPartySkillProfile(generation, catalogGeneration uint64, ui
 }
 
 func (r *RobotVo) resetPartySkillProfileUnsafe() {
+	r.partyBasicAttackStep = 0
+	r.partyBasicAttackTarget = [4]byte{}
 	r.partySkillGeneration++
 	r.partySkillLoaded = false
 	r.partySkillLoading = false
