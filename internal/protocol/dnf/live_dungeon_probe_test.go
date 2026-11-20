@@ -487,7 +487,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 			t.Logf("drove %d steps to x=%d", drive, x)
 		}
 		if os.Getenv("DNF_LIVE_LEAD_FRAMES") == "1" {
-			liveLeadFrames(t, vo, birthX, birthY)
+			liveLeadFrames(t, vo, x, y)
 		}
 	}
 
