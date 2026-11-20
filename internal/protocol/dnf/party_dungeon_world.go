@@ -87,7 +87,7 @@ func (world *partyDungeonWorld) observe(body []byte, now time.Time) {
 		return
 	}
 	command := binary.LittleEndian.Uint16(body[1:3])
-	if command != 6 && command != 12 && command != 23 {
+	if command != 6 && command != 12 && command != 20 && command != 23 {
 		return
 	}
 	payload := make([]byte, len(body)-7)
@@ -98,11 +98,17 @@ func (world *partyDungeonWorld) observe(body []byte, now time.Time) {
 	if body[3] != checksum[0] || body[0] == 1 && string(body[3:7]) != string(checksum[:]) {
 		return
 	}
-	if command == 6 && len(payload) != 6 || command == 12 && len(payload) != 16 || command == 23 && len(payload) != 4 {
+	if command == 6 && len(payload) != 6 || command == 12 && len(payload) != 16 || command == 20 && len(payload) != 44 || command == 23 && len(payload) != 4 {
 		return
 	}
 	var ref [4]byte
 	copy(ref[:], payload)
+	if command == 20 {
+		// HP_DAMAGE identifies the attacker first, then the victim. Its current
+		// HP follows a float, five shorts and two damage-related integers.
+		// Read the peer's resulting HP; do not subtract the reported damage.
+		copy(ref[:], payload[4:8])
+	}
 	if ref[0] != 0x11 || (ref[1] != 1 && ref[1] != 2) {
 		return
 	}
@@ -111,8 +117,12 @@ func (world *partyDungeonWorld) observe(body []byte, now time.Time) {
 	}
 	actor := world.actors[ref]
 	actor.seenAt = now
-	if command == 12 {
-		actor.hp = int32(binary.LittleEndian.Uint32(payload[4:]))
+	if command == 12 || command == 20 {
+		hpOffset := 4
+		if command == 20 {
+			hpOffset = 30
+		}
+		actor.hp = int32(binary.LittleEndian.Uint32(payload[hpOffset:]))
 		actor.hpKnown = true
 		actor.dead = actor.hp <= 0 || partyDungeonMonster(ref) && actor.dead
 	} else if command == 23 {

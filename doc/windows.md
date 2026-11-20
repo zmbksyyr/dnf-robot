@@ -838,3 +838,22 @@ Go 1.26.4。证据在相邻 Native 仓库外 `../x/dnf-gm-output/evidence/party-
 `candidate-room-state.private.log`、`room-review.private.json` 及 `restored.private.json`。
 客户端正常回城退出，Robot、全部服务与数据库正常停止；五项临时文件按哈希恢复，
 没有修改数据库夹具、原 ELF/PVF、Native、GM 或正式发布包。
+
+## 接收真实伤害后的 HP 同步（2026-11-20）
+
+房间状态此前忽略客户端的 `HP_DAMAGE`（UDP 20），只读取 HP 快照和死亡通知。
+现在读取该消息的受击对象和当前 HP，保留坐标，HP 为零时立即清除当前目标，沿用
+原来的清怪后回队逻辑。消息的第一个对象是攻击者，不能把它当成受击者；使用客户端
+已经计算的剩余 HP，不重复减去伤害，也不生成或向客户端发送自造的伤害。
+
+依据为原客户端发送/接收函数及隔离测试角色的真实抓包，当前记录格式为 44 字节
+payload，HP 位于偏移 30。回归中的对象引用和不解释的尾部已替换为测试值。
+新增回归在原实现失败、修改后通过，覆盖两种传输封装、连续掉血、目标死亡后回队、
+攻击者不受影响、截断、校验错误和非角色对象。完整 Go 测试、Windows/Linux amd64
+构建通过；本阶段是抓包回放及协议回归，没有新增实机或 Linux 战斗验收。
+
+源证据在相邻 Native 仓库外 `../x/dnf-gm-output/evidence/party-combat/skill-execution-v28/`。
+平台沿用 Windows 10 IoT Enterprise LTSC x64 build 19044、Go 1.26.4，客户端快照
+SHA-256 为 `13dbcdc8cbfff3952da54738b89503c1d52219333cbb6eefaf9d6ff62dae8230`。
+本次修复的是接收和记录已有伤害，Robot 本体正常受击的计算归属、完整主动技能与
+MP/材料消耗仍在继续处理；没有改变原 ELF、PVF、Native、GM 或正式发布目录。
