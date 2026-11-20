@@ -440,6 +440,28 @@ func TestLiveDungeonProbe(t *testing.T) {
 				t.Logf("sent dungeon finish loading")
 			}
 		}
+		if one := os.Getenv("DNF_LIVE_MOVE_ONE"); one != "" {
+			// One room move per session: an out-of-range coordinate makes the server
+			// drop the connection, so the sweep has to be split across runs.
+			var cx, cy int
+			if _, scanErr := fmt.Sscanf(one, "%d,%d", &cx, &cy); scanErr == nil {
+				time.Sleep(4 * time.Second)
+				moveBody := make([]byte, liveRequestBody)
+				binary.LittleEndian.PutUint16(moveBody[0:2], uint16(cx))
+				binary.LittleEndian.PutUint16(moveBody[2:4], uint16(cy))
+				moveMap, buildErr := buildSendPacket(48, uint16(vo.PacketID), moveBody, vo.Cipher)
+				if buildErr != nil {
+					t.Fatalf("build single move map: %v", buildErr)
+				}
+				vo.PacketID++
+				if vo.sendRaw(moveMap) {
+					t.Logf("sent single move map cell=(%d,%d)", cx, cy)
+				} else {
+					t.Logf("single move map was not sent")
+				}
+				time.Sleep(3 * time.Second)
+			}
+		}
 		if liveEnvInt(t, "DNF_LIVE_NEXT_ROOM", 0) == 1 {
 			// The party only starts once every member has finished loading; give
 			// the peer a chance to report before asking for a room change.
