@@ -553,6 +553,12 @@ func TestLiveDungeonProbe(t *testing.T) {
 		}
 	}
 
+	if dungeon <= 0 && os.Getenv("DNF_LIVE_LEAD_FRAMES") == "1" {
+		// Town follow only reacts while the leader's party transport is fresh, so a
+		// town run has to send leader frames too, not just move over TCP.
+		liveLog("town: sending leader party frames")
+		liveLeadFrames(t, vo, birthX, birthY)
+	}
 	for i := 0; i < 30; i++ {
 		time.Sleep(time.Second)
 		t.Logf("t+%02ds %s%s", i+1, liveSnapshotLine(vo), liveDungeonState(vo))

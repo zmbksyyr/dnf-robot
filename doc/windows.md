@@ -2722,3 +2722,23 @@ Recv SIGSEGV signal
 按跟随半径（配置已有 `follow_radius_x/y = 120/30`）向队长靠拢并发 SetPos。
 
 （本轮配置改动 `follow_account = 17000020` 保留，便于后续测试；必要时可改回空。）
+
+## 城镇跟随：代码存在，但没被触发（2026-11-21）
+
+翻代码发现**城镇逐位置跟随其实已经实现**：`followPartyLeaderTownPositionUnsafe()` 会在收到队长城镇位置包时
+把机器人挪到队长位置，还有 `town_follow_test.go` 覆盖它。所以问题不是"没实现"，而是"没触发"。
+
+它的前置条件：
+
+1. `partyLeaderUniqueIDUnsafe()` 能拿到队长 uniqueID；
+2. `partyLeaderTransportFreshUnsafe()`——**队长的队伍传输必须是新鲜的**（服务端不发队伍帧就会过期）；
+3. 位置包的 `uniqueID` 等于队长 uniqueID。
+
+因此怀疑条件 2：城里没有队伍帧，新鲜度过期 → 跟随被跳过。为此给夹具加了"城镇里也发队长队伍帧"
+（`DNF_LIVE_LEAD_FRAMES=1` 时在城镇分支调用 `liveLeadFrames`），并确认帧确实发出
+（阶段日志 `town: sending leader party frames`）。
+
+**结果：机器人位置仍然不动**（1000,300 → 1000,300）。所以条件 2 不是唯一原因，或者位置包压根没到机器人手里。
+
+下一步：在 `followPartyLeaderTownPositionUnsafe` 里加一条诊断日志，把四个条件的实际值打出来
+（leaderID、freshness、position.uniqueID、当前/目标坐标），一次运行就能定位到底卡在哪一条。
