@@ -70,17 +70,22 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 }
 
 func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
+	// Loading changes the room's actors and coordinate system. Neither queued
+	// movement nor a reliable retry from the previous room may run in it.
+	r.cancelPartyDungeonReliableUnsafe(now)
+	r.partyDungeonFollow = nil
 	r.partyDungeonWorld = partyDungeonWorld{}
+	r.partyDungeonFlags = 0
+	r.partyBasicAttackNextAt = time.Time{}
+	r.partyBasicAttackStep = 0
+	r.partyBasicAttackTarget = [4]byte{}
+	r.partySkillRecoverAt = time.Time{}
 	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
 		r.resetPartySkillProfileUnsafe()
 	}
 	r.partyDungeonEnteredAt = now
-	if r.partyDungeonLastAt.IsZero() {
-		r.partyDungeonLastAt = now
-	}
-	if r.partySkillNextAt.IsZero() {
-		r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
-	}
+	r.partyDungeonLastAt = now
+	r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
 }
 
 func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {

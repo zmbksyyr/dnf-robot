@@ -812,3 +812,29 @@ MySQL 5.7.44；Linux 本次仅构建。PVF SHA-256 为
 `combo-review.private.json`、房间截图及 `restored.private.json`。客户端正常回城退出，
 Robot、全部服务与数据库正常停止；五项临时文件恢复并核对哈希，没有数据库夹具修改，
 保留正常游戏保存。Native、GM、原 ELF/PVF 与正式包未改。
+
+## 换房清理旧动作（2026-11-20）
+
+加载通知此前只重置房间对象，仍保留上一房间的待发跟随、可靠动作重传、普攻连段、
+动作恢复计时及活动时间。新增真实 UDP 回归在旧实现失败；现在进入新房间先沿用已有
+取消逻辑清理旧房间的可靠动作，清空待发移动、连段与恢复计时，并刷新活动与施法调度。
+没有待确认房间动作时保留现有传输序号；已学技能、真实技能冷却与路由故障退避保留。
+完整 Go 测试、Windows/Linux amd64 构建通过；仅 Windows 有本轮实机测试。
+
+隔离原 ELF 的旧版本/候选使用相同产品调度与两项被动记录。候选的 5 次加载通知
+（包括首次进入的两条和后续 3 次换房）均刷新活动并清空房间状态，其中一次真实
+待发移动由 2 条清为 0。换房后有 51 次普通攻击状态、41 对 Robot 来源的命中请求/
+结果；可靠重传取消由独立 UDP 回归覆盖，真实换房时没有待确认可靠动作，不能混称
+为该分支已由实机触发。真人执行移动、一次 C 跳跃及菜单操作，没有攻击或技能输入；
+第一房没有 Robot 普攻状态且真人仍保留被动装备，不以清房计数证明 Robot 总伤害。
+
+前一轮门口“不可见”疑点复核发现两人完全重叠、反向输入再次穿门；本轮只读对象
+快照仍有两名有效角色。现有证据不支持把该现象判为丢失角色，也不能据此保证所有
+可见性边界通过。正常受击、完整主动技能及资源消耗仍未解决。
+
+平台沿用 Windows 10 IoT Enterprise LTSC x64 build 19044、原 ELF x86、MySQL 5.7.44、
+Go 1.26.4。证据在相邻 Native 仓库外 `../x/dnf-gm-output/evidence/party-combat/combat-v19/`：
+`baseline-room-tests-corrected.log`、`all-tests.log`、`baseline-room-state.private.log`、
+`candidate-room-state.private.log`、`room-review.private.json` 及 `restored.private.json`。
+客户端正常回城退出，Robot、全部服务与数据库正常停止；五项临时文件按哈希恢复，
+没有修改数据库夹具、原 ELF/PVF、Native、GM 或正式发布包。
