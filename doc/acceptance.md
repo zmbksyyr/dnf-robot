@@ -9,7 +9,7 @@
 
 | 环节 | 状态 | 证据 |
 |---|---|---|
-| 城镇跟随 | 已验证 | `PARTY_AUTO_ACCEPT` / `PARTY_ROBOT_TQOS_READY`，按队长位置移动 |
+| 城镇跟随 | **已直接验证** | 队长生成在 (1600,300)、机器人 (1356,309)：`[TOWN_FOLLOW_DIAG]` 条件满足后 `cur` 变为 (1600,300)，接口 `x=1600,y=300` |
 | 进副本（机器人侧响应） | 已验证 | 队长 `SelectDungeon(16)` → 机器人 `PARTY_DUNGEON_SKILL_PROFILE` |
 | 自动寻怪 | 已验证 | `[PARTY_DUNGEON_NAV] active=true move=true reason=move` |
 | 接近 | 已验证 | `[PARTY_DUNGEON_NAV] reason=in-range` |
@@ -18,7 +18,7 @@
 | 击杀 | 已验证 | 队长侧 command-23 死亡 → 机器人停手、归队 |
 | 清图判定 | 已验证 | `active=false reason=idle-no-enemy` |
 | 换房（协议） | 部分验证 | 修正 MoveMap 报文后服务端有应答（`typ=48`/`typ=29`），但**未在真实多房间副本中验证** |
-| 回城跟随（状态机） | 已验证 | 队长消失 → `PARTY_TRANSPORT_CLEARED`；新城镇会话恢复 `TQOS_READY` |
+| 回城跟随 | **已直接验证** | 同一次观测：副本内 `PARTY_DUNGEON_ATTACK` → 会话结束 `PARTY_TRANSPORT_CLEARED` → 回城后机器人从 (1356,309) 走到 (1600,300) |
 
 **关键限制**：只有**教程副本 10000** 是服务端真实进入的（`SetPos` 被拒可证）。普通副本（id 1）在
 `SelectDungeon` 被世界地图校验拒绝（应答字节 8），用户状态退回城镇，所以"真实多房间副本"的

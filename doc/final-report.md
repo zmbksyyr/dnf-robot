@@ -16,7 +16,7 @@
 
 | 环节 | 证据 |
 |---|---|
-| 城镇跟随 | `PARTY_AUTO_ACCEPT` → `PARTY_ROBOT_TQOS_READY`，按队长位置移动 |
+| 城镇跟随 | 队长生成在 (1600,300)、机器人 (1356,309)：诊断显示条件满足后机器人坐标变为 (1600,300) |
 | 进副本 | 队长 `SelectDungeon(16)` → 机器人加载技能档案 |
 | 自动寻怪 | `[PARTY_DUNGEON_NAV] active=true move=true` |
 | 接近 | `[PARTY_DUNGEON_NAV] reason=in-range` |
@@ -25,7 +25,7 @@
 | 击杀 | 队长宣告怪物死亡 → 机器人停手归队 |
 | 清图判定 | `idle-no-enemy`，不再攻击也不乱跑 |
 | 换房（协议） | 修正后的 `MoveMap` 报文能拿到服务端应答 |
-| 回城状态机 | 队长消失 → `PARTY_TRANSPORT_CLEARED`；新城镇会话恢复 `TQOS_READY` |
+| 回城跟随 | 同一次观测：副本内攻击 → 会话结束 `PARTY_TRANSPORT_CLEARED` → 回城后机器人走到队长位置 (1600,300) |
 
 关键修复：`MoveMap` 报文的 `x/y` 是**单字节**（此前写成 short 导致服务端读包失败并断线）；换房需等**两名队员
 都完成加载**（8 秒）。
