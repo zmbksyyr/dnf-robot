@@ -2453,3 +2453,20 @@ trap 表上二分查找，而实际重复命中的只是少数热点站点。
 
 **尚未提交**：按该仓库"不做未测量改动"的约定，下一步要先加一个可关闭缓存的开关，跑一个系统调用密集的
 用例做前后对比；只有确认有正向收益才提交，否则回滚。
+
+## native 缓存测量：自测代码就位，但还没量到（2026-11-21）
+
+给 `adapt.c` 加了 `NR_SITE_BENCH=1` 自测：适配完成后，对同一批 trap 站点各跑 2 万轮"缓存开/缓存关"，
+用 QPC 计时并打印 `site_cache_bench lookups=… cache_ns=… bsearch_ns=… speedup=…`；
+另加 `NR_SITE_CACHE_OFF=1` 可强制走二分路径。
+
+过程中踩的坑：把自测函数插到了缓存静态变量**之前**，`-Werror` 下直接编译失败（隐式声明 + 未声明标识符）。
+把缓存声明上移到 include 之后、自测函数前置声明后，**构建通过**。
+
+测量还没拿到：
+
+- 跑 `tests/test_sysinfo.py` 时，测试把 host 的 stderr 收进管道，看不到 `site_cache_bench`；
+- 用实例启动（`restart_live.py`）时环境变量没传进 host 进程，日志里也没有这行。
+
+下一步：手工用 mingw 编一个最小 guest（例如 `tests/sysinfo.c`），直接 `dnf-host.exe guest.exe` 并带
+`NR_SITE_BENCH=1`，从它自己的 stderr 读数值；拿到前后对比后才决定是否提交 native 改动。
