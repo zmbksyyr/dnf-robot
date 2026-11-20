@@ -364,24 +364,26 @@ func TestLiveDungeonProbe(t *testing.T) {
 		if vo.sendRaw(finish) {
 			t.Logf("sent dungeon finish loading")
 		}
-		if room := liveEnvInt(t, "DNF_LIVE_NEXT_ROOM", -1); room >= 0 {
-			// MoveMap carries the room's grid cell, not a pixel position: a real
-			// client sends the door it walked through as (x,y) in the dungeon grid.
-			// 43 bytes of fields, padded to the cipher block size the other
-			// request builders use.
-			body := make([]byte, 48)
-			body[0], body[1] = byte(room&0xff), byte(room>>8)
-			moveMap, err := buildSendPacket(48, uint16(vo.PacketID), body, vo.Cipher)
-			if err != nil {
-				t.Fatalf("build move map: %v", err)
+		if liveEnvInt(t, "DNF_LIVE_NEXT_ROOM", 0) == 1 {
+			// Sweep plausible grid cells in one session: a real client sends the
+			// target room cell, and the server only reacts to one that exists.
+			for _, cell := range [][2]byte{{1, 0}, {0, 1}, {2, 0}, {0, 2}, {1, 1}} {
+				// 43 bytes of fields, padded to the cipher block size.
+				body := make([]byte, 48)
+				body[0], body[1] = cell[0], cell[1]
+				moveMap, err := buildSendPacket(48, uint16(vo.PacketID), body, vo.Cipher)
+				if err != nil {
+					t.Fatalf("build move map: %v", err)
+				}
+				vo.PacketID++
+				if vo.sendRaw(moveMap) {
+					t.Logf("sent move map room=(%d,%d)", cell[0], cell[1])
+				} else {
+					t.Logf("move map was not sent")
+					break
+				}
+				time.Sleep(1500 * time.Millisecond)
 			}
-			vo.PacketID++
-			if vo.sendRaw(moveMap) {
-				t.Logf("sent move map room=(%d,%d)", body[0], body[1])
-			} else {
-				t.Logf("move map was not sent")
-			}
-			time.Sleep(1500 * time.Millisecond)
 		}
 		drive := liveEnvInt(t, "DNF_LIVE_DRIVE", 0)
 		x, y := birthX, birthY
