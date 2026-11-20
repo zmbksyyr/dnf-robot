@@ -10,6 +10,12 @@ import (
 
 const partyDungeonNavigationInterval = 200 * time.Millisecond
 
+// partyDungeonNavigationSlack absorbs the phase difference between the client
+// frame cadence and the navigation interval. A caller that arrives exactly one
+// interval later must be allowed through; without the slack a 200 ms cadence
+// lands a hair early every time and the Robot never walks.
+const partyDungeonNavigationSlack = 20 * time.Millisecond
+
 // partyDungeonMoveDiagInterval throttles the dungeon movement trace so a long
 // run stays readable while still showing whether the Robot actually walks.
 const partyDungeonMoveDiagInterval = 5 * time.Second
@@ -17,6 +23,9 @@ const partyDungeonMoveDiagInterval = 5 * time.Second
 type partyDungeonNavigation struct {
 	nextAt time.Time
 	active bool
+	// reason records why the last plan did or did not move; it only feeds the
+	// throttled diagnostic trace.
+	reason string
 }
 
 // plan approaches attack distance, then follows the leader when no live target
@@ -25,21 +34,25 @@ type partyDungeonNavigation struct {
 func (world *partyDungeonWorld) planNavigation(self, leader [4]byte, now time.Time) (partyDungeonPosition, bool, bool) {
 	position := world.actors[self].position
 	if position.known&3 != 3 {
+		world.navigation.reason = "self-unknown"
 		return position, false, false
 	}
 	_, target, enemy := world.nearestMonster(position)
 	navigation := &world.navigation
 	if !enemy {
 		if !navigation.active {
+			navigation.reason = "idle-no-enemy"
 			return position, false, false
 		}
 		target = world.actors[leader].position
 		if target.known&3 != 3 {
+			navigation.reason = "leader-unknown"
 			return position, false, true
 		}
 	}
 	navigation.active = true
-	if now.Before(navigation.nextAt) {
+	if now.Add(partyDungeonNavigationSlack).Before(navigation.nextAt) {
+		navigation.reason = "tick-wait"
 		return position, false, true
 	}
 	navigation.nextAt = now.Add(partyDungeonNavigationInterval)
@@ -55,6 +68,7 @@ func (world *partyDungeonWorld) planNavigation(self, leader [4]byte, now time.Ti
 	}
 	dx, dy := float64(target.x-position.x), float64(target.y-position.y)
 	if math.Abs(dx) <= 8 && math.Abs(dy) <= 6 {
+		navigation.reason = "in-range"
 		return position, false, true
 	}
 	distance := math.Hypot(dx, dy)
@@ -67,6 +81,7 @@ func (world *partyDungeonWorld) planNavigation(self, leader [4]byte, now time.Ti
 	position.x += float32(dx)
 	position.y += float32(dy)
 	position.z, position.known = 0, 7
+	world.navigation.reason = "move"
 	return position, true, true
 }
 
@@ -84,8 +99,8 @@ func (r *RobotVo) navigatePartyDungeonUnsafe(conn *net.UDPConn, now time.Time) b
 	if !now.Before(r.partyDungeonMoveDiagAt) {
 		r.partyDungeonMoveDiagAt = now.Add(partyDungeonMoveDiagInterval)
 		leader := r.partyDungeonWorld.actors[partyDungeonPlayerReference(peer.uniqueID)].position
-		foundationlog.Robotf("[PARTY_DUNGEON_NAV] uid=%d self=(%d) leader=(%d) from=(%.0f,%.0f) to=(%.0f,%.0f) active=%t move=%t\n",
-			r.UID, before.known, leader.known, before.x, before.y, leader.x, leader.y, active, move)
+		foundationlog.Robotf("[PARTY_DUNGEON_NAV] uid=%d self=(%d) leader=(%d) from=(%.0f,%.0f) to=(%.0f,%.0f) active=%t move=%t reason=%s\n",
+			r.UID, before.known, leader.known, before.x, before.y, leader.x, leader.y, active, move, r.partyDungeonWorld.navigation.reason)
 	}
 	if !active {
 		return false
@@ -122,8 +137,8 @@ func (r *RobotVo) navigatePartyDungeonUnsafe(conn *net.UDPConn, now time.Time) b
 	}
 	if _, err := r.sendPartyTransportUnsafe(conn, peer, route, packet); err == nil {
 		r.partyDungeonWorld.observe(body, now)
-		if !now.Before(r.partyDungeonMoveDiagAt) {
-			r.partyDungeonMoveDiagAt = now.Add(partyDungeonMoveDiagInterval)
+		if !now.Before(r.partyDungeonSentDiagAt) {
+			r.partyDungeonSentDiagAt = now.Add(partyDungeonMoveDiagInterval)
 			foundationlog.Robotf("[PARTY_DUNGEON_MOVE] uid=%d peer=%d from=(%.0f,%.0f) to=(%.0f,%.0f)\n",
 				r.UID, peer.accID, before.x, before.y, position.x, position.y)
 		}

@@ -1279,3 +1279,25 @@ TCP 的 SetPos，没有发队伍 UDP 帧，所以机器人拿不到队长位置�
 
 `PARTY_DUNGEON_MOVE` 目前尚未出现：`move` 在观测点恒为 false（多数调用落在 200ms 限流窗口内），
 因此**机器人真实位移仍未取得证据**，本轮不宣称跟随位移通过。
+
+## 机器人在副本里真的走了（2026-11-21）
+
+上一轮 `move` 恒为 false，加上原因码后立刻看清是 `reason=tick-wait`：导航间隔 200ms 与
+队伍帧到达节奏 200ms 相同，浮点相位让几乎每次调用都“早了零点几毫秒”，机器人因此**永远轮不到移动**。
+这不是夹具造成的巧合——任何以接近 200ms 节奏驱动该函数的场景都会同样饿死。
+
+修复：给间隔判断加 20ms 容差（`partyDungeonNavigationSlack`），一个整间隔之后的调用必定放行，
+更快的调用仍被限流。实机日志随即出现真实位移：
+
+```
+[PARTY_DUNGEON_NAV]  uid=17000020 ... from=(1430,300) to=(1480,300) active=true move=true reason=move
+[PARTY_DUNGEON_MOVE] uid=17000020 peer=17000015 from=(970,300) to=(1010,300)
+[PARTY_DUNGEON_MOVE] uid=17000020 peer=17000015 from=(1450,300) to=(1490,300)
+[PARTY_DUNGEON_NAV]  uid=17000020 ... active=true move=false reason=in-range
+```
+
+即机器人朝目标分步前进（每步 ≤40）、进入攻击距离后停住（`in-range`），并且确实把移动帧发给了队长。
+至此“进副本 → 与队长同房间 → 看到怪 → 接近”在实机上全部打通。
+
+仍未打通：**攻击**（该角色职业 9 无已学技能，`learned_candidates=0`）、清图判定、过图与回城。
+`[PARTY_DUNGEON_MOVE]` 与 `[PARTY_DUNGEON_NAV]` 使用各自独立的 5 秒窗口，否则同一调用里后者会吞掉前者。
