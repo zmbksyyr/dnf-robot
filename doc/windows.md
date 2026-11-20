@@ -1518,3 +1518,28 @@ WSL 里的队长按同一地址发送只会打到自己。日志表现正是机�
 
 结论：跨平台“控制面一致”已证；要让 Linux 侧也走完寻怪/攻击，必须让队长与机器人在同一网络命名空间
 内（即 Linux 服务端 + Linux 机器人，回到监视器登录那条路）。
+
+## 队伍帧解析热路径的分配削减（2026-11-21）
+
+给副本帧路径补了基准（`party_dungeon_observe_bench_test.go`），基线为：
+
+```
+BenchmarkObservePartyDungeonFrame   410.9 ns/op   320 B/op   3 allocs/op
+BenchmarkPartyDungeonFrameBodies     30.9 ns/op    48 B/op   1 allocs/op
+```
+
+`observePartyDungeonFrameUnsafe` 原先先用 `partyDungeonFrameBodies` 造一个 `[][]byte` 再逐条处理，
+那是纯垃圾。改为**原地遍历**（type 2 单体直接处理，type 1 按长度前缀逐段处理），帧长校验与
+类型判断保持等价。结果：
+
+```
+BenchmarkObservePartyDungeonFrame   387.4 ns/op   272 B/op   2 allocs/op
+```
+
+即 −5.7% 时间、少一次分配、少一个中间切片，代码也更短。
+
+另外试过把运动体与命令体的解码缓冲改成栈数组，**反而更差**（468 ns/op、720 B/op）：返回的
+`entries` 让栈数组整体逃逸成一次大分配。已回滚，只保留真正有收益的原地遍历。
+
+需要说明量级：机器人每帧只处理一次，按 40–100 帧/秒算是每秒几十微秒，绝对价值有限；
+这条基准的主要意义是把这块路径的代价固定下来，后续改动可以对照。

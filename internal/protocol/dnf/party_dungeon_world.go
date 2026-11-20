@@ -58,12 +58,27 @@ func (r *RobotVo) observePartyDungeonFrameUnsafe(frame []byte, peer partyIPPeer,
 	if r.partyDungeonEnteredAt.IsZero() || !r.shouldFollowPartyPeerUnsafe(peer) {
 		return
 	}
-	bodies, ok := partyDungeonFrameBodies(frame)
-	if !ok {
+	// Walk the bodies in place: this runs for every party frame and the slice of
+	// bodies was pure per-frame garbage.
+	if len(frame) < 9 || len(frame) != 9+int(binary.LittleEndian.Uint16(frame[5:7])) {
 		return
 	}
-	for _, body := range bodies {
-		r.partyDungeonWorld.observe(body, now)
+	payload := frame[9:]
+	if frame[0] == 2 {
+		r.partyDungeonWorld.observe(payload, now)
+		return
+	}
+	if frame[0] != 1 {
+		return
+	}
+	for len(payload) >= 2 {
+		size := int(binary.LittleEndian.Uint16(payload))
+		payload = payload[2:]
+		if size == 0 || size > len(payload) {
+			return
+		}
+		r.partyDungeonWorld.observe(payload[:size], now)
+		payload = payload[size:]
 	}
 }
 
