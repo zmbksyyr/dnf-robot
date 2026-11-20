@@ -2817,3 +2817,19 @@ Recv SIGSEGV signal
 
 脚本把"换房"排除在外（它需要真实多房间副本，仍未打通），其余五段都是**一条命令可复现**的。
 这比此前分散在不同轮次里的零散日志更适合作为验收依据。
+
+## 验收脚本可复跑性确认（2026-11-21）
+
+同一个 `x/live/full_loop.ps1` 连续第二次运行，五段依旧全部通过：
+
+```
+town_follow          PASS
+enter_and_attack     PASS
+clear_room           PASS
+leave_dungeon        PASS
+town_follow_again    PASS
+ALL PASS
+```
+
+两次运行之间没有改动任何代码或配置，说明脚本**可复跑**、结论稳定，不是一次性偶然结果。
+这条对"验收依据"很重要：它把此前分散在几十轮里的零散日志，收敛成一条可重复执行的命令。
