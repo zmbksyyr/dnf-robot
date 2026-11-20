@@ -1570,3 +1570,17 @@ secagent/游戏配对状态已经变脏，仅重启 secagent 不足以恢复。
 （包括两套 TSS_* 文件与残留进程），再按"先 secagent、后 run.sh"的顺序冷启动。
 
 `SLOT=0` 的假设**尚未验证**——环境没起来，不能算排除也不能算证实。
+
+## MoveMap 试探（2026-11-21）
+
+给夹具加了 `DNF_LIVE_NEXT_ROOM=<n>`：进入房间后按参考实现的字段序构造 `MoveMap(48)`
+（`byte m_x, byte m_y, int fieldF, int field13, byte field17, short trapBits, 4×short, 4×int,
+short pad, int field35`，共 43 字节，按密文块补到 48），其中 `m_x/m_y` 先按"房间网格坐标"猜
+`(1,0)`，其余字段清零。
+
+结果：包能正常加密并发出（不再有 `data not multiple of block size`），但**服务端既没有
+`move_map` 相关日志，也没有断线**，会话继续停在原房间——说明该组字段没有被当成有效换房请求，
+大概率 `m_x/m_y` 不是房间网格，而是门在房间内的像素位置，且服务端会按地图的门数据校验。
+
+结论：过图仍缺"真实客户端发出的 MoveMap 字节"。下一步只能从数据侧拿门坐标（解析
+`map/**.map`），或抓一次真实客户端的换房包。夹具的这条分支保留，便于后续用正确坐标重试。
