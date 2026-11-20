@@ -1626,3 +1626,29 @@ DirectInput，合成输入无法驱动**。因此"真人队长走到门口"这�
 （`TSS_30_570011` 与 `TSS_43_1`）。这与第 17 轮能起来的差异还没定位，暂按环境问题处理。
 
 已恢复 Windows 实例（3306/8111/10011）与零配置开关。
+
+## Linux 启动崩溃定位到函数级（2026-11-21）
+
+用 WSL 自带 gdb 直接跑原版 game，拿到了崩溃现场：
+
+```
+#0 0x080fd845 in ?? ()
+#1 0x082a1ebe in ?? ()
+#2 0x0829f863 in ?? ()
+#3 __libc_start_main
+```
+
+崩点前一条指令是 `sub $0x67b88,%esp`——**该函数一次分配约 424 KB 栈帧**，紧接着就 SIGSEGV。
+对照参考工程，`0x080fd8e4` 属于 `CInGameAdvertisementManager::InsertADExposeInfo`（同一邻域），
+而崩溃发生在它之前几十字节的函数里；结合日志最后一行是
+`Load In Game Advertisement Expose Info From DB(0) Complete`，可以判断崩在"广告/曝光信息"这条初始化链上。
+
+已试过把 `ulimit -s` 从 8192 提到 65536 再启动，崩点不变，所以不是主线程栈上限问题；
+`LD_PRELOAD=/dp2/libdp2pre.so` 期间还会打印一次 `wrong ELF class: ELFCLASS32` 提示（外层 64 位 shell
+尝试预加载 32 位库），该库最终仍由 32 位加载器载入。
+
+这是本轮唯一可交付的 Linux 结论：**崩溃不是随机的，位置稳定在广告曝光初始化**。下一步要看该函数
+在 Windows 宿主下为何不崩（dnf-native 可能提供了不同的线程栈或不同的 DB 返回），据此决定是补宿主
+行为还是修数据。
+
+Windows 实例与零配置开关已恢复。
