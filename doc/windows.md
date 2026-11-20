@@ -1000,3 +1000,30 @@ PVF 导出器目前只识别 46 条注册状态（仅职业 8、10），严格�
 `D:\cache\dnf\x\live\`，为测试包，`resources.ini` 中 `robot.exe` 哈希仅在该副本内
 重签，正式发布目录未改。副本仍为原版客户端缺失状态，尚未进入地下城，因此本轮不构成
 副本闭环验收。
+
+## Linux 原版服务端在 WSL2 内的落地进度（2026-11-21）
+
+为满足“双平台实机”要求，在 WSL2 Ubuntu 22.04.5（内核 5.10.16.3）内独立搭起原版 Linux
+服务端，不使用原 Win 实例的数据区：从 Native 仓库 `resources/native.zip` 解出 657 个成员到
+`/opt/dnfroot`，用自带 glibc 2.17 loader（`--library-path`）运行 32 位原 ELF，
+`/home/neople`、`/dp2`、`/usr/local/share/GeoIP` 以符号链接指到该目录；数据库改用
+MySQL 5.7.44 官方 Linux 包（`/opt/mysql57`）以满足原客户端的握手与查询行为，
+数据来自 Win 实例 5.7 导出并补入 `seed.sql`；`@DNF_GAME_PASSWORD@` 等模板占位符按
+Native 实例中已存在的密文写入，账号 `dnf_game`/`dnf_bridge` 以对应明文创建。
+
+当前结果：manager、dbmw×3、monitor、guild、statics、coserver、community、auction、
+point、channel、relay、stun 共 15 个服务可保持运行，7000/7200/30303/30603/30803
+正常监听；game 能完成 GeoIP、PVF 脚本、全库连接与频道初始化（日志出现
+“The siroco11 channel 11('ch.11') server has been started successfully”），
+随后在反外挂 SDK 内崩溃：`tss_sdk_impl::TssSdkChannelPlugin::ipc_channel_recv` →
+`ZEN_Bus_MMAPPipe::pop_front_bus` → `ZEN_LIB::shm_dequechunk::snap_getpoint(this=0x0)`，
+core 中为 SIGSEGV 后 abort。`zergsvr` 单独启动时能建立 `MMAP Pipe` 并生成
+`/dev/shm/ZERG_30_570011.STAT`，但进程随即退出，game 仍拿不到共享块。
+尝试过：MySQL 5.7 替换、去除 DP2 `LD_PRELOAD`、补 GeoIP 与 `channel_info`、
+清空 pid 与 `/dev/shm`，崩溃点不变，因此不是数据库、DP2 或资源缺失。
+
+这意味着 Linux 侧目前只能做到“服务与机器人可运行环境就绪”，game 因反外挂共享内存
+通道未建立而无法监听 10011；本轮没有 Linux 实机副本结论，也不把该状态算作双平台通过。
+下一步需要按 `secsvr` 配置把反外挂后端（zergsvr 存活条件、secagent/gunnersvr 依赖）
+跑通，或确认与 Native 兼容层对该通道的处理差异。所有脚本与日志留在仓库外
+`D:\cache\dnf\x\linux-server\`、`D:\cache\dnf\x\wsl\`。
