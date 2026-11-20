@@ -1652,3 +1652,31 @@ DirectInput，合成输入无法驱动**。因此"真人队长走到门口"这�
 行为还是修数据。
 
 Windows 实例与零配置开关已恢复。
+
+## Linux 启动崩溃的根因：堆把栈挤没了（2026-11-21）
+
+gdb 里取到崩溃现场与内存映射，两件事对上了：
+
+```
+0x80fd83f: sub $0x67b88,%esp        ← 该函数分配约 424 KB 栈帧
+=> 0x80fd845: movl $0x67b60,0x8(%esp)   ← 立刻 SIGSEGV
+$_siginfo...si_addr = 0xfff95878
+```
+
+进程映射（同一时刻）：
+
+```
+0xf7ffe000 0xffecc000  0x7ece000  rw-p  [heap]    ← 132 MB
+0xfffdd000 0xffffe000  0x21000    rw-p  [stack]   ← 只有 132 KB
+```
+
+即**堆（brk）一路涨到 0xffecc000，正贴着栈底**，栈只剩 132 KB；此时任何几百 KB 的栈帧都会立即溢出。
+这不是"随机环境问题"，而是 brk 与栈争地址空间的必然结果；Windows 宿主（dnf-native）自己实现 brk，
+不会与栈冲突，所以同一份 ELF 在那边正常。
+
+已试无效：把 `ulimit -s` 提到 64 MB（栈映射仍是 132 KB，brk 先占位）、开启 `setarch i386 -R`
+关闭 ASLR（崩点不变）。
+
+可行的修复方向（下一轮实施其一）：
+1. 写一个 `LD_PRELOAD` 的 brk 垫片，把 brk 请求改到独立 mmap 区域（等同 Windows 宿主的做法）；
+2. 启动时先把栈"撑开"（触碰若干 MB）再让游戏跑，使 brk 提前失败而不是挤压栈，观察游戏是否优雅降级。
