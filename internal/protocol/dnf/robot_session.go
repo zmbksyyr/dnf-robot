@@ -221,6 +221,7 @@ type RobotVo struct {
 	partySkillInfoKnown         bool
 	partySkillLevels            [256]byte
 	partySkillNextAt            time.Time
+	partyBasicAttackNextAt      time.Time
 	partySkillRecoverAt         time.Time
 	partySkillBlockedUntil      time.Time
 	partySkillLoaded            bool

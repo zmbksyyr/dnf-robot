@@ -84,7 +84,7 @@ func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
 }
 
 func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {
-	if r.partyDungeonEnteredAt.IsZero() && r.partyDungeonLastAt.IsZero() && r.partySkillNextAt.IsZero() && r.partySkillRecoverAt.IsZero() && len(r.partyDungeonFollow) == 0 {
+	if r.partyDungeonEnteredAt.IsZero() && r.partyDungeonLastAt.IsZero() && r.partySkillNextAt.IsZero() && r.partyBasicAttackNextAt.IsZero() && r.partySkillRecoverAt.IsZero() && len(r.partyDungeonFollow) == 0 {
 		return
 	}
 	r.cancelPartyDungeonReliableUnsafe(time.Now())
@@ -95,6 +95,7 @@ func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {
 	r.partyDungeonWorld = partyDungeonWorld{}
 	r.partyDungeonLegacySkills = false
 	r.partySkillNextAt = time.Time{}
+	r.partyBasicAttackNextAt = time.Time{}
 	r.partySkillRecoverAt = time.Time{}
 	r.partySkillBlockedUntil = time.Time{}
 }
@@ -136,7 +137,11 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	if now.Before(r.partySkillBlockedUntil) {
 		return
 	}
-	if !r.partySkillRecoverAt.IsZero() || r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
+	if !r.partySkillRecoverAt.IsZero() {
+		return
+	}
+	if r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
+		r.tryPartyBasicAttackUnsafe(conn, now)
 		return
 	}
 	for _, pending := range r.partyDungeonFollow {
@@ -146,7 +151,11 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		}
 	}
 	r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
-	if !r.ensurePartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
+	if !r.ensurePartySkillProfileUnsafe() {
+		return
+	}
+	if len(r.partySkillCandidates) == 0 {
+		r.tryPartyBasicAttackUnsafe(conn, now)
 		return
 	}
 	peer := r.partyPeerForSlotUnsafe(0)
@@ -161,6 +170,7 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 	// The transport enforces its window; only another skill must finish first.
 	candidate, ready := r.nextPartySkillCandidateUnsafe(now)
 	if !ready {
+		r.tryPartyBasicAttackUnsafe(conn, now)
 		return
 	}
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {

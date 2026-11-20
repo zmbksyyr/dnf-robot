@@ -516,6 +516,7 @@ func (r *RobotVo) resetPartyTQOSTransportUnsafe() {
 	r.partyDungeonWorld = partyDungeonWorld{}
 	r.partyDungeonLegacySkills = false
 	r.partySkillNextAt = time.Time{}
+	r.partyBasicAttackNextAt = time.Time{}
 	r.partySkillRecoverAt = time.Time{}
 	r.partySkillBlockedUntil = time.Time{}
 }
