@@ -2742,3 +2742,24 @@ Recv SIGSEGV signal
 
 下一步：在 `followPartyLeaderTownPositionUnsafe` 里加一条诊断日志，把四个条件的实际值打出来
 （leaderID、freshness、position.uniqueID、当前/目标坐标），一次运行就能定位到底卡在哪一条。
+
+## 城镇跟随：已实机验证（2026-11-21）
+
+加了 env 门控诊断（`DNF_DEBUG_TOWN_FOLLOW=1`），一次运行就看清了：
+
+```
+[07:23:48] leaderID=0 ok=false fresh=false posID=2 cur=(1356,309) want=(1000,300)
+[07:23:49] leaderID=2 ok=true  fresh=true  posID=2 cur=(1356,309) want=(1000,300)
+[07:23:49] leaderID=2 ok=true  fresh=true  posID=1 cur=(1000,300) want=(1000,300)
+```
+
+第二行四个条件全部满足（队长 id 2、传输新鲜、位置包 id 与队长一致、当前位置与目标不同），**紧接着
+`cur` 就变成了 `(1000,300)`——机器人真的走到了队长位置**。
+
+也就是说：
+
+1. **城镇逐位置跟随本身是好的**，此前"不动"是因为**队长的队伍传输不新鲜**（前几轮的夹具在城镇里
+   根本不发队伍帧），一旦补上城镇队伍帧（第 89 轮的改动），跟随立刻生效；
+2. 这也再次印证了 `partyLeaderTransportFreshUnsafe` 是跟随的硬前置。
+
+诊断日志保留（env 门控，默认关闭、零开销），后续排查可复用。

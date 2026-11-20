@@ -1,6 +1,7 @@
 package dnf
 
 import (
+	"os"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -299,6 +300,11 @@ func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPositio
 		return false
 	}
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
+	if os.Getenv("DNF_DEBUG_TOWN_FOLLOW") == "1" {
+		fresh := ok && r.partyLeaderTransportFreshUnsafe(leaderID, time.Now())
+		foundationlog.Robotf("[TOWN_FOLLOW_DIAG] uid=%d leaderID=%d ok=%t fresh=%t posID=%d cur=(%d,%d) want=(%d,%d)\n",
+			r.UID, leaderID, ok, fresh, position.uniqueID, r.CurX, r.CurY, position.x, position.y)
+	}
 	if !ok || !r.partyLeaderTransportFreshUnsafe(leaderID, time.Now()) || position.uniqueID != leaderID || (r.CurX == position.x && r.CurY == position.y) {
 		return false
 	}
