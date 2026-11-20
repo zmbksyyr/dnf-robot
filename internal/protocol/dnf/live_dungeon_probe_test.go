@@ -180,6 +180,19 @@ func TestLiveDungeonProbe(t *testing.T) {
 		t.Logf("after move: %s", liveSnapshotLine(vo))
 	}
 
+	// A real client answers the town loading notification with FinishLoad; the
+	// server keeps the user out of the dungeon-capable state until it arrives.
+	finish, err := buildSendPacket(40, uint16(vo.PacketID), buildFinishLoadingPayload(0, 0), vo.Cipher)
+	if err != nil {
+		t.Fatalf("build finish loading: %v", err)
+	}
+	vo.PacketID++
+	if !vo.sendRaw(finish) {
+		t.Fatal("finish loading was not sent")
+	}
+	t.Logf("sent finish loading")
+	time.Sleep(700 * time.Millisecond)
+
 	if os.Getenv("DNF_LIVE_PARTY_ONLY") == "1" {
 		partyBody := make([]byte, liveRequestBody)
 		partyBody[0] = 1
@@ -222,7 +235,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 		// size; the server reads only the fields it knows.
 		body := make([]byte, liveRequestBody)
 		body[0], body[1] = byte(dungeon), byte(dungeon>>8)
-		body[2], body[3], body[4] = byte(dungeonType), 0, 0
+		body[2], body[3], body[4] = byte(dungeonType), byte(liveEnvInt(t, "DNF_LIVE_FIELD10", 0)), byte(liveEnvInt(t, "DNF_LIVE_FIELD11", 0))
 		selectDungeon, err := buildSendPacket(16, uint16(vo.PacketID), body, vo.Cipher)
 		if err != nil {
 			t.Fatalf("build select dungeon: %v", err)
