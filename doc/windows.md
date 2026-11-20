@@ -1839,3 +1839,18 @@ if (checkSpecial && party != 0) {
 
 下一步：解析 `town/elvengard.twn` 的区域表，找出 areaType==4 的区域号，用 `SetArea(38)` 把角色切到
 那个区域，再选副本 1；之后就能验证多房间换房。
+
+## 换区域后的两种失败形态（2026-11-21）
+
+把区域从 0 换成 1（`-Area 1`）再选副本 1，结果与 area 0 不同：
+
+| 区域 | SelectDungeon 应答 | 含义 |
+|---|---|---|
+| area 0 | `typ=16 body=0008…`（错误 8） | 通过了状态校验，卡在世界地图索引（`m_areaType != 4`） |
+| area 1 | **完全没有应答**（整轮仅 21 个收包，无 typ=16） | 连 `check_error` 都没过（静默 0x7fffffff） |
+
+也就是说：**area 0 至少走到了世界地图那一关，而 area 1 破坏了更前置的状态**（很可能是
+`SetArea` 后用户状态不再满足 SelectDungeon 要求的 5/0xd）。这说明盲试区域号不是有效办法。
+
+下一步应该真正解出 `town/elvengard.twn` 的区域表（区域号 → areaType/世界图索引），
+再按数据选目标区域；盲扫区域只会把状态搞乱。
