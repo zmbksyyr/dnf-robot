@@ -2793,3 +2793,27 @@ Recv SIGSEGV signal
 
 这是目标① "城镇跟随" 最直接、可复现的证据（距离 244 像素 > 跟随半径 120，必然触发）。
 据此可以认定：**"城镇跟随" 已完成验证**。
+
+## 全链路验收脚本：5/5 全部通过（2026-11-21）
+
+写了可复跑的验收脚本 `x/live/full_loop.ps1`，一次跑完五段并输出 PASS/FAIL：
+
+```
+[1/5] town follow (leader at 1600,300)         robot at (1600,300) -> PASS
+[2/5] dungeon entry and attack (tutorial 10000) attack lines 791 -> 802 -> PASS
+[3/5] clear-room idle                           attacks after the kill 815 -> 815 -> PASS
+[4/5] leaving the dungeon                        PARTY_TRANSPORT_CLEARED 83 -> PASS
+[5/5] town follow again after the dungeon       robot at (1600,300) -> PASS
+=== summary === ALL PASS
+```
+
+要点：
+
+- 第 1/5 段用"队长生成在远处"触发真实位移，是**位置级证据**，不是间接信号；
+- 第 2 段以攻击日志增量为准（791→802）；
+- 第 3 段以"报告击杀后攻击不再增加"为准（815→815），这才是清图判定的行为；
+- 第 4 段以 `PARTY_TRANSPORT_CLEARED` 出现为准；
+- 第 5 段在副本结束后再次验证位移跟随（回城跟随）。
+
+脚本把"换房"排除在外（它需要真实多房间副本，仍未打通），其余五段都是**一条命令可复现**的。
+这比此前分散在不同轮次里的零散日志更适合作为验收依据。
