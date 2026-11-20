@@ -197,9 +197,18 @@ func TestLiveDungeonProbe(t *testing.T) {
 		// Town entity records carry the unique ids of the other players in the
 		// room. Invite each candidate as a party peer; NPCs simply do not answer
 		// and the robot accepts.
-		// The successful live runs scanned about six seconds after entering
-		// town, while the robot was still walking.
-		time.Sleep(6 * time.Second)
+		// The server only pushes an entity record when that player moves, so wait
+		// for a second entity while the robot is being driven around the room.
+		deadline := time.Now().Add(25 * time.Second)
+		for time.Now().Before(deadline) {
+			vo.mu.Lock()
+			count := len(vo.townEntityPositions)
+			vo.mu.Unlock()
+			if count >= 2 {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
 		vo.mu.Lock()
 		candidates := make([]uint16, 0, len(vo.townEntityPositions))
 		for uniqueID := range vo.townEntityPositions {
@@ -315,6 +324,41 @@ func TestLiveDungeonProbe(t *testing.T) {
 			t.Fatal("select dungeon was not sent")
 		}
 		t.Logf("sent select dungeon idx=%d type=%d", dungeon, dungeonType)
+
+		// A real client acknowledges the dungeon room loading and then walks.
+		// The party broadcast of that walking is what the Robot's follow loop
+		// consumes, so the probe drives itself around after the room loads.
+		time.Sleep(1200 * time.Millisecond)
+		finish, err := buildSendPacket(40, uint16(vo.PacketID), buildFinishLoadingPayload(0, 0), vo.Cipher)
+		if err != nil {
+			t.Fatalf("build dungeon finish loading: %v", err)
+		}
+		vo.PacketID++
+		if vo.sendRaw(finish) {
+			t.Logf("sent dungeon finish loading")
+		}
+		drive := liveEnvInt(t, "DNF_LIVE_DRIVE", 0)
+		x, y := birthX, birthY
+		for step := 0; step < drive; step++ {
+			x += 30
+			moveBody := make([]byte, 8)
+			binary.LittleEndian.PutUint16(moveBody[0:2], uint16(x))
+			binary.LittleEndian.PutUint16(moveBody[2:4], uint16(y))
+			moveBody[4] = 5
+			binary.LittleEndian.PutUint16(moveBody[5:7], 100)
+			movePacket, err := buildSendPacket(37, uint16(vo.PacketID), moveBody, vo.Cipher)
+			if err != nil {
+				t.Fatalf("build dungeon move: %v", err)
+			}
+			vo.PacketID++
+			if !vo.sendRaw(movePacket) {
+				t.Logf("dungeon move %d was not sent", step)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if drive > 0 {
+			t.Logf("drove %d steps to x=%d", drive, x)
+		}
 	}
 
 	for i := 0; i < 30; i++ {

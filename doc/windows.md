@@ -1223,3 +1223,20 @@ unique id，以及该应答包里是否携带拒绝码（应答体加密，未�
 与 `[PARTY_SELF_ID_RECOVERED] slot=1 unique=293`，`party=true`。
 
 这同时是产品侧城镇跟随的解析修复：此前遇到诱饵候选会记录错误的队友坐标。
+
+## 队长与机器人同时进入副本（2026-11-21）
+
+把顺序固定为「机器人重登（回到城镇 area 0）→ 队长在等实体时开始推动机器人 → 实体表出现两个 id
+→ 邀请 → StartGame(15) → SelectDungeon(16) → FinishLoad(40)」后，流程可以稳定复现：
+
+- 02:18:56 机器人 `[PARTY_AUTO_ACCEPT] uid=17000020 peer_unique_id=334`（队长会话）；
+- 02:19:06 机器人 `[PARTY_DUNGEON_SKILL_PROFILE] ... auto=true`，即它已在副本房间并加载技能档案；
+- 队长侧 `party=true`、`dungeon=yes`，随后驱动自身走了 16 步（x 1000→1480）。
+
+这验证了闭环的前两段（进副本、进房间）在真机上是通的。但机器人侧 `learned_candidates=0`：
+职业 9 只有 1 条目录条目且未被学到的技能匹配，因此它不会施法（该职业也不在已核实的普攻职业里）。
+
+仍未打通的是“跟随与击杀”：机器人追随的是**队伍 UDP 通道**里的队长动作帧，而夹具队长只发了
+TCP 的 SetPos，没有发队伍 UDP 帧，所以机器人拿不到队长位置（房间 `actors=0`），也就不会移动或攻击。
+下一步是让夹具按队伍传输格式（`buildPartyDungeonMotion`/`buildPartyUnreliablePacketChecked`）
+向机器人的队伍端口发送队长动作，复用现有构造器即可。
