@@ -2470,3 +2470,20 @@ trap 表上二分查找，而实际重复命中的只是少数热点站点。
 
 下一步：手工用 mingw 编一个最小 guest（例如 `tests/sysinfo.c`），直接 `dnf-host.exe guest.exe` 并带
 `NR_SITE_BENCH=1`，从它自己的 stderr 读数值；拿到前后对比后才决定是否提交 native 改动。
+
+## dnf-native 首个已测量优化落地（2026-11-21）
+
+用 `NR_SITE_BENCH=1` 在 sysinfo guest 上量到前后对比（`tests/test_sysinfo.py` 会把 host 的 stderr 写进
+`fixtures/sysinfo/i686/*.stderr.log`，之前没找到就是漏看了这两个文件）：
+
+```
+lookups=8    cache_ns=2.5  bsearch_ns=4.7   speedup=1.87x
+lookups=64   cache_ns=3.5  bsearch_ns=8.1   speedup=2.32x
+lookups=64   cache_ns=3.2  bsearch_ns=10.3  speedup=3.26x
+```
+
+即每次 trap 站点查找从 4.7–10.3 ns 降到 2.5–3.5 ns，**约 1.9–3.5 倍**。`test_elf.py`（19 映射 + 6 拒绝）
+与 `test_sysinfo.py`（direct/trace 各 PASS）在缓存开启下也都通过。
+
+已在 dnf-native 仓库提交 `5195120 perf(runtime): cache trapped syscall sites by program counter`，
+提交信息里带上了这三组数字和自测开关说明，符合该仓库"不做未测量改动"的约定。
