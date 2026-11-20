@@ -108,7 +108,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if r.State != StateRun || packet.flag != 0 {
 			return
 		}
-		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "REALTIME", "OBSERVED", fmt.Sprintf("type=153 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
+		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "REALTIME", "OBSERVED", partyDebugNote("type=153 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
 		identities, _, err := selectPartyRealtimeInfoPacket(r.Cipher, packet.data, packet.isAnti)
 		if err != nil {
 			recordPartyDebugPacket(r.UID, 0, "--", "GAME", "REALTIME_PARSE", "FAIL", err.Error(), nil)
@@ -139,7 +139,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if packet.flag != 0 || (r.State != StateLogin && r.State != StateRun) {
 			return
 		}
-		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_OPTION_SOURCE", "OBSERVED", fmt.Sprintf("type=173 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
+		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_OPTION_SOURCE", "OBSERVED", partyDebugNote("type=173 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
 		_, _, decData, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti)
 		if err == nil {
 			optionData, ok := partyAcceptGameOptions(decData)
@@ -155,7 +155,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if packet.flag != 0 || r.State != StateRun {
 			return
 		}
-		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "INVITE", "OBSERVED", fmt.Sprintf("type=7 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
+		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "INVITE", "OBSERVED", partyDebugNote("type=7 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
 		selected, alternate, err := selectPeerResponsePackets(r.Cipher, packet.data, packet.isAnti, r.partyRecvSource, r.partyConfirmedPeerUnsafe)
 		if err != nil {
 			recordPartyDebugPacket(r.UID, 0, "--", "GAME", "INVITE_PARSE", "FAIL", err.Error(), nil)
@@ -174,7 +174,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 			pkt, err := buildSendPacket(11, uint16(r.PacketID), data, r.Cipher)
 			r.PacketID++
 			if err != nil {
-				recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "ACCEPT", "FAIL", fmt.Sprintf("build request_type=%d err=%v", typ, err), nil)
+				recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "ACCEPT", "FAIL", partyDebugNote("build request_type=%d err=%v", typ, err), nil)
 				foundationlog.Robotf("[PEER_RESPONSE_BUILD_ERROR] uid=%d type=%d err=%v\n", r.UID, typ, err)
 			}
 			if err == nil {

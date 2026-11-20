@@ -28,7 +28,7 @@ func (r *RobotVo) setPartyRobotRouteReadyUnsafe(peer partyIPPeer, route byte, re
 		r.partyPeerRouteAt[peer.slot] = now
 		r.partyRouteActivityAt[peer.slot][route] = now
 		if !wasRouteReady {
-			recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "TQOS_READY", "OK", fmt.Sprintf("slot=%d route=%d reason=%s", peer.slot, route, reason), nil)
+			recordPartyDebugPacket(r.UID, peer.accID, "--", "CORE", "TQOS_READY", "OK", partyDebugNote("slot=%d route=%d reason=%s", peer.slot, route, reason), nil)
 			foundationlog.Robotf("[PARTY_ROBOT_TQOS_READY] uid=%d peer=%d slot=%d route=%d reason=%s\n", r.UID, peer.accID, peer.slot, route, reason)
 		}
 		r.partyRobotProbeAt[peer.slot] = time.Time{}

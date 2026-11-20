@@ -82,7 +82,7 @@ func (r *RobotVo) sendNATInfoUpdateUnsafe(force bool) bool {
 		foundationlog.Robotf("[NAT_SEND_ERROR] uid=%d\n", r.UID)
 		return false
 	}
-	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "OK", fmt.Sprintf("ip=%s port=%d mtu=%d", udpAddr.IP, udpAddr.Port, mtu), pkt)
+	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "OK", partyDebugNote("ip=%s port=%d mtu=%d", udpAddr.IP, udpAddr.Port, mtu), pkt)
 	r.natInfoSent = true
 	return true
 }
@@ -118,7 +118,11 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 		if err != nil {
 			decision = "FAIL"
 		}
-		recordPartyTransportFrames(r.UID, peer.accID, "TX", "UDP", route, decision, "dst="+remote.String()+" endpoint="+endpointSource, payload)
+		note := ""
+		if partyDebugEnabled() {
+			note = "dst=" + remote.String() + " endpoint=" + endpointSource
+		}
+		recordPartyTransportFrames(r.UID, peer.accID, "TX", "UDP", route, decision, note, payload)
 		if err != nil {
 			r.markPartyRouteFailureUnsafe(peer, route, time.Now(), err.Error())
 		}

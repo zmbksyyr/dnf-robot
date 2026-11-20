@@ -320,6 +320,21 @@ func recordPartyDebugPacket(uid, peer uint32, direction, channel, kind, decision
 	recordPartyDebug(partyDebugEvent{uid: uid, peer: peer, direction: direction, channel: channel, kind: kind, decision: decision, note: note, raw: raw})
 }
 
+// partyDebugEnabled reports whether a capture session is active. Callers on
+// hot packet paths use it to skip building diagnostic notes, which otherwise
+// allocate strings for every party packet even when nothing is recorded.
+func partyDebugEnabled() bool {
+	return globalPartyDebug.active.Load() != nil
+}
+
+// partyDebugNote formats a diagnostic note only while capturing.
+func partyDebugNote(format string, args ...interface{}) string {
+	if !partyDebugEnabled() {
+		return ""
+	}
+	return fmt.Sprintf(format, args...)
+}
+
 func recordPartyDebugTransport(uid, peer uint32, direction, channel string, route byte, decision, note string, raw []byte) {
 	recordPartyDebug(partyDebugEvent{uid: uid, peer: peer, direction: direction, channel: channel, kind: "TRANSPORT", decision: decision, note: note, route: route, raw: raw})
 }

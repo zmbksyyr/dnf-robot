@@ -312,7 +312,7 @@ type partyInviteFallbackState struct {
 
 func (r *RobotVo) partyActiveUnsafe() bool {
 	if r.partyPendingPeer != 0 && (r.partyPendingUntil.IsZero() || !time.Now().Before(r.partyPendingUntil)) {
-		recordPartyDebugPacket(r.UID, 0, "--", "GAME", "SNAPSHOT_WAIT", "TIMEOUT", fmt.Sprintf("peer_unique=%d wait=%s", r.partyPendingPeer, partyPendingTimeout), nil)
+		recordPartyDebugPacket(r.UID, 0, "--", "GAME", "SNAPSHOT_WAIT", "TIMEOUT", partyDebugNote("peer_unique=%d wait=%s", r.partyPendingPeer, partyPendingTimeout), nil)
 		foundationlog.Robotf("[PARTY_SNAPSHOT_TIMEOUT] uid=%d peer_unique_id=%d wait=%s\n", r.UID, r.partyPendingPeer, partyPendingTimeout)
 		r.clearPartyPendingUnsafe()
 	}
@@ -331,7 +331,7 @@ func (r *RobotVo) setPartyPendingUnsafe(uniqueID uint16) {
 	}
 	r.partyPendingPeer = uniqueID
 	r.partyPendingUntil = time.Now().Add(partyPendingTimeout)
-	recordPartyDebugPacket(r.UID, 0, "--", "CORE", "PARTY_PENDING", "OK", fmt.Sprintf("peer_unique=%d timeout=%s", uniqueID, partyPendingTimeout), nil)
+	recordPartyDebugPacket(r.UID, 0, "--", "CORE", "PARTY_PENDING", "OK", partyDebugNote("peer_unique=%d timeout=%s", uniqueID, partyPendingTimeout), nil)
 	r.ensurePartyUDPLoopUnsafe()
 	r.ensurePartySupervisorUnsafe()
 }
