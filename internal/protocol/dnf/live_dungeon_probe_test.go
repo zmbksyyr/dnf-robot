@@ -127,6 +127,14 @@ func TestLiveDungeonProbe(t *testing.T) {
 		MaxReConn: 3, ReDelay: 3,
 		BirthPos: [4]uint32{uint32(village), uint32(area), uint32(birthX), uint32(birthY)},
 	}
+	if os.Getenv("DNF_LIVE_REPAIR") == "1" {
+		// A previous session can leave the account marked online; the Robot does
+		// this repair for itself, and the probe needs it when it logs in as an
+		// account that was just logged out.
+		if !repairLoginPrerequisites(db, uid, host) {
+			t.Logf("login repair reported a failure for uid=%d", uid)
+		}
+	}
 	setLoginToken(&info, resolveLoginToken("", uid, key))
 	if info.TokenSize == 0 {
 		t.Fatal("login token was not generated")

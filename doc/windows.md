@@ -1472,3 +1472,27 @@ Linux 上连接 Linux 服务端的行为与 Windows 一致。
 `d_taiwan` schema 不同（Windows 侧有 `m_id` 列，Linux 侧没有），而探测器的登录链路按 Windows
 schema 查询账户与令牌，于是认证失败。要跑通 Linux 侧的副本闭环，需要让探测器按目标库的
 schema 取账户信息（或把 Linux 库对齐同一份 schema）。
+
+## Linux 侧夹具登录卡在监视器登录（2026-11-21）
+
+把 Linux 库的真实情况摸清了：`taiwan_login.login_account_3`、`taiwan_cain.charac_info` 都是
+`m_id` schema（与 Windows 相同），只有 `d_taiwan.accounts` 是 `UID/accountname` 一套；
+账号 17000020(cid1)、17000027(cid8)、17000036(cid17) 等都在库里，`login_account_3` 也有
+`m_channel_no=3011` 的行。
+
+夹具队长在 Linux 上仍被拒（`reason=10`）。服务端日志给出了确切位置：
+
+```
+Inter_MonitorLoginOK() mid(17000027), charac_no(0), channel_no(0)
+CUser::DisConnSig ... from (10) ... send(0:53), recv(4)
+```
+
+即**监视器登录上报的角色号与频道号都是 0**，服务端据此断线。对比 Windows 侧同一条日志是
+`charac_no(21), channel_no(11)`，说明这是 Linux 实例的监视器/通道注册数据与账号不匹配，
+不是夹具的协议问题（同一份代码在 Windows 上正常）。
+
+同时给夹具加了 `DNF_LIVE_REPAIR=1`：登录前调用与机器人相同的 `repairLoginPrerequisites`
+重置账号在线状态。它在 Linux 上执行了但没能解决上述监视器登录问题。
+
+结论：Linux 侧机器人行为已验证（20 个机器人在线、技能解析正常），**副本闭环仍需先解决
+Linux 实例的监视器登录数据**（例如让监视器服务识别该账号的频道/角色，或换用监视器已知的账号）。
