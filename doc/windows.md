@@ -1098,3 +1098,13 @@ cid 22）一次上线成功、状态 running，说明“新建机器人角色可
 
 后续路线确定为协议级“真人队长”夹具：在 Robot 仓库内用同一套协议完成登录、建队、邀请
 机器人、进图与过图，替代客户端输入；客户端仅作为可选的人工复核手段。该夹具尚未实现。
+
+## 副本协议调研（2026-11-21，只读参考）
+
+只读参考工程 `x\reference\rednf`（原服务端反编译重建，未并入仓库）给出了分发器槽位与
+包体布局：槽位下标即包类型，`DisPatcher_SelectDungeon` 为 16、`DisPatcher_MoveMap` 为 48；
+类型 16 的包体依次为 short dungeonIdx、byte dungeonType、byte field10、byte field11，
+类型 48 共 0x42 字节（x、y、fieldF、field13、field17、trapBits、4×short、4×int、pad、
+field35）。这为“协议级真人队长夹具”提供了可独立实现的依据：夹具用 16 进图、48 换房，
+即可在不依赖客户端输入的情况下驱动同一套 Robot 协议。调研记录见
+`x\reference\notes-dungeon-protocol.md`；夹具尚未实现，也未复制参考代码。
