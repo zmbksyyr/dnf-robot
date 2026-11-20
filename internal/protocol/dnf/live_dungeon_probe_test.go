@@ -355,7 +355,9 @@ func TestLiveDungeonProbe(t *testing.T) {
 		// A real client acknowledges the dungeon room loading and then walks.
 		// The party broadcast of that walking is what the Robot's follow loop
 		// consumes, so the probe drives itself around after the room loads.
-		time.Sleep(1200 * time.Millisecond)
+		// Answer the room loading notification, not the selection: too early and the
+		// server has nothing to finish loading yet.
+		time.Sleep(2500 * time.Millisecond)
 		finish, err := buildSendPacket(40, uint16(vo.PacketID), buildFinishLoadingPayload(0, 0), vo.Cipher)
 		if err != nil {
 			t.Fatalf("build dungeon finish loading: %v", err)
