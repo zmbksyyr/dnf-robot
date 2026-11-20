@@ -409,7 +409,14 @@ func liveLeadFrames(t *testing.T, vo *RobotVo, startX, startY int) {
 			robotEntry.modes &^= 3 << uint((9+i)*2)
 			robotEntry.values[9+i] = math.Float32bits(value)
 		}
-		body, ok := buildPartyDungeonMotion([]partyDungeonMotion{entry, robotEntry})
+		// The leader's client also broadcasts the monsters it sees; that is how
+		// the Robot learns what to approach and attack.
+		monster := partyDungeonMotion{entity: [4]byte{0x11, 2, 1, 3}, controller: [4]byte{0x11, 2, 1, 3}, modes: 0x415555, flags: [3]byte{2, 0, 0x10}}
+		for i, value := range []float32{x + 120, y} {
+			monster.modes &^= 3 << uint((9+i)*2)
+			monster.values[9+i] = math.Float32bits(value)
+		}
+		body, ok := buildPartyDungeonMotion([]partyDungeonMotion{entry, robotEntry, monster})
 		if !ok {
 			t.Fatalf("build leader motion")
 		}

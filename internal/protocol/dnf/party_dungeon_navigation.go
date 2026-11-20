@@ -4,9 +4,15 @@ import (
 	"math"
 	"net"
 	"time"
+
+	foundationlog "robot/internal/foundation/log"
 )
 
 const partyDungeonNavigationInterval = 200 * time.Millisecond
+
+// partyDungeonMoveDiagInterval throttles the dungeon movement trace so a long
+// run stays readable while still showing whether the Robot actually walks.
+const partyDungeonMoveDiagInterval = 5 * time.Second
 
 type partyDungeonNavigation struct {
 	nextAt time.Time
@@ -75,6 +81,12 @@ func (r *RobotVo) navigatePartyDungeonUnsafe(conn *net.UDPConn, now time.Time) b
 	self := partyDungeonPlayerReference(r.partySelfPeer.uniqueID)
 	before := r.partyDungeonWorld.actors[self].position
 	position, move, active := r.partyDungeonWorld.planNavigation(self, partyDungeonPlayerReference(peer.uniqueID), now)
+	if !now.Before(r.partyDungeonMoveDiagAt) {
+		r.partyDungeonMoveDiagAt = now.Add(partyDungeonMoveDiagInterval)
+		leader := r.partyDungeonWorld.actors[partyDungeonPlayerReference(peer.uniqueID)].position
+		foundationlog.Robotf("[PARTY_DUNGEON_NAV] uid=%d self=(%d) leader=(%d) from=(%.0f,%.0f) to=(%.0f,%.0f) active=%t move=%t\n",
+			r.UID, before.known, leader.known, before.x, before.y, leader.x, leader.y, active, move)
+	}
 	if !active {
 		return false
 	}
@@ -110,6 +122,11 @@ func (r *RobotVo) navigatePartyDungeonUnsafe(conn *net.UDPConn, now time.Time) b
 	}
 	if _, err := r.sendPartyTransportUnsafe(conn, peer, route, packet); err == nil {
 		r.partyDungeonWorld.observe(body, now)
+		if !now.Before(r.partyDungeonMoveDiagAt) {
+			r.partyDungeonMoveDiagAt = now.Add(partyDungeonMoveDiagInterval)
+			foundationlog.Robotf("[PARTY_DUNGEON_MOVE] uid=%d peer=%d from=(%.0f,%.0f) to=(%.0f,%.0f)\n",
+				r.UID, peer.accID, before.x, before.y, position.x, position.y)
+		}
 	}
 	return true
 }
