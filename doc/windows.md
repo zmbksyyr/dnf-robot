@@ -537,3 +537,28 @@ Windows/Linux amd64 构建通过。回归覆盖副本/PvP 与职业隔离、常�
 `validation.private.json`。客户端与服务、数据库均正常退出；临时角色四张表、卸下的四件
 装备、实验运行文件与客户端配置已经恢复并核对，见 `restored.private.json`。
 原 ELF/PVF、正式 3.0 和 GM 未改。
+
+## 公共冷却继承及客户端职责复核（2026-11-20）
+
+继续核对同一 PVF 时发现男魔法师技能 3 的 8000 毫秒冷却写在公共段，没有副本覆盖。
+上一阶段只读取 `[dungeon]`，会遗漏这种正常定义。现按公共值作为默认、显式副本值覆盖，
+剔除 PvP 段后再读公共值；副本表若随等级变化，不退回公共常量冒充有效覆盖。
+仍只接受两个正数端点相等的常量，不计算等级插值或脚本修正。技能状态缓存版本升至 4。
+该 PVF 重新解析得到 631 个常量冷却，现有 51 条状态中 41 条携带该元数据；隔离实例的
+目录已自动重建，男魔法师技能 3 为 8000 毫秒。此前的 301/3 是上一实现的提取结果。
+
+本轮真人与 Robot 同队继续被动采集，观察到真人使用技能和自身 HP 消息。只发送控制权
+委托消息后，观察窗口内仍没有 Robot 的受击请求、结果或 HP 更新；发送成功本身不能证明
+客户端已经接管远程玩家的受击。真人保留装备，本轮不把其攻击特效或怪物死亡归给 Robot。
+
+只读核对原 i386 ELF 的 `DisPatcher_UseSkill::read/process`、`CParty::use_skill` 及
+`CParty::OnUsedSkill`：该处理链进行技能有效性校验和队伍战斗统计，没有扣 MP/无色的操作。
+不能把补发 UseSkill 当成资源消耗实现，也没有把仅用于 PvP assault 的 ChangeHp 处理器
+用于普通副本掉血。技能消耗、正常受击和人偶 AI 对普通玩家的控制入口仍待打通。
+
+Windows 10 IoT Enterprise LTSC x64 build 19044、Go 1.26.4 上完整 Go 测试与
+Windows/Linux amd64 构建通过；本轮 Linux 仅构建。证据在相邻 Native 仓库外
+`../x/dnf-gm-output/evidence/party-combat/combat-v9/`，入口为 `pvf-review.json`、
+`control-review.private.json`、`validation.private.json` 和 `restored.private.json`。
+客户端正常回城并退出，服务及数据库正常停止，五项临时运行/配置文件按备份恢复并核对；
+没有新增角色数据库夹具变更，正常游戏保存保留。原 ELF/PVF 与正式发布包未改。

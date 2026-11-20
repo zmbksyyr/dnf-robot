@@ -33,7 +33,7 @@ type pvfManifest struct {
 // catalogs automatically so previously exported forbidden areas are excluded.
 const pvfExportVersion = 8
 
-const pvfSkillStateExportVersion = 3
+const pvfSkillStateExportVersion = 4
 
 const pvfItemInfoExportName = "iteminfo.dat"
 

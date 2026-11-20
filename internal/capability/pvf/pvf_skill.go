@@ -101,40 +101,65 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 	return entries
 }
 
-// Read constant dungeon cooldowns through the PVF's own job/skill lists. Do
-// not use PvP values or guess level-dependent tables and script modifiers.
+// Read constant cooldowns through the PVF's own job/skill lists, applying a
+// dungeon override when present. Do not use PvP values or guess level tables.
 func extractSkillCooldowns(archive *pvfArchive) map[[2]int]int {
 	lists := [...]string{"swordmanskill.lst", "fighterskill.lst", "gunnerskill.lst", "mageskill.lst", "priestskill.lst",
 		"atgunnerskill.lst", "thiefskill.lst", "atfighterskill.lst", "atmageskill.lst", "demonicswordman.lst", "creatormage.lst"}
 	out := make(map[[2]int]int)
 	for job, list := range lists {
 		for _, entry := range parsePVFList(archive.text("skill/" + list)) {
-			text := archive.text("skill/" + entry.Path)
-			start := strings.Index(text, "[dungeon]")
-			if start < 0 {
-				continue
-			}
-			text = text[start+len("[dungeon]"):]
-			end := strings.Index(text, "[/dungeon]")
-			if end < 0 {
-				continue
-			}
-			match := skillCooldownRE.FindStringSubmatch(text[:end])
-			if len(match) == 0 {
-				continue
-			}
-			fields := strings.Fields(match[1])
-			if len(fields) != 2 {
-				continue
-			}
-			first, e1 := strconv.Atoi(fields[0])
-			last, e2 := strconv.Atoi(fields[1])
-			if e1 == nil && e2 == nil && first > 0 && first == last {
-				out[[2]int{job, entry.ID}] = first
+			if cooldown := dungeonSkillCooldown(archive.text("skill/" + entry.Path)); cooldown > 0 {
+				out[[2]int{job, entry.ID}] = cooldown
 			}
 		}
 	}
 	return out
+}
+
+func dungeonSkillCooldown(text string) int {
+	// Public values apply unless the dungeon block provides its own table.
+	// Remove mode blocks before reading the public value so a PvP-only value
+	// cannot become a dungeon cooldown, regardless of section order.
+	var dungeon []string
+	for _, mode := range []string{"dungeon", "pvp"} {
+		open, close := "["+mode+"]", "[/"+mode+"]"
+		for {
+			start := strings.Index(text, open)
+			if start < 0 {
+				break
+			}
+			body := start + len(open)
+			end := strings.Index(text[body:], close)
+			if end < 0 {
+				return 0
+			}
+			end += body
+			if mode == "dungeon" {
+				if match := skillCooldownRE.FindStringSubmatch(text[body:end]); len(match) > 0 {
+					dungeon = match
+				}
+			}
+			text = text[:start] + text[end+len(close):]
+		}
+	}
+	match := dungeon
+	if len(match) == 0 {
+		match = skillCooldownRE.FindStringSubmatch(text)
+	}
+	if len(match) == 0 {
+		return 0
+	}
+	fields := strings.Fields(match[1])
+	if len(fields) != 2 {
+		return 0
+	}
+	first, e1 := strconv.Atoi(fields[0])
+	last, e2 := strconv.Atoi(fields[1])
+	if e1 != nil || e2 != nil || first <= 0 || first != last {
+		return 0
+	}
+	return first
 }
 
 func skillScriptPath(value string) string {
