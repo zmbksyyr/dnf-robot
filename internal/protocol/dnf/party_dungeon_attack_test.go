@@ -25,8 +25,20 @@ func basicAttackTestRobot(now time.Time) (*RobotVo, [4]byte, [4]byte) {
 }
 
 func TestNormalAttackFacesOwnTargetAndWaitsForAcknowledgementBeforeRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		job  int
+	}{{"swordman", 0}, {"male-mage", 8}} {
+		t.Run(tc.name, func(t *testing.T) {
+			testNormalAttackFacesOwnTargetAndWaitsForAcknowledgementBeforeRecovery(t, tc.job)
+		})
+	}
+}
+
+func testNormalAttackFacesOwnTargetAndWaitsForAcknowledgementBeforeRecovery(t *testing.T, job int) {
 	now := time.Now()
 	r, self, _ := basicAttackTestRobot(now)
+	r.partySkillJob = job
 	r.partySkillNextAt = now // An empty active-skill list must still permit normal attacks.
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -92,7 +104,7 @@ func TestNormalAttackRequiresSupportedActorAndCurrentEnemyInRange(t *testing.T) 
 		name   string
 		change func(*RobotVo, [4]byte)
 	}{
-		{"other-job", func(r *RobotVo, e [4]byte) { r.partySkillJob = 8 }},
+		{"other-job", func(r *RobotVo, e [4]byte) { r.partySkillJob = 1 }},
 		{"unknown-profile", func(r *RobotVo, e [4]byte) { r.partySkillLoaded = false }},
 		{"unknown-wire", func(r *RobotVo, e [4]byte) { r.partyDungeonLegacySkills = false }},
 		{"cooling", func(r *RobotVo, e [4]byte) { r.partyBasicAttackNextAt = now.Add(time.Second) }},

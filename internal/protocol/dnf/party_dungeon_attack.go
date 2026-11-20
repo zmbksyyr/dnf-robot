@@ -10,12 +10,12 @@ import (
 
 const partyBasicAttackInterval = 1200 * time.Millisecond
 
-// Swordman state 8 with vector [0] is the first normal swing observed from a
-// real player. The receiving client uses this actor's own attack information;
-// no damage value or copied passive object is sent. Other jobs and the newer
-// state envelope need their own client verification before enabling them.
+// Swordman and male mage use state 8 with vector [0] for their first normal
+// attack. Both were captured from real players and verified to produce hits
+// from the Robot itself. The client uses this actor's own attack information;
+// other jobs and the newer state envelope still require client verification.
 func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bool {
-	if !r.partySkillLoaded || r.partySkillJob != 0 || !r.partyDungeonLegacySkills || now.Before(r.partyBasicAttackNextAt) {
+	if !r.partySkillLoaded || (r.partySkillJob != 0 && r.partySkillJob != 8) || !r.partyDungeonLegacySkills || now.Before(r.partyBasicAttackNextAt) {
 		return false
 	}
 	peer := r.partyPeerForSlotUnsafe(0)
