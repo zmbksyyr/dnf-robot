@@ -416,10 +416,21 @@ func (l *Ledger) FilterBlockedRuntimeStatus(status map[int]robotcap.RuntimeStatu
 	}
 }
 
+func (l *Ledger) HasAutoActorsToDrain() bool {
+	l.indexMu.RLock()
+	defer l.indexMu.RUnlock()
+	for slotID, actor := range l.actors {
+		if actor.ModeValue() == ModeAuto && l.draining[slotID] != actor {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *Ledger) BeginDrainAutoActors() []*Actor {
 	l.indexMu.Lock()
 	defer l.indexMu.Unlock()
-	actors := make([]*Actor, 0, len(l.actors))
+	var actors []*Actor
 	for slotID, actor := range l.actors {
 		if actor.ModeValue() != ModeAuto || l.draining[slotID] == actor {
 			continue
