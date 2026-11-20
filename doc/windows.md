@@ -1496,3 +1496,25 @@ CUser::DisConnSig ... from (10) ... send(0:53), recv(4)
 
 结论：Linux 侧机器人行为已验证（20 个机器人在线、技能解析正常），**副本闭环仍需先解决
 Linux 实例的监视器登录数据**（例如让监视器服务识别该账号的频道/角色，或换用监视器已知的账号）。
+
+## 跨平台交叉验证：Linux 客户端 ↔ Windows 服务端（2026-11-21）
+
+Windows 实例重新拉起后，用 `netsh portproxy`（10012→10011、3307→3306）加两条窄口防火墙规则，
+让 WSL 里的 **Linux 构建的夹具队长**连到 Windows 服务端，机器人仍在 Windows 侧运行。结果：
+
+- 登录成功（`state=3`）；
+- 组队成功（`party=true`，机器人 `[PARTY_AUTO_ACCEPT] peer_unique_id=5`）；
+- 进副本成功（`dungeon=yes`），机器人随即加载技能档案：
+  `[PARTY_DUNGEON_SKILL_PROFILE] job=8 auto=true whitelist=40 pvf=38 pvf_matched=38 learned_candidates=4`。
+
+也就是说**控制面（TCP 登录/组队/进图）跨平台互通**，Linux 构建的同一份客户端代码与 Windows 服务端
+协同正常。
+
+但**媒体面（队伍 UDP 传输）无法跨 WSL 边界**：机器人通告的是 Windows 侧 `127.0.0.1:<port>`，
+WSL 里的队长按同一地址发送只会打到自己。日志表现正是机器人一直 `reason=self-unknown`
+（收不到队长动作帧，拿不到自身坐标），因此这一步没有产生攻击记录。
+
+实验后已删除两条 portproxy 与三条防火墙规则，主机恢复原状（重新做需要同样三条命令）。
+
+结论：跨平台“控制面一致”已证；要让 Linux 侧也走完寻怪/攻击，必须让队长与机器人在同一网络命名空间
+内（即 Linux 服务端 + Linux 机器人，回到监视器登录那条路）。
