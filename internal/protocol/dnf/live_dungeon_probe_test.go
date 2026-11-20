@@ -180,6 +180,23 @@ func TestLiveDungeonProbe(t *testing.T) {
 		t.Logf("after move: %s", liveSnapshotLine(vo))
 	}
 
+	if os.Getenv("DNF_LIVE_PARTY_ONLY") == "1" {
+		partyBody := make([]byte, liveRequestBody)
+		partyBody[0] = 1
+		partyBody[1] = 4
+		partyPacket, err := buildSendPacket(12, uint16(vo.PacketID), partyBody, vo.Cipher)
+		if err != nil {
+			t.Fatalf("build set party info: %v", err)
+		}
+		vo.PacketID++
+		if !vo.sendRaw(partyPacket) {
+			t.Fatal("set party info was not sent")
+		}
+		t.Logf("sent party create only; holding")
+		time.Sleep(70 * time.Second)
+		return
+	}
+
 	if dungeon > 0 {
 		// The original server only lets a party leader pick a dungeon, so a solo
 		// leader first creates a one-member party (type 12: title index, member
@@ -198,7 +215,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 			t.Fatal("set party info was not sent")
 		}
 		t.Logf("sent party create")
-		time.Sleep(700 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 		t.Logf("after party: %s", liveSnapshotLine(vo))
 
 		// The original client pads small request bodies to the cipher block
@@ -215,7 +232,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 			t.Fatal("select dungeon was not sent")
 		}
 		t.Logf("sent select dungeon idx=%d type=%d", dungeon, dungeonType)
-		time.Sleep(700 * time.Millisecond)
+		time.Sleep(1500 * time.Millisecond)
 		start, err := buildSendPacket(15, uint16(vo.PacketID), nil, vo.Cipher)
 		if err != nil {
 			t.Fatalf("build start game: %v", err)
