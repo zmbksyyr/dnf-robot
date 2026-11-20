@@ -77,7 +77,7 @@ func TestActiveSkillTargetsLiveEnemyBeforeSendingAndRecoversAfterItsDeath(t *tes
 	}
 }
 
-func TestActiveSkillSkipsEmptyDeadStaleAndUnknownTargets(t *testing.T) {
+func TestActiveSkillSkipsEmptyDeadAndUnknownTargets(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change func(*RobotVo, [4]byte, [4]byte, time.Time)
@@ -88,9 +88,9 @@ func TestActiveSkillSkipsEmptyDeadStaleAndUnknownTargets(t *testing.T) {
 			a.dead = true
 			r.partyDungeonWorld.actors[enemy] = a
 		}},
-		{"stale", func(r *RobotVo, self, enemy [4]byte, now time.Time) {
+		{"unknown-target", func(r *RobotVo, self, enemy [4]byte, now time.Time) {
 			a := r.partyDungeonWorld.actors[enemy]
-			a.seenAt = now.Add(-4 * time.Second)
+			a.position.known = 1
 			r.partyDungeonWorld.actors[enemy] = a
 		}},
 		{"unknown-self", func(r *RobotVo, self, enemy [4]byte, now time.Time) { delete(r.partyDungeonWorld.actors, self) }},
@@ -231,9 +231,9 @@ func TestNormalAttackRequiresSupportedActorAndCurrentEnemyInRange(t *testing.T) 
 			a.dead = true
 			r.partyDungeonWorld.actors[e] = a
 		}},
-		{"stale-target", func(r *RobotVo, e [4]byte) {
+		{"unknown-target", func(r *RobotVo, e [4]byte) {
 			a := r.partyDungeonWorld.actors[e]
-			a.seenAt = now.Add(-4 * time.Second)
+			a.position.known = 1
 			r.partyDungeonWorld.actors[e] = a
 		}},
 		{"out-of-range", func(r *RobotVo, e [4]byte) {
@@ -323,6 +323,10 @@ func TestMaleMageFourStageComboStaysOrderedAndRecoversOnce(t *testing.T) {
 	now := time.Now()
 	r, _, enemy := basicAttackTestRobot(now)
 	r.partySkillJob = 8
+	// A silent living enemy remains a valid target throughout the combo.
+	actor := r.partyDungeonWorld.actors[enemy]
+	actor.seenAt = now.Add(-10 * time.Second)
+	r.partyDungeonWorld.actors[enemy] = actor
 	sender, receiver := comboTestTransport(t, r)
 	for step := byte(0); step < 4; step++ {
 		r.flushPartyDungeonSkillUnsafe(sender, now)
@@ -390,9 +394,9 @@ func TestMaleMageComboCannotCarryAcrossTargetLossOrInterruption(t *testing.T) {
 			r.partyDungeonWorld.actors[[4]byte{0x11, 2, 2, 3}] = a
 			return now.Add(partyBasicComboInterval)
 		}},
-		{"stale", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time {
+		{"unknown-target", func(r *RobotVo, enemy [4]byte, now time.Time) time.Time {
 			a := r.partyDungeonWorld.actors[enemy]
-			a.seenAt = now.Add(-4 * time.Second)
+			a.position.known = 1
 			r.partyDungeonWorld.actors[enemy] = a
 			return now.Add(partyBasicComboInterval)
 		}},

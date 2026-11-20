@@ -116,7 +116,7 @@ func TestDungeonWorldTracksDeathAndRoomBoundary(t *testing.T) {
 	body := motionCaptureBody(t, "011102fc8d110116000000107f514100c04d440080954324faffff")
 	world.observe(body, now)
 	self := partyDungeonPosition{x: 700, y: 299, known: 7}
-	ref, point, ok := world.nearestMonster(self, now)
+	ref, point, ok := world.nearestMonster(self)
 	if !ok || ref != monster || point.x != 823 || point.y != 299 {
 		t.Fatalf("target=%x position=%+v ok=%t", ref, point, ok)
 	}
@@ -135,7 +135,7 @@ func TestDungeonWorldTracksDeathAndRoomBoundary(t *testing.T) {
 	}
 	world.observe(hpBody, now)
 	world.observe(body, now.Add(time.Millisecond))
-	if _, _, ok := world.nearestMonster(self, now.Add(time.Second)); ok {
+	if _, _, ok := world.nearestMonster(self); ok {
 		t.Fatal("dead monster selected after a late motion record")
 	}
 	actor := world.actors[monster]
@@ -149,13 +149,20 @@ func TestDungeonWorldTracksDeathAndRoomBoundary(t *testing.T) {
 	}
 	world = partyDungeonWorld{}
 	world.observe(body, now)
-	if _, _, ok := world.nearestMonster(self, now.Add(4*time.Second)); ok {
-		t.Fatal("stale monster selected")
+	if _, _, ok := world.nearestMonster(self); !ok {
+		t.Fatal("living monster was lost without a death or destroy record")
+	}
+	destroy := motionCaptureBody(t, "1102fc8d")
+	destroy[1] = 23
+	world.observe(destroy, now.Add(10*time.Second))
+	world.observe(body, now.Add(11*time.Second))
+	if _, _, ok := world.nearestMonster(self); ok {
+		t.Fatal("destroyed monster was revived by a late motion record")
 	}
 	// Movement with an unknown y delta must wait for a full y update.
 	world = partyDungeonWorld{}
 	world.observe(motionCaptureBody(t, "011102fc8d110116000000006a4962ce5c394416ae7bc2"), now)
-	if _, _, ok := world.nearestMonster(self, now); ok {
+	if _, _, ok := world.nearestMonster(self); ok {
 		t.Fatal("unknown y coordinate was invented")
 	}
 }

@@ -134,20 +134,22 @@ func (world *partyDungeonWorld) observe(body []byte, now time.Time) {
 	}
 }
 
-func (world *partyDungeonWorld) nearestMonster(position partyDungeonPosition, now time.Time) ([4]byte, partyDungeonPosition, bool) {
+func (world *partyDungeonWorld) nearestMonster(position partyDungeonPosition) ([4]byte, partyDungeonPosition, bool) {
 	if position.known&3 != 3 {
 		return [4]byte{}, partyDungeonPosition{}, false
 	}
-	// Keep a live target while approaching it. Re-evaluating nearby monsters
-	// every movement tick made the Robot repeatedly cross their attack line.
-	if actor, ok := world.actors[world.target]; ok && partyDungeonMonster(world.target) && !actor.dead && actor.position.known&3 == 3 && now.Sub(actor.seenAt) <= 3*time.Second {
+	// Motion is a delta stream, not an actor heartbeat: a living monster can
+	// go several seconds without an update. Keep it until a death/destroy or
+	// room reset; timing out its last position made the Robot abandon enemies.
+	// Keep the chosen target while approaching instead of crossing between them.
+	if actor, ok := world.actors[world.target]; ok && partyDungeonMonster(world.target) && !actor.dead && actor.position.known&3 == 3 {
 		return world.target, actor.position, true
 	}
 	var selected [4]byte
 	var point partyDungeonPosition
 	best := math.Inf(1)
 	for ref, actor := range world.actors {
-		if !partyDungeonMonster(ref) || actor.dead || actor.position.known&3 != 3 || now.Sub(actor.seenAt) > 3*time.Second {
+		if !partyDungeonMonster(ref) || actor.dead || actor.position.known&3 != 3 {
 			continue
 		}
 		distance := math.Hypot(float64(actor.position.x-position.x), 2*float64(actor.position.y-position.y))

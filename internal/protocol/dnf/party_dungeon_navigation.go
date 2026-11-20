@@ -21,7 +21,7 @@ func (world *partyDungeonWorld) planNavigation(self, leader [4]byte, now time.Ti
 	if position.known&3 != 3 {
 		return position, false, false
 	}
-	_, target, enemy := world.nearestMonster(position, now)
+	_, target, enemy := world.nearestMonster(position)
 	navigation := &world.navigation
 	if !enemy {
 		if !navigation.active {

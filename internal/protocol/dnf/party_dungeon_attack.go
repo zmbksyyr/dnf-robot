@@ -28,7 +28,7 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 	}
 	self := partyDungeonPlayerReference(r.partySelfPeer.uniqueID)
 	position := r.partyDungeonWorld.actors[self].position
-	targetID, target, ok := r.partyDungeonWorld.nearestMonster(position, now)
+	targetID, target, ok := r.partyDungeonWorld.nearestMonster(position)
 	if r.partyBasicAttackStep != 0 && (!ok || targetID != r.partyBasicAttackTarget) {
 		r.partyBasicAttackStep = 0
 		r.partyBasicAttackTarget = [4]byte{}

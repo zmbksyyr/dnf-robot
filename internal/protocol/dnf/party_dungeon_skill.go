@@ -245,7 +245,7 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 		// These are combat casts. Empty rooms should leave the actor free to
 		// regroup; a target behind us must be faced before its skill state.
 		position := r.partyDungeonWorld.actors[partyDungeonPlayerReference(r.partySelfPeer.uniqueID)].position
-		_, target, ok := r.partyDungeonWorld.nearestMonster(position, now)
+		_, target, ok := r.partyDungeonWorld.nearestMonster(position)
 		if !ok {
 			return false
 		}

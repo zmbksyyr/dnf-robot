@@ -21,7 +21,9 @@ func TestNavigationKeepsTargetAndApproachSideUnderCrowding(t *testing.T) {
 	now := time.Unix(100, 0)
 	world, self, leader, enemy := navigationTestWorld(now)
 	var last partyDungeonPosition
-	for i := 0; i < 12; i++ {
+	// Stationary actors need no periodic motion update. Keep this approach
+	// active longer than the previously imposed three-second expiry.
+	for i := 0; i < 70; i++ {
 		at := now.Add(time.Duration(i) * partyDungeonNavigationInterval)
 		position, move, active := world.planNavigation(self, leader, at)
 		if !active || position.x > 230 || position.x < world.actors[self].position.x || position.y != 300 {
