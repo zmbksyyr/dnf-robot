@@ -593,3 +593,29 @@ Windows/Linux amd64 构建通过；Linux 未新增战斗实测。测试覆盖转
 八条角色夹具记录及四项临时运行/配置文件恢复并核对，详见 `restored.private.json`。
 20 个历次测试遗留登录器也按精确测试路径发送 WM_CLOSE 正常关闭，未强制终止。
 原 ELF/PVF、正式发布包与 GM 未改。
+
+## 人偶 AI 与玩家控制归属（2026-11-20）
+
+继续只读解析同一客户端的 Squirrel 注册表和原生函数，确认 `sq_IsMyControlObject`
+会调用对象的虚方法，再与本机主角色比较。普通玩家的该方法受对象控制标志影响，
+并非直接返回网络消息设置的控制者指针。客户端 RTTI 中，实际玩家类型的继承表包含
+`sq_GetCNRDObjectToAICharacter` 的目标类型；这保留了进一步研究的依据，但没有执行
+该转换或验证远程玩家的命令检查器、技能管理器和 AI 初始化均可用。
+
+新的隔离实机实验让两名原始男魔法师角色同队进入幽暗密林，覆盖单独移动消息中的
+控制者引用，以及控制委托加移动的组合。后一组合确实将远程角色的控制者指针改为
+真人角色，采样时控制标志仍为零；按对应反汇编及校验通过的受保护字段离线求值，
+该远程对象的 `IsMyControlObject` 条件仍为假。不能再把这个结果简单归为消息未送达，
+也不能仅凭类型继承关系宣称可直接开启人偶 AI。
+
+组合之后观察约 156 秒，收到 31 条真人 HP 消息，没有对应 Robot 的受击或 HP 消息。
+本轮共复核 13882 个 ACCEPTED 非 ACK 帧，帧结构和所选消息校验无错误。外部探针
+停用测试 Robot 的技能发送以隔离控制实验；真人仍穿装备，本轮怪物死亡不归因于 Robot。
+没有发送合成伤害、调用或改写客户端内存，没有变更产品战斗实现。
+
+平台仍为 Windows 10 IoT Enterprise LTSC x64 build 19044；没有新增 Linux 实测。
+证据在相邻 Native 仓库外 `../x/dnf-gm-output/evidence/party-combat/combat-v11/`，
+入口为 `control-review.private.json`、`control-state-after-combined.private.json`
+及 `player-rtti.private.json`。客户端回城后正常关闭，Robot、服务及数据库正常停止；
+四项临时运行/配置文件恢复并核对哈希，测试登录器正常关闭。没有数据库夹具修改，
+保留正常游戏保存；详见 `restored.private.json` 和 `launcher-cleanup.private.json`。
