@@ -1556,3 +1556,17 @@ BenchmarkObservePartyDungeonFrame   387.4 ns/op   272 B/op   2 allocs/op
 
 收益量级：单次查询约零点几毫秒，600 个账号反复登录时可省掉同数量级的往返；绝对收益有限，
 但属于"零风险、可验证"的一类（职业不可变，缓存不会读到过期职业）。
+
+## 本轮尝试与回退（2026-11-21）
+
+为验证上一轮推断的"夹具角色槽位不对导致 Linux 侧 signal 10"，重启了整套 WSL 环境：
+MySQL 起得来（`--no-defaults`），secagent 也起了，但 **game 反复 SIGSEGV**
+（`Init CipherKeyString` 之后即崩，`/dev/shm` 里同时存在 `TSS_30_570011.STAT` 与
+`TSS_43_1.STAT`）。这与上一轮"secagent 在、游戏能起"的状态不同，说明 WSL 侧的
+secagent/游戏配对状态已经变脏，仅重启 secagent 不足以恢复。
+
+为避免继续占用端口和机器，本轮以**恢复 Windows 实例**收尾（3306/8111/10011 均在监听，
+零配置开关已重新打开）。Linux 侧要再试，需要先把 secagent 与游戏的状态彻底清干净
+（包括两套 TSS_* 文件与残留进程），再按"先 secagent、后 run.sh"的顺序冷启动。
+
+`SLOT=0` 的假设**尚未验证**——环境没起来，不能算排除也不能算证实。
