@@ -1027,3 +1027,28 @@ core 中为 SIGSEGV 后 abort。`zergsvr` 单独启动时能建立 `MMAP Pipe` �
 下一步需要按 `secsvr` 配置把反外挂后端（zergsvr 存活条件、secagent/gunnersvr 依赖）
 跑通，或确认与 Native 兼容层对该通道的处理差异。所有脚本与日志留在仓库外
 `D:\cache\dnf\x\linux-server\`、`D:\cache\dnf\x\wsl\`。
+
+## 解除 Linux 反外挂阻塞并完成双平台运行（2026-11-21）
+
+上一节的 SIGSEGV 定位到 `secagent`：它才是在 `/dev/shm` 建立
+`TSS_30_570011.STAT` 与 `sec/` 目录的组件，game 的 `tss_sdk` 会 attach 该共享块。
+`zergsvr` 只建 `ZERG_30_570011.STAT` 且随后退出，不能替代。让 `secagent` 常驻
+（`setsid` 脱离会话）后，game 通过 DataManager、GameManager、GameScriptManager，
+监听 10011 且不再崩溃；`LD_PRELOAD=libdp2pre.so`、`GCONV_PATH` 与 MySQL 5.7.44 保持不变。
+另外 5.7 需关闭零日期严格模式（`sql_mode=NO_ENGINE_SUBSTITUTION`），否则机器人创建
+角色时报 `Incorrect datetime value '0000-00-00 00:00:00'`。
+
+Linux 侧现状（WSL2 Ubuntu 22.04.5／内核 5.10.16.3，原版 32 位 ELF，MySQL 5.7.44）：
+10011、30303、7000、7200、30803、30603 全部监听；`/root/robot`（本分支
+Linux amd64 构建）20 个机器人全部在线，无失败，观测到移动；职业覆盖
+0、1、2、3、4、6、7、8，分布于 7 个城镇区域。
+
+技能目录在 Linux 上同样是 `mode=auto`、198 条；只把总开关改为开启后日志为
+`applied party_skills path=/root/config/templates/party_skill_catalog.json
+enabled=true mode=auto entries=198`，与 Windows 侧一致。这说明“单开关 + 自动选择”
+在两个平台走同一份代码和数据，而不是平台分支。
+
+仍需明确：两端都还没有真实客户端进入地下城，副本闭环（寻怪、清图判定、跟随过图、
+回城）仍无实机证据；Linux 侧的运行是服务与机器人层，不含图形客户端。环境脚本与
+证据在仓库外 `D:\cache\dnf\x\linux-server\`（`run.sh`、`stop.sh`、`start_game.sh`、
+`evidence-linux.json`）与 `D:\cache\dnf\x\wsl\`。
