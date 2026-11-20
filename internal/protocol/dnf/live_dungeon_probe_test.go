@@ -202,6 +202,30 @@ func TestLiveDungeonProbe(t *testing.T) {
 	t.Logf("sent finish loading")
 	time.Sleep(700 * time.Millisecond)
 
+	if areaProbe := liveEnvInt(t, "DNF_LIVE_AREA_PROBE", -1); areaProbe >= 0 {
+		// Observable check: does SetArea actually move the character? A real move
+		// changes the town entities the server broadcasts for the new area.
+		townCount := func() int {
+			vo.mu.Lock()
+			defer vo.mu.Unlock()
+			return len(vo.townEntityPositions)
+		}
+		time.Sleep(2 * time.Second)
+		before := townCount()
+		body := make([]byte, 12)
+		body[0], body[1] = byte(village), byte(areaProbe)
+		binary.LittleEndian.PutUint16(body[2:4], uint16(birthX))
+		binary.LittleEndian.PutUint16(body[4:6], uint16(birthY))
+		body[7] = 0x01
+		if packet, err := buildSendPacket(38, uint16(vo.PacketID), body, vo.Cipher); err == nil {
+			vo.PacketID++
+			vo.sendRaw(packet)
+			t.Logf("area probe: sent set area %d (entities before=%d)", areaProbe, before)
+		}
+		time.Sleep(3 * time.Second)
+		t.Logf("area probe: after area %d entities=%d %s", areaProbe, townCount(), liveSnapshotLine(vo))
+		return
+	}
 	// Announce where we stand: the world-map index that normal dungeon selection
 	// needs comes from the area the user reports, not from the character record.
 	setArea := make([]byte, 12)
