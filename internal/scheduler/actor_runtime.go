@@ -38,7 +38,13 @@ func (r *RobotRuntime) Config() robotconfig.RuntimeConfig {
 }
 
 func (r *RobotRuntime) Status(uid int) (robotcap.RuntimeStatus, bool) {
-	return r.manager.runtimeStatus(uid)
+	st, ok := r.manager.runtimeStatus(uid)
+	if ok && st.StateName == robotcap.RuntimeStateWrong {
+		// A terminal decision must not reuse a rejection that explicit logout
+		// already removed while the regular metrics cache is still valid.
+		st, ok = r.manager.runtimeStatusMapFresh()[uid]
+	}
+	return st, ok
 }
 
 func (r *RobotRuntime) PartyActive(uid int) bool {

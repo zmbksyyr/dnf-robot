@@ -1,12 +1,61 @@
 package actor
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 )
+
+type rejectedLoginRuntime struct {
+	manualAttachRuntime
+	logoutOK bool
+	logouts  int
+}
+
+func (r *rejectedLoginRuntime) Logout(uid int) robotcap.ActionResult {
+	r.logouts++
+	if !r.logoutOK {
+		return robotcap.ActionResult{UID: uid, State: robotcap.ActionStateFailed}
+	}
+	r.status = robotcap.RuntimeStatus{}
+	return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateClosed}
+}
+
+func TestRejectedLoginPausesWithoutRecyclingOrDeletingCharacter(t *testing.T) {
+	runtime := &rejectedLoginRuntime{}
+	runtime.status = robotcap.RuntimeStatus{UID: 101, CID: 201, StateName: robotcap.RuntimeStateWrong, DisconnectReason: 36}
+	a := NewActor(1, ModeAuto, runtime)
+	a.resetForUID(101)
+	a.setLastOnlineTry(time.Now().Add(-time.Second))
+	for i := 0; i < 5; i++ {
+		a.tick(time.Now().Add(time.Duration(i) * time.Minute))
+	}
+	if snap := a.snapshot(); snap.UID != 101 || snap.OnlineDesired || snap.Failures != 1 || runtime.logins != 0 || runtime.logouts != 0 {
+		t.Fatalf("rejected login not paused: snapshot=%+v runtime=%+v", snap, runtime)
+	}
+	status := a.Status(time.Now(), robotconfig.RuntimeConfig{SchedulerBadFailures: 1})
+	if status.Health != HealthUnhealthy || status.HealthReason != "login_rejected" || status.RecycleUID {
+		t.Fatalf("rejected character may be recycled: %+v", status)
+	}
+	result, ok := a.ensureOnlineForCommand()
+	if ok || result.OK || !strings.Contains(result.Message, "36") || runtime.logins != 0 {
+		t.Fatalf("implicit command retried rejected character: %+v", result)
+	}
+	if result := a.handleCommand(CommandOnline); result.OK || runtime.logins != 0 {
+		t.Fatalf("retry skipped failed logout confirmation: %+v", result)
+	}
+	runtime.logoutOK = true
+	if result := a.handleCommand(CommandOnline); !result.OK {
+		t.Fatalf("explicit retry failed: %+v", result)
+	}
+	a.tick(time.Now())
+	if runtime.logins != 1 || !a.snapshot().OnlineDesired {
+		t.Fatalf("explicit retry did not log in: %+v logins=%d", a.snapshot(), runtime.logins)
+	}
+}
 
 type manualAttachRuntime struct {
 	partyWaitRuntime

@@ -1,12 +1,61 @@
 package robotaction
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 )
+
+type rejectedLoginEnv struct{ directLogoutEnv }
+
+func (*rejectedLoginEnv) RuntimeStatusMap() map[int]robotcap.RuntimeStatus {
+	return map[int]robotcap.RuntimeStatus{
+		17000001: {UID: 17000001, StateName: robotcap.RuntimeStateWrong, DisconnectReason: 36},
+		17000002: {UID: 17000002, StateName: robotcap.RuntimeStateRunning},
+	}
+}
+
+func (e *rejectedLoginEnv) RuntimeStatusMapFresh() map[int]robotcap.RuntimeStatus {
+	return e.RuntimeStatusMap()
+}
+
+type staleRejectedLoginEnv struct{ rejectedLoginEnv }
+
+func (*staleRejectedLoginEnv) RuntimeStatusMapFresh() map[int]robotcap.RuntimeStatus {
+	return map[int]robotcap.RuntimeStatus{17000001: {UID: 17000001, StateName: robotcap.RuntimeStateRunning}}
+}
+
+func TestOnlineConfirmationDoesNotReusePreviousAttemptRejection(t *testing.T) {
+	service := SessionService{Env: &staleRejectedLoginEnv{}}
+	result := robotcap.NewCommandResult(1)
+	result.Accepted = 1
+	result.Robots = []robotcap.ActionResult{{UID: 17000001, State: robotcap.ActionStateAccepted}}
+	service.ConfirmAccepted(&result, 100*time.Millisecond)
+	if result.Confirmed != 1 || result.Failed != 0 || !result.Robots[0].OK {
+		t.Fatalf("previous attempt's cached rejection was reused: %+v", result)
+	}
+}
+
+func TestOnlineConfirmationReportsRejectionWithoutWaitingForTimeout(t *testing.T) {
+	service := SessionService{Env: &rejectedLoginEnv{}}
+	result := robotcap.NewCommandResult(2)
+	result.Accepted = 2
+	result.Robots = []robotcap.ActionResult{
+		{UID: 17000001, State: robotcap.ActionStateAccepted},
+		{UID: 17000002, State: robotcap.ActionStateAccepted},
+	}
+	started := time.Now()
+	service.ConfirmAccepted(&result, 100*time.Millisecond)
+	if time.Since(started) >= 400*time.Millisecond || result.Confirmed != 1 || result.Failed != 1 {
+		t.Fatalf("rejection was left pending until timeout: %+v", result)
+	}
+	if got := result.Robots[0]; got.OK || got.State != robotcap.ActionStateFailed || !strings.Contains(got.Message, "36") {
+		t.Fatalf("rejection reason was lost: %+v", got)
+	}
+}
 
 func TestOnlineConfirmationStopsWithoutClaimingSuccessDuringShutdown(t *testing.T) {
 	service := SessionService{Env: &directLogoutEnv{}, Cancelled: func() bool { return true }}

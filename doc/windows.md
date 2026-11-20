@@ -740,3 +740,40 @@ Web 子进程 18.6–18.8 MiB，game 1180.9–1181.0 MiB。这是无图形客户
 sealed-only-nocache-comparison.private.json、sealed-and-missing-6-nocache-v2-comparison.private.json、
 remaining-verification.private.json、original-item-lookup.private.json、stock-stage.private.json、
 corrected-stock-550.private.json、validation.private.json 及 restored.private.json。
+
+## 物品拒绝的有限重试与手动重试确认（2026-11-20）
+
+原 ELF 因角色物品校验失败发出通知 199、断开码 36 后，原逻辑会按普通断线建立新
+会话，并丢失原拒绝原因。本轮将这一已确认的拒绝保留为 `wrong` 终态：关闭连接和
+会话缓存，暂停该角色本次自动上线，在接口及日志中保留原断开码。它不触发自动删除
+角色或按导出物品目录清理背包。用户离线处理数据后可明确重试；重试先完成旧会话
+退出确认，再重新上线。其他断开码的重连规则保持原行为。
+
+实际重试又复现了两秒状态缓存复用上次拒绝的问题。上线确认改用当前会话快照；
+actor 只有在遇到拒绝终态时额外核对当前会话，普通运行状态仍使用原有缓存。新增
+回归均先在修改前复现失败，修改后完整 Go 测试及 Windows/Linux amd64 构建通过。
+
+Windows 隔离原 ELF、普通候选且无观察覆盖的实测中，36 个既有测试角色约 7.0 秒
+返回一名上线、35 名物品拒绝，接口逐一提供断开码 36；状态收敛后连续约 10.1 秒，
+35 名角色的重连计数均为零、角色归属保留。移动命令不会暗中重试这类角色。对其中
+一名明确重试，约 1.0 秒完成新的登录拒绝，原服务端拒绝日志只新增一次。最后全部
+36 名正常退出，状态收敛后连续约 10.0 秒，会话、actor 归属及数据库登录状态均离线。
+
+另对前一节旧构建的退出疑点，用本轮修改前的普通候选覆盖相同失败角色及一个正常角色：
+36 个账号约 2.0 秒确认退出，随后 30 秒数据库均离线，MySQL 查询日志中没有退出
+应答后的登录标记写入。早期诊断构建的元信息指向早于退出确认实现的源码基线，且带
+有 dirty 标记；元信息不能完整还原其源码。不能把旧现象列为本次候选仍可复现的缺陷，
+也不能据此扩大到所有并发时序均已通过。
+
+本轮未修改数据库夹具、原 ELF、PVF、客户端、GM 或正式发布目录。公共重试逻辑对
+Windows 和 Linux 均生效；Linux 本轮仅构建，没有新增登录或战斗实机结论。平台为
+Windows 10 IoT Enterprise LTSC x64 build 19044、原 ELF x86、MySQL 5.7.44、Go 1.26.4。
+证据位于相邻 Native 仓库外 `../x/dnf-gm-output/evidence/logout-reconnect-20261120/`：
+`baseline.private.json`、`baseline-flag-writes.private.json`、修改前失败的回归记录、
+`all-tests-final.log` 及 `inventory-rejection-live/live-verified.private.json`。保留初次
+缓存失败及随后因异步日志刷新、列表缓存尚未收敛而失败的测试器记录，最终检查明确
+等待日志落盘和状态收敛，不把中间失败删除或混作通过结果。
+
+最终全部服务及数据库正常停止，隔离包的两个临时文件按备份恢复并核对 SHA-256；
+原 ELF/PVF/DP2 入口哈希未变，业务源码差异与实测构建收据一致。恢复及最终检查
+记录为 `inventory-rejection-live/restored-final.private.json`、`validation-final.private.json`。

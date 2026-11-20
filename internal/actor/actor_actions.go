@@ -1,6 +1,7 @@
 package actor
 
 import (
+	"fmt"
 	"time"
 
 	robotcap "robot/internal/capability/robot"
@@ -42,6 +43,12 @@ func (a *Actor) handleCommand(cmd Command) robotcap.ActionResult {
 	}
 	switch cmd {
 	case CommandOnline:
+		if st, ok := a.runtime.Status(uid); ok && st.StateName == robotcap.RuntimeStateWrong {
+			if result := a.runtime.Logout(uid); !result.OK {
+				return result
+			}
+		}
+		a.clearOnlineAttempt()
 		a.setOnlineDesired(true)
 		a.setState(StateAssigned)
 		return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateAccepted}
@@ -97,6 +104,10 @@ func (a *Actor) ensureOnlineForCommand() (robotcap.ActionResult, bool) {
 	if a.runtime.IsActive(uid) {
 		return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateRunning}, true
 	}
+	if st, ok := a.runtime.Status(uid); ok && st.StateName == robotcap.RuntimeStateWrong {
+		return robotcap.ActionResult{UID: uid, CID: st.CID, State: robotcap.ActionStateFailed,
+			Message: fmt.Sprintf("server rejected character data (disconnect_reason=%d); check inventory before retrying", st.DisconnectReason)}, false
+	}
 	a.setOnlineDesired(true)
 	a.setState(StateAssigned)
 	rc := a.runtime.Config()
@@ -113,6 +124,11 @@ func (a *Actor) ensureOnlineForCommand() (robotcap.ActionResult, bool) {
 			return robotcap.ActionResult{UID: uid, OK: true, State: robotcap.ActionStateRunning}, true
 		}
 		a.ensureOnline(time.Now())
+		if !a.onlineDesiredValue() {
+			st, _ := a.runtime.Status(uid)
+			return robotcap.ActionResult{UID: uid, CID: st.CID, State: robotcap.ActionStateFailed,
+				Message: fmt.Sprintf("server rejected character data (disconnect_reason=%d); check inventory before retrying", st.DisconnectReason)}, false
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	return robotcap.ActionResult{UID: uid, OK: false, State: robotcap.ActionStateOnlineTimeout, Message: "not confirmed running"}, false
@@ -351,6 +367,16 @@ func (a *Actor) ensureOnline(now time.Time) {
 		a.markOnlineHealthy()
 		a.setState(StateRunning)
 		a.runtime.AddAutoOnline(1, 0)
+		return
+	}
+	if st, ok := a.runtime.Status(uid); ok && st.StateName == robotcap.RuntimeStateWrong {
+		a.setOnlineDesired(false)
+		a.clearAutoSchedule()
+		a.clearOnlineAttempt()
+		a.recordFailure(now)
+		a.setState(StateOffline)
+		a.runtime.AddAutoOnline(0, 1)
+		foundationlog.Robotf("[Actor] login_rejected slot=%d uid=%d disconnect_reason=%d action=paused\n", a.slotIDValue(), uid, st.DisconnectReason)
 		return
 	}
 	rc := a.runtime.Config()

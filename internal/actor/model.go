@@ -180,6 +180,14 @@ func EvaluateStatus(snapshot Snapshot, now time.Time, cfg StatusConfig, lookup R
 		status.HealthReason = snapshot.BusyKind
 		return status
 	}
+	if lookup != nil {
+		if st, ok := lookup(snapshot.UID); ok && st.StateName == robotcap.RuntimeStateWrong {
+			status.Health = HealthUnhealthy
+			status.HealthReason = "login_rejected"
+			// A data rejection is not proof that this character may be deleted.
+			return status
+		}
+	}
 	if snapshot.Failures >= cfg.BadFailures {
 		status.Health = HealthUnhealthy
 		status.HealthReason = "failure_count"

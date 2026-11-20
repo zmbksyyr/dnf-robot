@@ -11,7 +11,7 @@ type robotInboundPacket struct {
 }
 
 func (r *RobotVo) parsePacket(inBuf []byte) {
-	if r.State == StateStop || len(inBuf) < 7 {
+	if r.State == StateStop || r.State == StateWrong || len(inBuf) < 7 {
 		return
 	}
 

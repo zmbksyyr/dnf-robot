@@ -50,6 +50,9 @@ const (
 	BadUid        DisconnectReason = 11
 	RepeatLogin   DisconnectReason = 12
 	PunishReason  DisconnectReason = 26
+	// Original game sends 36 when character inventory validation rejects login.
+	// Reconnecting with the same persisted items cannot repair this failure.
+	InventoryRejected DisconnectReason = 36
 )
 
 type ClientError int
@@ -681,7 +684,7 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 		n, err := conn.Read(buf)
 		if err != nil {
 			r.mu.Lock()
-			if r.State == StateStop {
+			if r.State == StateStop || r.State == StateWrong {
 				r.mu.Unlock()
 				return
 			}
@@ -734,7 +737,7 @@ func (r *RobotVo) onRecvDataFrom(conn net.Conn, data []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State == StateStop || len(data) < 1 || (conn != nil && r.Conn != conn) {
+	if r.State == StateStop || r.State == StateWrong || len(data) < 1 || (conn != nil && r.Conn != conn) {
 		return
 	}
 

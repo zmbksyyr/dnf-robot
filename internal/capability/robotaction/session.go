@@ -245,22 +245,24 @@ func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout ti
 			cancelled = true
 			break
 		}
-		confirmed := 0
-		status := s.Env.RuntimeStatusMap()
+		resolved := 0
+		// Confirmation belongs to this attempt. A cached terminal snapshot from
+		// the previous attempt can otherwise fail an explicit retry immediately.
+		status := s.Env.RuntimeStatusMapFresh()
 		for _, robot := range result.Robots {
 			if robot.State != robotcap.ActionStateAccepted {
 				continue
 			}
-			if st, ok := status[robot.UID]; ok && robotcap.ActiveRuntimeStatus(st) {
-				confirmed++
+			if st, ok := status[robot.UID]; ok && (robotcap.ActiveRuntimeStatus(st) || st.StateName == robotcap.RuntimeStateWrong) {
+				resolved++
 			}
 		}
-		if confirmed >= result.Accepted {
+		if resolved >= result.Accepted {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	status := s.Env.RuntimeStatusMap()
+	status := s.Env.RuntimeStatusMapFresh()
 	result.Confirmed = 0
 	result.Failed = 0
 	for i := range result.Robots {
@@ -277,6 +279,10 @@ func (s SessionService) confirmOnline(result *robotcap.CommandResult, timeout ti
 				result.Robots[i].State = robotcap.ActionStateRunning
 			}
 			result.Confirmed++
+		} else if st, ok := status[result.Robots[i].UID]; ok && st.StateName == robotcap.RuntimeStateWrong {
+			result.Robots[i].State = robotcap.ActionStateFailed
+			result.Robots[i].Message = fmt.Sprintf("server rejected character data (disconnect_reason=%d); check inventory before retrying", st.DisconnectReason)
+			result.Failed++
 		} else if cancelled {
 			result.Robots[i].State = robotcap.ActionStateCancelled
 			result.Robots[i].Message = "robot is shutting down"
