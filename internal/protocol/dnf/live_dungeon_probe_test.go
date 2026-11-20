@@ -198,63 +198,53 @@ func TestLiveDungeonProbe(t *testing.T) {
 		// Town entity records carry the unique ids of the other players in the
 		// room. Invite each candidate as a party peer; NPCs simply do not answer
 		// and the robot accepts.
-		// The server only pushes an entity record when that player moves, so wait
-		// for a second entity while the robot is being driven around the room.
-		deadline := time.Now().Add(25 * time.Second)
+		// Entities only appear as other players move, so keep scanning and invite
+		// each newly seen peer until a party forms or the window expires.
+		invited := map[uint16]bool{}
+		deadline := time.Now().Add(30 * time.Second)
 		for time.Now().Before(deadline) {
 			vo.mu.Lock()
-			count := len(vo.townEntityPositions)
-			vo.mu.Unlock()
-			if count >= 2 {
-				break
+			pending := make([]uint16, 0, len(vo.townEntityPositions))
+			for uniqueID := range vo.townEntityPositions {
+				if !invited[uniqueID] {
+					pending = append(pending, uniqueID)
+				}
 			}
-			time.Sleep(500 * time.Millisecond)
-		}
-		vo.mu.Lock()
-		candidates := make([]uint16, 0, len(vo.townEntityPositions))
-		for uniqueID := range vo.townEntityPositions {
-			candidates = append(candidates, uniqueID)
-		}
-		vo.mu.Unlock()
-		vo.mu.Lock()
-		for uniqueID, entity := range vo.townEntityPositions {
-			t.Logf("town entity %d at (%d,%d)", uniqueID, entity.x, entity.y)
-		}
-		vo.mu.Unlock()
-		t.Logf("town entities: %v", candidates)
-		for _, uniqueID := range candidates {
-			// Our own character stands at the spawn point; inviting it would
-			// only auto-accept against ourselves.
-			vo.mu.Lock()
-			entity := vo.townEntityPositions[uniqueID]
-			vo.mu.Unlock()
-			if int(entity.x) == birthX && int(entity.y) == birthY {
-				t.Logf("skipping self %d", uniqueID)
-				continue
-			}
-			body := make([]byte, liveRequestBody)
-			binary.LittleEndian.PutUint16(body[0:2], uniqueID)
-			body[2] = 0 // party request
-			packet, err := buildSendPacket(10, uint16(vo.PacketID), body, vo.Cipher)
-			if err != nil {
-				t.Fatalf("build peer request: %v", err)
-			}
-			vo.PacketID++
-			if !vo.sendRaw(packet) {
-				t.Logf("peer request %d was not sent", uniqueID)
-				continue
-			}
-			t.Logf("invited %d", uniqueID)
-			time.Sleep(700 * time.Millisecond)
-			vo.mu.Lock()
 			self := vo.partySelfPeer.uniqueID
-			peers := len(vo.partyPeers)
 			vo.mu.Unlock()
 			if self != 0 {
-				t.Logf("party formed: self=%d peers=%d", self, peers)
+				t.Logf("party formed: self=%d", self)
 				break
 			}
+			for _, uniqueID := range pending {
+				invited[uniqueID] = true
+				vo.mu.Lock()
+				entity := vo.townEntityPositions[uniqueID]
+				vo.mu.Unlock()
+				if int(entity.x) == birthX && int(entity.y) == birthY {
+					t.Logf("skipping self %d", uniqueID)
+					continue
+				}
+				body := make([]byte, liveRequestBody)
+				binary.LittleEndian.PutUint16(body[0:2], uniqueID)
+				body[2] = 0
+				packet, err := buildSendPacket(10, uint16(vo.PacketID), body, vo.Cipher)
+				if err != nil {
+					t.Fatalf("build peer request: %v", err)
+				}
+				vo.PacketID++
+				if !vo.sendRaw(packet) {
+					t.Logf("peer request %d was not sent", uniqueID)
+					continue
+				}
+				t.Logf("invited %d at (%d,%d)", uniqueID, entity.x, entity.y)
+			}
+			time.Sleep(600 * time.Millisecond)
 		}
+		vo.mu.Lock()
+		peer := vo.partyPeers
+		vo.mu.Unlock()
+		t.Logf("party peers after invite: %d", len(peer))
 		t.Logf("after invite: %s", liveSnapshotLine(vo))
 		time.Sleep(2 * time.Second)
 	}
