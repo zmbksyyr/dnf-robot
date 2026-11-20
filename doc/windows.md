@@ -703,3 +703,40 @@ Windows 10 IoT Enterprise LTSC x64 build 19044、Go 1.26.4；Linux 本轮仅构�
 `baseline-tests.log`、`all-tests.log`、两份 `*-bench.log`、`live-load.private.json` 及
 `validation.private.json`。服务及数据库正常停止后恢复隔离包的 Robot 和资源清单并
 核对 SHA-256；没有修改数据库夹具、客户端、原 ELF/PVF 或正式发布包。
+
+## 旧 PVF 夹具造成的登录拒绝及 550 手动回归（2026-11-20）
+
+上一节的失败继续定位到原 ELF 的背包校验：握手、选角已经完成，随后通知 199 的
+断开原因为 36。隔离进程的被动观察保留原校验返回值，首先确认自由交易装备错误地
+带有封装标记，原错误码 5601；修正这一标记后，校验又在旧任务物品处返回 5494，
+表示原服务端没有找到物品。仅清六个旧任务条目的早期对照仍失败，不能单独算作根因。
+
+备份后的隔离夹具共临时修正 2028 处封装标记、3294 个旧任务条目和 34 个经原服务端
+校验拒绝的旧装备槽。最后三名角色的同类错误来自独立宠物栏，原服务端确认旧宠物
+不存在；另备份宠物压缩块及 creature_items 精确记录后临时处理三份夹具。只凭导出
+目录缺少 ID 不能判无效：原服务端实际能找到未出现在导出目录的材料 8388 及两个现金
+物品。产品没有新增按导出目录自动清空背包或宠物的逻辑；当前摆摊池已有封装类型筛选，
+本轮没有将旧夹具错误认定为当前生成器缺陷。
+
+部分诊断重启曾由测试器默认启动较早的外部构建，只用于原 ELF 拒绝路径的数据定位。
+最终回归移除 Robot 观察覆盖和游戏校验探针，显式选择隔离包，并逐一核对实际运行
+GUI、Robot 主进程及 Web 子进程的路径和哈希。Robot 为 1adca2f 阶段通过检查的普通
+候选，SHA-256 为 18738649bf7f6024299632272eeb20170d58d93c35b91bec8c8bf9248a369e15。
+
+最终约 85.1 秒达到 550 手动在线，连续约 104.9 秒观察保持 550；五个角色的移动命令
+全部确认，最终 550 个账号正常退出。稳态 Robot 主进程工作集 201.6–202.2 MiB，
+Web 子进程 18.6–18.8 MiB，game 1180.9–1181.0 MiB。这是无图形客户端、自动行为关闭
+的短观察，没有混合摆摊、副本或 Linux 新实测，不能作为战斗性能、长期稳定性或相对
+原生性能的结论，也没有同场修改前比较可量化调度优化收益。
+
+失败重连对照中曾出现运行时会话已退出、退出接口已确认，但四个数据库账号状态随后
+仍为在线的现象，根因尚未定位；该次恢复前正常停止原 game，确认进程退出后再回滚。
+失败现场保留，不能将最终成功登录后的正常退出覆盖此边界问题。最终回归的全部背包
+压缩字节及三份宠物相关记录恢复并核对，服务、数据库正常停止，三个临时文件按哈希
+恢复，原 ELF/PVF、客户端及正式发布包未改。本轮只新增验证记录，没有业务源码修改。
+
+平台为 Windows 10 IoT Enterprise LTSC x64 build 19044、原 ELF x86、MySQL 5.7.44；
+证据位于相邻 Native 仓库外 ../x/dnf-gm-output/evidence/login-550-20261120/：
+sealed-only-nocache-comparison.private.json、sealed-and-missing-6-nocache-v2-comparison.private.json、
+remaining-verification.private.json、original-item-lookup.private.json、stock-stage.private.json、
+corrected-stock-550.private.json、validation.private.json 及 restored.private.json。
