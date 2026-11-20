@@ -1402,3 +1402,35 @@ slot0 id4 lvl1 | slot1 id47 lvl1 data3 | ... | slot9 id235 lvl0 | ... 共 26 条
 
 另外查清 PVF 侧状态数据的覆盖面：`skill_state_catalog.json` 只含**职业 8（38 条）与职业 10
 （8 条）**，职业 9 没有任何 state 数据。所以要实机验证施法，必须换一个**职业 8** 的机器人角色。
+
+## 实机通关：零配置选技能 → 寻怪 → 接近 → 攻击（2026-11-21）
+
+上一轮定位到“只有职业 8/10 有 PVF 状态数据，而能登录的机器人只有职业 9”。换个思路解决：
+**让机器人自己创建一个职业 8 的角色**。把 `robot_config.ini` 的 `jobs` 临时限制为 `8`，
+调用 `createRobots {count:1}`，机器人通过自己的建角路径造出：
+
+```
+uid=17000021 cid=23 job=8 level=55 狂虎帝 艾尔文防线(1/0)
+```
+
+这条角色能正常登录（与 17000020/cid22 一样走机器人自建路径，不是库里预置的坏档）。
+夹具再把队长动作换成“带旧式技能状态”的帧（`buildPartyLegacySkillStateBody(..., 8, ...)`），
+让机器人确认队长使用的是旧式通道。实机日志完整走通：
+
+```
+[PARTY_DUNGEON_SKILL_PROFILE_INFO] learned=14
+[PARTY_AUTO_ACCEPT] peer_unique_id=7
+[PARTY_DUNGEON_SKILL_PROFILE] job=8 auto=true whitelist=40 pvf=38 pvf_matched=38 kept_without_pvf=2 learned_candidates=4
+[PARTY_DUNGEON_MOVE] from=(970,300) to=(1010,300)
+[PARTY_DUNGEON_NAV]   active=true move=true reason=move
+[PARTY_DUNGEON_ATTACK] job=8 state=8 step=0 target=11020103 recover_in=900ms
+[PARTY_DUNGEON_ATTACK] ... step=1/2/3 ...  ← 四段连击循环
+```
+
+这一次同时证明了：
+
+- **零配置技能自动选择在生产实例上有效**：`mode=auto`、40 条候选、38 条命中 PVF、4 条可施放；
+- 机器人会**自己走进攻击距离**（`reason=move`）并**连续攻击**同一目标（`step` 0→3 循环）；
+- 攻击用的是旧式通道 `state=8`（普攻），与目标职业（8）匹配。
+
+实验后已把 `jobs` 恢复为全职业池。仍未验证：怪物死亡→清图判定→过图→回城→循环。

@@ -452,6 +452,16 @@ func liveLeadFrames(t *testing.T, vo *RobotVo, startX, startY int) {
 			t.Logf("leader frame %d: %v", step, err)
 			return
 		}
+		if step%2 == 0 {
+			// A real leader also shows its own legacy skill state; the Robot only
+			// switches to the legacy attack transport after seeing one.
+			legacy := buildPartyLegacySkillStateBody(vo.partySelfPeer.uniqueID, 8, []byte{byte(step % 4)}, partySkillToken(vo.UID, time.Now()))
+			if seq, ok := vo.nextPartyTQOSSequenceUnsafe(peer.slot, route, false); ok {
+				if packet, err := buildPartyUnreliablePacketChecked(seq, vo.partySelfPeer.slot, vo.partyDungeonFlags, legacy); err == nil {
+					vo.sendPartyTransportUnsafe(vo.partyUDPConn, peer, route, packet)
+				}
+			}
+		}
 		sent++
 		time.Sleep(200 * time.Millisecond)
 	}
