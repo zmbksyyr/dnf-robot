@@ -1680,3 +1680,24 @@ $_siginfo...si_addr = 0xfff95878
 可行的修复方向（下一轮实施其一）：
 1. 写一个 `LD_PRELOAD` 的 brk 垫片，把 brk 请求改到独立 mmap 区域（等同 Windows 宿主的做法）；
 2. 启动时先把栈"撑开"（触碰若干 MB）再让游戏跑，使 brk 提前失败而不是挤压栈，观察游戏是否优雅降级。
+
+## 两个 brk 垫片都无效：游戏绕过 libc（2026-11-21）
+
+按上一轮的方案做了两个 32 位 `LD_PRELOAD` 垫片（zig 交叉编译，均确认已加载进游戏进程）：
+
+1. `dnf_heap_shim.so`：`mallopt(M_MMAP_THRESHOLD, 64K)`，让 malloc 的大块走 mmap；
+2. `dnf_brk_shim.so`：直接接管 `sbrk`/`brk`，用独立 mmap 竞技场（768 MB）承载 brk。
+
+结果：**两者都不改变布局**。加垫片后 gdb 里依旧是
+
+```
+0xf7ffe000 0xffecc000  0x7ed1000  [heap]     ← 132 MB
+0xfffdd000 0xffffe000  0x21000    [stack]    ← 132 KB
+```
+
+崩点也不变。这说明游戏既不通过 glibc 的 `malloc` 扩展竞技场，也不通过 PLT 调 `sbrk`/`brk`
+——它很可能**直接发 `int 0x80` 的 brk 系统调用**（或自行指定高位 brk 地址）。这正是 dnf-native
+在 Windows 上能幸免的原因：它拦截的是系统调用层，而我们只能用 libc 层的预加载。
+
+要真正修好 Linux 侧启动，需要在系统调用层做（seccomp/ptrace 或改 ELF 本身），成本明显高于本轮
+能覆盖的范围。当前以 Windows 实例继续推进主线，Linux 侧记录为"已知启动回归 + 根因定位完成"。
