@@ -79,26 +79,37 @@ func buildPartyDungeonMotion(entries []partyDungeonMotion) ([]byte, bool) {
 	if len(entries) == 0 || len(entries) > 255 {
 		return nil, false
 	}
-	payload := []byte{byte(len(entries))}
+	// Size the payload exactly and build it inside the frame buffer: this runs for
+	// every outgoing party frame and used to cost seven allocations.
+	size := 1
 	for _, entry := range entries {
-		payload = append(payload, entry.entity[:]...)
-		payload = append(payload, entry.controller[:]...)
-		payload = append(payload, entry.flags[:]...)
-		payload = append(payload, byte(entry.modes), byte(entry.modes>>8), byte(entry.modes>>16))
+		size += 14
+		for field := 0; field < 12; field++ {
+			if entry.mode(field) == 0 {
+				size += 4
+			}
+		}
+	}
+	body := make([]byte, 7, 7+size)
+	body[0], body[1] = 1, 4
+	body = append(body, byte(len(entries)))
+	for _, entry := range entries {
+		body = append(body, entry.entity[:]...)
+		body = append(body, entry.controller[:]...)
+		body = append(body, entry.flags[:]...)
+		body = append(body, byte(entry.modes), byte(entry.modes>>8), byte(entry.modes>>16))
 		for group := 9; group >= 0; group -= 3 {
 			for field := group; field < group+3; field++ {
 				if entry.mode(field) == 0 {
-					payload = binary.LittleEndian.AppendUint32(payload, entry.values[field])
+					body = binary.LittleEndian.AppendUint32(body, entry.values[field])
 				}
 			}
 		}
 	}
-	body := make([]byte, 7+len(payload))
-	body[0], body[1] = 1, 4
-	checksum := partyPayloadChecksum(payload)
+	checksum := partyPayloadChecksum(body[7:])
 	copy(body[3:7], checksum[:])
-	for i, value := range payload {
-		body[7+i] = value ^ 0x7e
+	for i := 7; i < len(body); i++ {
+		body[i] ^= 0x7e
 	}
 	return body, true
 }

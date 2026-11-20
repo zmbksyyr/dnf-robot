@@ -1997,3 +1997,24 @@ if (user->get_state() != 3) return 0x7fffffff;   // 静默丢弃
 
 顺带说明两种攻击形态的触发条件：队长用旧式通道 → 机器人普攻（四段连击）；队长不用旧式通道 →
 机器人用目录技能。两者都不是硬编码技能列表。
+
+## 出站帧构造：7 次分配降到 1 次（2026-11-21）
+
+给 `buildPartyDungeonMotion` 补了基准，发现它是出站热路径里最贵的一段：
+
+```
+改前  BenchmarkBuildPartyDungeonMotion  340.1 ns/op  336 B/op  7 allocs/op
+改后  BenchmarkBuildPartyDungeonMotion  255.9 ns/op   80 B/op  1 alloc/op
+```
+
+改法：先按 `entries` 的 mode 位精确算出载荷长度，直接在帧缓冲里预留（`make([]byte, 7, 7+size)`），
+逐字段 append，校验和就地计算、载荷就地 XOR——整个函数只剩一次分配。
+
+过程中踩了一个自造 bug：重写时漏掉了载荷首字节的**记录条数**，解码端立刻拒收（单元测试捕获），
+补回后全部测试通过。
+
+实机复核：机器人仍正常攻击与接近（`[PARTY_DUNGEON_ATTACK] step=0..3`、`[PARTY_DUNGEON_NAV] in-range`），
+说明新构造的帧被对端正确解析。
+
+量级说明：每帧 255 ns，按每机器人 5 帧/秒、600 机器人算是每秒 0.75 毫秒的构造开销——绝对量很小，
+但这是每帧都要走的路径，分配次数从 7 降到 1 对 GC 压力有实际意义。

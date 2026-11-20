@@ -79,3 +79,33 @@ func BenchmarkPartyDungeonFrameBodies(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkBuildPartyDungeonMotion(b *testing.B) {
+	leader := partyDungeonPlayerReference(7)
+	robot := partyDungeonPlayerReference(8)
+	monster := [4]byte{0x11, 2, 1, 3}
+	entries := []partyDungeonMotion{
+		{entity: leader, controller: leader, modes: 0x415555, flags: [3]byte{2, 0, 0x10}},
+		{entity: robot, controller: robot, modes: 0x415555, flags: [3]byte{2, 0, 0x10}},
+		{entity: monster, controller: monster, modes: 0x415555, flags: [3]byte{2, 0, 0x10}},
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		body, ok := buildPartyDungeonMotion(entries)
+		if !ok || len(body) == 0 {
+			b.Fatal("build rejected")
+		}
+	}
+}
+
+func BenchmarkBuildPartyUnreliablePacket(b *testing.B) {
+	body := make([]byte, 48)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := buildPartyUnreliablePacketChecked(uint32(i), 1, 0, body); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
