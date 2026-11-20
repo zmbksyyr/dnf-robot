@@ -504,6 +504,13 @@ func TestLiveDungeonProbe(t *testing.T) {
 				time.Sleep(1500 * time.Millisecond)
 			}
 		}
+		if liveEnvInt(t, "DNF_LIVE_POST_MOVE", 0) == 1 {
+			// A new room has no monsters yet and the party stands somewhere else:
+			// report exactly that and see whether the Robot stops attacking and
+			// follows instead.
+			liveLog("post-move: empty room, leader at (%d,%d)", birthX+600, birthY+200)
+			liveLeadFrames(t, vo, birthX+600, birthY+200)
+		}
 		drive := liveEnvInt(t, "DNF_LIVE_DRIVE", 0)
 		x, y := birthX, birthY
 		for step := 0; step < drive; step++ {
