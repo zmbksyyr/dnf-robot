@@ -1360,3 +1360,22 @@ state 数据），两者都需要额外验证，本轮未做。
 技能存档补丁已确认落在库里（解压后索引表含 235，`has235 True`），但**仍未观察到
 `learned_candidates>0` 的新档案行**——实例重启后的两次运行机器人没有进房（机器人侧无
 `PARTY_AUTO_ACCEPT`），因此施法效果依旧未验证。
+
+## 按会话 id 直接邀请（2026-11-21）
+
+实体表轮询仍然会漏：机器人走动时实体 id 与时刻都在变，靠“看到再邀请”存在概率性失败。改为
+从服务端登录日志取**会话 id**（`[USER LOGIN] ... (SlotIDX: N)(IncreID: M)`，其中 M 就是
+该连接的唯一 id），再用 `DNF_LIVE_PEER` 直接对该 id 连续邀请。实测一次成功：
+
+```
+[PARTY_AUTO_ACCEPT] uid=17000020 peer_unique_id=3 request_id=0     ← 03:00:42
+[PARTY_DUNGEON_MOVE] uid=17000020 peer=17000015 from=(970,300) to=(1010,300)
+[PARTY_DUNGEON_MOVE] uid=17000020 peer=17000015 from=(1450,300) to=(1490,300)
+```
+
+至此“邀请 → 进图 → 看到怪 → 移动”都可以在一次运行里稳定复现，不再依赖偶然的实体广播。
+
+技能侧仍无进展：存档补丁确实在库里（`has235 True`），但重启后的运行没有产生新的
+`[PARTY_DUNGEON_SKILL_PROFILE]` 行，也没有 `[PARTY_DUNGEON_SKILL]` 施法记录，
+因此**施法与击杀仍未被证实**。下一步应确认技能档案在重启后是否真的重建
+（可在 `ensurePartySkillProfileUnsafe` 的早退分支加一条原因日志）。

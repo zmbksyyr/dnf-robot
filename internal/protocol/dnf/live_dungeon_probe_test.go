@@ -200,7 +200,34 @@ func TestLiveDungeonProbe(t *testing.T) {
 		// and the robot accepts.
 		// Entities only appear as other players move, so keep scanning and invite
 		// each newly seen peer until a party forms or the window expires.
-		invited := map[uint16]bool{}
+		if peerID := liveEnvInt(t, "DNF_LIVE_PEER", 0); peerID > 0 {
+			// The server log names the peer's session id directly; using it avoids
+			// depending on whether the peer happened to walk into view.
+			for attempt := 0; attempt < 40; attempt++ {
+				body := make([]byte, liveRequestBody)
+				binary.LittleEndian.PutUint16(body[0:2], uint16(peerID))
+				body[2] = 0
+				packet, err := buildSendPacket(10, uint16(vo.PacketID), body, vo.Cipher)
+				if err != nil {
+					t.Fatalf("build peer request: %v", err)
+				}
+				vo.PacketID++
+				if !vo.sendRaw(packet) {
+					t.Logf("direct peer request %d was not sent", peerID)
+					break
+				}
+				time.Sleep(700 * time.Millisecond)
+				vo.mu.Lock()
+				self := vo.partySelfPeer.uniqueID
+				vo.mu.Unlock()
+				if self != 0 {
+					t.Logf("party formed with %d: self=%d", peerID, self)
+					break
+				}
+			}
+			t.Logf("direct invite finished: %s", liveSnapshotLine(vo))
+			time.Sleep(2 * time.Second)
+		} else {		invited := map[uint16]bool{}
 		deadline := time.Now().Add(30 * time.Second)
 		for time.Now().Before(deadline) {
 			vo.mu.Lock()
@@ -245,6 +272,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 		peer := vo.partyPeers
 		vo.mu.Unlock()
 		t.Logf("party peers after invite: %d", len(peer))
+		}
 		t.Logf("after invite: %s", liveSnapshotLine(vo))
 		time.Sleep(2 * time.Second)
 	}
