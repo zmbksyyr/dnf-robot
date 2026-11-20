@@ -429,16 +429,36 @@ func liveLeadFrames(t *testing.T, vo *RobotVo, startX, startY int) {
 		}
 		// The leader's client also broadcasts the monsters it sees; that is how
 		// the Robot learns what to approach and attack.
-		monster := partyDungeonMotion{entity: [4]byte{0x11, 2, 1, 3}, controller: [4]byte{0x11, 2, 1, 3}, modes: 0x415555, flags: [3]byte{2, 0, 0x10}}
+		monsterRef := [4]byte{0x11, 2, 1, 3}
+		killAfter := liveEnvInt(t, "DNF_LIVE_KILL_AFTER", 0)
+		monster := partyDungeonMotion{entity: monsterRef, controller: monsterRef, modes: 0x415555, flags: [3]byte{2, 0, 0x10}}
 		for i, value := range []float32{x + 120, y} {
 			monster.modes &^= 3 << uint((9+i)*2)
 			monster.values[9+i] = math.Float32bits(value)
 		}
-		body, ok := buildPartyDungeonMotion([]partyDungeonMotion{entry, robotEntry, monster})
+		route := vo.partyRouteForPeerUnsafe(peer.slot)
+		dead := killAfter > 0 && step >= killAfter
+		if dead && step == killAfter {
+			// Report the kill exactly once; afterwards the monster is simply gone
+			// from the room, the same way a cleared room looks to the Robot.
+			body, ok := livePartyCommandBody(23, monsterRef[:])
+			if ok {
+				if seq, ok := vo.nextPartyTQOSSequenceUnsafe(peer.slot, route, false); ok {
+					if packet, err := buildPartyUnreliablePacketChecked(seq, vo.partySelfPeer.slot, vo.partyDungeonFlags, body); err == nil {
+						vo.sendPartyTransportUnsafe(vo.partyUDPConn, peer, route, packet)
+						t.Logf("reported monster death after %d steps", step)
+					}
+				}
+			}
+		}
+		motions := []partyDungeonMotion{entry, robotEntry}
+		if !dead {
+			motions = append(motions, monster)
+		}
+		body, ok := buildPartyDungeonMotion(motions)
 		if !ok {
 			t.Fatalf("build leader motion")
 		}
-		route := vo.partyRouteForPeerUnsafe(peer.slot)
 		sequence, ok := vo.nextPartyTQOSSequenceUnsafe(peer.slot, route, false)
 		if !ok {
 			t.Logf("leader frame %d: no sequence", step)
@@ -466,4 +486,21 @@ func liveLeadFrames(t *testing.T, vo *RobotVo, startX, startY int) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Logf("sent %d leader party frames to slot=%d uid=%d", sent, peer.slot, peer.uniqueID)
+}
+// livePartyCommandBody encodes one party dungeon command body (command 6/12/20/23)
+// the same way the Robot decodes it: a command word, a checksummed payload and a
+// per-byte XOR mask.
+func livePartyCommandBody(command uint16, plain []byte) ([]byte, bool) {
+	if len(plain) < 4 {
+		return nil, false
+	}
+	checksum := partyPayloadChecksum(plain)
+	body := make([]byte, 7+len(plain))
+	body[0] = 2
+	binary.LittleEndian.PutUint16(body[1:3], command)
+	copy(body[3:7], checksum[:4])
+	for i, value := range plain {
+		body[7+i] = value ^ 0x7e
+	}
+	return body, true
 }
