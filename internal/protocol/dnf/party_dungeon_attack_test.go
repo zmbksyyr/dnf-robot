@@ -1,12 +1,126 @@
 package dnf
 
 import (
+	"encoding/binary"
 	"net"
 	"testing"
 	"time"
 
 	"robot/internal/shared"
 )
+
+func skillTargetTestWorld(selfID uint16, now time.Time) partyDungeonWorld {
+	return partyDungeonWorld{actors: map[[4]byte]partyDungeonActor{
+		partyDungeonPlayerReference(selfID): {position: partyDungeonPosition{x: 100, y: 300, known: 7}, seenAt: now},
+		{0x11, 2, 1, 3}:                     {position: partyDungeonPosition{x: 30, y: 300, known: 7}, seenAt: now},
+	}}
+}
+
+func TestActiveSkillTargetsLiveEnemyBeforeSendingAndRecoversAfterItsDeath(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "envelope", true: "legacy"}[legacy], func(t *testing.T) {
+			now := time.Now()
+			r, self, enemy := basicAttackTestRobot(now)
+			r.partyDungeonLegacySkills = legacy
+			r.partySkillJob = 8
+			r.partySkillNextAt = now
+			r.partySkillCandidates = []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}, cooldown: 15 * time.Second}}
+			receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer receiver.Close()
+			sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sender.Close()
+			remote := receiver.LocalAddr().(*net.UDPAddr)
+			r.partyPeers[0].outerIP, r.partyPeers[0].port = remote.IP, uint16(remote.Port)
+			before := r.partyDungeonWorld.actors[self].position
+			r.flushPartyDungeonSkillUnsafe(sender, now)
+			buf := make([]byte, 4096)
+			receiver.SetReadDeadline(time.Now().Add(time.Second))
+			n, _, err := receiver.ReadFromUDP(buf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bodies, ok := partyDungeonFrameBodies(buf[:n])
+			if !ok || len(bodies) != 2 {
+				t.Fatalf("skill was not preceded by facing: %x", buf[:n])
+			}
+			motion, ok := decodePartyDungeonMotion(bodies[0])
+			if !ok || len(motion) != 1 || motion[0].entity != self || motion[0].controller != self || motion[0].flags[2]&0x20 != 0 || before.apply(motion[0]) != before {
+				t.Fatalf("skill did not face the enemy without moving: %+v", motion)
+			}
+			wantCommand := uint16(partyDungeonEnvelopeCommand)
+			if legacy {
+				wantCommand = 5
+			}
+			if binary.LittleEndian.Uint16(bodies[1][1:3]) != wantCommand || r.partySkillReadyAt[3] != now.Add(15*time.Second) {
+				t.Fatal("skill wire or cooldown changed")
+			}
+			actor := r.partyDungeonWorld.actors[enemy]
+			actor.dead = true
+			r.partyDungeonWorld.actors[enemy] = actor
+			r.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, 0), 1, r.partyPeers[0])
+			r.flushPartyDungeonSkillUnsafe(sender, now.Add(partySkillRecoverDelay))
+			n, _, err = receiver.ReadFromUDP(buf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bodies, ok = partyDungeonFrameBodies(buf[:n])
+			if !ok || len(bodies) != 1 || !r.partySkillRecoverAt.IsZero() {
+				t.Fatal("last enemy dying prevented recovery")
+			}
+		})
+	}
+}
+
+func TestActiveSkillSkipsEmptyDeadStaleAndUnknownTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*RobotVo, [4]byte, [4]byte, time.Time)
+	}{
+		{"empty", func(r *RobotVo, self, enemy [4]byte, now time.Time) { delete(r.partyDungeonWorld.actors, enemy) }},
+		{"dead", func(r *RobotVo, self, enemy [4]byte, now time.Time) {
+			a := r.partyDungeonWorld.actors[enemy]
+			a.dead = true
+			r.partyDungeonWorld.actors[enemy] = a
+		}},
+		{"stale", func(r *RobotVo, self, enemy [4]byte, now time.Time) {
+			a := r.partyDungeonWorld.actors[enemy]
+			a.seenAt = now.Add(-4 * time.Second)
+			r.partyDungeonWorld.actors[enemy] = a
+		}},
+		{"unknown-self", func(r *RobotVo, self, enemy [4]byte, now time.Time) { delete(r.partyDungeonWorld.actors, self) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			r, self, enemy := basicAttackTestRobot(now)
+			r.partySkillJob = 8
+			r.partySkillNextAt = now
+			r.partySkillCandidates = []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}, cooldown: 15 * time.Second}}
+			tc.change(r, self, enemy, now)
+			receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer receiver.Close()
+			sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sender.Close()
+			remote := receiver.LocalAddr().(*net.UDPAddr)
+			r.partyPeers[0].outerIP, r.partyPeers[0].port = remote.IP, uint16(remote.Port)
+			r.flushPartyDungeonSkillUnsafe(sender, now)
+			if r.partyTQOSReliableSeq[0][1] != 0 || !r.partySkillRecoverAt.IsZero() || len(r.partySkillReadyAt) != 0 {
+				t.Fatal("cast without a current target consumed transport, recovery or cooldown")
+			}
+		})
+	}
+}
 
 func basicAttackTestRobot(now time.Time) (*RobotVo, [4]byte, [4]byte) {
 	world, self, _, enemy := navigationTestWorld(now)

@@ -212,12 +212,27 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 	if r.partyDungeonLegacySkills {
 		body = buildPartyLegacySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
 	}
+	records := [][]byte{body}
+	if reason == "CAST" {
+		// These are combat casts. Empty rooms should leave the actor free to
+		// regroup; a target behind us must be faced before its skill state.
+		position := r.partyDungeonWorld.actors[partyDungeonPlayerReference(r.partySelfPeer.uniqueID)].position
+		_, target, ok := r.partyDungeonWorld.nearestMonster(position, now)
+		if !ok {
+			return false
+		}
+		face, ok := buildPartyAttackFacing(r.partySelfPeer.uniqueID, position, target)
+		if !ok {
+			return false
+		}
+		records = [][]byte{face, body}
+	}
 	purpose := "skill-cast"
 	if reason == "RECOVER" {
 		purpose = "skill-recover"
 	}
 	route := r.partyRouteForPeerUnsafe(peer.slot)
-	destination, err := r.sendPartyReliableUnsafe(conn, peer, r.partyDungeonFlags, [][]byte{body}, purpose, now)
+	destination, err := r.sendPartyReliableUnsafe(conn, peer, r.partyDungeonFlags, records, purpose, now)
 	if err != nil {
 		if r.shouldLogPartyRuntimeErrorUnsafe(now) {
 			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d state=%d data=%x route=%d destination=%s err=%v\n", reason, r.UID, state, stateData, route, destination, err)

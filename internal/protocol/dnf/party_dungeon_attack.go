@@ -31,15 +31,7 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 	// Face the selected enemy without changing position, then start the swing
 	// in the same ordered reliable frame. This also handles a monster crossing
 	// behind an actor that has already stopped walking into attack range.
-	entry := partyDungeonMotion{entity: self, controller: self, modes: 0x415555, flags: [3]byte{2, 0, 0x10}}
-	if target.x >= position.x {
-		entry.flags[2] |= 0x20
-	}
-	for i, value := range []float32{position.x, position.y} {
-		entry.modes &^= 3 << uint((9+i)*2)
-		entry.values[9+i] = math.Float32bits(value)
-	}
-	face, ok := buildPartyDungeonMotion([]partyDungeonMotion{entry})
+	face, ok := buildPartyAttackFacing(r.partySelfPeer.uniqueID, position, target)
 	if !ok {
 		return false
 	}
@@ -52,4 +44,17 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 	r.partyDungeonFollow = nil
 	foundationlog.Robotf("[PARTY_DUNGEON_ATTACK] uid=%d job=%d state=8 target=%x recover_in=%s\n", r.UID, r.partySkillJob, r.partyDungeonWorld.target, partySkillRecoverDelay)
 	return true
+}
+
+func buildPartyAttackFacing(uniqueID uint16, position, target partyDungeonPosition) ([]byte, bool) {
+	self := partyDungeonPlayerReference(uniqueID)
+	entry := partyDungeonMotion{entity: self, controller: self, modes: 0x415555, flags: [3]byte{2, 0, 0x10}}
+	if target.x >= position.x {
+		entry.flags[2] |= 0x20
+	}
+	for i, value := range []float32{position.x, position.y} {
+		entry.modes &^= 3 << uint((9+i)*2)
+		entry.values[9+i] = math.Float32bits(value)
+	}
+	return buildPartyDungeonMotion([]partyDungeonMotion{entry})
 }

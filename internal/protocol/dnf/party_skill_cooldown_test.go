@@ -17,6 +17,7 @@ func TestFailedDungeonSkillSendDoesNotStartCooldown(t *testing.T) {
 		partySkillCandidates: []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}, cooldown: 15 * time.Second}},
 	}
 	r.partyPeers[0] = partyIPPeer{uniqueID: 1, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
+	r.partyDungeonWorld = skillTargetTestWorld(r.partySelfPeer.uniqueID, now)
 	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
