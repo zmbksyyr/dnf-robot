@@ -1052,3 +1052,29 @@ enabled=true mode=auto entries=198`，与 Windows 侧一致。这说明“单开
 回城）仍无实机证据；Linux 侧的运行是服务与机器人层，不含图形客户端。环境脚本与
 证据在仓库外 `D:\cache\dnf\x\linux-server\`（`run.sh`、`stop.sh`、`start_game.sh`、
 `evidence-linux.json`）与 `D:\cache\dnf\x\wsl\`。
+
+## 真实客户端接入与输入限制（2026-11-21）
+
+为验证副本闭环，把 `x\clients\jbz69` 客户端接到隔离实例：用 Native 的“选择客户端”导入
+客户端 PVF 与密钥对后，实例 `Script.pvf` 与该客户端 SHA-256 一致
+（`FC88E293…6ED54F`），服务端 `publickey.pem` 与客户端一致，服务端重启后游戏正常初始化。
+启动器 `DNFLogin.exe` 的 Win32 控件可脚本化（`IDC_PLAYER` 1005／`IDC_PLAYER_PW` 1006／
+`IDC_BTN_LOGIN` 1009），登录后客户端依次到达“选择频道”“选择角色”。
+
+截图方面，该客户端是 800×600 无边框 D3D9 窗口，`CopyFromScreen`、`BitBlt` 与
+`PrintWindow(flag 0)` 都只能得到全黑；`PrintWindow` 的 `PW_RENDERFULLCONTENT`（flag 2）
+可以取到完整画面，但返回的 DIB 是上下颠倒的，必须按行反向后再阅读，否则会被误判成
+“镜像文字”。本次据此建立了可读的画面通道（`x\live\capture_game.py`、`shot.ps1`）。
+
+用机器人账号（口令 MD5('123456')）中的 17000015（Lv.79 鬼剑士）登录真实客户端时，服务端
+记录 `USER LOGINED!`、角色名与 `setCharacInfoDetail` 成功，约 15 秒后以
+`CUser::DisConnSig from (36)` 断开，即文档记载的物品校验断开码 36：机器人夹具角色的背包
+无法通过原版客户端触发的完整校验。这条路径因此不能直接当真人角色使用。
+
+更关键的阻塞是输入：客户端只渲染悬停效果，`mouse_event`、`SendInput`（绝对坐标）与
+`WM_LBUTTONDOWN/UP`、`WM_KEYDOWN` 均无法让“创建角色／游戏开始”等按钮动作，说明该客户端
+按硬件输入源过滤合成事件。仓库内的 GUI 自动化只能驱动 Native 控制台，不能驱动它。
+
+结论：本轮没有取得副本实机验收。可行路线有两条，都需要另行实现：一是用原版客户端的人在
+环路（人工按键），二是写一个协议级的“真人队长”夹具（登录、建队、邀请机器人、进图、
+过图）来驱动同一套 Robot 协议。两条路线都尚未进入仓库。
