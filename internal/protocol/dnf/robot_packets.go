@@ -39,7 +39,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 	}
 	if os.Getenv("DNF_TRACE_RX") == "1" {
 		line := fmt.Sprintf("[RX] typ=%d size=%d", packet.typ, packet.size)
-		if packet.typ == 48 {
+		if packet.typ == 16 || packet.typ == 48 {
 			if _, _, body, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti); err == nil {
 				line += fmt.Sprintf(" body=%x", body)
 			}

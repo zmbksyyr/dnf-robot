@@ -202,6 +202,19 @@ func TestLiveDungeonProbe(t *testing.T) {
 	t.Logf("sent finish loading")
 	time.Sleep(700 * time.Millisecond)
 
+	// Announce where we stand: the world-map index that normal dungeon selection
+	// needs comes from the area the user reports, not from the character record.
+	setArea := make([]byte, 12)
+	setArea[0], setArea[1] = byte(village), byte(area)
+	binary.LittleEndian.PutUint16(setArea[2:4], uint16(birthX))
+	binary.LittleEndian.PutUint16(setArea[4:6], uint16(birthY))
+	setArea[7] = 0x01
+	if setAreaPacket, err := buildSendPacket(38, uint16(vo.PacketID), setArea, vo.Cipher); err == nil {
+		vo.PacketID++
+		if vo.sendRaw(setAreaPacket) {
+			t.Logf("sent set area village=%d area=%d", village, area)
+		}
+	}
 	if os.Getenv("DNF_LIVE_INVITE") == "1" {
 		// Town entity records carry the unique ids of the other players in the
 		// room. Invite each candidate as a party peer; NPCs simply do not answer
@@ -355,16 +368,32 @@ func TestLiveDungeonProbe(t *testing.T) {
 		// A real client acknowledges the dungeon room loading and then walks.
 		// The party broadcast of that walking is what the Robot's follow loop
 		// consumes, so the probe drives itself around after the room loads.
-		// Answer the room loading notification, not the selection: too early and the
-		// server has nothing to finish loading yet.
-		time.Sleep(2500 * time.Millisecond)
-		finish, err := buildSendPacket(40, uint16(vo.PacketID), buildFinishLoadingPayload(0, 0), vo.Cipher)
-		if err != nil {
-			t.Fatalf("build dungeon finish loading: %v", err)
+		// Only answer once the room actually starts. Sending FinishLoad for a room
+		// the server never opened makes it drop the session instead of reporting why
+		// the selection was refused.
+		startedBy := time.Now().Add(8 * time.Second)
+		roomStarted := false
+		for time.Now().Before(startedBy) {
+			vo.mu.Lock()
+			roomStarted = !vo.partyDungeonEnteredAt.IsZero()
+			vo.mu.Unlock()
+			if roomStarted {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		vo.PacketID++
-		if vo.sendRaw(finish) {
-			t.Logf("sent dungeon finish loading")
+		if !roomStarted {
+			t.Logf("dungeon room did not start; selection was refused")
+		}
+		if roomStarted {
+			finish, err := buildSendPacket(40, uint16(vo.PacketID), buildFinishLoadingPayload(0, 0), vo.Cipher)
+			if err != nil {
+				t.Fatalf("build dungeon finish loading: %v", err)
+			}
+			vo.PacketID++
+			if vo.sendRaw(finish) {
+				t.Logf("sent dungeon finish loading")
+			}
 		}
 		if liveEnvInt(t, "DNF_LIVE_NEXT_ROOM", 0) == 1 {
 			// The party only starts once every member has finished loading; give

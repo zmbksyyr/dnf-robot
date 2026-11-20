@@ -1788,3 +1788,34 @@ FinishLoad 并等待全员加载完成）后重试过图。
 结合参考实现，下一步应从 `process_16.inc` 的后半段（成员村庄/区域核对、副本表查询、等级/疲劳校验）
 找出普通副本特有的拒绝分支，并确认它是否通过"返回负值 → 派发层断线"的方式结束会话。
 本轮到此为止，结论是：**普通副本的拒绝发生在 select 之后，不是字段形状问题**。
+
+## 普通副本被拒的真实原因：错误码 8（2026-11-21）
+
+改成"只有房间真的开始才发 FinishLoad"之后，普通副本**不再断线**，而是收到一张选图结果包：
+
+```
+[RX] typ=16 size=23 body=00087e0e7a7d0000
+```
+
+体里的第二个字节是 **0x08**，与参考实现的两处 `out.m_8 = 8` 完全对应：
+
+```c
+bool checkSpecial = ((short)req.m_dungeonIdx != (short)10000);
+if (checkSpecial && party != 0) {
+    const int worldIdx = G_GameWorld()->GetWorldMapIndex(user);
+    if (worldIdx <= 0) out.m_8 = 8;                       // 没有世界地图索引
+    else {
+        CWorldMap* wm = m_worldMapList.find_world_map(worldIdx);
+        if (!wm) { out.m_4 = 0x7fffffff; return 0; }
+        if (!wm->hasDungeon(dungeonIdx)) { out.m_8 = 8; return 0; }   // 世界图里没有这张图
+    }
+}
+```
+
+也就是说：**教程副本 10000 走 `checkSpecial=false` 跳过整段校验，而普通副本必须先有正确的世界地图索引**。
+本轮已补发 `SetArea(38)`（village/area/x/y 上报），错误码仍是 8，说明问题不在"区域未上报"，而更可能
+是**该世界图不包含 id 1/2**（`hasDungeon` 为假），或世界图索引来自别处（例如客户端打开世界地图时
+下发的那张图）。
+
+下一步：确认 艾尔文防线 当前世界图包含哪些副本 id（`m_worldMapList` 来自 PVF），据此换一个
+`hasDungeon` 为真的 id，或用正确的世界图索引。
