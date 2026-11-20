@@ -193,6 +193,45 @@ func TestLiveDungeonProbe(t *testing.T) {
 	t.Logf("sent finish loading")
 	time.Sleep(700 * time.Millisecond)
 
+	if os.Getenv("DNF_LIVE_INVITE") == "1" {
+		// Town entity records carry the unique ids of the other players in the
+		// room. Invite each candidate as a party peer; NPCs simply do not answer
+		// and the robot accepts.
+		time.Sleep(6 * time.Second)
+		vo.mu.Lock()
+		candidates := make([]uint16, 0, len(vo.townEntityPositions))
+		for uniqueID := range vo.townEntityPositions {
+			candidates = append(candidates, uniqueID)
+		}
+		vo.mu.Unlock()
+		t.Logf("town entities: %v", candidates)
+		for _, uniqueID := range candidates {
+			body := make([]byte, liveRequestBody)
+			binary.LittleEndian.PutUint16(body[0:2], uniqueID)
+			body[2] = 0 // party request
+			packet, err := buildSendPacket(10, uint16(vo.PacketID), body, vo.Cipher)
+			if err != nil {
+				t.Fatalf("build peer request: %v", err)
+			}
+			vo.PacketID++
+			if !vo.sendRaw(packet) {
+				t.Fatalf("peer request %d was not sent", uniqueID)
+			}
+			t.Logf("invited %d", uniqueID)
+			time.Sleep(700 * time.Millisecond)
+			vo.mu.Lock()
+			self := vo.partySelfPeer.uniqueID
+			peers := len(vo.partyPeers)
+			vo.mu.Unlock()
+			if self != 0 {
+				t.Logf("party formed: self=%d peers=%d", self, peers)
+				break
+			}
+		}
+		t.Logf("after invite: %s", liveSnapshotLine(vo))
+		time.Sleep(2 * time.Second)
+	}
+
 	if os.Getenv("DNF_LIVE_PARTY_ONLY") == "1" {
 		partyBody := make([]byte, liveRequestBody)
 		partyBody[0] = 1
