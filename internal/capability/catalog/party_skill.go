@@ -279,6 +279,42 @@ func SyncPartySkillCatalog(path, pvfPath string) (bool, error) {
 		}
 		entries = append(entries, entry)
 	}
+	// The PVF exporter only registers the load_state entries it can parse, so
+	// rebuilding from it alone would delete the captured protocol vectors that
+	// make automatic selection possible for the other jobs. Keep an entry that
+	// still carries captured state data but has no current registration; drop
+	// entries without data because nothing can verify them any more.
+	leftovers := make([]partySkillCatalogEntry, 0)
+	for key, entry := range existing {
+		if _, registered := seen[key]; registered {
+			continue
+		}
+		if len(entry.StateData) == 0 {
+			continue
+		}
+		entry.ID = key
+		entry.JobLabel = partySkillJobLabel(entry.Job)
+		if strings.TrimSpace(entry.Name) == "" {
+			entry.Name = partySkillDisplayName(entry.ScriptPath)
+		}
+		if entry.Level <= 0 || entry.Level > maxSafePartySkillLevel {
+			entry.Level = maxSafePartySkillLevel
+		}
+		leftovers = append(leftovers, entry)
+	}
+	sort.Slice(leftovers, func(i, j int) bool {
+		if leftovers[i].Job != leftovers[j].Job {
+			return leftovers[i].Job < leftovers[j].Job
+		}
+		if leftovers[i].SkillIndex != leftovers[j].SkillIndex {
+			return leftovers[i].SkillIndex < leftovers[j].SkillIndex
+		}
+		if leftovers[i].State != leftovers[j].State {
+			return leftovers[i].State < leftovers[j].State
+		}
+		return leftovers[i].ScriptPath < leftovers[j].ScriptPath
+	})
+	entries = append(entries, leftovers...)
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Job != entries[j].Job {
 			return entries[i].Job < entries[j].Job

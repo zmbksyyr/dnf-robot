@@ -125,6 +125,76 @@ func TestSyncPartySkillCatalogPreservesAutoMode(t *testing.T) {
 	}
 }
 
+func TestSyncPartySkillCatalogKeepsUnregisteredCapturedVectors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "party_skill_catalog.json")
+	pvfPath := filepath.Join(dir, "skill_state_catalog.json")
+	initial := `{"mode":"auto","enabled":true,"max_skill_level":70,"skills":[
+		{"enabled":true,"job":4,"skill_index":240,"state":240,"level":10,"name":"captured","state_data":[0,1],"risk":1},
+		{"enabled":true,"job":4,"skill_index":241,"state":241,"level":10,"name":"no_vector"},
+		{"enabled":true,"job":4,"skill_index":242,"state":242,"level":10,"name":"opted_out","disabled":true,"state_data":[2]}
+	]}`
+	pvf := `[{"job":8,"skill_index":1,"state":20,"script_path":"sqr/character/atmage/windstrike/wind_strike.nut"}]`
+	if err := os.WriteFile(path, []byte(initial), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pvfPath, []byte(pvf), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncPartySkillCatalog(path, pvfPath); err != nil {
+		t.Fatal(err)
+	}
+	report, err := ReadPartySkillCatalog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySkill := make(map[int]string, len(report.Entries))
+	for _, entry := range report.Entries {
+		bySkill[entry.SkillIndex] = entry.Name
+	}
+	if bySkill[1] == "" {
+		t.Fatalf("newly registered PVF state is missing: %+v", report.Entries)
+	}
+	if bySkill[240] != "captured" {
+		t.Fatalf("captured vector for an unregistered skill was dropped: %+v", report.Entries)
+	}
+	if _, ok := bySkill[241]; ok {
+		t.Fatalf("entry without a vector survived: %+v", report.Entries)
+	}
+	// An explicit opt-out must survive the rebuild.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Skills []struct {
+			SkillIndex int    `json:"skill_index"`
+			Disabled   bool   `json:"disabled"`
+			Risk       int    `json:"risk"`
+			StateData  []int  `json:"state_data"`
+			Level      int    `json:"level"`
+			ID         string `json:"id"`
+		} `json:"skills"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range document.Skills {
+		if entry.SkillIndex != 240 {
+			continue
+		}
+		if entry.Risk != 1 || len(entry.StateData) != 2 || entry.Level != 10 {
+			t.Fatalf("captured metadata changed: %+v", entry)
+		}
+		if entry.ID == "" {
+			t.Fatalf("kept entry lost its runtime id: %+v", entry)
+		}
+	}
+	if _, err := SyncPartySkillCatalog(path, pvfPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReleasedPartySkillCatalogDefaultsToAuto(t *testing.T) {
 	path := filepath.Join("..", "..", "bootstrap", "runtime", "defaults", "party_skill_catalog.json")
 	data, err := os.ReadFile(path)
