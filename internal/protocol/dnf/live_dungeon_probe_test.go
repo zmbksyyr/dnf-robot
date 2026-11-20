@@ -585,6 +585,11 @@ func liveLeadFrames(t *testing.T, vo *RobotVo, startX, startY int) {
 		// The leader's client also broadcasts the monsters it sees; that is how
 		// the Robot learns what to approach and attack.
 		monsterRef := [4]byte{0x11, 2, 1, 3}
+		if override := liveEnvInt(t, "DNF_LIVE_MONSTER_REF", 0); override > 0 {
+			// A new room reports different monsters; the Robot must treat them as
+			// fresh targets rather than the ones it already killed.
+			monsterRef = [4]byte{byte(override), 2, 1, 3}
+		}
 		killAfter := liveEnvInt(t, "DNF_LIVE_KILL_AFTER", 0)
 		monster := partyDungeonMotion{entity: monsterRef, controller: monsterRef, modes: 0x415555, flags: [3]byte{2, 0, 0x10}}
 		for i, value := range []float32{x + 120, y} {
