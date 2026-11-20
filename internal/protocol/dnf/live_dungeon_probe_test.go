@@ -365,6 +365,9 @@ func TestLiveDungeonProbe(t *testing.T) {
 			t.Logf("sent dungeon finish loading")
 		}
 		if liveEnvInt(t, "DNF_LIVE_NEXT_ROOM", 0) == 1 {
+			// The party only starts once every member has finished loading; give
+			// the peer a chance to report before asking for a room change.
+			time.Sleep(5 * time.Second)
 			// Sweep plausible grid cells in one session: a real client sends the
 			// target room cell, and the server only reacts to one that exists.
 			for _, cell := range [][2]byte{{1, 0}, {0, 1}, {2, 0}, {0, 2}, {1, 1}} {

@@ -1,6 +1,10 @@
 package dnf
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"fmt"
+	"os"
+)
 
 type robotInboundPacket struct {
 	data   []byte
@@ -32,6 +36,15 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 				isAnti: true,
 			}
 		}
+	}
+	if os.Getenv("DNF_TRACE_RX") == "1" {
+		line := fmt.Sprintf("[RX] typ=%d size=%d", packet.typ, packet.size)
+		if packet.typ == 48 {
+			if _, _, body, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti); err == nil {
+				line += fmt.Sprintf(" body=%x", body)
+			}
+		}
+		fmt.Println(line)
 	}
 	switch packet.typ {
 	case 19:
