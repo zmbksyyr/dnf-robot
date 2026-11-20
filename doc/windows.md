@@ -1911,3 +1911,24 @@ area 1 → after area 1 entities=1   （快照里 area 仍是 0）
 1. 记录服务端下发的城镇实体**id 集合**（不是数量）在换区域前后是否变化；
 2. 或换区域后观察 NPC 实体（不同区域 NPC 不同）；
 3. 或直接看服务端把角色放进哪个 `Area`（需要服务端侧诊断）。
+
+## SetArea 被静默丢弃：发得太晚（2026-11-21）
+
+服务端**会**为区域移动记日志：
+
+```
+GameWorld::move_area(...): Move Guild Agit Area User(10) Guild(0) dest area(1), virtual area(-1)
+```
+
+机器人的 SetArea 一直有这类日志；而我们把夹具的 `SetArea(38)` 发到区域 0/1/2 时，**日志里一条都没有**
+——说明包被静默丢弃了。对照参考实现的 `DisPatcher_SetArea::check_error`：
+
+```c
+if (user->get_state() != 3) return 0x7fffffff;   // 静默丢弃
+```
+
+而夹具的发送顺序是：登录 → **FinishLoad(40)** → SetArea。FinishLoad 很可能已经把用户状态从 3 推到
+别的值，于是 SetArea 必然被拒——这和"换区域无效"的结论完全吻合，也解释了此前 area 0/1 结果相同的怪现象。
+
+下一步：把 SetArea 挪到 FinishLoad **之前**（登录后立刻发），再确认 `move_area` 日志出现，即可验证
+换区域生效，然后重新做区域对照。
