@@ -1108,3 +1108,21 @@ cid 22）一次上线成功、状态 running，说明“新建机器人角色可
 field35）。这为“协议级真人队长夹具”提供了可独立实现的依据：夹具用 16 进图、48 换房，
 即可在不依赖客户端输入的情况下驱动同一套 Robot 协议。调研记录见
 `x\reference\notes-dungeon-protocol.md`；夹具尚未实现，也未复制参考代码。
+
+## 协议级队长夹具（2026-11-21，进行中）
+
+新增 `internal/protocol/dnf/live_dungeon_probe_test.go`（构建标签 `live`，不进入常规构建与
+正式包）：它用本项目自身的登录流程（RSA 令牌、`NewRobotDnfTask`、`MsgOnLine`）把任意账号
+登入原版服务端，再按环境变量发送指定副本请求。实测已通过“登录并进入城镇”：
+`state=3`、`village=1`、无断开；同一账号此前由真实客户端使用，说明令牌与选角路径可复用。
+
+未通过的部分：发送 `SetPartyInfo`（类型 12）、`SelectDungeon`（类型 16）、`StartGame`
+（类型 15）后，服务端没有出现 `DisPatcher_SelectDungeon::process` 记录，`PartyActive` 仍为
+false。已排除：包体填充（改为 16 字节块）、账号状态（已在城镇）、副本号（改用客户端实际
+进入过的 10000）。仍待确认：分发器槽位与线上包类型是否一一对应（参考工程按槽位建表，
+`m_dispatchers[12]=SetPartyInfo`、`[15]=StartGame`、`[16]=SelectDungeon`，而真实客户端
+进入副本时服务端确实打印 `partyCount : 1`），以及该版本是否要求先由 `ReqPeer(10)/ResPeer(11)`
+建队再选副本。
+
+下一步优先级：给原版 game 打开收发包跟踪或对真实客户端做一次 TCP 抓包，直接读出
+“进副本”实际使用的包类型与字节长度，再回填夹具；这比继续猜测槽位更快。
