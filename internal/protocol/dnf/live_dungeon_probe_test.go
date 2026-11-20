@@ -511,6 +511,21 @@ func TestLiveDungeonProbe(t *testing.T) {
 			liveLog("post-move: empty room, leader at (%d,%d)", birthX+600, birthY+200)
 			liveLeadFrames(t, vo, birthX+600, birthY+200)
 		}
+		if liveEnvInt(t, "DNF_LIVE_GIVEUP", 0) == 1 {
+			// Abandon the dungeon the way a client does when the party leaves:
+			// the server should move everyone back to town.
+			giveUp, buildErr := buildSendPacket(42, uint16(vo.PacketID), nil, vo.Cipher)
+			if buildErr != nil {
+				t.Fatalf("build give up game: %v", buildErr)
+			}
+			vo.PacketID++
+			if vo.sendRaw(giveUp) {
+				liveLog("sent give up game")
+			} else {
+				liveLog("give up game was not sent")
+			}
+			time.Sleep(4 * time.Second)
+		}
 		drive := liveEnvInt(t, "DNF_LIVE_DRIVE", 0)
 		x, y := birthX, birthY
 		for step := 0; step < drive; step++ {
