@@ -1450,3 +1450,25 @@ uid=17000021 cid=23 job=8 level=55 狂虎帝 艾尔文防线(1/0)
 
 这说明“目标消失 → 不再攻击 → 归队”这条清图后行为是通的。仍需补的是“下一房间 → 继续清图 →
 副本完成 → 回城”的连续迁移，以及双平台复跑。
+
+## Linux 侧联调（2026-11-21）
+
+按双平台要求把 Linux（WSL2 dnf-linux）整套拉起来，过程中踩到两个环境坑：
+
+1. **mysqld 静默退出**：`/etc/mysql/my.cnf` 里的选项让 MySQL 5.7 启动即退，且不写任何日志。
+   对比实验 `mysqld --no-defaults ...` 能正常启动（并做崩溃恢复）。已改用 `--no-defaults`
+   加显式参数启动，并把 `--sql-mode=NO_ENGINE_SUBSTITUTION` 直接放在命令行（零日期兼容）。
+2. **游戏进程 SIGSEGV**：先起 `secagent`（生成 `/dev/shm/TSS_30_570011.STAT`）再起游戏；
+   另外 `game.sh` 缺少 `GCONV_PATH` 会刷 `iconv_open error`，需要显式
+   `export GCONV_PATH=/opt/dnfroot/usr/lib/gconv`。
+
+拉起后的状态：MySQL 5.7.44(3306)、channel(7001)、monitor(30303)、game(10011) 均在监听，
+`secagent` 正常，Linux 版机器人（从 `/mnt/d` 当前仓库源码 `GOOS=linux` 构建）启动后
+**自动上线 20 个机器人**（`policy=fill ... online=20`），并已解析出各自的已学技能
+（`[PARTY_DUNGEON_SKILL_PROFILE_INFO] uid=17000021 cid=2 learned=11` 等）——说明机器人代码在
+Linux 上连接 Linux 服务端的行为与 Windows 一致。
+
+但**夹具队长在 Linux 上登录被拒**：`state=0 reason=10/11`。定位到原因：两个实例的
+`d_taiwan` schema 不同（Windows 侧有 `m_id` 列，Linux 侧没有），而探测器的登录链路按 Windows
+schema 查询账户与令牌，于是认证失败。要跑通 Linux 侧的副本闭环，需要让探测器按目标库的
+schema 取账户信息（或把 Linux 库对齐同一份 schema）。
