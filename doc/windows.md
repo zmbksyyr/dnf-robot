@@ -2218,3 +2218,31 @@ move00b 的捕获明显不完整（连 `after login` 都没有，但结尾却打
 因此本轮**不能**判定 `(0,0)` 是否致死，需要单独重跑一次。
 
 下一轮：单独跑一次 `move00b`（不进循环、单独重定向），拿到可信的阶段序列后再下结论。
+
+## 关键修正：MoveMap 报文格式一直是错的（2026-11-21）
+
+把阶段日志改成写独立文件后（`DNF_LIVE_STAGE_FILE`），终于拿到可信序列：
+
+```
+after login: state=3 ...
+sent select dungeon idx=1 type=0
+sent dungeon finish loading
+sent single move map cell=(0,0)
+```
+
+对照参考实现的 `read_45.inc`（MoveMap 的读取器）发现**我们的报文布局是错的**：
+
+```c
+get_byte(m_x); get_byte(m_y);          // 两个"字节"，不是 short
+get_int(m_fieldF); get_int(m_field13);
+get_byte(m_field17); get_short(m_trapBits);
+get_short(m_1b[0..3]); ...             // 后面还有若干字段
+```
+
+我们却按 `short x @0`、`short y @2` 写 16 字节——**读取器连字段都取不完**，`read` 返回非零，
+派发层按"处理器返回非零"直接断线。这解释了此前所有"发 MoveMap 就掉线"的现象，也让"坐标越界"
+这个假设退居其次。
+
+修正后（x/y 各 1 字节、报文 48 字节），`(0,0)` 这次**会话存活**（全日志 0 处 `reason=10`）。
+
+下一步：用这个正确格式重新做坐标扫描（逐格独立会话），并重新审视教程图里固定错误包的来源。

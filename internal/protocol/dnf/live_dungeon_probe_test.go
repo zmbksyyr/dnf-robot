@@ -86,7 +86,16 @@ func liveSnapshotLine(vo *RobotVo) string {
 // t.Logf until the run ends, which makes the file's ordering useless when the
 // session dies mid-run.
 func liveLog(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	line := fmt.Sprintf(format, args...)
+	// A dedicated file avoids every stream-redirection quirk: the stage order is
+	// what makes a dysfunct run diagnosable.
+	if path := os.Getenv("DNF_LIVE_STAGE_FILE"); path != "" {
+		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, line)
+			f.Close()
+		}
+	}
+	fmt.Fprintln(os.Stderr, line)
 }
 
 func TestLiveDungeonProbe(t *testing.T) {
@@ -453,9 +462,11 @@ func TestLiveDungeonProbe(t *testing.T) {
 			var cx, cy int
 			if _, scanErr := fmt.Sscanf(one, "%d,%d", &cx, &cy); scanErr == nil {
 				time.Sleep(4 * time.Second)
-				moveBody := make([]byte, liveRequestBody)
-				binary.LittleEndian.PutUint16(moveBody[0:2], uint16(cx))
-				binary.LittleEndian.PutUint16(moveBody[2:4], uint16(cy))
+				// MSG_MOVE_MAP starts with two *bytes* (x, y) followed by ints,
+				// shorts and an array; a short-body request fails the reader and
+				// the dispatcher answers by dropping the connection.
+				moveBody := make([]byte, 48)
+				moveBody[0], moveBody[1] = byte(cx), byte(cy)
 				moveMap, buildErr := buildSendPacket(48, uint16(vo.PacketID), moveBody, vo.Cipher)
 				if buildErr != nil {
 					t.Fatalf("build single move map: %v", buildErr)
