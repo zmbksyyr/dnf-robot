@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"net"
 	"sort"
+	"sync"
 	"time"
 
 	foundationlog "robot/internal/foundation/log"
@@ -384,20 +385,43 @@ func (r *RobotVo) resetPartySkillProfileUnsafe() {
 	r.partySkillCatalogGeneration = 0
 }
 
+// A character's job never changes, so the database row behind a skill profile is
+// immutable. Batch scheduling logs the same account in and out repeatedly, and
+// each login used to cost one query; remember the row for the process lifetime.
+type partySkillIdentity struct {
+	uid, cid int
+}
+
+var partySkillIdentityCache sync.Map // partySkillIdentity -> partySkillDBRow
+
+type partySkillDBRow struct {
+	cid, job int
+}
+
 func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile, error) {
+	identity := partySkillIdentity{uid: int(uid), cid: cid}
+	if cached, ok := partySkillIdentityCache.Load(identity); ok {
+		return partySkillProfileFromRow(cached.(partySkillDBRow)), nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	var profile partySkillProfile
-	if err := db.QueryRowContext(ctx, "SELECT c.charac_no,c.job FROM taiwan_cain.charac_info c WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", uid, cid, cid).Scan(&profile.cid, &profile.job); err != nil {
+	var row partySkillDBRow
+	if err := db.QueryRowContext(ctx, "SELECT c.charac_no,c.job FROM taiwan_cain.charac_info c WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", uid, cid, cid).Scan(&row.cid, &row.job); err != nil {
 		return partySkillProfile{}, err
 	}
+	partySkillIdentityCache.Store(identity, row)
+	return partySkillProfileFromRow(row), nil
+}
+
+func partySkillProfileFromRow(row partySkillDBRow) partySkillProfile {
+	profile := partySkillProfile{cid: row.cid, job: row.job}
 	whitelist := shared.PartySkillStatesForJob(profile.job)
 	pvfStates := shared.SkillStatesForJob(profile.job)
 	profile.whitelistCount = len(whitelist)
 	profile.pvfCount = len(pvfStates)
 	profile.candidates, profile.stats = partySkillCandidatesFromCatalog(profile.job, whitelist, pvfStates)
-	return profile, nil
+	return profile
 }
 
 func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
