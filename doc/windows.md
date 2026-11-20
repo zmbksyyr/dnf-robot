@@ -1240,3 +1240,20 @@ unique id，以及该应答包里是否携带拒绝码（应答体加密，未�
 TCP 的 SetPos，没有发队伍 UDP 帧，所以机器人拿不到队长位置（房间 `actors=0`），也就不会移动或攻击。
 下一步是让夹具按队伍传输格式（`buildPartyDungeonMotion`/`buildPartyUnreliablePacketChecked`）
 向机器人的队伍端口发送队长动作，复用现有构造器即可。
+
+## 队长动作进入机器人跟随循环（2026-11-21）
+
+夹具补上两件事后，机器人的跟随分支被真正驱动起来：
+
+1. **按队伍传输发送队长动作**：用 `buildPartyDungeonMotion` +
+   `buildPartyUnreliablePacketChecked` 组装队长动作帧，经 `sendPartyTransportUnsafe`
+   发到机器人的队伍端口（不是 TCP 的 SetPos）。实测机器人连续记录
+   `[PARTY_DUNGEON_FOLLOW] uid=17000020 peer=17000015 slot=0 route=1 reliable=false queued=1 delay=369ms`。
+2. **帧里带上机器人自己的实体**：真实客户端的一帧会描述它看到的全部实体，机器人正是从
+   这样的帧里得知自己的坐标。只发队长一个实体时，机器人 `actors[self].position` 未知，
+   导航分支直接返回；补上第二个实体后才有可用的自身位置。
+
+当前状态：队长与机器人在同一副本房间（`party=true`、`dungeon=yes`），机器人在副本内加载技能档案
+并持续消费队长动作。仍未验证的是“机器人是否真的移动/攻击”：验证器所在进程看不到机器人进程内的
+副本坐标，日志也只记录入队不记录位移，因此本轮不宣称跟随位移与击杀通过。要闭环还需要一个可观测点
+（例如让夹具统计收到的机器人队伍帧数量，或让机器人在副本内上报自身坐标）。

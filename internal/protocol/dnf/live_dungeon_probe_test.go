@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -359,6 +360,9 @@ func TestLiveDungeonProbe(t *testing.T) {
 		if drive > 0 {
 			t.Logf("drove %d steps to x=%d", drive, x)
 		}
+		if os.Getenv("DNF_LIVE_LEAD_FRAMES") == "1" {
+			liveLeadFrames(t, vo, birthX, birthY)
+		}
 	}
 
 	for i := 0; i < 30; i++ {
@@ -377,4 +381,54 @@ func liveDungeonState(vo *RobotVo) string {
 	}
 	return fmt.Sprintf(" dungeon=yes actors=%d target=%x legacy=%t",
 		len(vo.partyDungeonWorld.actors), vo.partyDungeonWorld.target, vo.partyDungeonLegacySkills)
+}
+
+// liveLeadFrames sends the leader's motion on the party UDP transport, which is
+// where a real client's actions reach the Robot's follow loop.
+func liveLeadFrames(t *testing.T, vo *RobotVo, startX, startY int) {
+	t.Helper()
+	peer := vo.partyPeerForSlotUnsafe(1)
+	if peer.uniqueID == 0 || !peer.slotKnown {
+		t.Logf("no robot peer for party frames")
+		return
+	}
+	leader := partyDungeonPlayerReference(vo.partySelfPeer.uniqueID)
+	x, y := float32(startX), float32(startY)
+	sent := 0
+	for step := 0; step < 40; step++ {
+		x += 20
+		entry := partyDungeonMotion{entity: leader, controller: leader, modes: 0x415555, flags: [3]byte{2, 0, 0x10}}
+		for i, value := range []float32{x, y} {
+			entry.modes &^= 3 << uint((9+i)*2)
+			entry.values[9+i] = math.Float32bits(value)
+		}
+		// A real client's frame describes every entity it sees, so the robot
+		// learns its own position from it. Include the peer entity as well.
+		robotEntry := partyDungeonMotion{entity: partyDungeonPlayerReference(peer.uniqueID), controller: partyDungeonPlayerReference(peer.uniqueID), modes: 0x415555, flags: [3]byte{2, 0, 0x10}}
+		for i, value := range []float32{x - 50, y} {
+			robotEntry.modes &^= 3 << uint((9+i)*2)
+			robotEntry.values[9+i] = math.Float32bits(value)
+		}
+		body, ok := buildPartyDungeonMotion([]partyDungeonMotion{entry, robotEntry})
+		if !ok {
+			t.Fatalf("build leader motion")
+		}
+		route := vo.partyRouteForPeerUnsafe(peer.slot)
+		sequence, ok := vo.nextPartyTQOSSequenceUnsafe(peer.slot, route, false)
+		if !ok {
+			t.Logf("leader frame %d: no sequence", step)
+			return
+		}
+		packet, err := buildPartyUnreliablePacketChecked(sequence, vo.partySelfPeer.slot, vo.partyDungeonFlags, body)
+		if err != nil {
+			t.Fatalf("build leader frame: %v", err)
+		}
+		if _, err := vo.sendPartyTransportUnsafe(vo.partyUDPConn, peer, route, packet); err != nil {
+			t.Logf("leader frame %d: %v", step, err)
+			return
+		}
+		sent++
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Logf("sent %d leader party frames to slot=%d uid=%d", sent, peer.slot, peer.uniqueID)
 }
