@@ -2681,3 +2681,24 @@ Lv79 角色进城后，画面中央一直有 `林纳斯的礼物 / 请选择需�
 
 就目前掌握的信息，**客户端 UI 这条路已经不是"再点一次"能解决的了**：弹窗对合成鼠标事件完全没有反应
 （而同一时刻其它 UI 元素能响应），更像是游戏对该弹窗走了不同的输入通道。这一条按"环境限制"记录。
+
+## Linux 启动：栈保护带方案也失败（2026-11-21）
+
+思路是"在栈下方预留一段 PROT_NONE 保护带，让游戏的高位 brk 提前失败，而不是把栈挤到 132 KB"。
+写了 `dnf_stack_guard.so`（构造函数里 `mmap(MAP_FIXED_NOREPLACE)` 预留 0xff000000 起 15 MB），
+编译通过、随 `LD_PRELOAD` 注入，结果：
+
+```
+[guard] map failed at 0xff000000
+… Init CipherKeyString …
+Recv SIGSEGV signal
+```
+
+保护带**根本没建成**：目标地址落在游戏已建好的 heap VMA 里（heap 从 0xf7ffe000 一直映射到 0xffecc000），
+`MAP_FIXED_NOREPLACE` 正确地拒绝了覆盖。而低于 heap 基址的保护带对"向上增长"的 brk 没有任何阻挡作用。
+
+结论：**在用户态（LD_PRELOAD）已经没有可用的手段**——heap 的 VMA 一旦由游戏自己建立到栈下方，外部就无法
+收回。要修只能：① 系统调用层（ptrace/seccomp）拦 brk；② 改 ELF；③ 换真实 Linux 主机。这一条按环境限制
+收尾，不再继续投入。
+
+环境已恢复（Windows 实例 + 零配置开关）。
