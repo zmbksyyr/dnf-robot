@@ -231,6 +231,20 @@ func TestLiveDungeonProbe(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		t.Logf("after party: %s", liveSnapshotLine(vo))
 
+		// The reference puts the party into its dungeon state from StartGame
+		// (CParty::game_start -> GameWorld::goto_dungeon -> state 5), and the
+		// dungeon selection only validates in that state, so start first.
+		start, err := buildSendPacket(15, uint16(vo.PacketID), nil, vo.Cipher)
+		if err != nil {
+			t.Fatalf("build start game: %v", err)
+		}
+		vo.PacketID++
+		if !vo.sendRaw(start) {
+			t.Fatal("start game was not sent")
+		}
+		t.Logf("sent start game")
+		time.Sleep(1500 * time.Millisecond)
+
 		// The original client pads small request bodies to the cipher block
 		// size; the server reads only the fields it knows.
 		body := make([]byte, liveRequestBody)
@@ -245,20 +259,22 @@ func TestLiveDungeonProbe(t *testing.T) {
 			t.Fatal("select dungeon was not sent")
 		}
 		t.Logf("sent select dungeon idx=%d type=%d", dungeon, dungeonType)
-		time.Sleep(1500 * time.Millisecond)
-		start, err := buildSendPacket(15, uint16(vo.PacketID), nil, vo.Cipher)
-		if err != nil {
-			t.Fatalf("build start game: %v", err)
-		}
-		vo.PacketID++
-		if !vo.sendRaw(start) {
-			t.Fatal("start game was not sent")
-		}
-		t.Logf("sent start game")
 	}
 
 	for i := 0; i < 30; i++ {
 		time.Sleep(time.Second)
-		t.Logf("t+%02ds %s", i+1, liveSnapshotLine(vo))
+		t.Logf("t+%02ds %s%s", i+1, liveSnapshotLine(vo), liveDungeonState(vo))
 	}
+}
+
+// liveDungeonState reports the runtime state the dungeon loop keeps. The public
+// snapshot does not expose it, and this probe is in-package on purpose.
+func liveDungeonState(vo *RobotVo) string {
+	vo.mu.Lock()
+	defer vo.mu.Unlock()
+	if vo.partyDungeonEnteredAt.IsZero() {
+		return " dungeon=no"
+	}
+	return fmt.Sprintf(" dungeon=yes actors=%d target=%x legacy=%t",
+		len(vo.partyDungeonWorld.actors), vo.partyDungeonWorld.target, vo.partyDungeonLegacySkills)
 }

@@ -1157,3 +1157,21 @@ process 与 trace 都不会执行）。因此问题不在包体、副本号或�
 
 下一步应找出使 `CUser::get_state()` 变为 5 的客户端包序列（真实客户端进图前必然发过），
 再补进夹具；这比继续试副本参数更接近根因。
+
+## 协议级队长成功进图（2026-11-21）
+
+上一节判断“被状态卡住”只说对了一半：真正的顺序是 **建队(12) → StartGame(15) → SelectDungeon(16)**。
+参考实现里 `CParty::game_start` 会对每个成员调用 `GameWorld::goto_dungeon`，把用户状态置为 5
+（可进副本），之后 `SelectDungeon` 的 `check_error` 才放行；先发 16 再发 15 时状态还没到 5，
+服务端 0x7fffffff 静默丢弃。另外在登录后补一条 `FinishLoad(40)` 也与真实客户端一致。
+
+按正确顺序实测（uid 17000015 / cid 21）：
+- 服务端出现 `[DisPatcher_SelectDungeon] partyCount : 1`；
+- 断开记录为 `DisConnSig ... dungeon(10000)` 与 `CParty::leave_user ... user_state(5)`；
+- 探测端内部 `partyDungeonEnteredAt` 已置位（`dungeon=yes`），即 Robot 侧已进入副本运行态。
+
+`actors=0` 是因为这条会话是单人预演：没有队长实体帧、没有怪物同步，房间实体表为空。
+下一步把真机器人拉进同一队伍（`ReqPeer(10)` 邀请 + `ResPeer(11)` 应答），队长帧与怪物数据
+才会到达机器人，进而驱动“寻怪→击杀→清图→跟随过图”的真实分支。
+
+本轮把这条结论与工具一起提交；进图之外的副本行为仍未实机验证。
