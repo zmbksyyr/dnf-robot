@@ -1,5 +1,7 @@
 # Windows 宿主
 
+按问题归纳的最终决定见[运行与联调知识](../docs/knowledge.md)；后续独立分支的自动攻击研究见[战斗研究](../docs/combat-research.md)。本页保留接口与历史验证过程。
+
 Robot 保持独立项目。Linux 使用原有 `/proc`、信号及启动脚本；Windows 使用同一业务代码和本项目的平台实现。宿主差异由配置目录内 `conf/host-profile.json` 描述，不依赖外部 GUI 的进程名称或界面控件。
 
 ## 接口和生命周期

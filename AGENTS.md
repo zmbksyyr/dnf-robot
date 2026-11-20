@@ -1,5 +1,7 @@
 # AI Rules
 
+Project knowledge starts at `docs/README.md`: read `docs/knowledge.md` before repeating prior runtime experiments, and `docs/combat-research.md` for the separately retained combat branch. These documents distinguish current integration behavior, historical results, rejected approaches, and remaining work.
+
 Before any VM, deploy, or debug task, read:
 
 - `doc/vm.md`
