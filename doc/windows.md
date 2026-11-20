@@ -2590,3 +2590,23 @@ lookups=64   cache_ns=3.2  bsearch_ns=10.3  speedup=3.26x
 
 下一步：把机器人自建角色的**干净背包**复制给 cid 16（先备份 `taiwan_cain_2nd.inventory` 对应行），
 让这台 Lv79 角色能正常进游戏；之后客户端就能自己走进普通副本，机器人再设法加入同一队伍。
+
+## 背包修复后 Lv79 角色可登录，但选图仍错误 8（2026-11-21）
+
+把机器人角色的干净背包复制给 cid 16（先备份到 `bak_inv_16`）：
+
+```sql
+CREATE TABLE bak_inv_16 AS SELECT * FROM inventory WHERE charac_no=16;
+UPDATE inventory SET inventory=(SELECT ... charac_no=23 ...) WHERE charac_no=16;
+```
+
+结果：`reason=36` 消失，**Lv79 角色可以正常登录**（`after login: state=3 reason=0`）。
+
+但 `SelectDungeon(1)` 仍然返回**错误 8**（`00087e0e7a7d0000`）。这说明**背包/等级从来不是选图失败的原因**——
+一个完全合法的 Lv79 角色站在出生点也选不了普通副本。
+
+结论收窄为：**出生点所在区域的世界地图不包含这些副本**（或该区域根本没有世界地图索引）。真实客户端是从
+副本入口区域（走过去的）选图的，而我们的角色固定在出生点。
+
+下一步：验证 `SetArea` 是否真的把角色挪了区域——用**行为探针**：让真实客户端登录后站在 area 0，
+再用夹具 `SetArea(2)`，看探针收到的城镇实体数是 2（还在 area 0，能看到客户端）还是 1（已换区域）。
