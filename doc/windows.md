@@ -2201,3 +2201,20 @@ if (((int)req.m_y >= party->m_battleField.getMapHeight()) ||
 
 下一步（下一轮第一件事）：把探针的关键阶段日志改成写 stderr（不缓冲），或者统一用 `fmt.Println`，
 让顺序可信；然后重跑 base/move00 对照，确认 `(0,0)` 是否真的致死。
+
+## 阶段日志改为不缓冲（2026-11-21）
+
+`[RX]` 跟踪和探针关键阶段（`after login` / `sent select dungeon` / `sent dungeon finish loading` /
+`sent single move map` / `dungeon room did not start`）现在都直接写 stderr，不再经 `t.Logf` 缓冲。
+对照运行的结果：
+
+- **base2（不发 MoveMap）**：阶段序列完整——
+  `after login` → `sent finish loading` → `sent party create` → `sent start game` → `sent select dungeon idx=1`
+  → `sent dungeon finish loading` → `no robot peer`；
+- **move00b（发 0,0）**：日志里**一条阶段日志都没有**，只有 RX 跟踪和结尾缓冲的 `no robot peer`/快照。
+
+move00b 的捕获明显不完整（连 `after login` 都没有，但结尾却打印了只有走到 519 行才会出现的日志），
+说明那一次运行的输出文件没被正确写入（很可能是循环里第二次 `Start-Process` 的重定向文件被占用或未刷新）。
+因此本轮**不能**判定 `(0,0)` 是否致死，需要单独重跑一次。
+
+下一轮：单独跑一次 `move00b`（不进循环、单独重定向），拿到可信的阶段序列后再下结论。

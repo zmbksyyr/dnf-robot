@@ -44,7 +44,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 				line += fmt.Sprintf(" body=%x", body)
 			}
 		}
-		fmt.Println(line)
+		fmt.Fprintln(os.Stderr, line)
 	}
 	switch packet.typ {
 	case 19:

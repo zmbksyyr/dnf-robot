@@ -82,6 +82,13 @@ func liveSnapshotLine(vo *RobotVo) string {
 		s.State, s.LastError, s.DisconnectReason, s.PartyActive, s.Village, s.Area, s.X, s.Y)
 }
 
+// liveLog writes a probe stage log straight to stderr: the test framework buffers
+// t.Logf until the run ends, which makes the file's ordering useless when the
+// session dies mid-run.
+func liveLog(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
 func TestLiveDungeonProbe(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("DNF_LIVE_DSN"))
 	keyPath := strings.TrimSpace(os.Getenv("DNF_LIVE_KEY"))
@@ -163,7 +170,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Logf("after login: %s", liveSnapshotLine(vo))
+	liveLog("after login: %s", liveSnapshotLine(vo))
 	if vo.Snapshot().State != StateRun {
 		t.Fatalf("character did not reach town: %s", liveSnapshotLine(vo))
 	}
@@ -408,7 +415,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 			}
 			return
 		}
-		t.Logf("sent select dungeon idx=%d type=%d", dungeon, dungeonType)
+		liveLog("sent select dungeon idx=%d type=%d", dungeon, dungeonType)
 
 		// A real client acknowledges the dungeon room loading and then walks.
 		// The party broadcast of that walking is what the Robot's follow loop
@@ -428,7 +435,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 		}
 		if !roomStarted {
-			t.Logf("dungeon room did not start; selection was refused")
+			liveLog("dungeon room did not start; selection was refused")
 		}
 		if roomStarted {
 			finish, err := buildSendPacket(40, uint16(vo.PacketID), buildFinishLoadingPayload(0, 0), vo.Cipher)
@@ -437,7 +444,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 			}
 			vo.PacketID++
 			if vo.sendRaw(finish) {
-				t.Logf("sent dungeon finish loading")
+				liveLog("sent dungeon finish loading")
 			}
 		}
 		if one := os.Getenv("DNF_LIVE_MOVE_ONE"); one != "" {
@@ -455,7 +462,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 				}
 				vo.PacketID++
 				if vo.sendRaw(moveMap) {
-					t.Logf("sent single move map cell=(%d,%d)", cx, cy)
+					liveLog("sent single move map cell=(%d,%d)", cx, cy)
 				} else {
 					t.Logf("single move map was not sent")
 				}
