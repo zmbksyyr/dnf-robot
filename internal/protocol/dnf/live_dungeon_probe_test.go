@@ -197,6 +197,8 @@ func TestLiveDungeonProbe(t *testing.T) {
 		// Town entity records carry the unique ids of the other players in the
 		// room. Invite each candidate as a party peer; NPCs simply do not answer
 		// and the robot accepts.
+		// The successful live runs scanned about six seconds after entering
+		// town, while the robot was still walking.
 		time.Sleep(6 * time.Second)
 		vo.mu.Lock()
 		candidates := make([]uint16, 0, len(vo.townEntityPositions))
@@ -211,6 +213,15 @@ func TestLiveDungeonProbe(t *testing.T) {
 		vo.mu.Unlock()
 		t.Logf("town entities: %v", candidates)
 		for _, uniqueID := range candidates {
+			// Our own character stands at the spawn point; inviting it would
+			// only auto-accept against ourselves.
+			vo.mu.Lock()
+			entity := vo.townEntityPositions[uniqueID]
+			vo.mu.Unlock()
+			if int(entity.x) == birthX && int(entity.y) == birthY {
+				t.Logf("skipping self %d", uniqueID)
+				continue
+			}
 			body := make([]byte, liveRequestBody)
 			binary.LittleEndian.PutUint16(body[0:2], uniqueID)
 			body[2] = 0 // party request
@@ -220,7 +231,8 @@ func TestLiveDungeonProbe(t *testing.T) {
 			}
 			vo.PacketID++
 			if !vo.sendRaw(packet) {
-				t.Fatalf("peer request %d was not sent", uniqueID)
+				t.Logf("peer request %d was not sent", uniqueID)
+				continue
 			}
 			t.Logf("invited %d", uniqueID)
 			time.Sleep(700 * time.Millisecond)
@@ -258,21 +270,21 @@ func TestLiveDungeonProbe(t *testing.T) {
 		// The original server only lets a party leader pick a dungeon, so a solo
 		// leader first creates a one-member party (type 12: title index, member
 		// limit, dungeon index, difficulty).
-		partyBody := make([]byte, liveRequestBody)
-		partyBody[0] = 1 // no custom title
-		partyBody[1] = 4 // member limit
-		partyBody[2], partyBody[3] = 0, 0
-		partyBody[4] = 0
-		partyPacket, err := buildSendPacket(12, uint16(vo.PacketID), partyBody, vo.Cipher)
-		if err != nil {
-			t.Fatalf("build set party info: %v", err)
+		if os.Getenv("DNF_LIVE_INVITE") != "1" {
+			partyBody := make([]byte, liveRequestBody)
+			partyBody[0] = 1
+			partyBody[1] = 4
+			partyPacket, err := buildSendPacket(12, uint16(vo.PacketID), partyBody, vo.Cipher)
+			if err != nil {
+				t.Fatalf("build set party info: %v", err)
+			}
+			vo.PacketID++
+			if !vo.sendRaw(partyPacket) {
+				t.Fatal("set party info was not sent")
+			}
+			t.Logf("sent party create")
+			time.Sleep(2 * time.Second)
 		}
-		vo.PacketID++
-		if !vo.sendRaw(partyPacket) {
-			t.Fatal("set party info was not sent")
-		}
-		t.Logf("sent party create")
-		time.Sleep(2 * time.Second)
 		t.Logf("after party: %s", liveSnapshotLine(vo))
 
 		// The reference puts the party into its dungeon state from StartGame

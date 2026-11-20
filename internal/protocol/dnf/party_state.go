@@ -89,6 +89,12 @@ type townEntityArea struct {
 	y        uint16
 }
 
+// maxTownCoordinate bounds the town position accepted from an entity record.
+// The server sends a second, decoy candidate body alongside the real one; those
+// decoys still parse structurally but carry coordinates far outside any town, so
+// a plausibility bound keeps the selector from picking them.
+const maxTownCoordinate = 4000
+
 func parseTownEntityPosition(data []byte) (townEntityPosition, bool) {
 	if len(data) < 9 {
 		return townEntityPosition{}, false
@@ -97,10 +103,15 @@ func parseTownEntityPosition(data []byte) (townEntityPosition, bool) {
 	if uniqueID == 0 {
 		return townEntityPosition{}, false
 	}
+	x := binary.LittleEndian.Uint16(data[2:4])
+	y := binary.LittleEndian.Uint16(data[4:6])
+	if x > maxTownCoordinate || y > maxTownCoordinate {
+		return townEntityPosition{}, false
+	}
 	return townEntityPosition{
 		uniqueID: uniqueID,
-		x:        binary.LittleEndian.Uint16(data[2:4]),
-		y:        binary.LittleEndian.Uint16(data[4:6]),
+		x:        x,
+		y:        y,
 		moveType: data[6],
 		speed:    binary.LittleEndian.Uint16(data[7:9]),
 		seenAt:   time.Now(),
@@ -115,12 +126,17 @@ func parseTownEntityArea(data []byte) (townEntityArea, bool) {
 	if uniqueID == 0 {
 		return townEntityArea{}, false
 	}
+	x := binary.LittleEndian.Uint16(data[4:6])
+	y := binary.LittleEndian.Uint16(data[6:8])
+	if x > maxTownCoordinate || y > maxTownCoordinate {
+		return townEntityArea{}, false
+	}
 	return townEntityArea{
 		uniqueID: uniqueID,
 		village:  data[2],
 		area:     data[3],
-		x:        binary.LittleEndian.Uint16(data[4:6]),
-		y:        binary.LittleEndian.Uint16(data[6:8]),
+		x:        x,
+		y:        y,
 	}, true
 }
 
