@@ -3443,3 +3443,16 @@ if (ret > 0) { send_to_party_cmd_error((ENUM_CMDPACKET)0x30, ret & 0xff); return
 房间信息包，不是换房成功包——两者类型号相同（0x1d=29），此前混淆了。
 
 结论：换房协议本身已完全对齐（字段、长度、成功/失败应答均可解释），缺的是"一个真实可走的多房间副本"。
+
+## 临时产物归位：src\x 改为指向 x\dnf-native-output 的目录联接（2026-11-21）
+
+任务书要求"临时、测试、调试产物一律放 `D:\cache\dnf\x`，不得污染 src 目录"。而 dnf-native 的构建脚本按
+仓库自身约定把产物写到 `../x/dnf-native-output`，也就是 `D:\cache\dnf\src\x`——严格说落在了 src 里。
+
+处理方式（不动仓库代码）：
+
+1. 把 `D:\cache\dnf\src\x` 整体移动到 `D:\cache\dnf\x\dnf-native-output`；
+2. 在原位置创建**目录联接**：`mklink /J D:\cache\dnf\src\x D:\cache\dnf\x\dnf-native-output`；
+3. 重新构建验证：`tools/build.py` 仍正常产出 i686 / x86_64 两个 host。
+
+这样仓库约定与任务书要求同时满足：脚本照旧写 `src\x`，实际落盘在 `D:\cache\dnf\x`。
