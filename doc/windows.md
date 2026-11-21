@@ -3149,3 +3149,19 @@ successfully"，最合理的解释是：**它需要一个管理器/父进程保�
 协议编解码、技能解析、20 机器人上线）在此前轮次已完成；**副本实机流程仍以 Windows 侧为准**。
 
 环境已恢复 Windows，后续不再在 Linux 服务端上投入。
+
+## 三仓库全量验证 + 配方文档（2026-11-21）
+
+本轮做了一次完整回归：
+
+| 项目 | 验证 | 结果 |
+|---|---|---|
+| dnf-robot | `go test ./...` | 全部通过（exit 0） |
+| dnf-robot | `go vet ./...` | 无报告 |
+| dnf-native | `tools/build.py` | i686 / x86_64 两个 host 均构建成功 |
+| dnf-native | `tests/test_elf.py` | 19 个映射 + 6 个拒绝检查全过 |
+| dnf-gm | `tools/build.bat` | 构建成功（634880 字节） |
+| 全链路 | `full_loop.ps1` | 六段 **ALL PASS** |
+
+同时把 Linux 排查结论整理成可复用文档 `doc/linux-server-recipe.md`：包含"不要用加载器启动"的根因与
+正确启动命令、桥接数据库账号替换、worker 线程 exit 垫片，以及本环境未解决的最后一步（需要管理器常驻）。
