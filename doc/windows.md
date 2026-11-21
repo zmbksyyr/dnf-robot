@@ -3831,3 +3831,23 @@ DNF_LIVE_GAME=127.0.0.1:10011  DNF_LIVE_UID=17000020  DNF_LIVE_CID=1
 
 下一步可以拿 Windows 侧 cid 16 的整行数据（已有 `dump-windows.sql`）与 Linux 侧 charac_no=1 逐列对比，
 找出真正的开关字段。
+
+## Linux 侧没有任何副本能开（2026-11-21）
+
+在 Linux 服务端上分别试 `-Dungeon 1 / 2 / 10000`，状态行始终 `dungeon=no`：
+
+| 副本 | Windows 侧 | Linux 侧 |
+|---|---|---|
+| 1 / 2（普通图） | 不开（世界图校验） | 不开 |
+| 10000（教程） | **开** | **不开** |
+
+同时把 `village_prev` 改成 0（与 Windows 侧一致）也不起作用，`tutorial_flag`（-1）本来就一致。
+
+还有一个细节值得注意：本轮开 `DNF_TRACE_RX=1` 也没看到 `typ=16`（选图应答），说明 Linux 侧的
+`SelectDungeon` 可能**连应答都没回**——这更像"服务端状态机拒绝了请求"，而不是"进图后失败"。
+
+下一步应查 Linux 侧的角色状态机（`check_state` 依赖的 `CUser` 状态）：Windows 侧选图前用户状态是 3，
+如果 Linux 侧不是 3（例如停在别的状态），`check_state` 会直接拒绝、连应答都不发。
+
+判定方法：在 Linux 侧发一个只有状态 3 才允许的包（SetPos），按存活/断线判断真实状态——此前做过，存活=状态 3。
+所以状态是对的，问题在别处（可能是服务端侧"副本是否可开"的判定，例如 `dungeon_play_count` 或服务端配置）。
