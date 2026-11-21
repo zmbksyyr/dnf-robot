@@ -3562,3 +3562,28 @@ Global::CBossTowerFunc::DieMob / advancealtar::Manager::dieMob / WarRoom::Handle
 1. 从队伍/地图包（type 29）或刷怪包里取出真实怪物 ref；
 2. 对照 `dispatch_sig` 的反汇编推出 type 39 的字段顺序；
 3. 逐个上报后发 MoveMap，期望收到 `0x1d`（换房成功）。
+
+## 清怪上报（type 39）的字段布局已找齐（2026-11-21）
+
+在 `Secu_HackLogCheckByParty.h` 里找到了 `MSG_MONSTER_DIE` 的完整 wire 布局：
+
+```c
+unsigned short m_mobSeq;             // +0x0d 击杀的 mob 序号
+short          m_fieldF;             // +0x0f ==0xffff 标记 / 否则 killer uid
+int            m_field11;            // +0x11
+int            m_field15;            // +0x15
+unsigned char  m_mobCount;           // +0x19 四数组有效项数
+unsigned short m_skillList[256];     // +0x1a
+unsigned short m_attackerList[256];  // +0x21a
+unsigned int   m_damageList[256];    // +0x41a
+unsigned short m_hitCountList[256];  // +0x81a
+unsigned int   m_killValue2;         // +0xa1a
+unsigned int   m_killValue1;         // +0xa1e
+…（其余到 0xa3d）
+```
+
+也就是说 type 39 的包体约 **0xa3f（2623）字节**，首字段就是 mob 序号。
+
+夹具已加上 `DNF_LIVE_DIE_MOB=<seq>`：在发换房之前先发一个 type 39 的死亡上报。本轮首次试跑时没看到
+"reported mob" 日志（环境变量或代码路径还需排查），**注意 `run_probe.ps1` 会自己设置一整套 `DNF_LIVE_*`，
+新增变量需要确认能传进子进程**。下一步先确认这个变量生效，再验证 `check_grid_clear()` 是否因此通过。

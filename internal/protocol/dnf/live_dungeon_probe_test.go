@@ -470,6 +470,20 @@ func TestLiveDungeonProbe(t *testing.T) {
 			// drop the connection, so the sweep has to be split across runs.
 			var cx, cy int
 			if _, scanErr := fmt.Sscanf(one, "%d,%d", &cx, &cy); scanErr == nil {
+				if seq := liveEnvInt(t, "DNF_LIVE_DIE_MOB", 0); seq > 0 {
+					// Type 39 is the monster death report: the server only counts a
+					// kill it hears about here, and a room whose monsters are alive
+					// refuses the room move before the coordinates are even checked.
+					dieBody := make([]byte, 0xa3f)
+					binary.LittleEndian.PutUint16(dieBody[0:2], uint16(seq))
+					binary.LittleEndian.PutUint16(dieBody[2:4], 0xffff)
+					if diePacket, dieErr := buildSendPacket(39, uint16(vo.PacketID), dieBody, vo.Cipher); dieErr == nil {
+						vo.PacketID++
+						vo.sendRaw(diePacket)
+						t.Logf("reported mob %d dead", seq)
+					}
+				}
+
 				delay := 4 + liveEnvInt(t, "DNF_LIVE_MOVE_AFTER_SEC", 0)
 				time.Sleep(time.Duration(delay) * time.Second)
 				// MSG_MOVE_MAP starts with two *bytes* (x, y) followed by ints,
