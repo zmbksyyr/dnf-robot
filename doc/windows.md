@@ -3342,3 +3342,24 @@ test_sysinfo.py exit=0  i686 sysinfo trace PASS exit 42
 
 下一步：用村庄 2 对应的副本 id 再试（需要先确定村庄 2 的副本归属，`ch_dungeon_list` 里的 kind 名与村庄对应表
 在 `town/town.lst`，但该文件是脚本 IR，暂未解出）。
+
+## 零配置验证：不配 follow_account 也全通过（2026-11-21）
+
+目标①的核心要求是"用户只需开启技能释放开关，其余全自动、零配置"。此前测试时我曾把
+`follow_account = 17000020` 写进配置，严格说那就不算零配置了。
+
+本轮把它**改回空（默认值）**，重启实例后复跑验收脚本：
+
+```
+=== summary ===
+town_follow          PASS
+enter_and_attack     PASS
+clear_room           PASS
+leave_dungeon        PASS
+town_follow_again    PASS
+zero_config_skill    PASS
+ALL PASS
+```
+
+结论：**城镇跟随走的是"队伍队长"，不需要 `follow_account`**；除技能开关（`party_skill_catalog.json` 的
+`enabled`）外，配置里没有任何一项是地下城闭环所必需的。这条把"零配置"从口头承诺变成了可复核的事实。
