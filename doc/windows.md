@@ -3234,3 +3234,24 @@ db-test 状态回读：金币 1000000 · 复活币 5 · 账号金币 0 · 点券
 同一套表结构自检、同一套读写回环）。这是目标③"各管理功能精确、有效、一致"的实证之一。
 
 环境已恢复 Windows 实例。
+
+## ③ 双平台：dnf-gm 的导出在两套部署上结构一致（2026-11-21）
+
+用同一个 `DNF_GM.exe` 分别对**两套部署的数据库**执行 `--db-dump`：
+
+| 部署 | 导出文件 | 大小 | CREATE TABLE 行数 |
+|---|---|---|---|
+| Linux（WSL MySQL） | `x\dump-linux.sql` | 693 KB | 330 |
+| Windows（实例 MySQL） | `x\dump-windows.sql` | 759 KB | 334 |
+
+逐表比对后，差异**只有 4 张表**，而且都是我在测试过程中手动建的备份表：
+
+```
+taiwan_cain_2nd.bak_inv_16
+taiwan_cain_2nd.bak_skill_22
+taiwan_cain.bak_charac_info_21
+taiwan_cain.bak_ncq_16
+```
+
+也就是说：**两套部署的游戏表结构完全一致（各 330 张）**，dnf-gm 的导出路径在两边行为相同。
+这是"各管理功能精确、有效、一致"里"导出/结构"这一项的实证，与上一轮的 `--db-test`（读/写回环）互补。
