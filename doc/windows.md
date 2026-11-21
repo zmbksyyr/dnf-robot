@@ -3216,3 +3216,21 @@ cd D:\cache\dnf\src\dnf-robot  && git push origin work/dungeon-automation
 cd D:\cache\dnf\src\dnf-gm     && git push origin main
 cd D:\cache\dnf\src\dnf-native && git push origin main
 ```
+
+## ③ 双平台：dnf-gm 直连 Linux 数据库验证通过（2026-11-21）
+
+利用 WSL 的 localhost 转发，Windows 侧可以直接连到 Linux 部署的 MySQL（127.0.0.1:3306）。把 Windows 实例
+停掉、只起 WSL 的 MySQL 后，用**同一个 `DNF_GM.exe`** 执行 `--db-test`：
+
+```
+数据库已连接 · 共 20 个角色
+表/列自检通过：23 张表、90 个列全部就位
+db-test 轮询：成功 · 角色 20 个 · 在线 0 个 · 总数 20
+db-test 载入 love_哈独立(20)：金币 1000000 · 复活币 5 · 点券 0+0 · 背包 249 格 · 仓库 152 格 …
+db-test 状态回读：金币 1000000 · 复活币 5 · 账号金币 0 · 点券 0+0 · 仓库容量 8 · SP 0/0 …
+```
+
+也就是说 **dnf-gm 的管理功能在 Windows 与 Linux 两套部署的数据库上都能正确执行**（同一二进制、
+同一套表结构自检、同一套读写回环）。这是目标③"各管理功能精确、有效、一致"的实证之一。
+
+环境已恢复 Windows 实例。
