@@ -50,6 +50,13 @@ func (r *RobotVo) killRoomMonstersUnsafe(packet robotInboundPacket) {
 				r.reportMonsterDeathUnsafe(instID + uint16(delta))
 			}
 		}
+		if os.Getenv("DNF_LIVE_CLEAR_WIDE") == "1" {
+			// The room may hold more monsters than the packet listed; unknown ids
+			// are ignored by the server, so a wide sweep is safe.
+			for id := uint16(1); id < 512; id++ {
+				r.reportMonsterDeathUnsafe(id)
+			}
+		}
 	}
 }
 
