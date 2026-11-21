@@ -3807,3 +3807,27 @@ DNF_LIVE_GAME=127.0.0.1:10011  DNF_LIVE_UID=17000020  DNF_LIVE_CID=1
 也可能与 `taiwan_cain` 库里缺少教程解锁记录有关。
 
 这已经是 ③ 的实质性进展：**Linux 侧服务端 + 真实客户端协议全链路通到"城镇/选副本"**，剩下的是数据侧条件。
+
+## Linux 侧教程副本为什么没开：数据对比（2026-11-21）
+
+先查了 `new_charac_quest`（教程/引导状态）：
+
+| 库 | 角色 | quest_notify 长度 | play_1 | play_1_trigger |
+|---|---|---|---|---|
+| Linux | charac_no=1 | 40 | 1016 | 0 |
+| Windows（修好的） | charac_no=16 | 40 | 1016 | 0 |
+
+**关键字段一致**，所以不是那三项的差异。另外 Windows 侧的 `charac_quest` 表是空的（dump 里只有 DELETE、没有 INSERT），
+说明"有任务记录"也不是条件。
+
+再验证一次"到底进没进副本"：在 Linux 侧用 `-Drive 1`（SetPos 探针）发移动包，会话**存活**（`state=3 reason=0`），
+而 Windows 侧进图后同样的 SetPos 会被断线——所以**Linux 侧确实没进副本**。
+
+也就是说：同样的服务端二进制、同样的协议、同样的 quest 关键字段，Windows 能进教程、Linux 不能。差异只剩：
+
+1. 角色本身（job/level/装备）或 `charac_stat` 里的某些标志；
+2. 服务端配置文件（`channel`/`dungeon` 相关）在两套部署里不同；
+3. 账号级数据（`accounts`/`member_*`）。
+
+下一步可以拿 Windows 侧 cid 16 的整行数据（已有 `dump-windows.sql`）与 Linux 侧 charac_no=1 逐列对比，
+找出真正的开关字段。
