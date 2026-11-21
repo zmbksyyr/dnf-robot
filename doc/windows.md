@@ -2874,3 +2874,27 @@ ALL PASS
 
 这样就说得通了：**没有真实移动就无法换区域，也没有世界地图索引，普通副本永远选不了**。这一条到此为止，
 不再尝试。
+
+## Linux 启动：seccomp 拦截 brk 有实质进展（2026-11-21）
+
+此前所有用户态钩子都无效，是因为游戏**直接发系统调用**。改成用 seccomp 过滤器在**系统调用层**拦截
+brk（`SECCOMP_RET_TRAP` + SIGSYS 处理器，用私有 mmap 竞技场模拟 brk），实测：
+
+```
+[brk-shim] trapping brk over an mmap arena
+[brk-shim] trap nr=45 eip=f7fd6549
+[brk-shim] trap nr=45 eip=f7f5e549   （连续 7 次）
+```
+
+**拦截确实生效**（此前从未捕获到 brk）。
+
+过程中修掉一个关键错误：i386 的 syscall 走 vdso 的 `__kernel_vsyscall`（sysenter 路径），保存的 EIP
+**已经指向调用点之后**，最初按 int 0x80 的惯例 `EIP += 2` 导致跳进垃圾、立刻 SIGSEGV；去掉该调整后
+不再崩溃，trap 连续触发。
+
+当前遗留问题：崩点从"Init CipherKeyString 之后"前移到"Init Taiwan Garena Auth Key"——说明模拟的
+竞技场地址与游戏期望的 brk 地址不匹配（游戏第一次 brk 用的仍是原始堆地址，落在我们的竞技场之外，
+于是拿到 ENOMEM）。下一步需要在第一次 brk 时对齐地址（例如把竞技场映射到原始堆基址），或按"增量"
+方式模拟 brk。
+
+环境已恢复（Windows 实例 + 零配置开关）。
