@@ -220,6 +220,11 @@ func TestLiveDungeonProbe(t *testing.T) {
 		binary.LittleEndian.PutUint16(body[2:4], uint16(birthX))
 		binary.LittleEndian.PutUint16(body[4:6], uint16(birthY))
 		body[7] = 0x01
+		if kind := liveEnvInt(t, "DNF_LIVE_AREA_KIND", 0); kind > 0 {
+			// Byte 6 is the move kind; the Robot template uses 5, which the server
+			// reports as a guild-agit move.
+			body[6] = byte(kind)
+		}
 		if packet, err := buildSendPacket(38, uint16(vo.PacketID), body, vo.Cipher); err == nil {
 			vo.PacketID++
 			vo.sendRaw(packet)
