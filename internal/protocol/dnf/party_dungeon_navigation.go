@@ -26,6 +26,9 @@ type partyDungeonNavigation struct {
 	// reason records why the last plan did or did not move; it only feeds the
 	// throttled diagnostic trace.
 	reason string
+	// mode says what the plan was aiming at: a live monster, or the leader once
+	// the room is clear. It only feeds the trace.
+	mode string
 }
 
 // plan approaches attack distance, then follows the leader when no live target
@@ -39,6 +42,10 @@ func (world *partyDungeonWorld) planNavigation(self, leader [4]byte, now time.Ti
 	}
 	_, target, enemy := world.nearestMonster(position)
 	navigation := &world.navigation
+	navigation.mode = "follow"
+	if enemy {
+		navigation.mode = "chase"
+	}
 	if !enemy {
 		if !navigation.active {
 			navigation.reason = "idle-no-enemy"
@@ -99,8 +106,8 @@ func (r *RobotVo) navigatePartyDungeonUnsafe(conn *net.UDPConn, now time.Time) b
 	if !now.Before(r.partyDungeonMoveDiagAt) {
 		r.partyDungeonMoveDiagAt = now.Add(partyDungeonMoveDiagInterval)
 		leader := r.partyDungeonWorld.actors[partyDungeonPlayerReference(peer.uniqueID)].position
-		foundationlog.Robotf("[PARTY_DUNGEON_NAV] uid=%d self=(%d) leader=(%d) from=(%.0f,%.0f) to=(%.0f,%.0f) active=%t move=%t reason=%s\n",
-			r.UID, before.known, leader.known, before.x, before.y, leader.x, leader.y, active, move, r.partyDungeonWorld.navigation.reason)
+		foundationlog.Robotf("[PARTY_DUNGEON_NAV] uid=%d self=(%d) leader=(%d) from=(%.0f,%.0f) to=(%.0f,%.0f) mode=%s active=%t move=%t reason=%s\n",
+			r.UID, before.known, leader.known, before.x, before.y, leader.x, leader.y, r.partyDungeonWorld.navigation.mode, active, move, r.partyDungeonWorld.navigation.reason)
 	}
 	if !active {
 		return false
