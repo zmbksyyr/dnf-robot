@@ -3972,3 +3972,37 @@ Linux 侧选图无应答的现象仍然成立：Windows 在 `276/414` 之后会�
 
 阶段性判断：Linux 服务端"能跑、能登录、能推包"，但**上行链路（请求处理/场景同步）在 Linux 侧不可用**；
 Windows 侧功能完整。这条线要真正打通，需要拆 anti/封装层，工作量远大于剩余可投入。
+
+## 找到房间包（0x1d）的完整结构：怪物条目里有 instId（2026-11-21）
+
+参考实现 `CBattle_Field::MakePacket` 的 `case 0x1d` 分支就是服务端下发房间信息的构造器：
+
+```c
+pkt->put_header(0, 0x1d);
+pkt->put_byte(posX); pkt->put_byte(posY);                 // 自身格子坐标（单字节！）
+pkt->put_byte(layeredMap != 0);
+pkt->put_int(mapBasisLevel);
+pkt->put_byte(hellPartyDifficulty); pkt->put_byte(hellPartyEventType);
+if (!m_visited) {
+    pkt->put_byte(mapType);
+    pkt->put_short(mapIndex);
+    pkt->put_byte(m_monsterMap.size());                    // 怪物数
+    for (each monster) {                                   // 每条 16 字节
+        put_short(m_hellPartyGroupIdx);
+        put_int  (m_mobId);
+        put_short((short)m_instId);                        // ← DieMob 需要的 m_mobSeq！
+        put_int  (m_mobIndex);
+        put_byte (m_level);
+        put_byte (roleType 或 3);
+        put_byte (m_field13);                              // ← 存活标志（check_grid_clear 判它）
+        put_byte (m_field14);
+    }
+    put_byte(m_itemMap.size()); …
+}
+```
+
+**关键**：房间包里带着每只怪的 `m_instId`（低 16 位）与 `m_field13`（存活标志）。这正是 `DieMob`
+需要的 `m_mobSeq`，也是 `check_grid_clear()` 判断的依据。
+
+也就是说：**客户端本来就能从 0x1d 里读到合法 mob 序号**，不需要解析地图脚本。下一步是按这个布局解析我们抓到的
+79 字节包体，取出怪物条目，再用其中的 `m_instId` 发 DieMob。之前"1–7 断线、0 被接受"的扫描正是因为用了猜的序号。
