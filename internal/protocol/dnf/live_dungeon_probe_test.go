@@ -219,10 +219,12 @@ func TestLiveDungeonProbe(t *testing.T) {
 		body[0], body[1] = byte(village), byte(areaProbe)
 		binary.LittleEndian.PutUint16(body[2:4], uint16(birthX))
 		binary.LittleEndian.PutUint16(body[4:6], uint16(birthY))
-		body[7] = 0x01
+		// Reference layout: vill, area, x, y, z, then prevVill and prevArea as
+		// shorts — the origin fields sit at 7 and 9, not 8 and 10.
+		body[6] = 0
+		binary.LittleEndian.PutUint16(body[7:9], uint16(village))
+		binary.LittleEndian.PutUint16(body[9:11], uint16(areaProbe))
 		if kind := liveEnvInt(t, "DNF_LIVE_AREA_KIND", 0); kind > 0 {
-			// Byte 6 is the move kind; the Robot template uses 5, which the server
-			// reports as a guild-agit move.
 			body[6] = byte(kind)
 		}
 		if packet, err := buildSendPacket(38, uint16(vo.PacketID), body, vo.Cipher); err == nil {
@@ -250,11 +252,13 @@ func TestLiveDungeonProbe(t *testing.T) {
 
 	// Announce where we stand: the world-map index that normal dungeon selection
 	// needs comes from the area the user reports, not from the character record.
-	setArea := make([]byte, 12)
+	setArea := make([]byte, 16)
 	setArea[0], setArea[1] = byte(village), byte(area)
 	binary.LittleEndian.PutUint16(setArea[2:4], uint16(birthX))
 	binary.LittleEndian.PutUint16(setArea[4:6], uint16(birthY))
-	setArea[7] = 0x01
+	setArea[6] = 0
+	binary.LittleEndian.PutUint16(setArea[7:9], uint16(village))
+	binary.LittleEndian.PutUint16(setArea[9:11], uint16(area))
 	if setAreaPacket, err := buildSendPacket(38, uint16(vo.PacketID), setArea, vo.Cipher); err == nil {
 		vo.PacketID++
 		if vo.sendRaw(setAreaPacket) {

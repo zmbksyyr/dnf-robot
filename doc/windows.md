@@ -3363,3 +3363,33 @@ ALL PASS
 
 结论：**城镇跟随走的是"队伍队长"，不需要 `follow_account`**；除技能开关（`party_skill_catalog.json` 的
 `enabled`）外，配置里没有任何一项是地下城闭环所必需的。这条把"零配置"从口头承诺变成了可复核的事实。
+
+## 发现并修正：SetArea 报文的源字段偏移一直是错的（2026-11-21）
+
+对照参考实现的 `read_35.inc`（SetArea 读取器）逐字段核对：
+
+```c
+get_byte(m_0d);   // village
+get_byte(m_0e);   // area
+get_short(m_0f);  // x
+get_short(m_11);  // y
+get_byte(m_13);   // z
+get_short(m_14);  // prevVillage
+get_short(m_16);  // prevArea
+```
+
+也就是说**源村庄/源区域是偏移 7 与 9 的 short**。而机器人代码里写的是：
+
+```go
+setArea[7] = 0x01
+binary.LittleEndian.PutUint16(setArea[8:10], fromVillage)
+binary.LittleEndian.PutUint16(setArea[10:12], fromArea)
+```
+
+于是 prevVillage 实际变成 `0x01 | (fromVillage<<8)`（例如 fromVillage=1 → 257），prevArea 也错位。
+已按参考布局修正为偏移 7 与 9，并同步更新了 `TestRobotFollowsPartyLeaderTownArea` 的期望报文
+（旧期望编码的正是错误布局）。全部测试重新通过。
+
+夹具侧也做了同样修正。修正后再试"村庄 2 / 区域 4 + 选图"，仍然返回错误 8——说明**世界地图索引的问题
+不在报文布局**，而在"该区域不是 areaType==4"。但这次修正是独立的正确性改进：机器人真实运行时上报的
+源区域从此与服务端读取器的布局一致。

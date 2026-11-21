@@ -93,7 +93,9 @@ func TestRobotFollowsPartyLeaderTownArea(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := mustPartyHex(t, "03018e03160100010300000000000000")
+	// Layout per the reference reader: village, area, x, y, z at 0..6, then the
+	// origin pair as shorts at 7 (village) and 9 (area).
+	want := mustPartyHex(t, "03018e03160100030000000000000000")
 	if !bytes.Equal(payload, want) {
 		t.Fatalf("payload = %x, want %x", payload, want)
 	}
