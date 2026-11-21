@@ -3410,3 +3410,16 @@ binary.LittleEndian.PutUint16(setArea[10:12], fromArea)
 两个错误都是靠这个方法发现的：`MoveMap` 的坐标宽度、`SetArea` 的源字段偏移。其余报文目前核对一致。
 
 这套核对清单建议保留，后续任何新报文都应按同样方式对一遍。
+
+## SetArea 修正后的完整回归（2026-11-21）
+
+修完 SetArea 源字段偏移后做了一次完整回归：
+
+- `go test ./...`：全部通过（exit 0）；
+- 六段验收脚本：**ALL PASS**（城镇跟随 / 进副本攻击 / 清图 / 退出 / 回城跟随 / 零配置施法）。
+
+同时核对了 `MoveMap` 报文的**总长度**：参考读取器依次读 byte、byte、int、int、byte、short、short×4、int×4、
+short、int，合计 **43 字节**；我们的报文是 48 字节（补齐到密文块整数倍），读取器消费 43 字节、剩余 5 字节
+为填充，符合要求。`SetArea` 读取器需 11 字节，我们发 16 字节，同样满足。
+
+所以三个此前怀疑过的报文（MoveMap / SetArea / FinishLoad）现在**长度与字段布局都核对无误**。
