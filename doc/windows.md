@@ -2942,3 +2942,23 @@ TRAP 变体把 brk 拦到用户态竞技场，但游戏会 **exec 子进程**（
 - 堆能正常增长到 ~240 MB（游戏够用）；
 - 永远碰不到栈所在的 0xfffxxxxx 区域；
 - 不依赖信号处理器，`exec` 后依然有效。
+
+## Linux 启动：seccomp 方案的最终结论（2026-11-21）
+
+尝试路径与结果汇总（全部为 `x/linux-server/heapsim/` 下的预加载垫片）：
+
+| 方案 | 结果 |
+|---|---|
+| `mallopt` 大块走 mmap | 游戏绕过 libc，无效 |
+| 接管 `sbrk`/`brk` | 游戏直接发系统调用，无效 |
+| 栈下 `PROT_NONE` 保护带 | 目标地址已被 heap VMA 占用，`MAP_FIXED_NOREPLACE` 拒绝 |
+| `SECCOMP_RET_ERRNO`（brk 一律 ENOMEM） | **证明根因**：堆停在 132 KB、栈涨到 536 KB、崩点转移到别处 |
+| `SECCOMP_RET_TRAP` + 竞技场 | 拦到了 brk（每次运行多次 trap），但游戏会在启动过程中**重置信号处理器**，导致后续 brk 以默认动作杀死进程（`Bad system call`） |
+| 阈值过滤（只拦近栈的 brk） | 游戏一次性预留约 132 MB，阈值要么挡住它、要么挡不住栈，两难 |
+| 阻止游戏重置 SIGSYS（libc 层 + seccomp 层拦 48/67/174） | 仍出现 `Bad system call`，说明重置走的是我们还没覆盖到的路径 |
+
+**结论**：根因（堆挤压栈）已被严格证明；用户在"拦到 brk"上也成功了；剩下的是"游戏在初始化期间会把我们的
+SIGSYS 处理器复位"这件具体工程问题。下一步应采用**外部 ptrace 监管进程**（`PTRACE_EVENT_SECCOMP`），
+由监管者直接改写子进程的 brk 返回值——那不受子进程信号处理影响。
+
+这一条到此收尾，不再在用户态垫片上投入。环境已恢复 Windows。
