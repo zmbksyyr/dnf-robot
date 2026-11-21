@@ -3302,3 +3302,23 @@ Windows 的 `172.26.16.1:10011`。三个防火墙配置（Domain/Private/Public�
 防火墙规则层面，更可能是 WSL2 NAT/vNIC 的网络策略。
 
 临时规则已删除。**结论不变**：本机无法做"WSL 侧夹具/机器人 ↔ Windows 侧服务端"的实机联调。
+
+## dnf-native 回归：代表性测试全过（2026-11-21）
+
+在 native 缓存改动之后，跑了 6 个代表性测试，全部通过：
+
+```
+test_elf.py     exit=0  Passed: 19 original fixed-address mappings and 6 rejection checks
+test_vm.py      exit=0  x86_64 PASS exit 42
+test_files.py   exit=0  x86_64 files, maps lifecycle, directory pagination and live shared mappings PASS
+test_net.py     exit=0  x86_64 TCP/poll/100ms timeout abortive PASS exit 42
+test_poll.py    exit=0  x86_64 select timeout / pipe poll PASS exit 42
+test_sysinfo.py exit=0  i686 sysinfo trace PASS exit 42
+```
+
+覆盖 ELF 固定映射、虚拟机、文件与共享映射、TCP/poll、select、i386 sysinfo —— 说明 trap 站点缓存改动没有
+破坏运行时行为。
+
+另外顺带确认了"服务端是否真的进了副本"这一疑问：服务端日志里 `SelectDungeon::process` 只打 `partyCount`
+一行，不记录后续 dungeon_start，所以无法从日志区分；但此前用 **SetPos（仅城镇状态 3 允许）** 的行为探针
+已经证明普通副本没进图（存活=仍在城镇）、教程副本进图了（被拒）。
