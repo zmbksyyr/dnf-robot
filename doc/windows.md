@@ -3652,3 +3652,21 @@ body=0001005ad7456d00000148ee020000000000009f761300000001000000000001000000a0761
 
 结论不变：**服务端会校验 mob 序号**，伪造值直接断线。要拿到真实序号，仍需解析进图后服务端下发的怪物数据
 （79 字节房间包或紧随其后的 100/276/414 包）。
+
+## 击杀校验的入口签名（2026-11-21）
+
+参考实现里 `CParty::kill_monster` 的签名是：
+
+```c
+bool CParty::kill_monster(CUser* user, int monsterIdx, unsigned short mapIdx,
+                          MSG_MONSTER_DIE const& dieInfo, int* param)
+```
+
+函数入口先构造 `map_monster mob;`（按 `monsterIdx` 在当前地图里查怪物），再走奖励/计数逻辑。也就是说
+**服务端拿 `m_mobSeq` 当"当前地图里的怪物索引"去查表**，查不到就按作弊处理——这正是伪造序号断线的原因。
+
+因此真实序号来自**地图脚本**（`map/tutorial/tutorial(4,1)_normal.map` 里定义的怪物索引），而不是运行期随机值。
+下一步从 PVF 里把这张地图取出来、读它的怪物段，即可得到合法索引；也可以直接用 GM 的 `--pvf-list`/`--pvf-extract`
+定位文件（本轮 `--pvf-list` 过滤没命中 tutorial，需要先确认列表里地图路径的写法）。
+
+这条线索把"清怪"从"猜序号"变成了"读地图数据"，是确定性的一步。
