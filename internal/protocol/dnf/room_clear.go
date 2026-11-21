@@ -40,6 +40,14 @@ func (r *RobotVo) killRoomMonstersUnsafe(packet robotInboundPacket) {
 			// both are harmless when accepted and one of them registers.
 			r.reportMonsterDeathUnsafe(mobIndex)
 		}
+		// The packet may be built before every monster of the room exists, so
+		// sweep the neighbouring ids as well: an unknown id is ignored by the
+		// server without ending the session.
+		if os.Getenv("DNF_LIVE_CLEAR_SWEEP") == "1" {
+			for delta := 1; delta <= 16; delta++ {
+				r.reportMonsterDeathUnsafe(instID + uint16(delta))
+			}
+		}
 	}
 }
 

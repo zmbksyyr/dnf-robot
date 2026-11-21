@@ -4168,3 +4168,21 @@ if (it == mapInfo->m_monsterMap.end()) { …log "kill_monster monster_map_trace_
 
 另外 `m_killPairA24/A26` 的注释是 `ValidateFixMobDiePos x/y`，很可能是"死亡位置校验"，我们一直填 0——这也会导致校验失败。
 下一步优先补上击杀位置（用角色/怪物坐标）。
+
+## 清房仍然是 0x14：击杀后条目似乎没被移除（2026-11-21）
+
+按"`kill_monster` 成功后 `m_monsterMap.erase(it)`"的推断，做了邻居扫描（对解析出的 instId 及其后 16 个 id 都上报一次；
+未知 id 在服务端只是 `find` 失败返回 false，不会断线）：仍然 `0x14`。
+
+服务端日志里也**没有** `kill_monster` / `find_monster` 相关行（这些日志是 level 1，默认级别不输出）。
+
+现在能确定的是：
+
+- 报文格式已正确（不再断线）；
+- 怪物条目键就是 `m_instId`（`championList.push_back(mob.m_instId)` → `m_monsterMap[picked]`）；
+- 解析出的 instId 与实际上报值一致（日志可核对）。
+
+剩下的可能：击杀在 `kill_monster` 的前置校验（`find_monster(m_mobIndex)`、角色/冠军校验等）里被 `return false` 掉了，
+而失败只在 level-1 日志里可见。
+
+下一步可以：把服务端日志级别调高（`df_game_r` 的日志配置）再复跑一次，直接从日志里读出 `find_monster(%u) fail` 的具体 `m_mobIndex`。
