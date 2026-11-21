@@ -4137,3 +4137,34 @@ short A29, A2b, A35, A37, A39, A3b, A3d
 
 下一步：验证 `field13` 是否由服务端在**收到死亡上报后**更新（可能需要再次拉取房间信息），或换房请求本身还需 `firstVisit`
 之类的参数配合。
+
+## 字段语义澄清 + 击杀为何没生效（2026-11-21）
+
+读 `add_monsters_current_map` 才明白两个关键字段的真实含义：
+
+```c
+mob.m_instId = uid++;              // 实例 id：房间内按顺序自增
+mob.m_field13 = ref.m_champion;    // ← 不是"存活标志"，是"冠军怪"标志
+mob.m_dropCnt = ref.m_hpPct;       // ← 不是掉落数，是"HP 百分比"
+mapInfo->Add_Mob(mob);
+```
+
+所以 `check_grid_clear()` 的判据 `m_dropCnt == 0x64 && m_field13 == 0` 实际是：
+**"存在一只 HP 还是 100% 且不是冠军的普通怪"→ 房间未清**。
+
+再看 `CBattle_Field::kill_monster`：
+
+```c
+std::map<int, map_monster>::iterator it = mapInfo->m_monsterMap.find(uid);
+if (it == mapInfo->m_monsterMap.end()) { …log "kill_monster monster_map_trace_.find() fail"…; return false; }
+```
+
+也就是说：**找不到就直接 false 返回，不改地图**——这正好解释了我们"上报被接受（不断线）但房间不清"的现象。
+
+我们上报的两个 candidate（`m_instId`、`m_mobIndex`）都没命中，下一步要确认 `m_monsterMap` 的键到底是哪一个：
+
+- `Add_Mob` 的插入键（尚未读到 `MapInfo::Add_Mob` 实现）；
+- 以及 `dispatch_sig` 里 `monsterIdx` 的来源是否经过某种换算。
+
+另外 `m_killPairA24/A26` 的注释是 `ValidateFixMobDiePos x/y`，很可能是"死亡位置校验"，我们一直填 0——这也会导致校验失败。
+下一步优先补上击杀位置（用角色/怪物坐标）。
