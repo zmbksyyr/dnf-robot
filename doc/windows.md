@@ -3752,3 +3752,37 @@ spawn 的怪物 id 与索引），这条路成本较高。
 
 再往下就只能解析地图脚本拿 `m_monsterMap` 的真实键值，或者反汇编 `CParty::kill_monster` 里更新地图表的那一段。
 两条路成本都明显高于此前的排查，**换房这条线到此收尾**，结论已完整记录（8 张图、判据、报文、应答码）。
+
+## 里程碑：Linux 服务端真的跑起来了（2026-11-21）
+
+关键组合终于找对：**管理器/服务栈 + 直接执行游戏**。
+
+此前两种单独尝试都失败：
+
+| 方式 | 结果 |
+|---|---|
+| 原始 `run.sh`（经 `ld-linux.so.2` 启动游戏） | 加载器抬高堆基址 → 堆挤压栈 → SIGSEGV |
+| 直接执行游戏（无服务栈） | 初始化全过、频道启动成功，随后 `exit_group(0)` 自行退出 |
+| **服务栈 + 直接执行（本轮）** | **进程常驻、`0.0.0.0:10011` 正常监听、端口可连接** |
+
+实测证据：
+
+```
+248 ./df_game_r siroco11 nofork
+LISTEN 0 1024 0.0.0.0:10011 0.0.0.0:* users:(("df_game_r",pid=248,fd=67))
+[!] The siroco11 channel 11('ch.11') server has been started successfully.
+```
+
+也就是说之前判断的"需要管理器常驻"是对的——管理器在跑，游戏就不再以 `exit_group(0)` 收尾。
+
+做法（不改仓库、只在 `x/` 下）：把 `run.sh` 前 44 行（服务栈启动部分）保留，把启动游戏的那 5 行换成
+
+```sh
+( cd /home/neople/game && GCONV_PATH=$DNF/usr/lib/gconv \
+    LD_PRELOAD="/mnt/d/.../dnf_exit_guard.so:/dp2/libdp2pre.so" \
+    LD_LIBRARY_PATH="..." exec ./df_game_r siroco11 nofork ) >> "$LOGS/game.log" 2>&1 &
+```
+
+即"直接执行 + exit 垫片"，其余服务照旧。
+
+**下一步**：在 WSL 里跑机器人/夹具连这台 Linux 服务端，尝试把副本闭环在 Linux 侧也跑通（③ 的关键一环）。
