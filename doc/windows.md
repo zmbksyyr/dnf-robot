@@ -4100,3 +4100,40 @@ bodylen = 64
 唯一缺的是"让服务端认可一次死亡"所需的完整校验字段——这需要反汇编 `dispatch_sig`（未移植），成本已超出可投入范围。
 
 本条与 ③ 的 Linux 上行链路、push 的凭据，共同构成当前三个明确的外部阻塞点。
+
+## 重大进展：死亡上报的**线上布局**原来不是结构体布局（2026-11-21）
+
+读了 `DisPatcher_DieMob::dispatch_sig`（`dispatch_sig_16.inc`）才看明白：**报文是按"读取顺序"逐字段顺序排列的**，
+不是结构体里那些 256 项数组的固定偏移。真实线上顺序：
+
+```
+short m_mobSeq
+short m_fieldF
+int   m_field11
+int   m_field15
+int   m_killValue2
+int   m_killValue1
+byte  m_mobCount
+for i < m_mobCount:            // 每只怪 10 字节，交错排列
+    short skillList[i]
+    short attackerList[i]
+    int   damageList[i]
+    short hitCountList[i]
+short killPairA24, short killPairA26
+byte  A22, byte A23, byte passiveFlag, byte moveCheckFlag
+short unusedShort
+byte  A28
+int   A2d, int A31
+short A29, A2b, A35, A37, A39, A3b, A3d
+```
+
+算下来 **一只怪正好 64 字节**（密文块大小），这也解释了此前 `0xa40` 的"结构体布局"为什么必然被拒。
+
+改成这个布局之后：
+
+- **不再断线了**（此前每一次上报都 `reason=4`）；
+- 日志确认两只怪都被上报（`5387`/`5388`，网格索引 `19`/`20`）；
+- 但换房仍返回 `0x14`（房间未清）——说明"死亡"还没被计入 `check_grid_clear` 的判据（`field13`）。
+
+下一步：验证 `field13` 是否由服务端在**收到死亡上报后**更新（可能需要再次拉取房间信息），或换房请求本身还需 `firstVisit`
+之类的参数配合。

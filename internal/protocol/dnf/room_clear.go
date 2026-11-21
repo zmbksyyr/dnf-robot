@@ -29,29 +29,62 @@ func (r *RobotVo) killRoomMonstersUnsafe(packet robotInboundPacket) {
 		// The instance id sits six bytes into the entry, after the group index
 		// and the monster id.
 		instID := binary.LittleEndian.Uint16(body[base+6 : base+8])
+		mobIndex := binary.LittleEndian.Uint16(body[base+8 : base+10])
 		alive := body[base+14]
-		if instID == 0 || alive != 0 {
+		if alive != 0 {
 			continue
 		}
 		r.reportMonsterDeathUnsafe(instID)
+		if mobIndex != instID {
+			// The map may key monsters by the index rather than the instance id;
+			// both are harmless when accepted and one of them registers.
+			r.reportMonsterDeathUnsafe(mobIndex)
+		}
 	}
 }
 
 // reportMonsterDeathUnsafe sends the death report for one monster instance.
+//
+// The wire order is the reader's: fixed header, then one block per killed
+// monster, then the trailing pairs. One entry comes to exactly sixty-four
+// bytes, which is the cipher block size.
 func (r *RobotVo) reportMonsterDeathUnsafe(instID uint16) {
-	body := make([]byte, 0xa40)
-	binary.LittleEndian.PutUint16(body[0:2], instID)
 	killer := uint16(r.partySelfPeer.uniqueID)
 	if raw := strings.TrimSpace(os.Getenv("DNF_LIVE_KILLER")); raw != "" {
 		if value, convErr := strconv.Atoi(raw); convErr == nil {
 			killer = uint16(value)
 		}
 	}
-	binary.LittleEndian.PutUint16(body[2:4], killer)
-	body[12] = byte(roomClearMobCount())
-	binary.LittleEndian.PutUint16(body[0x21a:], killer)
-	binary.LittleEndian.PutUint32(body[0x41a:], 100)
-	binary.LittleEndian.PutUint16(body[0x81a:], 1)
+	body := make([]byte, 64)
+	offset := 0
+	putShort := func(value uint16) { binary.LittleEndian.PutUint16(body[offset:], value); offset += 2 }
+	putInt := func(value uint32) { binary.LittleEndian.PutUint32(body[offset:], value); offset += 4 }
+	putByte := func(value byte) { body[offset] = value; offset++ }
+
+	putShort(instID)     // m_mobSeq
+	putShort(killer)     // m_fieldF
+	putInt(0)            // m_field11
+	putInt(0)            // m_field15
+	putInt(0)            // m_killValue2
+	putInt(0)            // m_killValue1
+	putByte(1)           // m_mobCount
+	putShort(0)          // skillList[0]
+	putShort(killer)     // attackerList[0]
+	putInt(100)          // damageList[0]
+	putShort(1)          // hitCountList[0]
+	putShort(0)          // m_killPairA24
+	putShort(0)          // m_killPairA26
+	putByte(0)           // m_fieldA22
+	putByte(0)           // m_fieldA23
+	putByte(0)           // passive flag
+	putByte(0)           // move check flag
+	putShort(0)          // unused short
+	putByte(0)           // m_fieldA28
+	putInt(0)            // m_fieldA2d
+	putInt(0)            // m_fieldA31
+	for i := 0; i < 7; i++ {
+		putShort(0) // m_fieldA29 .. m_fieldA3d
+	}
 	if packet, err := buildSendPacket(39, uint16(r.PacketID), body, r.Cipher); err == nil {
 		r.PacketID++
 		r.sendRaw(packet)
@@ -59,12 +92,4 @@ func (r *RobotVo) reportMonsterDeathUnsafe(instID uint16) {
 			println("[ROOM_CLEAR] reported monster", instID, "dead")
 		}
 	}
-}
-// roomClearMobCount keeps the per-mob array length switchable while the exact
-// validation is still being pinned down.
-func roomClearMobCount() int {
-	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("DNF_LIVE_CLEAR_COUNT"))); err == nil {
-		return value
-	}
-	return 1
 }
