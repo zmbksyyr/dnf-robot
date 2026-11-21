@@ -3871,3 +3871,17 @@ DNF_LIVE_GAME=127.0.0.1:10011  DNF_LIVE_UID=17000020  DNF_LIVE_CID=1
 
 **环境已回切**：停掉 WSL 服务栈、重启 Windows 实例，六段验收脚本 **ALL PASS**，确认回切后功能完好。
 `doc/windows.md` 里保留了 Linux 侧启动与联调的完整步骤，随时可以再切回去继续查。
+
+## 新增《快速上手》文档（2026-11-21）
+
+把"怎么跑起来、怎么验证"压缩成一页可直接复制的命令：`doc/quickstart.md`。
+
+涵盖：
+
+- Windows 实例的启动/验收/关闭三条命令；
+- Linux 服务端的完整步骤（起 MySQL+secagent → `run_direct.sh` → 确认 10011 → 用夹具连它 → 停止），
+  并明确标注"Linux 与 Windows 不能同时运行"；
+- dnf-gm 的验证命令（db-test / db-dump / pvf-list / pvf-extract）；
+- dnf-native 的构建与 6 个测试；
+- dnf-robot 的双平台测试；
+- 常见问题（端口互斥、登录 reason=36、验收失败、Linux 选图无应答）。
