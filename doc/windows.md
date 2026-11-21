@@ -3393,3 +3393,20 @@ binary.LittleEndian.PutUint16(setArea[10:12], fromArea)
 夹具侧也做了同样修正。修正后再试"村庄 2 / 区域 4 + 选图"，仍然返回错误 8——说明**世界地图索引的问题
 不在报文布局**，而在"该区域不是 areaType==4"。但这次修正是独立的正确性改进：机器人真实运行时上报的
 源区域从此与服务端读取器的布局一致。
+
+## 报文逐字段核对（2026-11-21）
+
+用"对着参考实现的 `read_*.inc` 逐字段核对"的方法审了机器人发出的主要报文：
+
+| 报文 | 参考读取顺序 | 我们的写法 | 结论 |
+|---|---|---|---|
+| SetPos(37) | short x @0、short y @2、byte type @4、short speed @5 | 同 | ✅ 一致 |
+| FinishLoad(40) | int @0、int @4 | 两个 uint32 | ✅ 一致 |
+| SelectDungeon(16) | short idx、byte type、byte field10、byte field11 | 同 | ✅ 一致 |
+| SetPartyInfo(12) | byte titleIndex（0 时再 int len + str≤32）、byte userMax、short dungIndex、byte dungDiffi | titleIndex=1、userMax=4、dungIndex=0、dungDiffi=0 | ✅ 一致 |
+| **MoveMap(48)** | **byte x、byte y**、int、int、byte、short×… | 原写成 short x/short y | ❌ **已修**（第 60 轮） |
+| **SetArea(38)** | byte vill、byte area、short x、short y、byte z、**short prevVill @7、short prevArea @9** | 原来把常量写 @7、prev 写 @8/@10 | ❌ **已修**（本轮） |
+
+两个错误都是靠这个方法发现的：`MoveMap` 的坐标宽度、`SetArea` 的源字段偏移。其余报文目前核对一致。
+
+这套核对清单建议保留，后续任何新报文都应按同样方式对一遍。
