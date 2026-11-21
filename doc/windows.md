@@ -3602,3 +3602,17 @@ unsigned int   m_killValue1;         // +0xa1e
 下一步：从房间信息包（type 29，长度 79）里解析出该房间的怪物序号，再按真实序号逐个上报。
 `MSG_MONSTER_DIE` 的四个 per-mob 数组（skillList/attackerList/damageList/hitCountList）也需要按
 `m_mobCount` 填真实值，否则 `CParty::kill_monster` 的伤害/命中校验可能不通过。
+
+## 下一步怎么拿到真实 mob 序号（2026-11-21 记录）
+
+type 39 的结构已通、但伪造序号会被断线，所以必须拿到服务端下发的真实序号。三条可行线索：
+
+1. **房间信息包（type 29，79 字节）**：进图后服务端会发一次，里面按设计包含该房间的怪物列表。
+   下一步是把这个包体打印出来（`robot_packets.go` 的 `[RX]` 跟踪目前只打类型和长度），对照
+   `MSG_MOVE_MAP`/地图信息的结构解析。
+2. **刷怪包**：进图后可能有独立的 actor 出生包（本环境曾观察到 type 100）。
+3. **服务端侧**：参考实现里 `CBattle_Field` 有 `m_mapMonster` 容器，`mobSeq` 由场景加载时分配；
+   若能找到同场景的怪物配置（PVF 的 `map/*.map` 里的 monster 段），也能反推序号规则。
+
+另外，`CParty::kill_monster` 会做伤害/命中校验（`m_hitCountList` 为 0 时报 0x6e 并置 1），所以上报时
+per-mob 数组也要填合理值。
