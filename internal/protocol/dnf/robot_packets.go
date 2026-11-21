@@ -66,6 +66,9 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			r.handlePartyPacketUnsafe(packet)
 		}
 	case 6, 9, 11, 22, 23, 28, 29, 153, 173:
+		if packet.typ == 29 && os.Getenv("DNF_LIVE_KILL_ROOM") == "1" {
+			r.killRoomMonstersUnsafe(packet)
+		}
 		r.handlePartyPacketUnsafe(packet)
 	case guildInviteNotification:
 		r.handleGuildPacketUnsafe(packet)

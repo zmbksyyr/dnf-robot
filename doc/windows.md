@@ -4057,3 +4057,26 @@ bodylen = 64
 说明**中间还有未考虑到的字段或对齐差**（例如 `put_header` 也写进了 body、或 hell 字段之后还有额外字段）。
 
 下一步用程序化方式尝试若干偏移组合，以"怪物条目 16 字节 × N + 掉落数 + 掉落条目正好落到第 64 字节"为约束求出自洽解。
+
+## 房间怪物解析成功，但死亡上报仍被断线（2026-11-21）
+
+按"怪物条目 16 字节、instId 在条目 +6"的推断，写了 `internal/protocol/dnf/room_clear.go`：
+
+- 从 type 29（房间包）解析怪物数（偏移 12）与每只怪的 `instId`；
+- 对每只 `field13 == 0`（存活）的怪发 type 39 死亡上报；
+- 由 `DNF_LIVE_KILL_ROOM=1` 开启。
+
+实测日志确认解析生效：
+
+```
+[ROOM_CLEAR] reported monster 45895 dead
+[ROOM_CLEAR] reported monster 45896 dead
+```
+
+**两只怪的 instId 被正确读出**（45895/45896，且两次运行的取值不同，说明是每次进房动态分配——这也解释了此前手填固定值必然失败）。
+
+但随后会话仍然 `reason=4` 断线，说明上报内容仍不完全合法。最可能的原因：`m_attackerList`/`m_fieldF` 里的"击杀者 uid"在无队伍时是 0，
+服务端校验不通过。
+
+下一步：从登录/进图流程里取到服务端分配的**世界唯一 id**（不是队伍内的 uniqueID），用它填击杀者；并把 `m_hitCountList`、
+`m_damageList` 与之一致化。
