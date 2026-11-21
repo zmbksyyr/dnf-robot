@@ -478,7 +478,7 @@ func TestLiveDungeonProbe(t *testing.T) {
 					// refuses the room move before the coordinates are even checked.
 					dieBody := make([]byte, 0xa40)
 					binary.LittleEndian.PutUint16(dieBody[0:2], uint16(seq))
-					binary.LittleEndian.PutUint16(dieBody[2:4], 0xffff)
+					binary.LittleEndian.PutUint16(dieBody[2:4], uint16(liveEnvInt(t, "DNF_LIVE_DIE_KILLER", 0xffff)))
 					// One entry in each per-mob array: the kill handler validates the
 					// hit count and credits the damage to the reporting member.
 					dieBody[12] = byte(liveEnvInt(t, "DNF_LIVE_DIE_COUNT", 1))
