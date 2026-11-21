@@ -3007,3 +3007,26 @@ Recv SIGSEGV signal --> make Dump Core file.
 
 下一步：用 gdb 跑直接执行版本，看这个收尾阶段崩在哪里——此时堆/栈已不冲突，崩点应该是别的问题（例如
 桥接卸载后仍有回调）。
+
+## 直接执行的收尾崩溃：frida 线程调用 exit()（2026-11-21）
+
+gdb 直接执行版本，拿到崩溃栈：
+
+```
+#0 __run_exit_handlers () from libc
+#1 exit () from libc
+#2 0xe168e40f in ??            ← frida agent 的 JIT 区域
+#3 UdpThread::dispatch(void*)
+#4 ThreadInterface::dispatch_proxy(void*)
+#5 start_thread () from libpthread
+```
+
+也就是说：**frida 桥接在一个 UDP 线程里调用了 `exit()`**，而 `exit()` 的清理路径崩溃。
+`df_game_r.js` 里的 `dispose` 只是打日志，没有调 `exit`——所以 `exit` 来自 agent 运行时本身
+（桥接在卸载/出错时结束进程）。
+
+顺带确认：**去掉 `LD_PRELOAD=/dp2/libdp2pre.so` 后游戏反而更早崩**（回到 CipherKeyString 那个崩点），
+说明这个预加载库是启动必需的，不能简单去掉。
+
+下一步：查 agent 为什么在频道启动后立刻 dispose（可能是 JS 侧的某个校验/异常），或绕开 agent 的 exit
+（例如给 `exit` 加垫片，让它在非主线程调用时只终止该线程）。
