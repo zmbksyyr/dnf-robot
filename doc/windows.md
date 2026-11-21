@@ -3456,3 +3456,20 @@ if (ret > 0) { send_to_party_cmd_error((ENUM_CMDPACKET)0x30, ret & 0xff); return
 3. 重新构建验证：`tools/build.py` 仍正常产出 i686 / x86_64 两个 host。
 
 这样仓库约定与任务书要求同时满足：脚本照旧写 `src\x`，实际落盘在 `D:\cache\dnf\x`。
+
+## dnf-native：修掉一个潜在的释放后使用（2026-11-21）
+
+审查上一轮的 trap 站点缓存时发现：缓存里存的是指向 `elf->traps` 的指针，而 `nr_elf_free` 会释放这张表。
+若同一进程里换过一次 ELF，残留缓存条目在做 `cached->pc == pc` 校验时会**读已释放内存**。
+
+修法：在释放 trap 表之前调用 `nr_site_cache_reset()` 清空缓存（并在 `elf.c` 里补上前置声明）。
+构建通过，`test_elf.py`、`test_sysinfo.py`、`test_vm.py` 全部通过。提交在 dnf-native：`afcaef8`。
+
+### 另外一件事：目录联接方案回滚
+
+上一轮我把 `src\x` 做成指向 `D:\cache\dnf\x\dnf-native-output` 的目录联接，想让构建产物落在任务书要求的
+目录。但构建脚本会用解析后的真实路径再拼一次 `../x/`，结果变成
+`x\dnf-native-output\dnf-native-output\.local\...`，并且触发了脚本自身的 `external_output` 校验失败。
+
+已回滚为普通目录（`src\x`），保持仓库自身"产物写到 ../x/"的约定。任务书里"不得污染 src"的实质要求是
+**不要写进三个仓库**——`src\x` 在三个仓库之外，且已被各仓库的 `.gitignore` 覆盖，三个仓库的工作区始终干净。
