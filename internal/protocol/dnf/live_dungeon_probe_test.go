@@ -470,7 +470,8 @@ func TestLiveDungeonProbe(t *testing.T) {
 			// drop the connection, so the sweep has to be split across runs.
 			var cx, cy int
 			if _, scanErr := fmt.Sscanf(one, "%d,%d", &cx, &cy); scanErr == nil {
-				time.Sleep(4 * time.Second)
+				delay := 4 + liveEnvInt(t, "DNF_LIVE_MOVE_AFTER_SEC", 0)
+				time.Sleep(time.Duration(delay) * time.Second)
 				// MSG_MOVE_MAP starts with two *bytes* (x, y) followed by ints,
 				// shorts and an array; a short-body request fails the reader and
 				// the dispatcher answers by dropping the connection.

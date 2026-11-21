@@ -3506,3 +3506,38 @@ dnf-native 的缓存失效修复提交后，重建宿主并把实例重启，用
 原样回发），20 来自 `CBattle_Field::MoveMap` 本身——即"战斗场景里没有这个可走的格子"。
 
 这与"教程图只有一张 map、没有相邻房间"一致。换房到此为止：**协议正确、错误码可解释、环境缺多房间副本**。
+
+## 突破性发现：错误码 0x14 的含义是"当前房间没清干净"（2026-11-21）
+
+在参考实现里找到了 `CBattle_Field::MoveMap` 的换图主流程（`BattleDepsB2/MoveMap.inc`）：
+
+```c
+if (!m_pDungeon->IsEnterEachMap())
+{
+    if (!check_grid_clear())
+    {
+        moveMap_1_Log(x, y);
+        return 0x14;          // ← 我们一直收到的错误码
+    }
+}
+…
+if (x < 0 || x > 0x31 || y < 0 || y > 0x31) return 1;
+if (GetCurrentMapInfo()->m_layeredMap != 1) { …if (x==curX && y==curY) return 0x12; }
+if (m_gridMaze == NULL) { return 0x15; }
+if (!(x < width && y < height)) return 0x15;
+…
+```
+
+也就是说 **0x14 = `check_grid_clear()` 返回 false —— 当前房间还有怪没清完**，不是"格子不存在"！
+
+这解释了此前所有观察：
+
+- 早先 (0,0) 曾给 0x12（同房间）——说明**那一刻房间是清空的**，所以检查通过、走到了"原地不动"判定；
+- 之后所有格子统一给 0x14——说明**那一刻房间里有怪**；
+- 教程副本里我们的机器人攻击没有真正打死服务端刷的怪（夹具用的是伪造的怪物 ref），所以房间一直不清。
+
+**方向因此明确**：只要让房间真的清空，换房报文就能通过。下一步是让夹具从服务端下发的刷怪包里取出**真实怪物 ref**
+并逐一上报击杀，然后再发 MoveMap——这样 `check_grid_clear()` 就会通过，服务端应回 `0x1d`（换房成功包）。
+
+同时给夹具加了 `DNF_LIVE_MOVE_AFTER_SEC`，可以把"发换房"延后到机器人打够时间之后再发（本次试了 55 秒，仍是 0x14，
+印证了"攻击没打死怪"这一点）。
