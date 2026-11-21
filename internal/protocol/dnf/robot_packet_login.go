@@ -98,9 +98,10 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 		r.setArea[1] = r.CurArea
 		binary.LittleEndian.PutUint16(r.setArea[2:4], r.CurX)
 		binary.LittleEndian.PutUint16(r.setArea[4:6], r.CurY)
-		r.setArea[7] = 0x01
-		binary.LittleEndian.PutUint16(r.setArea[8:10], uint16(r.CurVillage))
-		binary.LittleEndian.PutUint16(r.setArea[10:12], uint16(r.GateArea))
+		// The reference reads the origin pair right after the z byte: previous
+		// village at offset 7 and previous area at offset 9, both as shorts.
+		binary.LittleEndian.PutUint16(r.setArea[7:9], uint16(r.CurVillage))
+		binary.LittleEndian.PutUint16(r.setArea[9:11], uint16(r.GateArea))
 		pkt, err = buildSendPacket(38, 26, r.setArea[:], r.Cipher)
 		if err == nil {
 			r.sendRaw(pkt)
