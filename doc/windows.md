@@ -3294,3 +3294,11 @@ taiwan_cain.bak_ncq_16
 
 结论：跨 WSL/Windows 边界的实机联调在这台机器上不可行；Linux 侧的实机验证仍以"机器人进程在 WSL 内
 连接 Windows 侧服务端"此前的 20 机器人测试为准，副本闭环实机仍只在 Windows 侧完成。
+
+## 跨边界连通性：放行全部配置仍不通（2026-11-21）
+
+进一步试验：加一条 `Profile Any`、`RemoteAddress Any` 的入站放行规则（TCP 10011），WSL 仍连不上
+Windows 的 `172.26.16.1:10011`。三个防火墙配置（Domain/Private/Public）都是启用的，说明拦截不在普通
+防火墙规则层面，更可能是 WSL2 NAT/vNIC 的网络策略。
+
+临时规则已删除。**结论不变**：本机无法做"WSL 侧夹具/机器人 ↔ Windows 侧服务端"的实机联调。
