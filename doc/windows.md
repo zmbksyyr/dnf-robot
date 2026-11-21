@@ -4206,3 +4206,24 @@ if (it == mapInfo->m_monsterMap.end()) { …log "kill_monster monster_map_trace_
 5. 但条目仍未从 `m_monsterMap` 移除，服务端前置校验失败且不可观测。
 
 再往下只能是反汇编 `CBattle_Field::kill_monster` 的前置校验分支，成本已远超可投入。
+
+## 定时重发死亡上报仍然不清房（2026-11-21）
+
+怀疑"房间包在怪物入库之前就发出"，于是给 `room_clear.go` 加了缓存（`roomClearIDs`）与
+`ReportCachedRoomMonsters()`，在换房前按 2/3/4/5 秒四次重发：
+
+```
+[ROOM_CLEAR] reported monster 5355 dead
+[ROOM_CLEAR] reported monster 5356 dead
+re-reported 2 room monsters   × 4
+sent single move map cell=(1,1)
+[RX] typ=48 size=23 body=0014…    ← 仍是 0x14
+```
+
+结论：**不是时序问题**。此前已排除：报文格式、击杀者、数组条数、邻居 id 扫描、重发时机。
+
+剩下的唯一解释是 `CBattle_Field::kill_monster` 的前置校验里 `find_monster(m_mobIndex)` 失败
+（我们解析出的 `m_mobIndex` 是 19/20，若 PVF 里没有这个 id 就会 `return false`）。
+
+下一步（最后一次尝试）：确认 PVF 里怪物 id 19/20 是否存在——存在则该解释也不成立，不存在则说明房间包解析的
+`m_mobIndex` 偏移需要修正。

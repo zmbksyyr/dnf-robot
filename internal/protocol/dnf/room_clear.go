@@ -24,11 +24,13 @@ func (r *RobotVo) killRoomMonstersUnsafe(packet robotInboundPacket) {
 	if count <= 0 || 13+count*entrySize > len(body) {
 		return
 	}
+	r.roomClearIDs = r.roomClearIDs[:0]
 	for i := 0; i < count; i++ {
 		base := 13 + i*entrySize
 		// The instance id sits six bytes into the entry, after the group index
 		// and the monster id.
 		instID := binary.LittleEndian.Uint16(body[base+6 : base+8])
+		r.roomClearIDs = append(r.roomClearIDs, instID)
 		mobIndex := binary.LittleEndian.Uint16(body[base+8 : base+10])
 		alive := body[base+14]
 		if alive != 0 {
@@ -100,4 +102,16 @@ func (r *RobotVo) reportMonsterDeathUnsafe(instID uint16) {
 			println("[ROOM_CLEAR] reported monster", instID, "dead")
 		}
 	}
+}
+// ReportCachedRoomMonsters re-sends the deaths parsed from the last room packet.
+//
+// The server builds that packet before every monster of the room exists, so a
+// report sent immediately can miss; repeating it a moment later hits the ones
+// that appeared in the meantime.
+func (r *RobotVo) ReportCachedRoomMonsters() int {
+	ids := append([]uint16(nil), r.roomClearIDs...)
+	for _, id := range ids {
+		r.reportMonsterDeathUnsafe(id)
+	}
+	return len(ids)
 }

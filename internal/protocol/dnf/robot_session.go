@@ -105,6 +105,7 @@ type RobotVo struct {
 	ConnCount            uint32
 	ReDelay              uint32
 	PacketID             uint32
+	roomClearIDs         []uint16
 	CurVillage           uint8
 	CurArea              uint8
 	CurX                 uint16

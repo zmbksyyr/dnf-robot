@@ -500,6 +500,12 @@ func TestLiveDungeonProbe(t *testing.T) {
 				// MSG_MOVE_MAP starts with two *bytes* (x, y) followed by ints,
 				// shorts and an array; a short-body request fails the reader and
 				// the dispatcher answers by dropping the connection.
+				for _, wait := range []int{2, 3, 4, 5} {
+					time.Sleep(time.Duration(wait) * time.Second)
+					if n := vo.ReportCachedRoomMonsters(); n > 0 {
+						t.Logf("re-reported %d room monsters", n)
+					}
+				}
 				moveBody := make([]byte, 48)
 				moveBody[0], moveBody[1] = byte(cx), byte(cy)
 				moveMap, buildErr := buildSendPacket(48, uint16(vo.PacketID), moveBody, vo.Cipher)
