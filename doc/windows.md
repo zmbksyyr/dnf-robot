@@ -4186,3 +4186,23 @@ if (it == mapInfo->m_monsterMap.end()) { …log "kill_monster monster_map_trace_
 而失败只在 level-1 日志里可见。
 
 下一步可以：把服务端日志级别调高（`df_game_r` 的日志配置）再复跑一次，直接从日志里读出 `find_monster(%u) fail` 的具体 `m_mobIndex`。
+
+## 服务端 level-1 日志不可用（2026-11-21）
+
+查了 `cfg/siroco11.cfg`（只有端口/端口转发，没有日志级别）与 `log/` 目录下的所有文件：
+
+- 只有 `Log20261121.log` 等常规日志；
+- **没有** `kill_monster` / `find_monster` / `battle_field` 任何一行——说明 `LogManager::logFormat(1, …)`
+  的实际级别被过滤（配置里也没有可调项）。
+
+因此"从日志读出 kill 校验失败原因"这条路走不通。
+
+至此 ① 的换房排查已做到：
+
+1. 多房间副本存在（教程 8 张图）；
+2. 清房判据明确（`m_dropCnt(hpPct)==100 && m_field13(champion)==0`）；
+3. 报文格式修正为读取器顺序（1 怪 = 64 字节），**不再断线**；
+4. 地图键确认是 `m_instId`，且已能从房间包解析并上报；
+5. 但条目仍未从 `m_monsterMap` 移除，服务端前置校验失败且不可观测。
+
+再往下只能是反汇编 `CBattle_Field::kill_monster` 的前置校验分支，成本已远超可投入。
