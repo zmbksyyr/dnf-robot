@@ -26,6 +26,15 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		typ:  binary.LittleEndian.Uint16(inBuf[1:3]),
 	}
 	if packet.flag == 0 && packet.typ == 561 && packet.size > 36 {
+		if dec, decErr := r.Cipher.DecryptAnti(packet.data[19:]); decErr != nil {
+			if os.Getenv("DNF_TRACE_RX") == "1" {
+				fmt.Fprintf(os.Stderr, "[RX] anti decrypt failed size=%d err=%v\n", packet.size, decErr)
+			}
+		} else if os.Getenv("DNF_TRACE_RX") == "1" {
+			fmt.Fprintf(os.Stderr, "[RX] anti inner size=%d typ=%d\n", len(dec), int(binary.LittleEndian.Uint16(dec[1:3])))
+		}
+	}
+	if packet.flag == 0 && packet.typ == 561 && packet.size > 36 {
 		dec, err := r.Cipher.DecryptAnti(packet.data[19:])
 		if err == nil && len(dec) >= 7 {
 			packet = robotInboundPacket{

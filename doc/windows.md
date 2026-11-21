@@ -3885,3 +3885,21 @@ DNF_LIVE_GAME=127.0.0.1:10011  DNF_LIVE_UID=17000020  DNF_LIVE_CID=1
 - dnf-native 的构建与 6 个测试；
 - dnf-robot 的双平台测试；
 - 常见问题（端口互斥、登录 reason=36、验收失败、Linux 选图无应答）。
+
+## 发现一个可能的真实缺陷：561 反外挂包解不开（2026-11-21）
+
+给 `[RX]` 加了对 type 561（反外挂/anti 包）的解密诊断后，在 Linux 服务端上跑夹具，结果**几乎所有 561 都解密失败**：
+
+```
+[RX] anti decrypt failed size=92  err=data not multiple of block size
+[RX] anti decrypt failed size=102 err=data not multiple of block size
+[RX] anti decrypt failed size=80  err=data not multiple of block size
+[RX] anti decrypt failed size=396 err=data not multiple of block size
+```
+
+机器人当前的处理是：`flag==0 && typ==561 && size>36` 时解 `data[19:]`。失败说明**载荷起点不是 19**（或这些 561 根本不是
+anti 载荷）。这会影响两个平台：**所有 561 包都被静默丢弃**，其中可能包含副本相关的关键通知。
+
+这也很可能解释 Linux 侧"选图无应答"——应答也许就藏在这些 561 里。
+
+下一步：确认 561 的真实布局（可能是 3 字节头 + 16 字节 anti 头 + 载荷，或 4 字节长度前缀），把偏移改对后用单元测试锁住。
