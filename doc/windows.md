@@ -3587,3 +3587,18 @@ unsigned int   m_killValue1;         // +0xa1e
 夹具已加上 `DNF_LIVE_DIE_MOB=<seq>`：在发换房之前先发一个 type 39 的死亡上报。本轮首次试跑时没看到
 "reported mob" 日志（环境变量或代码路径还需排查），**注意 `run_probe.ps1` 会自己设置一整套 `DNF_LIVE_*`，
 新增变量需要确认能传进子进程**。下一步先确认这个变量生效，再验证 `check_grid_clear()` 是否因此通过。
+
+## 死亡上报：包体需要补齐，伪造序号会被断线（2026-11-21）
+
+把 `DNF_LIVE_DIE_MOB` 跑通的过程与结果：
+
+1. 环境变量能传进子进程（日志 `die-mob option sees 17`）；
+2. 首次构包失败：`data not multiple of block size` —— type 39 的包体不走自动补齐，需自己对齐到 16 字节
+   （`0xa3f` → `0xa40`）；
+3. 补齐后包能发出，但**服务端直接断线**（`reason=4`）——说明伪造的 mob 序号（17）被判为非法。
+
+结论：type 39 的结构已经能正确构造，但**必须用服务端真实下发的 mob 序号**，否则就是断线。
+
+下一步：从房间信息包（type 29，长度 79）里解析出该房间的怪物序号，再按真实序号逐个上报。
+`MSG_MONSTER_DIE` 的四个 per-mob 数组（skillList/attackerList/damageList/hitCountList）也需要按
+`m_mobCount` 填真实值，否则 `CParty::kill_monster` 的伤害/命中校验可能不通过。
