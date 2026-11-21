@@ -3541,3 +3541,24 @@ if (!(x < width && y < height)) return 0x15;
 
 同时给夹具加了 `DNF_LIVE_MOVE_AFTER_SEC`，可以把"发换房"延后到机器人打够时间之后再发（本次试了 55 秒，仍是 0x14，
 印证了"攻击没打死怪"这一点）。
+
+## 清怪路径：服务端要的是 type 39（DieMob）（2026-11-21）
+
+沿着 0x14 继续查：服务端把"怪死了"这件事记到 `CParty::kill_monster`，入口是 **`DisPatcher_DieMob`（type 39）**：
+
+```
+process_39.inc: process(...) 恒返 0 —— 逻辑全在 dispatch_sig(0x081eb0c4)：
+读 MSG_MONSTER_DIE 各字段，按 get_state 分派 CParty::kill_monster / CDeathTower::handleKillMonster /
+Global::CBossTowerFunc::DieMob / advancealtar::Manager::dieMob / WarRoom::HandleMonsterKill
+```
+
+也就是说：**只有 TCP 的 type 39 才会让服务端认为怪死了**；我们目前给机器人发的是队伍 UDP 的
+`livePartyCommandBody(23, ref)`，那只是"告诉队友怪死了"，服务端并不知道。
+
+所以换房要成功，缺的一环是：夹具（或机器人）把**服务端下发的真实怪物 ref**逐个用 type 39 上报。
+
+`MSG_MONSTER_DIE` 的字段布局尚未在参考的已移植 `.inc` 里找到（在未移植的 `dispatch_sig` 里），
+下一步需要：
+1. 从队伍/地图包（type 29）或刷怪包里取出真实怪物 ref；
+2. 对照 `dispatch_sig` 的反汇编推出 type 39 的字段顺序；
+3. 逐个上报后发 MoveMap，期望收到 `0x1d`（换房成功）。
