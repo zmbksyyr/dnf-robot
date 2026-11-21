@@ -3,6 +3,8 @@ package dnf
 import (
 	"encoding/binary"
 	"os"
+	"strconv"
+	"strings"
 )
 
 // killRoomMonstersUnsafe reports every monster in the room packet dead.
@@ -39,9 +41,15 @@ func (r *RobotVo) killRoomMonstersUnsafe(packet robotInboundPacket) {
 func (r *RobotVo) reportMonsterDeathUnsafe(instID uint16) {
 	body := make([]byte, 0xa40)
 	binary.LittleEndian.PutUint16(body[0:2], instID)
-	binary.LittleEndian.PutUint16(body[2:4], uint16(r.partySelfPeer.uniqueID))
-	body[12] = 1
-	binary.LittleEndian.PutUint16(body[0x21a:], uint16(r.partySelfPeer.uniqueID))
+	killer := uint16(r.partySelfPeer.uniqueID)
+	if raw := strings.TrimSpace(os.Getenv("DNF_LIVE_KILLER")); raw != "" {
+		if value, convErr := strconv.Atoi(raw); convErr == nil {
+			killer = uint16(value)
+		}
+	}
+	binary.LittleEndian.PutUint16(body[2:4], killer)
+	body[12] = byte(roomClearMobCount())
+	binary.LittleEndian.PutUint16(body[0x21a:], killer)
 	binary.LittleEndian.PutUint32(body[0x41a:], 100)
 	binary.LittleEndian.PutUint16(body[0x81a:], 1)
 	if packet, err := buildSendPacket(39, uint16(r.PacketID), body, r.Cipher); err == nil {
@@ -51,4 +59,12 @@ func (r *RobotVo) reportMonsterDeathUnsafe(instID uint16) {
 			println("[ROOM_CLEAR] reported monster", instID, "dead")
 		}
 	}
+}
+// roomClearMobCount keeps the per-mob array length switchable while the exact
+// validation is still being pinned down.
+func roomClearMobCount() int {
+	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("DNF_LIVE_CLEAR_COUNT"))); err == nil {
+		return value
+	}
+	return 1
 }
