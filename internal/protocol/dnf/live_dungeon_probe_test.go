@@ -491,7 +491,17 @@ func TestLiveDungeonProbe(t *testing.T) {
 			time.Sleep(5 * time.Second)
 			// Sweep plausible grid cells in one session: a real client sends the
 			// target room cell, and the server only reacts to one that exists.
-			for _, cell := range [][2]byte{{1, 0}, {0, 1}, {2, 0}, {0, 2}, {1, 1}} {
+			sweep := [][2]byte{{1, 0}, {0, 1}, {2, 0}, {0, 2}, {1, 1}}
+			if custom := os.Getenv("DNF_LIVE_MOVE_CELLS"); custom != "" {
+				sweep = nil
+				for _, part := range strings.Split(custom, ";") {
+					var cx, cy int
+					if _, err := fmt.Sscanf(part, "%d,%d", &cx, &cy); err == nil {
+						sweep = append(sweep, [2]byte{byte(cx), byte(cy)})
+					}
+				}
+			}
+			for _, cell := range sweep {
 				// 43 bytes of fields, padded to the cipher block size.
 				body := make([]byte, 48)
 				body[0], body[1] = cell[0], cell[1]
