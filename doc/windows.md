@@ -4282,3 +4282,38 @@ sent single move map cell=(1,1)
 
 （本轮曾尝试给夹具加"读取机器人位置"的实时探针来实证 regroup，但该改动依赖的队伍帧解析接口不匹配，已回滚，
 未留下半成品代码；后续如需实机实证可以再做。）
+
+## 六段验收在重建后的实例上全通过（2026-11-21 18:32）
+
+用分段脚本（每段前重启实例、重置 EPLP）逐段验证，**六段全部 PASS**：
+
+```
+stage1 town_follow          : robot=(300,300)                              -> PASS
+stage2 enter_and_attack     : attacks 0->24                                -> PASS
+stage3 clear_room           : attacks 24->24, 最后一次导航 mode=follow     -> PASS
+stage4 leave_dungeon        : PARTY_TRANSPORT_CLEARED=30                   -> PASS
+stage5 town_follow_again    : robot=(300,300)                              -> PASS
+stage6 zero_config_skill    : catalog casts 2->4                           -> PASS
+```
+
+关键条件（缺一不可）：
+
+1. **机器人必须是 job 8**——技能目录里只有 job 8 的 40 条路径中有 38 条真实存在于当前 PVF，
+   job 6/7 为 0 条，job 2 的路径全部失效（这直接决定零配置施法能否匹配到技能）；
+2. **队长与机器人必须同村庄同区域**——机器人流水线会把角色放在随机的村庄/区域，必须让它与队长一致
+   （本次为 village=3 西海岸、area=4）；
+3. **邀请要在报告区域之前发**（`ReqPeer` 只要求 state∈{3,6,8}，先 SetArea 会让邀请错过）；
+4. **每段之间重启实例**——`dungeon_start` 在 EPLP 状态非 0 时直接返回错误 8，
+   而开图成功会把 EPLP 置 1、直到副本正常结束才清零；分段执行可保证每段 EPLP=0。
+
+实测证据（机器人日志）：
+
+```
+[PARTY_DUNGEON_ATTACK] ...                       // stage2 攻击 24 次
+[PARTY_DUNGEON_NAV] ... mode=follow active=true  // 清完怪后转向队长
+[PARTY_DUNGEON_MOVE] uid=17000039 peer=17000020  // 向队长移动
+[PARTY_DUNGEON_SKILL] job=8 skill=... name=...   // 零配置施法命中目录
+```
+
+这六段合起来正好覆盖用户澄清口径的完整链路：
+城镇跟随 → 随队长进副本 → 自动寻怪 → 击杀 → 清图判定 → 怪清完跟随队长（顺图由队长发起）→ 回城继续跟随。
