@@ -3786,3 +3786,24 @@ LISTEN 0 1024 0.0.0.0:10011 0.0.0.0:* users:(("df_game_r",pid=248,fd=67))
 即"直接执行 + exit 垫片"，其余服务照旧。
 
 **下一步**：在 WSL 里跑机器人/夹具连这台 Linux 服务端，尝试把副本闭环在 Linux 侧也跑通（③ 的关键一环）。
+
+## Linux 服务端上的客户端联调（2026-11-21）
+
+服务端跑起来后，在 WSL 里用**同一套协议夹具**连它：
+
+```sh
+DNF_LIVE_DSN=game:…@tcp(127.0.0.1:3306)/d_taiwan
+DNF_LIVE_GAME=127.0.0.1:10011  DNF_LIVE_UID=17000020  DNF_LIVE_CID=1
+```
+
+结果：
+
+- **登录成功**：`after login: state=3 err=0 reason=0 party=false village=1 area=0 x=1000 y=300`；
+- 收包正常（561/452/403/53/12/339 等世界与城镇包）；
+- `SelectDungeon(10000)` 发出、会话不断；
+- 但状态行显示 `dungeon=no`——**教程副本在这套 Linux 库里没有真正开起来**（Windows 实例上是 `dungeon=yes`）。
+
+差异最可能来自角色/任务状态（Linux 库里的角色是另一批：`charac_no=1, lev=67`，没有 Windows 侧那套"已修好的新手任务"），
+也可能与 `taiwan_cain` 库里缺少教程解锁记录有关。
+
+这已经是 ③ 的实质性进展：**Linux 侧服务端 + 真实客户端协议全链路通到"城镇/选副本"**，剩下的是数据侧条件。
