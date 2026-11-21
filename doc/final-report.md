@@ -94,3 +94,30 @@ town_follow  enter_and_attack  clear_room  leave_dungeon  town_follow_again  zer
 
 1. **提供 GitHub 认证**（PAT 或完成一次 `gh auth login`），三条命令即可推送三个仓库；
 2. 如需 Linux 侧副本实机验证，请在**真实 Linux 主机**上按 `doc/linux-server-recipe.md` 启动服务端。
+## 附：换房（过图）专项结论（供后续接手）
+
+这一项是本项目唯一没有在实机上跑通的能力，但每一步都已查清。按顺序：
+
+1. **多房间副本存在**：教程副本 `10000` 下有 8 张地图 —
+   `tutorial(0,1)_start`、`(1,1)/(2,1)/(3,1)/(4,1)/(3,2)_normal`、`(3,0)_boss`、`tutorial.map`。
+   起始房是 `(0,1)`，我们一直站在这里。
+2. **换房报文**：`MoveMap(48)`，body 首两字节是**单字节** x/y（曾误写成 short 导致服务端读包失败断线）。
+   读取器共消费 43 字节，我们发 48 字节（补齐到密文块整数倍），字段与长度均已核对。
+3. **应答**：成功时服务端发 `0x1d`（=29），失败时发 `0x30`（=48）+ 错误码；错误码来自
+   `CBattle_Field::MoveMap` 的返回值。
+4. **失败码 0x14 的含义**：`check_grid_clear()` 返回 false。判据是
+   `m_dropCnt == 100 && m_field13 == 0` —— 而这两个字段的真实含义是 **HP 百分比**与**冠军标志**
+   （见 `add_monsters_current_map`），所以 0x14 = "房间里还有一只满血的普通怪"。
+5. **清怪路径**：服务端只认 `DisPatcher_DieMob`（type 39）→ `CParty::kill_monster` → `CBattle_Field::kill_monster`，
+   后者用 `m_monsterMap.find(uid)` 查表，**查不到直接 return false**，查到才在末尾 `erase(it)`。
+6. **uid 来源**：房间包 `0x1d` 的怪物条目（16 字节）里第 6 字节起是 `(short)m_instId`，
+   条目第 14 字节是 `m_field13`。已实现 `internal/protocol/dnf/room_clear.go` 解析并上报。
+7. **报文顺序**：`dispatch_sig_16.inc` 显示死亡上报是**读取顺序的平坦序列**（不是结构体的固定数组偏移），
+   一只怪正好 64 字节。改成该布局后**不再断线**（此前每次上报都会 `reason=4`）。
+8. **当前卡点**：上报被接受、但 `m_monsterMap` 里的条目没有被移除（换房仍 0x14），说明在
+   `kill_monster` 的前置校验里被 `return false`（`find_monster(m_mobIndex)` 等），而该函数的日志级别为 1、
+   服务端默认不输出，配置里也没有可调项。
+
+**若要继续**：反汇编 `CBattle_Field::kill_monster`（0x0830bc78）里 0x0830c… 之前的分支，
+确认它对 `mobPtr->m_mobIndex` / `m_roleType` / `m_hellPartyGroupIdx` 的具体要求；或在一个可控的、
+单房间小副本上用真实客户端打一次，抓上行包对照字段。
