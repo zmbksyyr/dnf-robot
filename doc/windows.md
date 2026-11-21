@@ -4261,3 +4261,24 @@ sent single move map cell=(1,1)
 结合本轮的更正（角色一直在城镇、选图错误 8 = 区域不是世界图区域），① 的进副本链路在这套环境里**无法成立**：
 `Area::m_worldMapIndex` 只有在 `m_areaType == 4` 的区域里才有效，而角色出生在区域 0、且没有任何办法让它走进类型 4 的区域
 （客户端无法操作、SetArea 不接受跨区、换村登录被拒）。
+
+## 用户澄清：顺图由队长发起，机器人只需"怪刷完即跟随"（2026-11-21）
+
+用户明确：**换房/顺图不需要机器人发起**，只要房间里怪被清完，机器人跟着队长走即可。
+
+按这个口径重新核对现有实现，机器人侧的行为已经完全覆盖，且都有单元测试：
+
+| 环节 | 实现 | 测试 |
+|---|---|---|
+| 城镇跟随 | `followPartyLeaderTownPositionUnsafe` | 六段验收 `town_follow` 实机 PASS |
+| 随队长进副本 | 队伍帧驱动的地牢状态 | `TestPartyDungeonLoopEnterAttackClearNextRoomTown`（步骤 1） |
+| 自动寻怪/攻击 | `navigatePartyDungeonUnsafe` + 连击/技能 | 同上 + `TestFailedNormalAttack…` |
+| **清图判定** | 目标死亡后停止攻击 | 六段验收 `clear_room` 实机 PASS |
+| **怪刷完跟随队长** | **清空后 regroup 到队长位置**（主动向队长移动） | **`TestPartyDungeonLoopEnterAttackClearNextRoomTown` 步骤 2：断言 regroup 帧确实产生了位移** |
+| 下一房间 | 队长过图后重置本房间状态、保留技能冷却 | `TestNewDungeonRoomDiscardsOldActionsAndPreservesSkillCooldowns` + 循环测试步骤 3 |
+| 回城跟随 | 退出地牢后回到城镇跟随 | 六段验收 `town_follow_again` 实机 PASS |
+
+也就是说：**"打怪→清完→跟队长"这条链在机器人侧是完整实现且有测试保证的**；机器人不需要（也没有）发起 MoveMap。
+
+（本轮曾尝试给夹具加"读取机器人位置"的实时探针来实证 regroup，但该改动依赖的队伍帧解析接口不匹配，已回滚，
+未留下半成品代码；后续如需实机实证可以再做。）
