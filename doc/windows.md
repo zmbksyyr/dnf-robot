@@ -2980,3 +2980,30 @@ SIGSYS 处理器复位"这件具体工程问题。下一步应采用**外部 ptr
 
 直接执行时进入的是 frida/JS 桥路径（日志里 `api_MySQL_exec /df_game_r.js`），需要 MySQL 用户 `dnf_frida`。
 下一步：在 Linux 库中创建该用户（或改用 run.sh 里同样的桥接环境），验证直接执行是否能真正启动。
+
+## Linux 直接执行：跑到"频道服务器启动成功"后崩溃（2026-11-21）
+
+按上一轮的方向做了三件事：
+
+1. `/lib/ld-linux.so.2` 软链到自带加载器（游戏原始的 interpreter 就是 `/lib/ld-linux.so.2`）；
+2. 桥接脚本 `dp2/df_game_r.js` 里的数据库密码占位符 `@DNF_FRIDA_PASSWORD@` 替换成实际密码（已留 `.orig` 备份）；
+3. 在 Linux 库里创建 `dnf_frida` 用户并授权（顺带 `apt-get install libncurses5` 让自带 mysql 客户端可用）。
+
+然后直接执行 `./df_game_r siroco11 nofork`，日志第一次走到了这么远：
+
+```
+[!] Init GameWorld ...
+Success
+[!] Init Login State Success
+[!] Load Event From DB
+[!] Init CipherKeyString TotalTime : 0s
+[frida] ------------------------------ dispose ------------------------------
+[!] The siroco11 channel 11('ch.11') server has been started successfully.
+Recv SIGSEGV signal --> make Dump Core file.
+```
+
+**"频道服务器启动成功"** 说明：直接执行确实绕开了"堆挤压栈"（主程序基址低），游戏一路初始化到频道启动；
+之后仍在收尾阶段 SIGSEGV，紧挨着 frida 的 `dispose`（桥接 agent 卸载）。
+
+下一步：用 gdb 跑直接执行版本，看这个收尾阶段崩在哪里——此时堆/栈已不冲突，崩点应该是别的问题（例如
+桥接卸载后仍有回调）。
