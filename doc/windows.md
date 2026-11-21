@@ -3104,3 +3104,29 @@ main() exited OK
 因此"进程有序退出"这件事发生在游戏自身 main 返回之后，而 main 返回的直接原因是**网络线程 join**。
 下一步用 `strace -f` 抓一下退出前最后的系统调用（重点看有没有 `SIGTERM`/`exit_group`、以及
 是否先收到某个信号），这样能确定是"自己退出"还是"被动收到信号退出"。
+
+## 进程是"自愿干净退出"，不是被信号杀死（2026-11-21）
+
+用 `strace -f -e trace=signal,exit_group,kill` 跟踪直接执行版本，末尾是：
+
+```
+260  rt_sigaction(SIGSEGV, ...)      ← 游戏设置自己的崩溃处理器
+260  +++ exited with 0 +++
+259  exit_group(0)                   = ?
+259  +++ exited with 0 +++
+```
+
+**没有任何信号**（没有 SIGTERM/SIGKILL），主进程以 `exit_group(0)` **正常退出码 0 结束**。
+
+也就是说：游戏自己认为"做完了"。结合它已经打印 "The siroco11 channel 11('ch.11') server has been started
+successfully"，最合理的解释是：**它需要一个管理器/父进程保持通道存活**，独立运行时把通道起好就正常收尾退出。
+
+至此 Linux 服务端的每一步都已查清：
+
+1. 加载器抬高堆基址 → 挤压栈 → SIGSEGV（已证）；
+2. 直接执行绕开该问题 → 初始化全过、频道启动成功；
+3. frida 线程 exit → 崩溃（已用垫片解决）；
+4. main 正常返回 → `exit_group(0)`：需要一个常驻的父/管理器角色。
+
+要继续，需要按原部署方式由 manager 拉起（或让桥接以守护方式持有进程），这属于部署形态问题，不再是
+代码/协议问题。
