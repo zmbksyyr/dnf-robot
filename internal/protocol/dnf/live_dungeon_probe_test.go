@@ -479,6 +479,13 @@ func TestLiveDungeonProbe(t *testing.T) {
 					dieBody := make([]byte, 0xa40)
 					binary.LittleEndian.PutUint16(dieBody[0:2], uint16(seq))
 					binary.LittleEndian.PutUint16(dieBody[2:4], 0xffff)
+					// One entry in each per-mob array: the kill handler validates the
+					// hit count and credits the damage to the reporting member.
+					dieBody[12] = byte(liveEnvInt(t, "DNF_LIVE_DIE_COUNT", 1))
+					attacker := liveEnvInt(t, "DNF_LIVE_DIE_ATTACKER", 0)
+					binary.LittleEndian.PutUint16(dieBody[0x21a:], uint16(attacker))
+					binary.LittleEndian.PutUint32(dieBody[0x41a:], 100)
+					binary.LittleEndian.PutUint16(dieBody[0x81a:], 1)
 					if diePacket, dieErr := buildSendPacket(39, uint16(vo.PacketID), dieBody, vo.Cipher); dieErr == nil {
 						vo.PacketID++
 						vo.sendRaw(diePacket)
