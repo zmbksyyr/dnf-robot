@@ -3194,3 +3194,25 @@ successfully"，最合理的解释是：**它需要一个管理器/父进程保�
 
 结论：地图文件名里的 `(4,1)` 不是可用的房间坐标线索。换房验证到此彻底结束——在这个环境里
 （教程图单房间、普通副本进不去）没有可用的合法相邻格。
+
+## push 阻塞点最终确认：只缺认证（2026-11-21）
+
+按任务书"Git 网络操作异常时启用系统代理"的提示，查了系统代理：
+
+| 检查 | 结果 |
+|---|---|
+| `HKCU\...\Internet Settings` | `ProxyEnable=1`，`ProxyServer=127.0.0.1:10808` |
+| 端口 10808 | **可连通**（代理在跑） |
+| 带代理 `git push`（45 秒超时） | 无输出、挂起 |
+| `git credential fill`（禁用交互） | `Cannot prompt because user interactivity has been disabled` → **凭据库里没有 github.com 的凭据** |
+
+所以：**网络通、代理可用，唯一缺的是 GitHub 认证**。推送必须有一次人工登录（浏览器授权或提供 PAT），
+无法在自动化环境里绕过。
+
+配置好认证后，三条命令即可完成推送：
+
+```
+cd D:\cache\dnf\src\dnf-robot  && git push origin work/dungeon-automation
+cd D:\cache\dnf\src\dnf-gm     && git push origin main
+cd D:\cache\dnf\src\dnf-native && git push origin main
+```
