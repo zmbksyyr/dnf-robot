@@ -112,6 +112,13 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 		pkt, err = buildSendPacket(37, 27, r.setPosStart[:], r.Cipher)
 		if err == nil {
 			if r.sendRaw(pkt) {
+				// The server keeps the user out of the dungeon-capable state
+				// until the client reports its loading screen as finished; without
+				// this a party member can never satisfy the all-members-loaded
+				// check that a dungeon selection performs.
+				if finish, finishErr := buildSendPacket(40, 28, buildFinishLoadingPayload(0, 0), r.Cipher); finishErr == nil {
+					r.sendRaw(finish)
+				}
 				r.PacketID = 29
 				r.State = StateRun
 				r.ConnCount = 0

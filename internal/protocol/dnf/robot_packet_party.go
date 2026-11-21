@@ -47,6 +47,9 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if r.State != StateRun || packet.flag != 0 || len(packet.data) <= 15 {
 			return
 		}
+		// A dungeon selection is only accepted once every member has reported its
+		// loading screen as finished, so a member that learns about the party reports it.
+		r.reportPartyLoadingUnsafe(time.Now())
 		clears, source, err := partyInfoPacketClearsParty(r.Cipher, packet.data, packet.isAnti)
 		if err != nil {
 			recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_INFO_PARSE", "FAIL", err.Error(), packet.data)
@@ -217,4 +220,21 @@ func tracePartyIPInfo(uid uint32, self partyIPPeer, peers []partyIPPeer) {
 	}
 	foundationlog.Robotf("[PARTY_IPINFO] uid=%d self_slot=%d self_acc=%d self_unique=%d self_port=%d peers=%s\n",
 		uid, self.slot, self.accID, self.uniqueID, self.port, peerText)
+}
+
+// reportPartyLoadingUnsafe tells the server this member has finished loading,
+// which is what the leader's dungeon selection waits for.
+func (r *RobotVo) reportPartyLoadingUnsafe(now time.Time) {
+	if now.Before(r.partyLoadingReportAt) {
+		return
+	}
+	r.partyLoadingReportAt = now.Add(2 * time.Second)
+	pkt, err := buildSendPacket(40, uint16(r.PacketID), buildFinishLoadingPayload(0, 0), r.Cipher)
+	if err != nil {
+		return
+	}
+	r.PacketID++
+	if r.sendRaw(pkt) {
+		foundationlog.Robotf("[PARTY_LOADING_REPORTED] uid=%d\n", r.UID)
+	}
 }
