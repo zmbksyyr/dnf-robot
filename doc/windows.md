@@ -3165,3 +3165,21 @@ successfully"，最合理的解释是：**它需要一个管理器/父进程保�
 
 同时把 Linux 排查结论整理成可复用文档 `doc/linux-server-recipe.md`：包含"不要用加载器启动"的根因与
 正确启动命令、桥接数据库账号替换、worker 线程 exit 垫片，以及本环境未解决的最后一步（需要管理器常驻）。
+
+## push 不可用：凭据管理器无存储凭据（2026-11-21）
+
+再次确认推送条件：
+
+| 检查项 | 结果 |
+|---|---|
+| 远端 | `https://github.com/zmbksyyr/dnf-robot.git`（https） |
+| `credential.helper` | `manager`（Git Credential Manager 已配置） |
+| 存储凭据 | **无**——`GIT_TERMINAL_PROMPT=0` 下 `git push` 直接挂起（GCM 在等待交互式登录） |
+| `GITHUB_TOKEN` / `GH_TOKEN` | 均未设置 |
+| `gh` CLI | 未安装 |
+| `~/.ssh` | 无密钥 |
+
+尝试 `git push origin HEAD`（dnf-native，仅 1 个提交）时进程挂起超过 5 分钟，被中止；仓库仍 `ahead 1`。
+
+**结论**：三个仓库的代码、提交、文档都已完成，但**推送需要一次人工登录**（浏览器/设备码授权或提供 PAT）。
+这不是技术问题，无法在无凭据的自动化环境里绕过。
