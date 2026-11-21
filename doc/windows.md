@@ -3670,3 +3670,41 @@ bool CParty::kill_monster(CUser* user, int monsterIdx, unsigned short mapIdx,
 定位文件（本轮 `--pvf-list` 过滤没命中 tutorial，需要先确认列表里地图路径的写法）。
 
 这条线索把"清怪"从"猜序号"变成了"读地图数据"，是确定性的一步。
+
+## 重大更正：教程副本其实是 8 张图的多房间副本（2026-11-21）
+
+从 PVF 清单里看到教程目录下的地图文件：
+
+```
+map/tutorial/tutorial(0,1)_start.map     ← 起始房
+map/tutorial/tutorial(1,1)_normal.map
+map/tutorial/tutorial(2,1)_normal.map
+map/tutorial/tutorial(3,1)_normal.map
+map/tutorial/tutorial(4,1)_normal.map
+map/tutorial/tutorial(3,2)_normal.map
+map/tutorial/tutorial(3,0)_boss.map      ← BOSS 房
+map/tutorial/tutorial.map                ← 副本定义
+```
+
+**也就是说教程副本是一个 x=0..4、y=0..2 的多房间副本**，此前"教程图只有一张图"的判断是错的
+（当时只看到日志里出现过 `(4,1)` 这一个文件名）。我们一直在起始房 (0,1)。
+
+同时把 `check_grid_clear` 的实现也读到了：
+
+```c
+for (it : GetCurrentMapInfo()->m_monsterMap) {
+    mob = it->second;
+    if (mob.m_dropCnt == 0x64 && mob.m_field13 == 0) return false;   // 必须清掉
+}
+return true;
+```
+
+也就是说：**只要房间里存在 `dropCnt==100` 且未死的怪，换房就被拒（0x14）**。起始房里有这样的怪。
+
+于是换房的路径彻底清楚了：
+
+1. 起始房 (0,1) 的怪必须死（走 DieMob，需要地图里真实的怪物索引）；
+2. 之后 MoveMap 到 (1,1) 就应通过，服务端回 `0x1d`；
+3. 依次 (2,1) (3,1) (4,1)，BOSS 房是 (3,0)。
+
+这比之前"环境没有多房间副本"的结论前进了一大步——**副本本身就在，卡的是清怪**。
