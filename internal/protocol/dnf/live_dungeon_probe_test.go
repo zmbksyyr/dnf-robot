@@ -250,6 +250,11 @@ func TestLiveDungeonProbe(t *testing.T) {
 	t.Logf("sent finish loading")
 	time.Sleep(700 * time.Millisecond)
 
+	if os.Getenv("DNF_LIVE_INVITE_FIRST") == "1" && os.Getenv("DNF_LIVE_INVITE") == "1" {
+		if peerID := liveEnvInt(t, "DNF_LIVE_PEER", 0); peerID > 0 {
+			invitePeerDirect(t, vo, peerID, 40)
+		}
+	}
 	// Announce where we stand: the world-map index that normal dungeon selection
 	// needs comes from the area the user reports, not from the character record.
 	setArea := make([]byte, 16)
@@ -735,4 +740,32 @@ func livePartyCommandBody(command uint16, plain []byte) ([]byte, bool) {
 		body[7+i] = value ^ 0x7e
 	}
 	return body, true
+}
+
+// invitePeerDirect asks the server to pair us with the peer, using the session
+// id the login log reports. Repeating it covers the window while the peer is
+// still finishing its own login.
+func invitePeerDirect(t *testing.T, vo *RobotVo, peerID, attempts int) bool {
+	for attempt := 0; attempt < attempts; attempt++ {
+		body := make([]byte, liveRequestBody)
+		binary.LittleEndian.PutUint16(body[0:2], uint16(peerID))
+		body[2] = 0
+		packet, err := buildSendPacket(10, uint16(vo.PacketID), body, vo.Cipher)
+		if err != nil {
+			t.Fatalf("build peer request: %v", err)
+		}
+		vo.PacketID++
+		if !vo.sendRaw(packet) {
+			return false
+		}
+		time.Sleep(700 * time.Millisecond)
+		vo.mu.Lock()
+		self := vo.partySelfPeer.uniqueID
+		vo.mu.Unlock()
+		if self != 0 {
+			t.Logf("party formed with %d: self=%d", peerID, self)
+			return true
+		}
+	}
+	return false
 }
