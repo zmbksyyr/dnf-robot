@@ -32,7 +32,11 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "empty command"})
 		return
 	}
-	raw, err := callRobot(s.robotAddr, req.Command, req.Payload, robotCallTimeout(req.Command), s.cfg.MaxResponseBytes)
+	timeout := robotCallTimeout(req.Command)
+	// Long operations must return their actual result before the HTTP write
+	// deadline, including failures; a dropped response can replay a POST.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(timeout + time.Second))
+	raw, err := callRobot(s.robotAddr, req.Command, req.Payload, timeout, s.cfg.MaxResponseBytes)
 	if err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
