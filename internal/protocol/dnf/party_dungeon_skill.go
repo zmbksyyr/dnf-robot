@@ -235,6 +235,18 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		r.tryPartyBasicAttackUnsafe(conn, now)
 		return
 	}
+	if candidate.closeAttack(r.partySkillJob) {
+		self := partyDungeonPlayerReference(r.partySelfPeer.uniqueID)
+		position := r.partyDungeonWorld.actors[self].position
+		_, target, found := r.partyDungeonWorld.nearestTarget(self, position)
+		if found && !partyCloseAttackInRange(position, target) {
+			// Keep approaching without spending the skill's cooldown or
+			// freezing movement for an empty swing. Recheck as we arrive,
+			// rather than waiting for the next random casting interval.
+			r.partySkillNextAt = now.Add(200 * time.Millisecond)
+			return
+		}
+	}
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
 		r.partySkillLastIndex = candidate.skillIndex
 		if cooldown := candidate.cooldownAtLevel(); cooldown > 0 {
@@ -246,6 +258,18 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d level=%d name=%s data=%x risk=%d path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.level, candidate.name, candidate.stateData, candidate.risk, candidate.path, r.partySkillRecoverAt.Sub(now))
 	}
+}
+
+func (c partySkillCandidate) closeAttack(job int) bool {
+	switch job {
+	case 0:
+		return c.skillIndex == 46 && c.state == 28 // Upper Slash
+	case 2:
+		return c.skillIndex == 4 && c.state == 20 // Jack Spike
+	case 3:
+		return c.skillIndex == 12 && c.state == 23 // Upper Swing
+	}
+	return false
 }
 
 func (c partySkillCandidate) cooldownAtLevel() time.Duration {

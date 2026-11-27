@@ -43,7 +43,7 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 		r.partyBasicAttackTarget = [4]byte{}
 		return false
 	}
-	if !ok || math.Abs(float64(target.x-position.x)) > 100 || math.Abs(float64(target.y-position.y)) > 25 {
+	if !ok || !partyCloseAttackInRange(position, target) {
 		r.partyBasicAttackStep = 0
 		r.partyBasicAttackTarget = [4]byte{}
 		return false
@@ -96,6 +96,13 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 	r.partyDungeonFollow = nil
 	foundationlog.Robotf("[PARTY_DUNGEON_ATTACK] uid=%d job=%d state=8 step=%d target=%x recover_in=%s\n", r.UID, r.partySkillJob, step, targetID, partySkillRecoverDelay)
 	return true
+}
+
+// The approach policy shared by normal swings and the native uppercut skills.
+// It is a casting distance, not a replacement for the client's collision box.
+func partyCloseAttackInRange(position, target partyDungeonPosition) bool {
+	return position.known&3 == 3 && target.known&3 == 3 &&
+		math.Abs(float64(target.x-position.x)) <= 100 && math.Abs(float64(target.y-position.y)) <= 25
 }
 
 func buildPartyAttackFacing(uniqueID uint16, position, target partyDungeonPosition, room [2]byte) ([]byte, bool) {
