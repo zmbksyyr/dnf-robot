@@ -33,7 +33,7 @@ type pvfManifest struct {
 const pvfExportVersion = 25
 
 // Version 13 preserves known empty initial vectors separately from unknown ones.
-const pvfSkillStateExportVersion = 15
+const pvfSkillStateExportVersion = 16
 
 const pvfItemInfoExportName = "iteminfo.dat"
 

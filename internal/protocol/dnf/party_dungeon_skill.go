@@ -262,7 +262,7 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 func (c partySkillCandidate) closeAttack(job int) bool {
 	switch job {
 	case 0:
-		return c.skillIndex == 46 && c.state == 28 || c.skillIndex == 5 && c.state == 20
+		return c.skillIndex == 46 && c.state == 28 || c.skillIndex == 5 && c.state == 20 || c.skillIndex == 8 && c.state == 22
 	case 2:
 		return c.skillIndex == 4 && c.state == 20 // Jack Spike
 	case 3:
@@ -272,6 +272,11 @@ func (c partySkillCandidate) closeAttack(job int) bool {
 }
 
 func (c partySkillCandidate) recoverDelay(job int) time.Duration {
+	if job == 0 && c.skillIndex == 8 && c.state == 22 {
+		// Original first slash state22/[0,1] completes after 667 ms when
+		// no next slash is requested. Later stages require their own input.
+		return 700 * time.Millisecond
+	}
 	if job == 0 && c.skillIndex == 20 && c.state == 24 {
 		return 350 * time.Millisecond
 	}

@@ -158,3 +158,14 @@ func TestNativeSwordWaveUsesMatchingDefinition(t *testing.T) {
 		t.Fatalf("native wave definition=%+v", got)
 	}
 }
+
+func TestNativeTripleSlashUsesCapturedFirstStage(t *testing.T) {
+	a := &pvfArchive{files: map[string]*pvfFile{
+		"skill/swordmanskill.lst":        {Data: []byte("8 `swordman/tripleslash.skl`")},
+		"skill/swordman/tripleslash.skl": {Data: []byte("[type]\n`[active]`\n[consume MP]\n1 1\n[cool time]\n6000 6000")},
+	}}
+	got := extractSkillStateCatalog(a)
+	if len(got) != 1 || got[0].SkillIndex != 8 || got[0].State != 22 || !reflect.DeepEqual(got[0].StateData, []int{0, 1}) || got[0].CooldownMS != 6000 {
+		t.Fatalf("native first slash=%+v", got)
+	}
+}

@@ -106,6 +106,7 @@ func extractSkillStateCatalog(archive *pvfArchive) []SkillState {
 		data              []int
 	}{
 		{0, 5, 20, "swordmanskill.lst", "swordman/hardattack.skl", []int{0, 0}},
+		{0, 8, 22, "swordmanskill.lst", "swordman/tripleslash.skl", []int{0, 1}},
 		{0, 20, 24, "swordmanskill.lst", "swordman/normalwave.skl", []int{20}},
 		{0, 46, 28, "swordmanskill.lst", "swordman/upperslash.skl", []int{2, 46}},
 		{2, 4, 20, "gunnerskill.lst", "gunner/aerialknee.skl", []int{4}},
