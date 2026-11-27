@@ -147,11 +147,13 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		r.partyBasicAttackNextAt = time.Time{}
 		r.partySkillNextAt = time.Time{}
 	}
-	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
-		r.clearPartyDungeonRuntimeUnsafe()
+	if r.partyDungeonLoading {
+		// Preparation (27) precedes entry (28). Keep loading active while
+		// waiting for the server to provide the dungeon and room notices.
 		return
 	}
-	if r.partyDungeonLoading {
+	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
+		r.clearPartyDungeonRuntimeUnsafe()
 		return
 	}
 	if r.partyDungeonLastAt.IsZero() {
