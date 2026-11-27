@@ -161,6 +161,7 @@ func (e sessionActionEnv) SelectRobots(req robotcap.CommandRequest) ([]robotcap.
 func (e sessionActionEnv) PrepareOnlineRobot(info robotcap.Info, rc robotconfig.RuntimeConfig) (robotcap.Info, error) {
 	repository, ok := e.manager.database.(interface {
 		OnlineCharacterSlot(uid, cid int) (int, error)
+		PrepareCharacterSupplies(uid, cid int) error
 	})
 	if !ok {
 		return info, fmt.Errorf("online character-list repository is unavailable")
@@ -170,6 +171,23 @@ func (e sessionActionEnv) PrepareOnlineRobot(info robotcap.Info, rc robotconfig.
 		return info, err
 	}
 	info.CharacterSlot = slot
+	if st, active := e.manager.runtimeStatus(info.UID); !active || !robotcap.ActiveRuntimeStatus(st) {
+		if e.manager.sessionReleaseRemaining(info.UID) > 0 {
+			if _, err := e.manager.waitAccountOffline(info.UID, nil); err != nil {
+				return info, err
+			}
+		} else if online, err := e.manager.schemaRepo().AccountOnline(info.UID); err != nil {
+			return info, err
+		} else if online {
+			return info, fmt.Errorf("cannot prepare supplies for online account uid=%d", info.UID)
+		}
+		if err := repository.PrepareCharacterSupplies(info.UID, info.CID); err != nil {
+			return info, err
+		}
+		if err := e.manager.invalidateClosedCharacterCache(info.UID); err != nil {
+			return info, err
+		}
+	}
 	if shared.GenericAreaAllowed(info.GuildID, info.Village) {
 		return info, nil
 	}

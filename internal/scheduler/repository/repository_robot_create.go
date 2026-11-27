@@ -15,6 +15,7 @@ import (
 	robotcap "robot/internal/capability/robot"
 	robotconfig "robot/internal/capability/robotconfig"
 	robottemplate "robot/internal/capability/robottemplate"
+	storecap "robot/internal/capability/store"
 	"robot/internal/foundation/charset"
 	foundationlog "robot/internal/foundation/log"
 	"robot/internal/shared"
@@ -159,6 +160,10 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 	if err != nil {
 		return err
 	}
+	initialInventory := make([]byte, inventorySlotCount*equipmentRecordSize)
+	if _, err := storecap.EnsureDungeonSupplies(initialInventory); err != nil {
+		return err
+	}
 	initializers := []characterInitializer{
 		{table: "taiwan_cain.charac_kill_monster_info", query: "INSERT IGNORE INTO taiwan_cain.charac_kill_monster_info (charac_no) VALUES (?)", args: []interface{}{info.CID}},
 		{table: "taiwan_cain.charac_link_message", query: "INSERT IGNORE INTO taiwan_cain.charac_link_message (m_id) VALUES (?)", args: []interface{}{info.UID}},
@@ -167,7 +172,7 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 		{table: "taiwan_cain.new_charac_quest", query: "INSERT IGNORE INTO taiwan_cain.new_charac_quest (charac_no,play_1) VALUES (?,?)", args: []interface{}{info.CID, "1016"}},
 		{table: "taiwan_cain.pvp_result", query: "INSERT IGNORE INTO taiwan_cain.pvp_result (charac_no) VALUES (?)", args: []interface{}{info.CID}},
 		{table: "taiwan_cain_2nd.charac_inven_expand", query: "INSERT IGNORE INTO taiwan_cain_2nd.charac_inven_expand (charac_no) VALUES (?)", args: []interface{}{info.CID}},
-		{table: "taiwan_cain_2nd.inventory", query: "INSERT IGNORE INTO taiwan_cain_2nd.inventory (charac_no,money,coin,inventory_capacity,inventory,equipslot) VALUES (?,?,?,?,?,?)", args: []interface{}{info.CID, rc.DefaultMoney, rc.DefaultCoin, rc.InventoryCapacity, equipcap.CompressedZeros(inventorySlotCount * equipmentRecordSize), equipcap.CompressedZeros(equipslotSlotCount * equipmentRecordSize)}, required: true},
+		{table: "taiwan_cain_2nd.inventory", query: "INSERT IGNORE INTO taiwan_cain_2nd.inventory (charac_no,money,coin,inventory_capacity,inventory,equipslot) VALUES (?,?,?,?,?,?)", args: []interface{}{info.CID, rc.DefaultMoney, rc.DefaultCoin, rc.InventoryCapacity, equipcap.CompressRaw(initialInventory), equipcap.CompressedZeros(equipslotSlotCount * equipmentRecordSize)}, required: true},
 		{table: "taiwan_cain_2nd.skill", query: "INSERT INTO taiwan_cain_2nd.skill (charac_no,skill_slot,skill_slot_2nd,skill_command,script_version) VALUES (?,?,?,?,3)", args: []interface{}{info.CID, skillSlots, skillSlots, equipcap.CompressedZeros(200)}, required: true},
 		{table: "taiwan_game_event.event_1306_account_reward", query: "INSERT IGNORE INTO taiwan_game_event.event_1306_account_reward (m_id,charac_no,occ_date) VALUES (?,?,NOW())", args: []interface{}{info.UID, info.CID}},
 	}
