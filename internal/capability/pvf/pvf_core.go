@@ -602,9 +602,6 @@ func generatedItemInfoFields(item shared.EquipmentCatalogItem, stackable bool) [
 	fields := []string{strconv.Itoa(item.ID), strconv.Itoa(nonNegativeInt(item.Rarity))}
 	fields = append(fields, generatedItemInfoJobFlags(item, stackable)...)
 	level := nonNegativeInt(item.Level)
-	if level > 70 {
-		level = 70
-	}
 	fields = append(fields,
 		strconv.Itoa(level),
 		EncodeItemInfoName(item.Name, "item", item.ID),
