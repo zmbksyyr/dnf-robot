@@ -13,6 +13,7 @@ func TestUppercutWaitsForApproachThenCastsWithoutRandomInterval(t *testing.T) {
 		data         []byte
 	}{
 		{"swordman", 0, 46, 28, []byte{2, 46}},
+		{"ghost-slash", 0, 5, 20, []byte{0, 0}},
 		{"gunner", 2, 4, 20, []byte{4}},
 		{"mage", 3, 12, 23, []byte{12}},
 	} {
@@ -40,7 +41,7 @@ func TestUppercutWaitsForApproachThenCastsWithoutRandomInterval(t *testing.T) {
 			arrival := now.Add(250 * time.Millisecond)
 			r.flushPartyDungeonSkillUnsafe(sender, arrival)
 			readComboState(t, receiver, skill.state, 0, 2)
-			if r.partySkillReadyAt[skill.index] != arrival.Add(2*time.Second) || r.partySkillRecoverAt.IsZero() {
+			if r.partySkillReadyAt[skill.index] != arrival.Add(2*time.Second) || r.partySkillRecoverAt != arrival.Add(r.partySkillCandidates[0].recoverDelay(skill.job)) {
 				t.Fatal("arrival did not execute the waiting uppercut")
 			}
 		})

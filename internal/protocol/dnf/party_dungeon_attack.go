@@ -14,10 +14,11 @@ const (
 	// A real male-mage four-tap capture used approximately 312 ms between
 	// stages. Allow a little more time; this is not an animation speed formula.
 	partyBasicComboInterval = 350 * time.Millisecond
+	partySwordComboInterval = 600 * time.Millisecond
 )
 
-// Swordman and male gunner use their verified first attack. Real captures establish the
-// female mage's three and male mage's four state-8 vectors, starting at [0].
+// Original captures establish three swordman/female-mage swings and four
+// male-mage swings. Male gunner still uses its observed first attack.
 func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bool {
 	if !shared.PartySkillEnabled() || !r.partySkillLoaded || (r.partySkillJob != 0 && r.partySkillJob != 2 && r.partySkillJob != 3 && r.partySkillJob != 8) || now.Before(r.partyBasicAttackNextAt) {
 		return false
@@ -72,7 +73,7 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 	r.partyBasicAttackStep = 0
 	r.partyBasicAttackTarget = [4]byte{}
 	lastStep := byte(0)
-	if r.partySkillJob == 3 {
+	if r.partySkillJob == 0 || r.partySkillJob == 3 {
 		lastStep = 2
 	}
 	if r.partySkillJob == 8 {
@@ -82,6 +83,10 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 		r.partyBasicAttackStep = step + 1
 		r.partyBasicAttackTarget = targetID
 		r.partyBasicAttackNextAt = now.Add(partyBasicComboInterval)
+		if r.partySkillJob == 0 {
+			// Original swordman state8/[0,1,2] advances after 545/540 ms.
+			r.partyBasicAttackNextAt = now.Add(partySwordComboInterval)
+		}
 		if r.partySkillJob == 3 {
 			// The original client sample advances after about 376/625 ms.
 			// Leave a margin without claiming an animation-speed formula.

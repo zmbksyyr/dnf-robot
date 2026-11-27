@@ -255,7 +255,7 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 			}
 			r.partySkillReadyAt[candidate.skillIndex] = now.Add(cooldown)
 		}
-		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
+		r.partySkillRecoverAt = now.Add(candidate.recoverDelay(r.partySkillJob))
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d level=%d name=%s data=%x risk=%d path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.level, candidate.name, candidate.stateData, candidate.risk, candidate.path, r.partySkillRecoverAt.Sub(now))
 	}
 }
@@ -263,13 +263,21 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 func (c partySkillCandidate) closeAttack(job int) bool {
 	switch job {
 	case 0:
-		return c.skillIndex == 46 && c.state == 28 // Upper Slash
+		return c.skillIndex == 46 && c.state == 28 || c.skillIndex == 5 && c.state == 20
 	case 2:
 		return c.skillIndex == 4 && c.state == 20 // Jack Spike
 	case 3:
 		return c.skillIndex == 12 && c.state == 23 // Upper Swing
 	}
 	return false
+}
+
+func (c partySkillCandidate) recoverDelay(job int) time.Duration {
+	if job == 0 && c.skillIndex == 5 && c.state == 20 {
+		// The original uncharged Ghost Slash returns to standing at 1083 ms.
+		return 1200 * time.Millisecond
+	}
+	return partySkillRecoverDelay
 }
 
 func (c partySkillCandidate) cooldownAtLevel() time.Duration {

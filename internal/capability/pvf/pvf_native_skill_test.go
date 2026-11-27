@@ -87,6 +87,33 @@ func TestNativeUpperSlashBecomesAutoCandidateInExistingCatalog(t *testing.T) {
 	}
 }
 
+func TestCapturedGhostSlashEntersAutomaticCatalog(t *testing.T) {
+	a := &pvfArchive{files: map[string]*pvfFile{
+		"skill/swordmanskill.lst":       {Data: []byte("5 `Swordman/HardAttack.skl`")},
+		"skill/swordman/hardattack.skl": {Data: []byte("[type]\n`[active]`\n[cool time]\n6000 6000\n[consume MP]\n5 5")},
+	}}
+	states := extractSkillStateCatalog(a)
+	dir := t.TempDir()
+	pvfPath, catalogPath := filepath.Join(dir, "pvf.json"), filepath.Join(dir, "catalog.json")
+	if err := WriteJSON(pvfPath, states); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, []byte(`{"mode":"auto","enabled":true,"max_skill_level":70,"skills":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.SyncPartySkillCatalog(catalogPath, pvfPath); err != nil {
+		t.Fatal(err)
+	}
+	report, err := catalog.ReadPartySkillCatalog(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, _ := shared.MatchPartySkillStatesMode(true, 0, report.Entries, states)
+	if len(matches) != 1 || matches[0].SkillIndex != 5 || matches[0].State != 20 || !reflect.DeepEqual(matches[0].StateData, []byte{0, 0}) || matches[0].CooldownMS != 6000 {
+		t.Fatalf("captured Ghost Slash did not reach automatic selection: %+v", matches)
+	}
+}
+
 func TestExtractNativeMageUpperSwingRequiresCurrentActiveDefinition(t *testing.T) {
 	for _, tc := range []struct {
 		name, list, text string

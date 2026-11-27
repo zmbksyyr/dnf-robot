@@ -208,6 +208,9 @@ func testNormalAttackFacesOwnTargetAndWaitsForAcknowledgementBeforeRecovery(t *t
 		t.Fatalf("normal attack vector changed: %x", p)
 	}
 	interval := partyBasicAttackInterval
+	if job == 0 {
+		interval = partySwordComboInterval
+	}
 	if job == 8 {
 		interval = partyBasicComboInterval
 	}
@@ -518,6 +521,28 @@ func TestFemaleMageThreeStageComboFromOriginalClient(t *testing.T) {
 	}
 	if r.partyBasicAttackStep != 0 || r.partyBasicAttackTarget != [4]byte{} {
 		t.Fatal("female mage continued beyond its three PVF attack motions")
+	}
+	r.flushPartyDungeonSkillUnsafe(sender, now.Add(partySkillRecoverDelay))
+	readComboState(t, receiver, 0, 0, 1)
+}
+
+func TestSwordmanThreeStageComboFromOriginalClient(t *testing.T) {
+	now := time.Now()
+	r, _, enemy := basicAttackTestRobot(t, now)
+	sender, receiver := comboTestTransport(t, r)
+	for step := byte(0); step < 3; step++ {
+		r.flushPartyDungeonSkillUnsafe(sender, now)
+		readComboState(t, receiver, 8, step, 2)
+		r.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, uint32(step)), 1, r.partyPeers[0])
+		if step < 2 {
+			if r.partyBasicAttackTarget != enemy || r.partyBasicAttackStep != step+1 || r.partyBasicAttackNextAt != now.Add(partySwordComboInterval) {
+				t.Fatal("swordman did not continue its observed three-swing combo")
+			}
+			now = r.partyBasicAttackNextAt
+		}
+	}
+	if r.partyBasicAttackStep != 0 || r.partyBasicAttackTarget != [4]byte{} {
+		t.Fatal("swordman continued beyond its observed third swing")
 	}
 	r.flushPartyDungeonSkillUnsafe(sender, now.Add(partySkillRecoverDelay))
 	readComboState(t, receiver, 0, 0, 1)
