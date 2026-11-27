@@ -232,6 +232,8 @@ type RobotVo struct {
 	partySkillWireDumped        bool
 	partyDungeonFollow          []partyDungeonFollowPending
 	partyDungeonEnteredAt       time.Time
+	partyDungeonInMap           bool
+	partyDungeonReturnPending   bool
 	partyDungeonIdentity        dungeonDefinitionIdentity
 	partyDungeonLoading         bool
 	partyDungeonLastAt          time.Time
@@ -477,6 +479,8 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.partyRecoveryResumePending = false
 	r.partyRecoveryEpoch++
 	r.partyRecoveryCooldownUntil = time.Time{}
+	r.partyDungeonInMap = false
+	r.partyDungeonReturnPending = false
 	r.partyPeers = [4]partyIPPeer{}
 	r.clearPartyPendingUnsafe()
 	r.townEntityPositions = make(map[uint16]townEntityPosition)
@@ -510,6 +514,8 @@ func (r *RobotVo) TryCloseOut() bool {
 }
 
 func (r *RobotVo) closeOutUnsafe() {
+	r.partyDungeonInMap = false
+	r.partyDungeonReturnPending = false
 	r.inventoryChecksumSeed, r.inventoryChecksumSeedKnown = 0, false
 	r.characterUniqueID = 0
 	r.characterBaseInfo = characterBasicInfo{}

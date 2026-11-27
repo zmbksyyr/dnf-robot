@@ -33,6 +33,9 @@ func (r *RobotVo) startPartyRecoveryUnsafe(now time.Time, reason string) bool {
 	if !r.partyHumanObserved || r.partyRecovery || r.ReturnSelectPending || now.Before(r.partyRecoveryCooldownUntil) {
 		return false
 	}
+	if r.partyDungeonInMap {
+		return r.sendPartyReturnTownUnsafe(reason)
+	}
 	if !r.sendReturnToCharacterSelectUnsafe(true) {
 		r.partyRecoveryCooldownUntil = now.Add(5 * time.Second)
 		return false
@@ -153,7 +156,7 @@ func (r *RobotVo) reconcilePartyRealtimeUnsafe(roster [4]uint16) {
 		peers = append(peers, peer)
 	}
 	r.observePartyAccountsUnsafe(peers)
-	if r.partyHumanObserved && r.partyRosterIsPureRobotUnsafe(self, peers) && r.startPartyRecoveryUnsafe(time.Now(), "stable realtime roster contains only robots") {
+	if (len(peers) > 0 || !r.partyDungeonInMap) && r.partyHumanObserved && r.partyRosterIsPureRobotUnsafe(self, peers) && r.startPartyRecoveryUnsafe(time.Now(), "stable realtime roster contains only robots") && !r.partyDungeonReturnPending {
 		return
 	}
 	r.setPartyPeersUnsafe(peers)

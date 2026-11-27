@@ -77,6 +77,7 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 }
 
 func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
+	r.partyDungeonInMap = true
 	// Loading changes the room's actors and coordinate system. Neither queued
 	// movement nor a reliable retry from the previous room may run in it.
 	r.cancelPartyDungeonReliableUnsafe(now)

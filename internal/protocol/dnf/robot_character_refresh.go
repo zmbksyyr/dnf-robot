@@ -97,6 +97,8 @@ func (r *RobotVo) finishReturnToSelectUnsafe() {
 	r.partyRecovery = false
 	r.SelectCharacSent = false
 	r.State = StateSelect
+	r.partyDungeonInMap = false
+	r.partyDungeonReturnPending = false
 	r.characterUniqueID = 0
 	r.characterBaseInfo = characterBasicInfo{}
 	r.characterLevel = characterLevelInfo{}

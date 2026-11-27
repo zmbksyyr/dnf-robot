@@ -284,7 +284,7 @@ func (r *RobotVo) followCachedPartyLeaderTownPositionUnsafe() bool {
 }
 
 func (r *RobotVo) followPartyLeaderTownAreaUnsafe(area townEntityArea) bool {
-	if r.State != StateRun {
+	if r.State != StateRun || r.partyDungeonInMap {
 		return false
 	}
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
@@ -305,7 +305,7 @@ func (r *RobotVo) followPartyLeaderTownAreaUnsafe(area townEntityArea) bool {
 }
 
 func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPosition) bool {
-	if r.State != StateRun || position.uniqueID == 0 {
+	if r.State != StateRun || r.partyDungeonInMap || position.uniqueID == 0 {
 		return false
 	}
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
@@ -352,7 +352,7 @@ func (r *RobotVo) partyActiveUnsafe() bool {
 			return true
 		}
 	}
-	return r.partyPendingPeer != 0
+	return r.partyPendingPeer != 0 || r.partyDungeonInMap || r.partyDungeonReturnPending
 }
 
 func (r *RobotVo) setPartyPendingUnsafe(uniqueID uint16) {
@@ -518,7 +518,8 @@ func (r *RobotVo) setPartyPeersUnsafe(peers []partyIPPeer) {
 			r.resetPartyTQOSPeerUnsafe(slot)
 		}
 	}
-	if !r.partyActiveUnsafe() {
+	if len(peers) == 0 {
+		r.sendPartyReturnTownUnsafe("empty party snapshot")
 		r.logPartyTransportClearedUnsafe("empty snapshot")
 		r.stopPartySupervisorUnsafe()
 		r.partySelfPeer = partyIPPeer{}

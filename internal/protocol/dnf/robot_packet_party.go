@@ -17,6 +17,9 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 	if r.ReturnSelectPending {
 		return
 	}
+	if r.partyDungeonReturnPending && packet.typ >= 28 && packet.typ <= 31 {
+		return
+	}
 	switch packet.typ {
 	case 28, 29:
 		if r.State != StateRun || packet.flag != 0 || packet.size < 15 {
@@ -80,13 +83,21 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		// during rewards. Keep the party transport for the normal return to town.
 		r.clearPartyDungeonRuntimeUnsafe()
 
+	case 36:
+		if r.State != StateRun || packet.flag != 0 {
+			return
+		}
+		if _, _, _, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti); err == nil {
+			r.confirmPartyReturnTownUnsafe()
+		}
+
 	case 22:
 		if r.State != StateRun || packet.flag != 0 {
 			return
 		}
 		if body, ok := r.selectTownEntityPositionBodyUnsafe(r.Cipher, packet.data, packet.isAnti); ok {
-			r.clearPartyDungeonRuntimeUnsafe()
 			position, _ := r.rememberTownEntityUnsafe(body)
+			r.observePartyTownReturnUnsafe(position.uniqueID)
 			r.followPartyLeaderTownPositionUnsafe(position)
 		}
 
@@ -95,7 +106,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 			return
 		}
 		if area, ok := r.selectTownEntityAreaUnsafe(r.Cipher, packet.data, packet.isAnti); ok {
-			r.clearPartyDungeonRuntimeUnsafe()
+			r.observePartyTownReturnUnsafe(area.uniqueID)
 			r.followPartyLeaderTownAreaUnsafe(area)
 		}
 
@@ -154,7 +165,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		r.partyRealtimeCandidateAt = time.Time{}
 		r.observePartyAccountsUnsafe(peers)
 		r.setPartySelfPeerUnsafe(self)
-		if r.partyHumanObserved && r.partyRosterIsPureRobotUnsafe(r.partySelfPeer, peers) && r.startPartyRecoveryUnsafe(time.Now(), "snapshot contains only robots") {
+		if (len(peers) > 0 || !r.partyDungeonInMap) && r.partyHumanObserved && r.partyRosterIsPureRobotUnsafe(r.partySelfPeer, peers) && r.startPartyRecoveryUnsafe(time.Now(), "snapshot contains only robots") && !r.partyDungeonReturnPending {
 			return
 		}
 		r.setPartyPeersUnsafe(peers)
