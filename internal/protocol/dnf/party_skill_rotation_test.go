@@ -27,6 +27,28 @@ func TestPartySkillCandidateRotationIncludesEveryReadyTier(t *testing.T) {
 	}
 }
 
+func TestBasicAttackRecoveryDoesNotPostponeReadySkill(t *testing.T) {
+	now := time.Now()
+	r, _, _ := basicAttackTestRobot(t, now)
+	r.partySkillCandidates = []partySkillCandidate{{skillIndex: 20, state: 24, level: 7,
+		stateData: []byte{20}, itemCostFree: true, cooldown: 3 * time.Second}}
+	r.partySkillNextAt = now.Add(800 * time.Millisecond)
+	sender, receiver := comboTestTransport(t, r)
+	r.flushPartyDungeonSkillUnsafe(sender, now)
+	readComboState(t, receiver, 8, 0, 2)
+	r.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, 0), 1, r.partyPeers[0])
+	// The active skill became due during the normal swing's recovery.
+	recovery := now.Add(partySkillRecoverDelay)
+	r.flushPartyDungeonSkillUnsafe(sender, recovery)
+	readComboState(t, receiver, 0, 0, 1)
+	r.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, 1), 1, r.partyPeers[0])
+	r.flushPartyDungeonSkillUnsafe(sender, recovery.Add(100*time.Millisecond))
+	readComboState(t, receiver, 24, 0, 2)
+	if r.partySkillLastIndex != 20 || len(r.partyBasicProjectiles) != 1 {
+		t.Fatal("normal attack recovery starved the ready active skill")
+	}
+}
+
 func TestPartySkillCandidateAvoidsConsecutiveRepeats(t *testing.T) {
 	now := time.Unix(300, 0)
 	vo := &RobotVo{partySkillLastIndex: 3, partySkillCandidates: []partySkillCandidate{

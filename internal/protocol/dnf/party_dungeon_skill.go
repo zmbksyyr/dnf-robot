@@ -171,9 +171,6 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		}
 		if r.sendPartySkillStateUnsafe(conn, now, 0, nil, "RECOVER") {
 			r.partySkillRecoverAt = time.Time{}
-			if !r.partySkillNextAt.IsZero() && !now.Before(r.partySkillNextAt) {
-				r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
-			}
 		} else {
 			r.partySkillRecoverAt = now.Add(partySkillRecoveryRetry)
 		}
