@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,6 +66,10 @@ func (m *RobotManager) UpdateRobotConfig(req robotcap.ConfigUpdateRequest) (robo
 		values := make(map[string]string, len(req.Updates))
 		for key, value := range req.Updates {
 			values[key] = fmt.Sprint(value)
+			if number, ok := value.(float64); ok {
+				// JSON numbers arrive as float64; INI integers need decimal text.
+				values[key] = strconv.FormatFloat(number, 'f', -1, 64)
+			}
 		}
 		if err := m.writeRobotConfigValues(values); err != nil {
 			return robotcap.ConfigResult{}, err

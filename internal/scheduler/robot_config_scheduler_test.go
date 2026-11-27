@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -247,6 +248,21 @@ func TestUpdateRobotConfigPreflightFailureKeepsLastValidFile(t *testing.T) {
 				t.Fatalf("rejected update changed snapshot: got=%d want=%d", got, beforeConfig.MaxOnlineRobots)
 			}
 		})
+	}
+}
+
+func TestUpdateRobotConfigPreservesLargeJSONIntegers(t *testing.T) {
+	m := testRobotManagerWithConfig(t, "[create]\nrobot_uid_start = 17000000\nrobot_uid_end = 17000999\n")
+	var req robotcap.ConfigUpdateRequest
+	if err := json.Unmarshal([]byte(`{"updates":{"create.robot_uid_start":17000040,"create.robot_uid_end":17000042}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	result, err := m.UpdateRobotConfig(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Config.RobotUIDStart != 17000040 || result.Config.RobotUIDEnd != 17000042 {
+		t.Fatalf("UID range after JSON update = %d..%d", result.Config.RobotUIDStart, result.Config.RobotUIDEnd)
 	}
 }
 
