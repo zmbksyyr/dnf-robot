@@ -29,8 +29,8 @@ type pvfManifest struct {
 	Runtime           interface{} `json:"runtime,omitempty"`
 }
 
-// Version 26 supplies equipment HP/MP and primary attributes for skill payment.
-const pvfExportVersion = 26
+// Version 27 preserves actual PVF levels in auction search metadata.
+const pvfExportVersion = 27
 
 // Version 13 preserves known empty initial vectors separately from unknown ones.
 const pvfSkillStateExportVersion = 16
