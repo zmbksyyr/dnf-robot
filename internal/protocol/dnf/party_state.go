@@ -308,7 +308,7 @@ func (r *RobotVo) followPartyLeaderTownAreaUnsafe(area townEntityArea) bool {
 }
 
 func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPosition) bool {
-	if r.State != StateRun || r.partyDungeonInMap || position.uniqueID == 0 {
+	if r.State != StateRun || r.partyDungeonInMap || r.partyDungeonLoading || position.uniqueID == 0 {
 		return false
 	}
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
@@ -328,7 +328,7 @@ func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPositio
 }
 
 func (r *RobotVo) flushTownFollowUnsafe(now time.Time) {
-	if r.State != StateRun || r.partyDungeonInMap || now.Before(r.townFollowNextAt) {
+	if r.State != StateRun || r.partyDungeonInMap || r.partyDungeonLoading || now.Before(r.townFollowNextAt) {
 		return
 	}
 	leader, ok := r.partyLeaderUniqueIDUnsafe()

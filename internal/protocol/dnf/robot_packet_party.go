@@ -21,6 +21,13 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		return
 	}
 	switch packet.typ {
+	case 27:
+		if r.State == StateRun && packet.flag == 0 {
+			if _, _, _, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti); err == nil {
+				r.partyDungeonLoading = true
+				r.reportPartyLoadingUnsafe(time.Now())
+			}
+		}
 	case 28, 29:
 		if r.State != StateRun || packet.flag != 0 || packet.size < 15 {
 			return
