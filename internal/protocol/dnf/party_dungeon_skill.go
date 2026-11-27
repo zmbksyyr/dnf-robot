@@ -295,6 +295,18 @@ func (c partySkillCandidate) cooldownAtLevel() time.Duration {
 	return time.Duration(c.cooldownByLevelMS[level-1]) * time.Millisecond
 }
 
+func (c partySkillCandidate) canUseObservedMP(actor partyDungeonActor) bool {
+	if !actor.mpKnown || actor.mp > 0 || len(c.baseMPByLevel) == 0 {
+		return true
+	}
+	level := min(max(c.level, 1), len(c.baseMPByLevel))
+	// Resource notifications report the resulting current MP. At zero MP a
+	// paid skill cannot start; ordinary attacks and explicitly free skills
+	// remain available. The base table alone cannot establish an effective
+	// nonzero cost after equipment and passive modifiers.
+	return c.baseMPByLevel[level-1] == 0
+}
+
 func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandidate, bool) {
 	if len(r.partySkillCandidates) == 0 {
 		return partySkillCandidate{}, false
@@ -303,8 +315,9 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandid
 	// registered states cannot crowd out the rest of a character's repertoire.
 	var seen [256]bool
 	var ready []byte
+	self := r.partyDungeonWorld.actors[partyDungeonPlayerReference(r.partySelfPeer.uniqueID)]
 	for _, candidate := range r.partySkillCandidates {
-		if candidate.itemCostFree && !now.Before(r.partySkillReadyAt[candidate.skillIndex]) && !seen[candidate.skillIndex] {
+		if candidate.itemCostFree && candidate.canUseObservedMP(self) && !now.Before(r.partySkillReadyAt[candidate.skillIndex]) && !seen[candidate.skillIndex] {
 			seen[candidate.skillIndex] = true
 			ready = append(ready, candidate.skillIndex)
 		}
@@ -323,7 +336,7 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandid
 	selected := ready[partySkillChoice(r.UID, now, len(ready))]
 	var states []partySkillCandidate
 	for _, candidate := range r.partySkillCandidates {
-		if candidate.skillIndex == selected && candidate.itemCostFree {
+		if candidate.skillIndex == selected && candidate.itemCostFree && candidate.canUseObservedMP(self) {
 			states = append(states, candidate)
 		}
 	}
