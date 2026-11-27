@@ -160,6 +160,8 @@ func (a *App) ensureMarketService(service marketServiceSpec) bool {
 	var err error
 	if runtime.GOOS == "windows" {
 		err = hostprofile.StartService(service.name, filepath.Join(a.configDir, "logs", service.name+"-host.log"))
+	} else if runtime.GOOS == "linux" && service.name == marketServiceNameAuction {
+		err = a.startAuctionBeforeLoad(service)
 	} else {
 		cmdline := marketServiceShellCommand(service.bin, service.args)
 		cmd := exec.Command("/bin/sh", "-c", cmdline)

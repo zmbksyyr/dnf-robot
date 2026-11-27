@@ -139,6 +139,20 @@ func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
 		return result, err
 	}
 	err = processfoundation.WithMemoryFile(pid, true, segments[0].start, func(mem processfoundation.MemoryFile, _ bool) error {
+		var patchErr error
+		result, patchErr = patchAuctionProcessMemory(pid, mem)
+		return patchErr
+	})
+	return result, err
+}
+
+func patchAuctionProcessMemory(pid int, mem processfoundation.MemoryFile) (AuctionMemoryPatchResult, error) {
+	result := AuctionMemoryPatchResult{PID: pid, Target: auctionMemoryTarget(pid)}
+	segments, err := executableSegments(pid, "df_auction_r")
+	if err != nil {
+		return result, err
+	}
+	err = func() error {
 		plans := make([]locatedAuctionMemoryPatch, 0, len(auctionMemoryPatchSpecs))
 		preflightOK := true
 		for _, spec := range platformAuctionPatchSpecs() {
@@ -187,7 +201,7 @@ func (a *App) patchAuctionMemory() (AuctionMemoryPatchResult, error) {
 		patched, err := applyAuctionMemoryPatches(mem, plans, result.Entries)
 		result.Patched = patched
 		return err
-	})
+	}()
 	if err != nil {
 		return result, err
 	}
