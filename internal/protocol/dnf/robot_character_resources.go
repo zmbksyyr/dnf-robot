@@ -44,7 +44,7 @@ func (r *RobotVo) initializeCharacterResourcesUnsafe() {
 		if len(item.UseJob) > 0 {
 			usable := false
 			for _, job := range item.UseJob {
-				if job == r.partySkillJob {
+				if job == 100 || job == r.partySkillJob {
 					usable = true
 					break
 				}
@@ -61,8 +61,10 @@ func (r *RobotVo) initializeCharacterResourcesUnsafe() {
 		equipped[id] = true
 		res := item.Resources
 		add(shared.ResourceStats{HP: res.HP, MP: res.MP, Vitality: res.Vitality, Spirit: res.Spirit, HPRate: res.HPRate, MPRate: res.MPRate})
-		if slot < 10 && len(record) > 9 {
-			option := int(record[9]&31) - 1
+		if slot < 10 && len(record) >= 20 {
+			// Avatars use the enchant DWORD for their one-based selected
+			// ability. The attribute byte at offset9 remains zero.
+			option := int(binary.LittleEndian.Uint32([]byte(record[16:20]))) - 1
 			if option >= 0 && option < len(res.Options) {
 				add(res.Options[option])
 			}

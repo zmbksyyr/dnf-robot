@@ -42,7 +42,7 @@ func equipmentResources(body string) *shared.EquipmentResources {
 			stack = append(stack, token.text)
 			continue
 		}
-		// Avatar option is one-based in the USERINFO attribute byte. A job
+		// Avatar options are one-based in USERINFO's hidden-option DWORD. A job
 		// literal immediately following SKILL_LEVEL belongs to that option.
 		if len(stack) == 1 && stack[0] == "[avatar select ability]" && token.kind == 7 && strings.HasPrefix(token.text, "[") {
 			if i > 0 && tokens[i-1].text == "[skill_level]" {
