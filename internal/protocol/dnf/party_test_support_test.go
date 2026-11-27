@@ -10,6 +10,31 @@ import (
 	"robot/internal/protocol/dnf/crypt"
 )
 
+// Collect bodies only for assertions. Production observes them in place.
+func partyDungeonFrameBodies(frame []byte) ([][]byte, bool) {
+	if len(frame) < 9 || len(frame) != 9+int(binary.LittleEndian.Uint16(frame[5:7])) {
+		return nil, false
+	}
+	payload := frame[9:]
+	if frame[0] == 2 {
+		return [][]byte{payload}, true
+	}
+	if frame[0] != 1 {
+		return nil, false
+	}
+	var bodies [][]byte
+	for len(payload) >= 2 {
+		size := int(binary.LittleEndian.Uint16(payload))
+		payload = payload[2:]
+		if size == 0 || size > len(payload) {
+			return nil, false
+		}
+		bodies = append(bodies, payload[:size])
+		payload = payload[size:]
+	}
+	return bodies, len(payload) == 0
+}
+
 func putPartyPeer(dst []byte, uniqueID uint16, ip net.IP, port uint16, accID uint32, natType byte, mtu uint32) {
 	binary.LittleEndian.PutUint16(dst[:2], uniqueID)
 	copy(dst[2:6], ip.To4())

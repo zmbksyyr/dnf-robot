@@ -69,17 +69,6 @@ func BenchmarkObservePartyDungeonFrame(b *testing.B) {
 	}
 }
 
-func BenchmarkPartyDungeonFrameBodies(b *testing.B) {
-	frame := benchDungeonFrame(b)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, ok := partyDungeonFrameBodies(frame); !ok {
-			b.Fatal("frame rejected")
-		}
-	}
-}
-
 func BenchmarkBuildPartyDungeonMotion(b *testing.B) {
 	leader := partyDungeonPlayerReference(7)
 	robot := partyDungeonPlayerReference(8)

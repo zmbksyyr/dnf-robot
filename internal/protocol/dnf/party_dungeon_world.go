@@ -42,30 +42,6 @@ type partyDungeonWorld struct {
 	objectives     []shared.DungeonObject
 }
 
-func partyDungeonFrameBodies(frame []byte) ([][]byte, bool) {
-	if len(frame) < 9 || len(frame) != 9+int(binary.LittleEndian.Uint16(frame[5:7])) {
-		return nil, false
-	}
-	payload := frame[9:]
-	if frame[0] == 2 {
-		return [][]byte{payload}, true
-	}
-	if frame[0] != 1 {
-		return nil, false
-	}
-	var bodies [][]byte
-	for len(payload) >= 2 {
-		size := int(binary.LittleEndian.Uint16(payload))
-		payload = payload[2:]
-		if size == 0 || size > len(payload) {
-			return nil, false
-		}
-		bodies = append(bodies, payload[:size])
-		payload = payload[size:]
-	}
-	return bodies, len(payload) == 0
-}
-
 func partyDungeonPlayerReference(unique uint16) (ref [4]byte) {
 	ref[0], ref[1] = 0x11, 1
 	binary.LittleEndian.PutUint16(ref[2:], unique)
