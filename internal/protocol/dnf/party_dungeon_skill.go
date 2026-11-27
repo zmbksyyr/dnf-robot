@@ -249,6 +249,7 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		}
 	}
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
+		r.queuePartySkillObjectUnsafe(candidate, now)
 		r.partySkillLastIndex = candidate.skillIndex
 		if cooldown := candidate.cooldownAtLevel(); cooldown > 0 {
 			if r.partySkillReadyAt == nil {
@@ -274,6 +275,9 @@ func (c partySkillCandidate) closeAttack(job int) bool {
 }
 
 func (c partySkillCandidate) recoverDelay(job int) time.Duration {
+	if job == 0 && c.skillIndex == 20 && c.state == 24 {
+		return 350 * time.Millisecond
+	}
 	if job == 0 && c.skillIndex == 5 && c.state == 20 {
 		// The original uncharged Ghost Slash returns to standing at 1083 ms.
 		return 1200 * time.Millisecond

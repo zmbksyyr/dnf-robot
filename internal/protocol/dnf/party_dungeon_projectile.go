@@ -25,10 +25,13 @@ var partyMageProjectileFrames = [...]struct {
 
 type partyBasicProjectile struct {
 	due, expires time.Time
+	lifetime     time.Duration
 	body         []byte
 	reference    [4]byte
+	objectIndex  uint32
 	step         byte
 	created      bool
+	stopOnHit    bool
 }
 
 func buildPartyMageProjectile(owner, unique uint16, step byte, position partyDungeonPosition, right bool, key uint32) ([]byte, [4]byte) {
@@ -58,6 +61,15 @@ func buildPartyMageProjectile(owner, unique uint16, step byte, position partyDun
 }
 
 func (r *RobotVo) queuePartyMageProjectileUnsafe(now time.Time, step byte, position, target partyDungeonPosition) {
+	unique, key := r.nextPartyObjectIdentityUnsafe(now)
+	body, reference := buildPartyMageProjectile(r.partySelfPeer.uniqueID, unique, step, position, target.x >= position.x, key)
+	r.partyBasicProjectiles = append(r.partyBasicProjectiles, partyBasicProjectile{
+		due: now.Add(partyMageProjectileFrames[step].delay), body: body, reference: reference, step: step,
+		objectIndex: 24202, lifetime: time.Second, stopOnHit: true,
+	})
+}
+
+func (r *RobotVo) nextPartyObjectIdentityUnsafe(now time.Time) (uint16, uint32) {
 	if r.partyBasicObjectUnique == 0 {
 		r.partyBasicObjectUnique = partySkillToken(r.UID, now) | 1
 	}
@@ -66,10 +78,7 @@ func (r *RobotVo) queuePartyMageProjectileUnsafe(now time.Time, step byte, posit
 		r.partyBasicObjectUnique++
 	}
 	key := uint32(partySkillToken(r.UID, now))<<16 | uint32(r.partyBasicObjectUnique)
-	body, reference := buildPartyMageProjectile(r.partySelfPeer.uniqueID, r.partyBasicObjectUnique, step, position, target.x >= position.x, key)
-	r.partyBasicProjectiles = append(r.partyBasicProjectiles, partyBasicProjectile{
-		due: now.Add(partyMageProjectileFrames[step].delay), body: body, reference: reference, step: step,
-	})
+	return r.partyBasicObjectUnique, key
 }
 
 func (r *RobotVo) flushPartyBasicProjectilesUnsafe(conn *net.UDPConn, now time.Time) {
@@ -92,9 +101,9 @@ func (r *RobotVo) flushPartyBasicProjectilesUnsafe(conn *net.UDPConn, now time.T
 				remaining = append(remaining, object)
 				continue
 			}
-			object.created, object.expires = true, now.Add(time.Second)
+			object.created, object.expires = true, now.Add(object.lifetime)
 			r.recordPartyDungeonBodyUnsafe(peer.accID, "TX", object.body)
-			foundationlog.Robotf("[PARTY_DUNGEON_PROJECTILE] uid=%d object=24202 ref=%x step=%d\n", r.UID, object.reference, object.step)
+			foundationlog.Robotf("[PARTY_DUNGEON_PROJECTILE] uid=%d object=%d ref=%x step=%d\n", r.UID, object.objectIndex, object.reference, object.step)
 		}
 		if now.Before(object.expires) {
 			remaining = append(remaining, object)
@@ -140,7 +149,7 @@ func (r *RobotVo) observePartyProjectileHitUnsafe(body []byte, now time.Time) {
 	}
 	for i := range r.partyBasicProjectiles {
 		object := &r.partyBasicProjectiles[i]
-		if object.created && string(plain[:4]) == string(object.reference[:]) {
+		if object.created && object.stopOnHit && string(plain[:4]) == string(object.reference[:]) {
 			object.expires = now
 		}
 	}

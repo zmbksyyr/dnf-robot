@@ -147,3 +147,14 @@ IRDSQRCharacter.pushState(0, "custom_pack/slash.nut", "unmapped", 23, -1);
 		t.Fatalf("custom registrations=%+v want %+v", got, want)
 	}
 }
+
+func TestNativeSwordWaveUsesMatchingDefinition(t *testing.T) {
+	a := &pvfArchive{files: map[string]*pvfFile{
+		"skill/swordmanskill.lst":       {Data: []byte("20 `swordman/normalwave.skl`")},
+		"skill/swordman/normalwave.skl": {Data: []byte("[type]\n`[active]`\n[consume MP]\n1 1\n[cool time]\n3000 3000")},
+	}}
+	got := extractSkillStateCatalog(a)
+	if len(got) != 1 || got[0].SkillIndex != 20 || got[0].State != 24 || !reflect.DeepEqual(got[0].StateData, []int{20}) || !got[0].ItemCostFree || got[0].CooldownMS != 3000 {
+		t.Fatalf("native wave definition=%+v", got)
+	}
+}
