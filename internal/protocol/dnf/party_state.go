@@ -289,7 +289,7 @@ func (r *RobotVo) followPartyLeaderTownAreaUnsafe(area townEntityArea) bool {
 		return false
 	}
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
-	if !ok || !r.partyLeaderTransportFreshUnsafe(leaderID, time.Now()) || area.uniqueID != leaderID || (r.CurVillage == area.village && r.CurArea == area.area) {
+	if !ok || area.uniqueID != leaderID || (r.CurVillage == area.village && r.CurArea == area.area) {
 		return false
 	}
 	// Private gate rooms have no shared area roster or departure broadcast.
@@ -317,7 +317,9 @@ func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPositio
 		foundationlog.Robotf("[TOWN_FOLLOW_DIAG] uid=%d leaderID=%d ok=%t fresh=%t posID=%d cur=(%d,%d) want=(%d,%d)\n",
 			r.UID, leaderID, ok, fresh, position.uniqueID, r.CurX, r.CurY, position.x, position.y)
 	}
-	if !ok || !r.partyLeaderTransportFreshUnsafe(leaderID, time.Now()) || position.uniqueID != leaderID || (r.CurX == position.x && r.CurY == position.y) {
+	// Fresh server town positions are sufficient even after dungeon peer UDP
+	// has gone quiet. Requiring that transport would freeze following in town.
+	if !ok || position.uniqueID != leaderID || (r.CurX == position.x && r.CurY == position.y) {
 		return false
 	}
 	if r.townEntityPositions == nil {
@@ -333,7 +335,7 @@ func (r *RobotVo) flushTownFollowUnsafe(now time.Time) {
 	}
 	leader, ok := r.partyLeaderUniqueIDUnsafe()
 	position, known := r.townEntityPositions[leader]
-	if !ok || !known || now.Sub(position.seenAt) > partyTownPositionMaxAge || !r.partyLeaderTransportFreshUnsafe(leader, now) {
+	if !ok || !known || now.Sub(position.seenAt) > partyTownPositionMaxAge {
 		return
 	}
 	r.stepTownFollowUnsafe(position, now)

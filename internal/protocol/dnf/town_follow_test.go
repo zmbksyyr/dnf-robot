@@ -36,6 +36,9 @@ func TestRobotFollowsCachedPartyLeaderTownPosition(t *testing.T) {
 	vo := &RobotVo{State: StateRun, Cipher: cipher, Conn: robotConn, PacketID: 7, CurX: 100, CurY: 200}
 	vo.partySelfPeer = partyIPPeer{uniqueID: 0x24ee, slot: 1, slotKnown: true}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x9692, slot: 0, slotKnown: true}
+	// Town TCP movement remains authoritative after dungeon UDP goes idle.
+	vo.partyLeaderTransportUnique = 0x9692
+	vo.partyLeaderTransportAt = time.Now().Add(-time.Minute)
 	if _, ok := vo.rememberTownEntityUnsafe(mustPartyHex(t, "92968e03160106c8006459f557000000")); !ok {
 		t.Fatal("town position was not cached")
 	}
