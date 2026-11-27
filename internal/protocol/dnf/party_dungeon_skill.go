@@ -245,7 +245,7 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 			return
 		}
 	}
-	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
+	if r.sendPartySkillCastUnsafe(conn, now, candidate) {
 		r.queuePartySkillObjectUnsafe(candidate, now)
 		r.partySkillLastIndex = candidate.skillIndex
 		if cooldown := candidate.cooldownAtLevel(); cooldown > 0 {
@@ -296,15 +296,13 @@ func (c partySkillCandidate) cooldownAtLevel() time.Duration {
 }
 
 func (c partySkillCandidate) canUseObservedMP(actor partyDungeonActor) bool {
-	if !actor.mpKnown || actor.mp > 0 || len(c.baseMPByLevel) == 0 {
+	if !actor.mpKnown || len(c.baseMPByLevel) == 0 {
 		return true
 	}
 	level := min(max(c.level, 1), len(c.baseMPByLevel))
-	// Resource notifications report the resulting current MP. At zero MP a
-	// paid skill cannot start; ordinary attacks and explicitly free skills
-	// remain available. The base table alone cannot establish an effective
-	// nonzero cost after equipment and passive modifiers.
-	return c.baseMPByLevel[level-1] == 0
+	// Resource notifications report current MP. Use the same definition cost
+	// as payment so an unaffordable skill cannot crowd out a usable attack.
+	return c.baseMPByLevel[level-1] == 0 || int64(actor.mp) >= int64(c.baseMPByLevel[level-1])
 }
 
 func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandidate, bool) {
@@ -344,6 +342,10 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandid
 }
 
 func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string) bool {
+	return r.sendPartySkillRecordsUnsafe(conn, now, state, stateData, reason, nil)
+}
+
+func (r *RobotVo) sendPartySkillRecordsUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string, useSkill []byte) bool {
 	if err := shared.ValidatePartySkillStateData(r.partySkillJob, int(state), stateData); err != nil {
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d job=%d state=%d err=%v\n", reason, r.UID, r.partySkillJob, state, err)
 		return false
@@ -379,6 +381,9 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 			return false
 		}
 		records = [][]byte{face, body}
+		if useSkill != nil {
+			records = [][]byte{face, useSkill, body}
+		}
 		targetID = selected
 	}
 	purpose := "skill-cast"
@@ -395,6 +400,9 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 	}
 	if reason == "CAST" {
 		r.partyDungeonWorld.noteTargetAttack(targetID, now)
+	}
+	if useSkill != nil {
+		r.recordPartyDungeonBodyUnsafe(peer.accID, "TX", useSkill)
 	}
 	r.recordPartyDungeonBodyUnsafe(peer.accID, "TX", body)
 	return true

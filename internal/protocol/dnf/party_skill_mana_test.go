@@ -30,9 +30,12 @@ func TestObservedMPExhaustionFallsBackToNormalAttackAndResumesAfterRecovery(t *t
 	binary.LittleEndian.PutUint32(resource[4:], 10)
 	r.partyDungeonWorld.observeActorEvent(13, resource, now.Add(time.Second))
 	r.flushPartyDungeonSkillUnsafe(sender, now.Add(time.Second))
-	readComboState(t, receiver, 20, 0, 2)
+	readComboState(t, receiver, 20, 0, 3)
 	if r.partySkillLastIndex != 5 {
 		t.Fatal("observed MP recovery did not resume active casting")
+	}
+	if r.partyDungeonWorld.actors[self].mp != 9 {
+		t.Fatal("resumed skill did not pay its MP cost")
 	}
 }
 
