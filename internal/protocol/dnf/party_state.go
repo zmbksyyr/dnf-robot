@@ -3,6 +3,7 @@ package dnf
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"sort"
@@ -301,6 +302,8 @@ func (r *RobotVo) followPartyLeaderTownAreaUnsafe(area townEntityArea) bool {
 		return false
 	}
 	r.setAreaFromLocked(area.village, area.area, area.x, area.y, uint16(r.CurVillage), uint16(r.CurArea))
+	r.townFollowNextAt = time.Time{}
+	r.townFollowMoving = false
 	return r.CurVillage == area.village && r.CurArea == area.area
 }
 
@@ -317,15 +320,56 @@ func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPositio
 	if !ok || !r.partyLeaderTransportFreshUnsafe(leaderID, time.Now()) || position.uniqueID != leaderID || (r.CurX == position.x && r.CurY == position.y) {
 		return false
 	}
+	if r.townEntityPositions == nil {
+		r.townEntityPositions = make(map[uint16]townEntityPosition)
+	}
+	r.townEntityPositions[leaderID] = position
+	return r.stepTownFollowUnsafe(position, time.Now())
+}
+
+func (r *RobotVo) flushTownFollowUnsafe(now time.Time) {
+	if r.State != StateRun || r.partyDungeonInMap || now.Before(r.townFollowNextAt) {
+		return
+	}
+	leader, ok := r.partyLeaderUniqueIDUnsafe()
+	position, known := r.townEntityPositions[leader]
+	if !ok || !known || now.Sub(position.seenAt) > partyTownPositionMaxAge || !r.partyLeaderTransportFreshUnsafe(leader, now) {
+		return
+	}
+	r.stepTownFollowUnsafe(position, now)
+}
+
+func (r *RobotVo) stepTownFollowUnsafe(position townEntityPosition, now time.Time) bool {
+	if now.Before(r.townFollowNextAt) {
+		return false
+	}
+	r.townFollowNextAt = now.Add(100 * time.Millisecond)
+	dx, dy := float64(position.x)-float64(r.CurX), float64(position.y)-float64(r.CurY)
+	distance := math.Hypot(dx, dy)
+	spacing := float64(50 + r.UID%21)
+	if distance <= spacing+2 || !r.townFollowMoving && distance < spacing+24 {
+		r.townFollowMoving = false
+		return false
+	}
+	r.townFollowMoving = true
+	// Small steps continue on the supervisor even after the leader stops.
+	// Slow down on approach rather than copying the leader's destination.
+	step := math.Min(24, math.Max(4, (distance-spacing)*0.35))
+	step = math.Min(step, distance-spacing)
+	x := uint16(math.Round(float64(r.CurX) + dx*step/distance))
+	y := uint16(math.Round(float64(r.CurY) + dy*step/distance))
 	moveType := position.moveType
 	if moveType == 0 {
 		moveType = 5
 	}
 	speed := position.speed
 	if speed == 0 {
-		speed = 100
+		speed = 200
 	}
-	return r.setPositionUnsafe(position.x, position.y, moveType, speed)
+	if distance-spacing < 50 {
+		speed = min(speed, 100)
+	}
+	return r.setPositionUnsafe(x, y, moveType, speed)
 }
 
 const (

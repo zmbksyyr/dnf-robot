@@ -140,8 +140,8 @@ func TestRoomActionsWaitForServerStartAndKeepObservedPosition(t *testing.T) {
 		t.Fatalf("queued movement did not resume: %x", buf[:n])
 	}
 	position := r.partyDungeonWorld.actors[self].position
-	if position.known != 7 || position.x != 461 || position.y != 341 {
-		t.Fatalf("server start lost initial actor position: %+v", position)
+	if position.known != 7 || position.x != 506 || position.y != 353 {
+		t.Fatalf("server start lost initial follower spacing: %+v", position)
 	}
 	// The next room must close the action gate again.
 	r.parsePacket(makeEncryptedPartyRecvPacket(t, r.Cipher, 29, mustPartyHex(t, capturedRoomBody)))

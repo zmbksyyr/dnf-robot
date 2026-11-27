@@ -88,6 +88,7 @@ func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
 		from, known = actor.room, true
 	}
 	r.partyDungeonWorld = partyDungeonWorld{entryFrom: from, entryFromKnown: known}
+	r.characterResources.syncPending = true
 	// Resources belong to the character, not the room's coordinate system.
 	for ref, actor := range previous.actors {
 		if ref[0] == 0x11 && ref[1] == 1 && (actor.hpKnown || actor.mpKnown || actor.dead) {
@@ -315,7 +316,7 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandid
 	var ready []byte
 	self := r.partyDungeonWorld.actors[partyDungeonPlayerReference(r.partySelfPeer.uniqueID)]
 	for _, candidate := range r.partySkillCandidates {
-		if candidate.itemCostFree && candidate.canUseObservedMP(self) && !now.Before(r.partySkillReadyAt[candidate.skillIndex]) && !seen[candidate.skillIndex] {
+		if candidate.itemCostFree && candidate.canUseObservedMP(self) && (!self.mpKnown || self.mp >= candidate.simulatedMPCost(r.characterResources.maxMP)) && !now.Before(r.partySkillReadyAt[candidate.skillIndex]) && !seen[candidate.skillIndex] {
 			seen[candidate.skillIndex] = true
 			ready = append(ready, candidate.skillIndex)
 		}

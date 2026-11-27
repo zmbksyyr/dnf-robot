@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -56,10 +57,11 @@ func TestRobotFollowsCachedPartyLeaderTownPosition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := mustPartyHex(t, "8e03160106c80000"); !bytes.Equal(payload, want) {
-		t.Fatalf("payload = %x, want %x", payload, want)
+	x, y := binary.LittleEndian.Uint16(payload), binary.LittleEndian.Uint16(payload[2:])
+	if x <= 100 || math.Hypot(float64(x)-100, float64(y)-200) > 24.8 || payload[4] != 6 {
+		t.Fatalf("follow must send a walking step, got %x", payload)
 	}
-	if vo.PacketID != 8 || vo.CurX != 910 || vo.CurY != 278 || vo.MoveType != 6 {
+	if vo.PacketID != 8 || vo.CurX != x || vo.CurY != y || vo.MoveType != 6 {
 		t.Fatalf("state packet=%d x=%d y=%d type=%d", vo.PacketID, vo.CurX, vo.CurY, vo.MoveType)
 	}
 }

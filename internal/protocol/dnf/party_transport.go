@@ -100,6 +100,8 @@ func (r *RobotVo) flushPartyRuntimeUnsafe(conn *net.UDPConn, now time.Time) {
 		r.cancelPartySkillCastsUnsafe(now)
 	}
 	r.flushPartyReliableUnsafe(conn, now)
+	r.flushPartyResourcesUnsafe(conn, now)
+	r.flushTownFollowUnsafe(now)
 	r.flushPartyDungeonFollowUnsafe(conn, now)
 	r.flushPartyDungeonSkillUnsafe(conn, now)
 	r.flushPartyBasicProjectilesUnsafe(conn, now)

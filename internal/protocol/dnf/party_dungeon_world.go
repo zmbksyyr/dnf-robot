@@ -9,26 +9,27 @@ import (
 )
 
 type partyDungeonActor struct {
-	position     partyDungeonPosition
-	room         [2]byte
-	seenAt       time.Time
-	hp           int32
-	hpKnown      bool
-	mp           int32
-	mpKnown      bool
-	lastSkill    byte
-	skillLevel   byte
-	lastSkillAt  time.Time
-	controller   uint16
-	attackTarget [4]byte
-	lastHitFrom  [4]byte
-	lastHitAt    time.Time
-	dead         bool
-	team         uint16
-	teamKnown    bool
-	objective    bool
-	lastDamageAt time.Time
-	lastAttackAt time.Time
+	position         partyDungeonPosition
+	room             [2]byte
+	seenAt           time.Time
+	hp               int32
+	hpKnown          bool
+	mp               int32
+	mpKnown          bool
+	lastSkill        byte
+	skillLevel       byte
+	lastSkillAt      time.Time
+	controller       uint16
+	attackTarget     [4]byte
+	lastHitFrom      [4]byte
+	lastHitAt        time.Time
+	dead             bool
+	team             uint16
+	teamKnown        bool
+	objective        bool
+	lastDamageAt     time.Time
+	lastAttackAt     time.Time
+	incomingAttackAt time.Time
 }
 
 type partyDungeonWorld struct {
@@ -194,6 +195,10 @@ func (world *partyDungeonWorld) observeActorEvent(command uint16, payload []byte
 	actor := world.actors[ref]
 	actor.seenAt = now
 	switch command {
+	case 5:
+		if partyDungeonMonster(ref) && payload[4] == 8 {
+			actor.incomingAttackAt = now
+		}
 	case 6:
 		actor.controller = binary.LittleEndian.Uint16(payload[4:])
 	case 13, 25:
@@ -243,7 +248,7 @@ func (world *partyDungeonWorld) playerCanAct(unique uint16) bool {
 
 func partyDungeonActorEvent(command uint16) bool {
 	switch command {
-	case 6, 12, 13, 19, 20, 23, 25, 32, 54:
+	case 5, 6, 12, 13, 19, 20, 23, 25, 32, 54:
 		return true
 	}
 	return false
@@ -251,6 +256,8 @@ func partyDungeonActorEvent(command uint16) bool {
 
 func validPartyDungeonActorEvent(command uint16, size int) bool {
 	switch command {
+	case 5:
+		return size >= 9
 	case 6, 54:
 		return size == 6
 	case 12:

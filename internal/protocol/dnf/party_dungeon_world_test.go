@@ -185,7 +185,7 @@ func TestDungeonDamageUpdatesVictimAndRegroupsWithoutWaitingForDeathNotice(t *te
 				}
 			}
 			position, move, active := r.partyDungeonWorld.planNavigation(self, leader, now.Add(2*time.Second))
-			if !active || !move || position.x != 140 || r.partyDungeonWorld.target != [4]byte{} {
+			if !active || !move || position.x != 122 || r.partyDungeonWorld.target != [4]byte{} {
 				t.Fatalf("last target's HP reached zero without regrouping: position=%+v target=%x", position, r.partyDungeonWorld.target)
 			}
 		})

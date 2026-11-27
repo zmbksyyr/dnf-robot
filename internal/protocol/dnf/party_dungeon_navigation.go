@@ -8,7 +8,7 @@ import (
 	foundationlog "robot/internal/foundation/log"
 )
 
-const partyDungeonNavigationInterval = 200 * time.Millisecond
+const partyDungeonNavigationInterval = 100 * time.Millisecond
 
 // A remote member entering a gate can move the whole party. Regroup near a
 // stationary leader, keeping clear of the gate they may still be standing in.
@@ -57,7 +57,15 @@ func (world *partyDungeonWorld) planNavigation(self, leader [4]byte, now time.Ti
 	if position.known&3 != 3 {
 		world.navigation.reason = "self-unknown"
 		if !world.entryFromKnown {
-			return position, false, false
+			if position.known != 0 || leaderActor.position.known&3 != 3 {
+				return position, false, false
+			}
+			position = leaderActor.position
+			position.x += 45
+			position.y += 12
+			position.z, position.known = 0, 7
+			world.navigation.reason = "enter-first-room"
+			return position, true, true
 		}
 		// The server resets our room position before the new leader motion
 		// arrives. Suppress delayed old-room replay while awaiting a complete
@@ -143,14 +151,16 @@ func (world *partyDungeonWorld) planNavigation(self, leader [4]byte, now time.Ti
 		}
 		// Cap the final step at the follow radius as well; a full walking step
 		// from just outside it would still approach the entrance too closely.
-		step := math.Min(40, distance-followDistance)
+		remaining := distance - followDistance
+		step := math.Min(22, math.Max(4, remaining*0.4))
+		step = math.Min(step, remaining)
 		dx *= step / distance
 		dy *= step / distance
-	} else if distance > 40 {
+	} else if distance > 22 {
 		// Match the bounded walking step used by the real-client movement probe.
 		// Delayed scheduling never accumulates a teleport-sized catch-up step.
-		dx *= 40 / distance
-		dy *= 40 / distance
+		dx *= 22 / distance
+		dy *= 22 / distance
 	}
 	position.x += float32(dx)
 	position.y += float32(dy)

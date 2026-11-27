@@ -230,7 +230,7 @@ func TestStationaryEntryRegroupApproachesInsidePointFromTheSide(t *testing.T) {
 	actor = world.actors[self]
 	actor.room, actor.position = [2]byte{2, 0}, partyDungeonPosition{x: 256.86816, y: 232.92935, known: 7}
 	world.actors[self] = actor
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 65; i++ {
 		position, move, active := world.planNavigation(self, leader, now.Add(time.Duration(i)*partyDungeonNavigationInterval))
 		if !active || position.x > 1140 && position.y > 300 {
 			t.Fatalf("sideways regroup crossed the entrance trigger: %+v", position)

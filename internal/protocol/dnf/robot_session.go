@@ -191,6 +191,8 @@ type RobotVo struct {
 	partyInviteEpoch            uint64
 	townEntityPositions         map[uint16]townEntityPosition
 	townEntitySweepAt           time.Time
+	townFollowNextAt            time.Time
+	townFollowMoving            bool
 	partyUDPConn                *net.UDPConn
 	partyUDPMTU                 int
 	partyUDPNetwork             *net.IPNet
