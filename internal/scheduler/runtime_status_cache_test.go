@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type countingStatusRuntime struct {
@@ -23,6 +24,28 @@ type mapStatusRuntime struct {
 }
 
 type storeStartingRuntime struct{ mapStatusRuntime }
+
+func TestOnlineConfirmationInvalidatesStoppedStatusSnapshot(t *testing.T) {
+	const uid = 17000001
+	doll := &mapStatusRuntime{statuses: map[int]robotcap.RuntimeStatus{
+		uid: {UID: uid, StateName: robotcap.RuntimeStateStop},
+	}}
+	manager := NewRobotManager(nil, nil, doll)
+	if st, ok := manager.runtimeStatus(uid); !ok || st.StateName != robotcap.RuntimeStateStop {
+		t.Fatal("stopped session was not cached")
+	}
+	doll.statuses[uid] = robotcap.RuntimeStatus{UID: uid, StateName: robotcap.RuntimeStateRunning}
+	result := robotcap.CommandResult{Accepted: 1, Robots: []robotcap.ActionResult{
+		{UID: uid, State: robotcap.ActionStateAccepted},
+	}}
+	manager.waitManagedConfirm(&result, time.Second)
+	if result.Confirmed != 1 {
+		t.Fatalf("online confirmation = %+v", result)
+	}
+	if st, ok := manager.runtimeStatus(uid); !ok || !robotcap.ActiveRuntimeStatus(st) {
+		t.Fatalf("confirmed session still has cached stopped status: %+v, exists=%t", st, ok)
+	}
+}
 
 func TestActorDoesNotPauseRetryUsingCachedLoginRejection(t *testing.T) {
 	const uid = 17000001

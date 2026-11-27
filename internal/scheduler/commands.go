@@ -368,4 +368,7 @@ func actorFullResult(robot robotcap.Info, action string) robotcap.ActionResult {
 
 func (m *RobotManager) waitManagedConfirm(result *robotcap.CommandResult, timeout time.Duration) {
 	m.sessionService().ConfirmAccepted(result, timeout)
+	// Confirmation reads live sessions; the next status request must not reuse
+	// a stopped snapshot captured while those sessions were still connecting.
+	m.invalidateRuntimeStatusCache()
 }
