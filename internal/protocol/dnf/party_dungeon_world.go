@@ -14,6 +14,15 @@ type partyDungeonActor struct {
 	seenAt       time.Time
 	hp           int32
 	hpKnown      bool
+	mp           int32
+	mpKnown      bool
+	lastSkill    byte
+	skillLevel   byte
+	lastSkillAt  time.Time
+	controller   uint16
+	attackTarget [4]byte
+	lastHitFrom  [4]byte
+	lastHitAt    time.Time
 	dead         bool
 	team         uint16
 	teamKnown    bool
@@ -148,7 +157,7 @@ func (world *partyDungeonWorld) observe(body []byte, now time.Time) {
 		}
 		return
 	}
-	if command != 6 && command != 12 && command != 20 && command != 23 && command != 54 {
+	if !partyDungeonActorEvent(command) {
 		return
 	}
 	payload := make([]byte, len(body)-7)
@@ -163,16 +172,13 @@ func (world *partyDungeonWorld) observe(body []byte, now time.Time) {
 }
 
 func (world *partyDungeonWorld) observeActorEvent(command uint16, payload []byte, now time.Time) {
-	if command != 6 && command != 12 && command != 20 && command != 23 && command != 54 {
-		return
-	}
-	if (command == 6 || command == 54) && len(payload) != 6 || command == 12 && len(payload) != 16 || command == 20 && len(payload) != 44 || command == 23 && len(payload) != 4 {
+	if !validPartyDungeonActorEvent(command, len(payload)) {
 		return
 	}
 	var ref [4]byte
 	copy(ref[:], payload)
-	if command == 20 {
-		// HP_DAMAGE identifies the attacker first, then the victim. Its current
+	if command == 19 || command == 20 {
+		// HIT_OBJECT and HP_DAMAGE identify attacker first, then victim. Current
 		// HP follows a float, five shorts and two damage-related integers.
 		// Read the peer's resulting HP; do not subtract the reported damage.
 		copy(ref[:], payload[4:8])
@@ -185,7 +191,22 @@ func (world *partyDungeonWorld) observeActorEvent(command uint16, payload []byte
 	}
 	actor := world.actors[ref]
 	actor.seenAt = now
-	if command == 12 || command == 20 {
+	switch command {
+	case 6:
+		actor.controller = binary.LittleEndian.Uint16(payload[4:])
+	case 13, 25:
+		offset := 4
+		if command == 25 {
+			offset = 6
+			actor.lastSkill, actor.skillLevel, actor.lastSkillAt = payload[4], payload[5], now
+		}
+		actor.mp, actor.mpKnown = int32(binary.LittleEndian.Uint32(payload[offset:])), true
+	case 19:
+		copy(actor.lastHitFrom[:], payload[:4])
+		actor.lastHitAt = now
+	case 32:
+		copy(actor.attackTarget[:], payload[4:8])
+	case 12, 20:
 		hpOffset := 4
 		if command == 20 {
 			hpOffset = 30
@@ -197,9 +218,9 @@ func (world *partyDungeonWorld) observeActorEvent(command uint16, payload []byte
 		actor.hp = hp
 		actor.hpKnown = true
 		actor.dead = actor.hp <= 0 || (partyDungeonMonster(ref) || actor.objective) && actor.dead
-	} else if command == 23 {
+	case 23:
 		actor.dead = true
-	} else if command == 54 {
+	case 54:
 		// Original SET_TEAM reads group, unique and team as three words,
 		// then calls virtual+0x228. Its getter (+0x22c) feeds the ordinary
 		// relation comparison in sq_FindEnemyTarget's 0x872c60 predicate.
@@ -211,6 +232,40 @@ func (world *partyDungeonWorld) observeActorEvent(command uint16, payload []byte
 		world.target = [4]byte{}
 		world.targetAttackAt = time.Time{}
 	}
+}
+
+func (world *partyDungeonWorld) playerCanAct(unique uint16) bool {
+	actor := world.actors[partyDungeonPlayerReference(unique)]
+	return !actor.dead
+}
+
+func partyDungeonActorEvent(command uint16) bool {
+	switch command {
+	case 6, 12, 13, 19, 20, 23, 25, 32, 54:
+		return true
+	}
+	return false
+}
+
+func validPartyDungeonActorEvent(command uint16, size int) bool {
+	switch command {
+	case 6, 54:
+		return size == 6
+	case 12:
+		return size == 16
+	case 13, 32:
+		return size == 8
+	case 19:
+		// The original sender has 25 bytes; its wire protection adds four.
+		return size == 29
+	case 20:
+		return size == 44
+	case 23:
+		return size == 4
+	case 25:
+		return size == 11
+	}
+	return false
 }
 
 func (world *partyDungeonWorld) targetable(self, ref [4]byte, actor partyDungeonActor) bool {

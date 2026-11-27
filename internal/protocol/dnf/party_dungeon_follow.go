@@ -115,7 +115,7 @@ func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
 func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time) {
 	// Peer state can arrive during loading. Retain it, but do not act on the
 	// room until the server confirms every member has finished loading.
-	if r.partyDungeonLoading {
+	if r.partyDungeonLoading || !r.partyDungeonWorld.playerCanAct(r.partySelfPeer.uniqueID) {
 		return
 	}
 	// Replayed leader states can cancel our own cast. Keep the latest position

@@ -27,6 +27,9 @@ func (r *RobotVo) tryPartyBasicAttackUnsafe(conn *net.UDPConn, now time.Time) bo
 		return false
 	}
 	self := partyDungeonPlayerReference(r.partySelfPeer.uniqueID)
+	if !r.partyDungeonWorld.playerCanAct(r.partySelfPeer.uniqueID) {
+		return false
+	}
 	room, roomKnown := r.partyDungeonWorld.combatRoom(self, partyDungeonPlayerReference(peer.uniqueID))
 	if !roomKnown {
 		r.partyBasicAttackStep = 0

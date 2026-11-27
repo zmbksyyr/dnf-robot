@@ -87,6 +87,16 @@ func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
 		from, known = actor.room, true
 	}
 	r.partyDungeonWorld = partyDungeonWorld{entryFrom: from, entryFromKnown: known}
+	// Resources belong to the character, not the room's coordinate system.
+	for ref, actor := range previous.actors {
+		if ref[0] == 0x11 && ref[1] == 1 && (actor.hpKnown || actor.mpKnown || actor.dead) {
+			if r.partyDungeonWorld.actors == nil {
+				r.partyDungeonWorld.actors = make(map[[4]byte]partyDungeonActor)
+			}
+			r.partyDungeonWorld.actors[ref] = partyDungeonActor{hp: actor.hp, hpKnown: actor.hpKnown,
+				mp: actor.mp, mpKnown: actor.mpKnown, dead: actor.dead}
+		}
+	}
 	r.partyDungeonFlags = 0
 	r.partyBasicAttackNextAt = time.Time{}
 	r.partyBasicAttackStep = 0
@@ -297,6 +307,9 @@ func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, st
 	records := [][]byte{body}
 	var targetID [4]byte
 	if reason == "CAST" {
+		if !r.partyDungeonWorld.playerCanAct(r.partySelfPeer.uniqueID) {
+			return false
+		}
 		// These are combat casts. Empty rooms should leave the actor free to
 		// regroup; a target behind us must be faced before its skill state.
 		self := partyDungeonPlayerReference(r.partySelfPeer.uniqueID)
