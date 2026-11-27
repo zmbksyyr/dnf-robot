@@ -8,6 +8,14 @@ import (
 	foundationlog "robot/internal/foundation/log"
 )
 
+// These diagnostic options come from the launching process. Looking them up
+// for every packet calls the Windows API and allocates even when tracing is off.
+var (
+	traceReceivedPackets = os.Getenv("DNF_TRACE_RX") == "1"
+	traceReceivedRawAll  = os.Getenv("DNF_TRACE_RAW_ALL") == "1"
+	traceReceivedRaw29   = os.Getenv("DNF_TRACE_RAW29") == "1"
+)
+
 type robotInboundPacket struct {
 	data   []byte
 	size   int
@@ -27,7 +35,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		flag: inBuf[0],
 		typ:  binary.LittleEndian.Uint16(inBuf[1:3]),
 	}
-	if os.Getenv("DNF_TRACE_RAW_ALL") == "1" && packet.typ == 561 {
+	if traceReceivedRawAll && packet.typ == 561 {
 		fmt.Fprintf(os.Stderr, "[RX] typ=561 raw=%x\n", packet.data)
 	}
 	if packet.flag == 0 && packet.typ == 561 && packet.size > 36 {
@@ -36,7 +44,7 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 			recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "DUNGEON_NOTIFY", "FAIL", "anti-decrypt: "+err.Error(), packet.data)
 			foundationlog.Robotf("[PARTY_DUNGEON_NOTIFY] uid=%d type=561 size=%d error=%v\n", r.UID, packet.size, err)
 		}
-		if os.Getenv("DNF_TRACE_RX") == "1" {
+		if traceReceivedPackets {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[RX] anti decrypt failed size=%d err=%v\n", packet.size, err)
 			} else if len(dec) >= 7 {
@@ -58,12 +66,12 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "DUNGEON_NOTIFY", "OBSERVED", note, packet.data)
 		foundationlog.Robotf("[PARTY_DUNGEON_NOTIFY] uid=%d %s\n", r.UID, note)
 	}
-	if os.Getenv("DNF_TRACE_RX") == "1" {
+	if traceReceivedPackets {
 		line := fmt.Sprintf("[RX] typ=%d size=%d", packet.typ, packet.size)
-		if packet.typ == 29 && os.Getenv("DNF_TRACE_RAW29") == "1" {
+		if packet.typ == 29 && traceReceivedRaw29 {
 			line += fmt.Sprintf(" raw=%x", packet.data)
 		}
-		if packet.typ == 16 || packet.typ == 48 || packet.typ == 29 || packet.typ == 100 || packet.typ == 12 || packet.typ == 22 || packet.typ == 23 || os.Getenv("DNF_TRACE_RAW_ALL") == "1" {
+		if packet.typ == 16 || packet.typ == 48 || packet.typ == 29 || packet.typ == 100 || packet.typ == 12 || packet.typ == 22 || packet.typ == 23 || traceReceivedRawAll {
 			if _, _, body, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti); err == nil {
 				line += fmt.Sprintf(" body=%x", body)
 			}
