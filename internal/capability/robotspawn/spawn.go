@@ -40,7 +40,7 @@ func ApplyConfiguredLocation(env Env, info *robotcap.Info, rc robotconfig.Runtim
 func ApplyVillageLocation(env Env, info *robotcap.Info, village int, rc robotconfig.RuntimeConfig, maps []shared.MapCatalogItem) {
 	var candidates []shared.MapCatalogItem
 	for _, mp := range maps {
-		if mp.Use && mp.Village == village && mp.Level <= info.Level {
+		if spawnMapEligible(mp) && mp.Village == village && mp.Level <= info.Level {
 			candidates = append(candidates, mp)
 		}
 	}
@@ -74,7 +74,7 @@ func ApplyVillageLocation(env Env, info *robotcap.Info, village int, rc robotcon
 func RandomMap(env Env, maps []shared.MapCatalogItem, level int) (shared.MapCatalogItem, bool) {
 	var candidates []shared.MapCatalogItem
 	for _, mp := range maps {
-		if mp.Use && mp.Village >= 0 && mp.Area >= 0 && mp.Level <= level {
+		if spawnMapEligible(mp) && mp.Level <= level {
 			candidates = append(candidates, mp)
 		}
 	}
@@ -82,6 +82,11 @@ func RandomMap(env Env, maps []shared.MapCatalogItem, level int) (shared.MapCata
 		return shared.MapCatalogItem{}, false
 	}
 	return candidates[safeRandIntn(env, len(candidates))], true
+}
+
+func spawnMapEligible(mp shared.MapCatalogItem) bool {
+	return mp.Use && !mp.Gate && mp.Village >= 0 && mp.Area >= 0 &&
+		(mp.NormalEligible == nil || *mp.NormalEligible)
 }
 
 func safeRandIntn(env Env, n int) int {

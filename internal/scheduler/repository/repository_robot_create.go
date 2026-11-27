@@ -155,6 +155,10 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 	}
 	infoQuery, infoArgs := createCharacterInfoInsert(info, exp, dbName, columns)
 	statQuery, statArgs := createCharacterStatInsert(info.CID, exp, info.Village)
+	skillSlots, err := maxRobotSkillSlots(info.Job, info.Grow)
+	if err != nil {
+		return err
+	}
 	initializers := []characterInitializer{
 		{table: "taiwan_cain.charac_kill_monster_info", query: "INSERT IGNORE INTO taiwan_cain.charac_kill_monster_info (charac_no) VALUES (?)", args: []interface{}{info.CID}},
 		{table: "taiwan_cain.charac_link_message", query: "INSERT IGNORE INTO taiwan_cain.charac_link_message (m_id) VALUES (?)", args: []interface{}{info.UID}},
@@ -164,7 +168,7 @@ func (r *SQLRepository) CreateBaseCharacter(info robotcap.Info, rc robotconfig.R
 		{table: "taiwan_cain.pvp_result", query: "INSERT IGNORE INTO taiwan_cain.pvp_result (charac_no) VALUES (?)", args: []interface{}{info.CID}},
 		{table: "taiwan_cain_2nd.charac_inven_expand", query: "INSERT IGNORE INTO taiwan_cain_2nd.charac_inven_expand (charac_no) VALUES (?)", args: []interface{}{info.CID}},
 		{table: "taiwan_cain_2nd.inventory", query: "INSERT IGNORE INTO taiwan_cain_2nd.inventory (charac_no,money,coin,inventory_capacity,inventory,equipslot) VALUES (?,?,?,?,?,?)", args: []interface{}{info.CID, rc.DefaultMoney, rc.DefaultCoin, rc.InventoryCapacity, equipcap.CompressedZeros(inventorySlotCount * equipmentRecordSize), equipcap.CompressedZeros(equipslotSlotCount * equipmentRecordSize)}, required: true},
-		{table: "taiwan_cain_2nd.skill", query: "INSERT IGNORE INTO taiwan_cain_2nd.skill (charac_no) VALUES (?)", args: []interface{}{info.CID}, required: true},
+		{table: "taiwan_cain_2nd.skill", query: "INSERT INTO taiwan_cain_2nd.skill (charac_no,skill_slot,skill_slot_2nd,skill_command,script_version) VALUES (?,?,?,?,3)", args: []interface{}{info.CID, skillSlots, skillSlots, equipcap.CompressedZeros(200)}, required: true},
 		{table: "taiwan_game_event.event_1306_account_reward", query: "INSERT IGNORE INTO taiwan_game_event.event_1306_account_reward (m_id,charac_no,occ_date) VALUES (?,?,NOW())", args: []interface{}{info.UID, info.CID}},
 	}
 	requiredInitializers := make([]characterInitializer, 0, 2)
@@ -281,7 +285,7 @@ func (r *SQLRepository) ReplaceAvatarItems(cid int, selected map[int]shared.Equi
 	sort.Ints(slots)
 	for _, slot := range slots {
 		item := selected[slot]
-		if _, err := tx.Exec("INSERT INTO taiwan_cain_2nd.user_items (charac_no,slot,it_id,expire_date,reg_date,obtain_from,hidden_option) VALUES (?,?,?,'9999-12-31 23:59:59',NOW(),0,1)", cid, slot, item.ID); err != nil {
+		if _, err := tx.Exec("INSERT INTO taiwan_cain_2nd.user_items (charac_no,slot,it_id,expire_date,reg_date,obtain_from,hidden_option,jewel_socket) VALUES (?,?,?,'9999-12-31 23:59:59',NOW(),0,1,UNHEX(''))", cid, slot, item.ID); err != nil {
 			return err
 		}
 	}
@@ -454,7 +458,6 @@ func (r *SQLRepository) CopyTemplateDefaults(cid int) error {
 	queries := []string{
 		"UPDATE taiwan_cain.charac_info dst JOIN taiwan_cain.charac_info src SET dst.element_resist=src.element_resist,dst.spec_property=src.spec_property,dst.create_time=src.create_time WHERE dst.charac_no=? AND src.charac_no=?",
 		"UPDATE taiwan_cain.charac_stat dst JOIN taiwan_cain.charac_stat src SET dst.tutorial_flag=src.tutorial_flag,dst.escalade_tutorial_flag=src.escalade_tutorial_flag,dst.open_flag=src.open_flag,dst.luck_point=src.luck_point WHERE dst.charac_no=? AND src.charac_no=?",
-		"UPDATE taiwan_cain_2nd.skill dst JOIN taiwan_cain_2nd.skill src SET dst.skill_slot=src.skill_slot,dst.skill_slot_2nd=src.skill_slot_2nd,dst.skill_command=src.skill_command,dst.script_version=src.script_version WHERE dst.charac_no=? AND src.charac_no=?",
 	}
 	var vipColumn int
 	if err := r.QueryRow("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='taiwan_cain' AND TABLE_NAME='charac_info' AND COLUMN_NAME='VIP'").Scan(&vipColumn); err != nil {

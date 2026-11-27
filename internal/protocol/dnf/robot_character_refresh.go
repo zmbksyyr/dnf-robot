@@ -97,6 +97,14 @@ func (r *RobotVo) finishReturnToSelectUnsafe() {
 	r.partyRecovery = false
 	r.SelectCharacSent = false
 	r.State = StateSelect
+	r.characterUniqueID = 0
+	r.characterBaseInfo = characterBasicInfo{}
+	r.characterLevel = characterLevelInfo{}
+	r.clearCharacterInventoryUnsafe()
+	r.partySkillInfoKnown = false
+	r.partySkillLevels = [256]byte{}
+	r.partySkillReadyAt = nil
+	r.resetPartySkillProfileUnsafe()
 	if recoverParty {
 		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_RETURN_ACK", "OK", "server accepted character return", nil)
 		r.partyRecoveryResumePending = true

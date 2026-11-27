@@ -62,7 +62,7 @@ func (r *RobotVo) partySupervisorStep(epoch uint64, uid uint32, now time.Time, n
 		}
 		return false
 	}
-	if nextMaintenance.IsZero() || !now.Before(*nextMaintenance) {
+	if !r.ReturnSelectPending && (nextMaintenance.IsZero() || !now.Before(*nextMaintenance)) {
 		r.ensurePartyUDPHealthUnsafe(uid)
 		r.refreshPartySelfIdentityUnsafe(now)
 		r.ensurePartyRelayUnsafe()

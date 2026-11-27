@@ -38,9 +38,10 @@ func (r *RobotVo) setAreaFromLocked(village, area uint8, x, y uint16, fromVillag
 	setArea[1] = area
 	binary.LittleEndian.PutUint16(setArea[2:4], x)
 	binary.LittleEndian.PutUint16(setArea[4:6], y)
-	setArea[7] = 0x01
-	binary.LittleEndian.PutUint16(setArea[8:10], fromVillage)
-	binary.LittleEndian.PutUint16(setArea[10:12], fromArea)
+	// The reference reads the origin pair right after the z byte: previous
+	// village at offset 7 and previous area at offset 9, both as shorts.
+	binary.LittleEndian.PutUint16(setArea[7:9], fromVillage)
+	binary.LittleEndian.PutUint16(setArea[9:11], fromArea)
 
 	pkt, err := buildSendPacket(38, uint16(r.PacketID), setArea[:], r.Cipher)
 	r.PacketID++

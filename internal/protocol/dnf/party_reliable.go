@@ -216,26 +216,42 @@ func (r *RobotVo) cancelPartyDungeonReliableUnsafe(now time.Time) {
 			continue
 		}
 		for route := byte(1); route <= 2; route++ {
-			cancel := false
-			for _, pending := range r.partyReliablePending[slot][route] {
-				if pending.purpose == "follow" || strings.HasPrefix(pending.purpose, "skill-") {
-					cancel = true
-					break
+			for i := range r.partyReliablePending[slot][route] {
+				pending := &r.partyReliablePending[slot][route][i]
+				if pending.purpose != "follow" && !strings.HasPrefix(pending.purpose, "skill-") {
+					continue
 				}
+				// A room change cancels actor actions, not the peer's transport
+				// stream. Keep each outstanding sequence until its ACK; restarting
+				// at zero leaves the real client waiting for the pre-loading next
+				// sequence forever. Empty reliable frames fill any unreceived gaps
+				// without replaying movement or attacks in the new room.
+				r.cancelPartyActionUnsafe(pending, now)
 			}
-			if !cancel {
-				continue
-			}
-			r.resetPartyTQOSRouteUnsafe(slot, route)
-			if !r.partyRouteAvailableUnsafe(peer, route) {
-				continue
-			}
-			sequence, ok := r.nextPartyTQOSSequenceUnsafe(slot, route, false)
-			if !ok {
-				continue
-			}
-			packet := buildPartyTQOSPacket(sequence, r.partySelfPeer.slot, 0, 3, route, partyTQOSCodec{key: 0x7e})
-			_, _ = r.sendPartyTransportUnsafe(r.partyUDPConn, peer, route, packet)
 		}
 	}
+}
+
+func (r *RobotVo) cancelPartySkillCastsUnsafe(now time.Time) {
+	for slot := range r.partyReliablePending {
+		for route := 1; route <= 2; route++ {
+			for i := range r.partyReliablePending[slot][route] {
+				pending := &r.partyReliablePending[slot][route][i]
+				if pending.purpose == "skill-cast" {
+					r.cancelPartyActionUnsafe(pending, now)
+				}
+			}
+		}
+	}
+}
+
+func (r *RobotVo) cancelPartyActionUnsafe(pending *partyReliablePending, now time.Time) {
+	// Preserve transport sequence gaps with an empty frame. Stand recovery and
+	// ordinary follow frames are still allowed when the combat switch is off.
+	pending.packet = buildPartyReliablePacket(pending.sequence, r.partySelfPeer.slot, 0, nil)
+	pending.purpose = "dungeon-cancel"
+	pending.firstSentAt = now
+	pending.nextRetry = now
+	pending.retryDelay = partyReliableRetryInitial
+	pending.retries = 0
 }

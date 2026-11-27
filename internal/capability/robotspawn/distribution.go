@@ -24,7 +24,7 @@ func DistributedTargets(env RangeRandom, maps []shared.MapCatalogItem, levels []
 	}
 	candidates := make([]mapCandidate, 0, len(maps))
 	for _, mp := range maps {
-		if !mp.Use || mp.Village < 0 || mp.Area < 0 {
+		if !spawnMapEligible(mp) {
 			continue
 		}
 		rectangles := NormalizeRectangles(MapRectangles(mp))

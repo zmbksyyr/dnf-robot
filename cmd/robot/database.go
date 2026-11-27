@@ -48,7 +48,13 @@ func mysqlDatabaseConfig(cfg *config.SysConfig) *mysql.Config {
 	mysqlCfg.Net = "tcp"
 	mysqlCfg.Addr = net.JoinHostPort(cfg.DBHost, strconv.Itoa(cfg.DBPort))
 	mysqlCfg.DBName = cfg.DBName
-	mysqlCfg.Params = map[string]string{"charset": "utf8"}
+	// The original game uses zero dates for unset timestamps. Initialize this
+	// session setting on every pooled connection, including reconnects, while
+	// preserving strict validation and the server's global configuration.
+	mysqlCfg.Params = map[string]string{
+		"charset":  "utf8",
+		"sql_mode": "TRIM(BOTH ',' FROM REPLACE(REPLACE(CONCAT(',',@@SESSION.sql_mode,','),',NO_ZERO_DATE,',','),',NO_ZERO_IN_DATE,',','))",
+	}
 	mysqlCfg.ParseTime = true
 	mysqlCfg.Timeout = time.Duration(cfg.DBDialTimeoutSec) * time.Second
 	mysqlCfg.ReadTimeout = time.Duration(cfg.DBReadTimeoutSec) * time.Second

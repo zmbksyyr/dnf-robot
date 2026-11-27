@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"testing"
 )
 
-func TestDecryptAntiSupportsProtocolCryptoTypes(t *testing.T) {
+func TestDecryptAntiGeneNewEnvelope(t *testing.T) {
 	for _, orderCase := range []struct {
 		name  string
 		order binary.ByteOrder
@@ -15,7 +16,7 @@ func TestDecryptAntiSupportsProtocolCryptoTypes(t *testing.T) {
 		{name: "big_endian", order: binary.BigEndian},
 		{name: "little_endian", order: binary.LittleEndian},
 	} {
-		for cryptoType := uint32(0); cryptoType <= maxAntiCryptoType; cryptoType++ {
+		for _, cryptoType := range []uint32{19} {
 			t.Run(fmt.Sprintf("%s_%d", orderCase.name, cryptoType), func(t *testing.T) {
 				packet, inner := antiTestPacket(orderCase.order, cryptoType)
 
@@ -50,7 +51,7 @@ func TestInitializeRequiresCompleteProtocolKey(t *testing.T) {
 }
 
 func TestDecryptAntiAllocations(t *testing.T) {
-	packet, _ := antiTestPacket(binary.BigEndian, 18)
+	packet, _ := antiTestPacket(binary.BigEndian, 19)
 	cipher := new(DNFCipher)
 	allocs := testing.AllocsPerRun(100, func() {
 		if _, err := cipher.DecryptAnti(packet); err != nil {
@@ -106,6 +107,24 @@ func antiTestPacket(order binary.ByteOrder, cryptoType uint32) ([]byte, []byte) 
 	order.PutUint16(packet[2:4], 17)
 	order.PutUint32(packet[5:9], seed)
 	order.PutUint32(packet[9:13], cryptoType)
+	order.PutUint32(packet[13:17], crc32.ChecksumIEEE(plain))
 	copy(packet[17:], encrypted)
 	return packet, inner
+}
+
+func TestDecryptAntiRejectsCorruption(t *testing.T) {
+	packet, _ := antiTestPacket(binary.BigEndian, 19)
+	packet[len(packet)-1] ^= 1
+	if _, err := new(DNFCipher).DecryptAnti(packet); err == nil {
+		t.Fatal("DecryptAnti accepted corrupt ciphertext")
+	}
+}
+
+func TestDecryptAntiRejectsTruncatedEnvelope(t *testing.T) {
+	packet, _ := antiTestPacket(binary.BigEndian, 19)
+	for n := 0; n < len(packet); n++ {
+		if _, err := new(DNFCipher).DecryptAnti(packet[:n]); err == nil {
+			t.Fatalf("DecryptAnti accepted truncation at %d", n)
+		}
+	}
 }

@@ -96,3 +96,69 @@ func TestLogoutCancelsPendingReconnect(t *testing.T) {
 		t.Fatalf("pending state after logout = %d, want stopped", snap.State)
 	}
 }
+
+func TestInventoryRejectionRemainsVisibleWithoutReconnect(t *testing.T) {
+	for _, checkState := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reconnect", true: "state_check"}[checkState], func(t *testing.T) {
+			task := NewRobotDnfTask()
+			defer task.Shutdown()
+			vo := NewRobotVo(nil)
+			vo.Load(UserLoginInfo{UID: 17000001, MaxReConn: 3, ReDelay: 60000})
+			if !vo.prepareConnect(task) || !task.replaceCurrent(vo.UID, nil, vo) {
+				t.Fatal("register rejected session")
+			}
+			vo.mu.Lock()
+			vo.State = StateLogin
+			vo.DisconReason = DisconnectReason(36)
+			vo.Conn = &captureSessionConn{}
+			vo.mu.Unlock()
+			if checkState {
+				vo.CheckUserState()
+			} else {
+				vo.RefishConnect()
+			}
+			if task.Find(int(vo.UID)) != vo {
+				t.Fatal("rejection was removed or replaced by an automatic retry")
+			}
+			if snap := vo.Snapshot(); snap.State != StateWrong || snap.DisconnectReason != 36 || snap.Reconnects != 0 {
+				t.Fatalf("rejected snapshot = %+v", snap)
+			}
+			if vo.Conn != nil || vo.CheckUserState() || vo.RefishConnect() || task.msgReconnect(task, vo) {
+				t.Fatal("rejected session retained a connection or accepted reconnect")
+			}
+			if task.Find(int(vo.UID)) != vo {
+				t.Fatal("a repeated state check lost the rejection")
+			}
+			task.msgLogout(task, int(vo.UID))
+			if task.Find(int(vo.UID)) != nil || vo.Snapshot().State != StateStop {
+				t.Fatal("explicit logout did not clear rejection")
+			}
+			vo.RefishConnect()
+			if task.Find(int(vo.UID)) != nil || vo.Snapshot().State != StateStop {
+				t.Fatal("late reconnect resurrected a logged-out rejection")
+			}
+		})
+	}
+}
+
+func TestOtherDisconnectReasonsRetainReconnectPolicy(t *testing.T) {
+	for _, reason := range []DisconnectReason{NoDisconnect, BadTokenOrCid, BadUid, RepeatLogin, PunishReason, 99} {
+		task := NewRobotDnfTask()
+		vo := NewRobotVo(nil)
+		vo.Load(UserLoginInfo{UID: 17000001, MaxReConn: 3, ReDelay: 60000})
+		if !vo.prepareConnect(task) || !task.replaceCurrent(vo.UID, nil, vo) {
+			task.Shutdown()
+			t.Fatal("register reconnecting session")
+		}
+		vo.mu.Lock()
+		vo.DisconReason = reason
+		vo.mu.Unlock()
+		vo.RefishConnect()
+		pending := task.Find(int(vo.UID))
+		if pending == nil || pending == vo || pending.Snapshot().State != StateInit || pending.Snapshot().Reconnects != 1 {
+			task.Shutdown()
+			t.Fatalf("reason %d changed reconnect policy", reason)
+		}
+		task.Shutdown()
+	}
+}

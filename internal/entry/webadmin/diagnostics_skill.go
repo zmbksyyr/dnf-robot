@@ -63,16 +63,17 @@ func partySkillWhitelistCheck(path string, report catalog.PartySkillCatalogRepor
 	case len(report.Entries) == 0:
 		status = diagWarn
 		message = "party skill whitelist has no valid entries"
-	case len(report.Issues) > 0 || report.OverLevelCount > 0 || report.ConfiguredMaxSkillLevel > report.EffectiveMaxSkillLevel:
+	case len(report.Issues) > 0 || report.OverLevelCount > 0 || report.UnknownStateDataCount > 0 || report.ConfiguredMaxSkillLevel > report.EffectiveMaxSkillLevel:
 		status = diagWarn
 		message = "party skill whitelist contains skipped entries"
 	}
 	return diagnosticsCheck{
 		Name: filepath.Base(path), Status: status, Message: message,
 		Observed: map[string]interface{}{
-			"path": path, "enabled": report.Enabled, "source_count": report.SourceCount, "valid_count": len(report.Entries), "by_job": byJob,
+			"path": path, "enabled": report.Enabled, "mode": report.Mode, "source_count": report.SourceCount, "valid_count": len(report.Entries), "by_job": byJob,
 			"invalid_count": len(report.Issues), "switch_off_count": report.SwitchOffCount, "disabled_count": report.DisabledCount, "over_level_count": report.OverLevelCount,
-			"configured_max_level": report.ConfiguredMaxSkillLevel, "effective_max_level": report.EffectiveMaxSkillLevel,
+			"unknown_state_data_count": report.UnknownStateDataCount,
+			"configured_max_level":     report.ConfiguredMaxSkillLevel, "effective_max_level": report.EffectiveMaxSkillLevel,
 		},
 	}
 }
@@ -124,12 +125,14 @@ func effectivePartySkillCheck(whitelist catalog.PartySkillCatalogReport, pvfStat
 	total := 0
 	stats := shared.PartySkillMatchStats{}
 	for _, job := range jobs {
-		matches, jobStats := shared.MatchPartySkillStates(job, whitelist.Entries, pvfStates)
+		matches, jobStats := shared.MatchPartySkillStatesMode(whitelist.Auto(), job, whitelist.Entries, pvfStates)
 		byJob[job] = len(matches)
 		total += len(matches)
 		stats.PVFMatched += jobStats.PVFMatched
+		stats.KeptWithoutPVF += jobStats.KeptWithoutPVF
 		stats.SkippedMissingPVF += jobStats.SkippedMissingPVF
 		stats.SkippedPathMismatch += jobStats.SkippedPathMismatch
+		stats.SkippedUnknownStateData += jobStats.SkippedUnknownStateData
 	}
 
 	status := diagOK
@@ -138,15 +141,17 @@ func effectivePartySkillCheck(whitelist catalog.PartySkillCatalogReport, pvfStat
 	case total == 0:
 		status = diagError
 		message = "party skill whitelist and PVF export have no effective candidates"
-	case len(whitelist.Issues) > 0 || whitelist.OverLevelCount > 0 || stats.SkippedMissingPVF > 0 || stats.SkippedPathMismatch > 0:
+	case len(whitelist.Issues) > 0 || whitelist.OverLevelCount > 0 || stats.SkippedMissingPVF > 0 || stats.SkippedPathMismatch > 0 || stats.SkippedUnknownStateData > 0:
 		status = diagWarn
 		message = fmt.Sprintf("%d effective party skill candidates with skipped entries", total)
 	}
 	return diagnosticsCheck{
 		Name: "effective party skill candidates", Status: status, Message: message,
 		Observed: map[string]interface{}{
-			"total": total, "by_job": byJob, "whitelist_valid": len(whitelist.Entries), "whitelist_invalid": len(whitelist.Issues),
-			"pvf_total": len(pvfStates), "missing_pvf": stats.SkippedMissingPVF, "path_mismatch": stats.SkippedPathMismatch,
+			"total": total, "by_job": byJob, "mode": whitelist.Mode, "auto": whitelist.Auto(),
+			"whitelist_valid": len(whitelist.Entries), "whitelist_invalid": len(whitelist.Issues),
+			"pvf_total": len(pvfStates), "missing_pvf": stats.SkippedMissingPVF, "kept_without_pvf": stats.KeptWithoutPVF,
+			"path_mismatch": stats.SkippedPathMismatch, "unknown_state_data": stats.SkippedUnknownStateData,
 		},
 	}
 }

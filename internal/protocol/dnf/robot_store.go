@@ -190,7 +190,7 @@ func (r *RobotVo) CompleteDisplay(title string, storeInfo []StoreInfo) bool {
 }
 
 func (r *RobotVo) completeDisplay(title string, storeInfo []StoreInfo) bool {
-	if r.State != StateRun || r.partyActiveUnsafe() {
+	if r.State != StateRun || r.partyActiveUnsafe() || r.inventoryNeedsSnapshot {
 		return false
 	}
 	if r.StoreDisplaySent {
@@ -339,7 +339,7 @@ func (r *RobotVo) MarkPrivateStoreDisplayFailed() {
 
 func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 	r.mu.Lock()
-	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.DB == nil {
+	if r.State != StateRun || r.partyActiveUnsafe() || !r.StoreCreated || r.DB == nil || r.inventoryNeedsSnapshot {
 		r.mu.Unlock()
 		return false
 	}
@@ -393,7 +393,7 @@ func (r *RobotVo) GetDbDataAndCompleteDisplay() bool {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.State != StateRun || !r.StoreCreated || r.UID != uid || r.DB != db || r.storeInventoryVersion != inventoryVersion {
+	if r.State != StateRun || !r.StoreCreated || r.UID != uid || r.DB != db || r.storeInventoryVersion != inventoryVersion || r.inventoryNeedsSnapshot {
 		return false
 	}
 	return r.completeDisplay(title, storeInfo)

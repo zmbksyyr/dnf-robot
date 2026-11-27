@@ -1,12 +1,29 @@
 package dnf
 
-import "time"
+import (
+	"time"
+
+	foundationlog "robot/internal/foundation/log"
+)
+
+func (r *RobotVo) rejectInventoryLoginUnsafe() {
+	r.closeOutUnsafe()
+	// Keep the small terminal snapshot in the registry until explicit logout
+	// or a new login request. The scheduler must see the original rejection.
+	r.State = StateWrong
+	r.publishSnapshotUnsafe()
+	foundationlog.Robotf("[RobotVo] login_rejected uid=%d cid=%d disconnect_reason=%d action=check_inventory_before_retry\n", r.UID, r.CID, r.DisconReason)
+}
 
 func (r *RobotVo) CheckUserState() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State == StateStop {
+	if r.State == StateStop || r.State == StateWrong {
+		return false
+	}
+	if r.DisconReason == InventoryRejected {
+		r.rejectInventoryLoginUnsafe()
 		return false
 	}
 	if r.DisconReason != NoDisconnect {
@@ -68,6 +85,15 @@ func (r *RobotVo) RefishConnect() bool {
 		if controller != nil {
 			controller.DeleteIf(uid, r)
 		}
+		return false
+	}
+	if r.State == StateWrong {
+		r.mu.Unlock()
+		return false
+	}
+	if r.DisconReason == InventoryRejected {
+		r.rejectInventoryLoginUnsafe()
+		r.mu.Unlock()
 		return false
 	}
 

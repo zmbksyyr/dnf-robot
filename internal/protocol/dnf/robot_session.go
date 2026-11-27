@@ -50,6 +50,9 @@ const (
 	BadUid        DisconnectReason = 11
 	RepeatLogin   DisconnectReason = 12
 	PunishReason  DisconnectReason = 26
+	// Original game sends 36 when character inventory validation rejects login.
+	// Reconnecting with the same persisted items cannot repair this failure.
+	InventoryRejected DisconnectReason = 36
 )
 
 type ClientError int
@@ -102,6 +105,8 @@ type RobotVo struct {
 	ConnCount            uint32
 	ReDelay              uint32
 	PacketID             uint32
+	partyLoadingReportAt time.Time
+	partyDungeonRoomAt   time.Time
 	CurVillage           uint8
 	CurArea              uint8
 	CurX                 uint16
@@ -109,6 +114,10 @@ type RobotVo struct {
 	GateArea             uint8
 	NccSent              bool
 	SelectCharacSent     bool
+	characterUniqueID    uint16
+	characterBaseInfo    characterBasicInfo
+	characterLevel       characterLevelInfo
+	sceneCategory        sceneCategoryInfo
 	ReturnSelectPending  bool
 	ReturnSelectRejected bool
 	RunStartTime         uint32
@@ -126,8 +135,13 @@ type RobotVo struct {
 	tradeQuoteVersion    uint64
 	tradeQuoteFailures   uint8
 
-	TransactionArr [24]*Transaction
-	InfanMap       map[int]Transaction
+	TransactionArr             [24]*Transaction
+	InfanMap                   map[int]Transaction
+	inventoryNeedsSnapshot     bool
+	inventoryChecksumRecords   map[int]string
+	inventoryChecksumKnown     bool
+	inventoryChecksumSeed      uint32
+	inventoryChecksumSeedKnown bool
 
 	PendingStoreTitle      string
 	StoreDisplaySent       bool
@@ -212,11 +226,27 @@ type RobotVo struct {
 	partyUDPDiagAt              time.Time
 	partyRuntimeDiagAt          time.Time
 	partyDungeonFollowDiagAt    time.Time
+	partyDungeonMoveDiagAt      time.Time
+	partyDungeonSentDiagAt      time.Time
+	partySkillInfoDiagAt        time.Time
+	partySkillWireDumped        bool
 	partyDungeonFollow          []partyDungeonFollowPending
 	partyDungeonEnteredAt       time.Time
+	partyDungeonIdentity        dungeonDefinitionIdentity
+	partyDungeonLoading         bool
 	partyDungeonLastAt          time.Time
 	partyDungeonFlags           byte
+	partyDungeonWorld           partyDungeonWorld
+	partyDungeonLegacySkills    bool
+	partySkillInfoKnown         bool
+	partySkillLevels            [256]byte
+	partySkillLastIndex         byte
 	partySkillNextAt            time.Time
+	partyBasicAttackNextAt      time.Time
+	partyBasicAttackStep        byte
+	partyBasicAttackTarget      [4]byte
+	partyBasicProjectiles       []partyBasicProjectile
+	partyBasicObjectUnique      uint16
 	partySkillRecoverAt         time.Time
 	partySkillBlockedUntil      time.Time
 	partySkillLoaded            bool
@@ -225,6 +255,7 @@ type RobotVo struct {
 	partySkillCatalogGeneration uint64
 	partySkillJob               int
 	partySkillCandidates        []partySkillCandidate
+	partySkillReadyAt           map[byte]time.Time
 	partySkillLoad              partySkillProfileLoadFunc
 
 	mu     lockhub.Locker
@@ -401,6 +432,14 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.CurY = uint16(info.BirthPos[3])
 	r.GateArea = uint8(info.GateArea)
 	r.Cipher = crypt.NewDNFCipher()
+	r.inventoryChecksumSeed, r.inventoryChecksumSeedKnown = 0, false
+	r.characterUniqueID = 0
+	r.characterBaseInfo = characterBasicInfo{}
+	r.characterLevel = characterLevelInfo{}
+	r.sceneCategory = sceneCategoryInfo{}
+	r.partySkillInfoKnown = false
+	r.partySkillLevels = [256]byte{}
+	r.partySkillReadyAt = nil
 	r.MoveType = 5
 	r.SelectCharacSent = false
 	r.ReturnSelectPending = false
@@ -411,7 +450,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.StoreCreateRejected = false
 	r.LastStoreError = 0
 	r.StoreCreated = false
-	r.storeInventoryVersion++
+	r.clearCharacterInventoryUnsafe()
 	r.invalidateTradeQuoteUnsafe()
 	r.clearTradeUnsafe()
 	r.DisjointCreateSent = false
@@ -471,6 +510,11 @@ func (r *RobotVo) TryCloseOut() bool {
 }
 
 func (r *RobotVo) closeOutUnsafe() {
+	r.inventoryChecksumSeed, r.inventoryChecksumSeedKnown = 0, false
+	r.characterUniqueID = 0
+	r.characterBaseInfo = characterBasicInfo{}
+	r.characterLevel = characterLevelInfo{}
+	r.sceneCategory = sceneCategoryInfo{}
 	r.logPartyTransportClearedUnsafe("session closed")
 	r.stopPartySupervisorUnsafe()
 	if r.Conn != nil {
@@ -486,13 +530,14 @@ func (r *RobotVo) closeOutUnsafe() {
 	// lease. Drop all packet, inventory and party caches at the lifecycle
 	// boundary so a 500+ robot run does not retain per-session state after a
 	// disconnect or cleanup operation.
-	r.InfanMap = nil
+	r.clearCharacterInventoryUnsafe()
 	r.LastStoreDisplay = nil
 	r.storeDisplayCandidates = nil
 	r.storeDisplayRetryPlans = nil
 	r.townEntityPositions = nil
 	r.partyDungeonFollow = nil
 	r.partySkillCandidates = nil
+	r.partySkillReadyAt = nil
 	r.partySkillLoad = nil
 	r.resetPartyTQOSTransportUnsafe()
 	r.invalidateTradeQuoteUnsafe()
@@ -671,7 +716,7 @@ func (r *RobotVo) readLoop(conn net.Conn) {
 		n, err := conn.Read(buf)
 		if err != nil {
 			r.mu.Lock()
-			if r.State == StateStop {
+			if r.State == StateStop || r.State == StateWrong {
 				r.mu.Unlock()
 				return
 			}
@@ -724,7 +769,7 @@ func (r *RobotVo) onRecvDataFrom(conn net.Conn, data []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.State == StateStop || len(data) < 1 || (conn != nil && r.Conn != conn) {
+	if r.State == StateStop || r.State == StateWrong || len(data) < 1 || (conn != nil && r.Conn != conn) {
 		return
 	}
 

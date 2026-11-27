@@ -1,11 +1,37 @@
 package pvf
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
 	"robot/internal/shared"
 )
+
+func TestSkillStateJSONPreservesKnownEmptyAndUnknownVectors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []int
+		want string
+	}{
+		{name: "known empty", data: []int{}, want: "[]"},
+		{name: "unknown", data: nil, want: "null"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := json.Marshal(SkillState{Job: 8, SkillIndex: 1, State: 20, StateData: tc.data})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &document); err != nil {
+				t.Fatal(err)
+			}
+			if got := string(document["native_state_data"]); got != tc.want {
+				t.Fatalf("native_state_data = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestExtractSkillStateCatalogIndexesResolvedPVFStates(t *testing.T) {
 	archive := &pvfArchive{files: map[string]*pvfFile{
@@ -98,5 +124,26 @@ func TestSkillStatesForJobReturnsCopy(t *testing.T) {
 	again := shared.SkillStatesForJob(1)
 	if len(again) != 1 || again[0].SkillIndex != 2 {
 		t.Fatalf("catalog mutated through returned slice: %+v", again)
+	}
+}
+
+func TestExtractSkillStateCatalogIncludesCustomRegistrations(t *testing.T) {
+	archive := &pvfArchive{files: map[string]*pvfFile{
+		"sqr/custom_pack/swordman_load_state.nut": {Data: []byte(`
+IRDSQRCharacter.pushScriptFiles("custom_pack/header.nut");
+IRDSQRCharacter.pushState(0, "custom_pack/slash.nut", "slash", STATE_SLASH, 9);
+IRDSQRCharacter.pushState(0, "sqr/custom_pack/followup.nut", "followup", 249, 9);
+IRDSQRCharacter.pushState(0, "custom_pack/slash.nut", "unmapped", 23, -1);
+`)},
+		"sqr/custom_pack/header.nut":   {Data: []byte("STATE_SLASH <- 23;")},
+		"sqr/custom_pack/slash.nut":    {Data: []byte("function onSetState_slash(obj,state,data,reset) {}")},
+		"sqr/custom_pack/followup.nut": {Data: []byte("function onSetState_followup(obj,state,data,reset) {}")},
+	}}
+	want := []SkillState{
+		{Job: 0, SkillIndex: 9, State: 23, ScriptPath: "sqr/custom_pack/slash.nut"},
+		{Job: 0, SkillIndex: 9, State: 249, ScriptPath: "sqr/custom_pack/followup.nut"},
+	}
+	if got := extractSkillStateCatalog(archive); !reflect.DeepEqual(got, want) {
+		t.Fatalf("custom registrations=%+v want %+v", got, want)
 	}
 }

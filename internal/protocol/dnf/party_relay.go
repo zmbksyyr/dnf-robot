@@ -51,7 +51,7 @@ func (r *RobotVo) ensurePartyRelayUnsafe() {
 func (r *RobotVo) connectPartyRelay(generation uint64, uid uint32, relayAddr string, dial partyRelayDialFunc) {
 	conn, err := dial("tcp", relayAddr, 3*time.Second)
 	if err != nil {
-		recordPartyDebugPacket(uid, 0, "--", "RELAY", "RELAY_CONNECT", "FAIL", fmt.Sprintf("addr=%s err=%v", relayAddr, err), nil)
+		recordPartyDebugPacket(uid, 0, "--", "RELAY", "RELAY_CONNECT", "FAIL", partyDebugNote("addr=%s err=%v", relayAddr, err), nil)
 		r.finishPartyRelayConnect(generation, nil)
 		foundationlog.Robotf("[PARTY_RELAY_CONNECT_ERROR] uid=%d addr=%s err=%v\n", uid, relayAddr, err)
 		return
@@ -347,7 +347,7 @@ func (r *RobotVo) handlePartyRelayPacket(conn net.Conn, packet []byte) {
 	dst := binary.LittleEndian.Uint32(packet[8:12])
 	payload := packet[12:]
 	if typ != 3 || src == 0 || src == r.UID || dst != r.UID || len(payload) == 0 {
-		recordPartyDebugPacket(r.UID, src, "--", "RELAY", "RELAY_DISPATCH", "IGNORE", fmt.Sprintf("type=%d src=%d dst=%d payload=%d", typ, src, dst, len(payload)), nil)
+		recordPartyDebugPacket(r.UID, src, "--", "RELAY", "RELAY_DISPATCH", "IGNORE", partyDebugNote("type=%d src=%d dst=%d payload=%d", typ, src, dst, len(payload)), nil)
 		return
 	}
 	recordPartyTransportFrames(r.UID, src, "RX", "RELAY", 2, "OBSERVED", "relay_src", payload)

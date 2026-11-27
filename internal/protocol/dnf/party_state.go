@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"time"
 
@@ -89,6 +90,12 @@ type townEntityArea struct {
 	y        uint16
 }
 
+// maxTownCoordinate bounds the town position accepted from an entity record.
+// The server sends a second, decoy candidate body alongside the real one; those
+// decoys still parse structurally but carry coordinates far outside any town, so
+// a plausibility bound keeps the selector from picking them.
+const maxTownCoordinate = 4000
+
 func parseTownEntityPosition(data []byte) (townEntityPosition, bool) {
 	if len(data) < 9 {
 		return townEntityPosition{}, false
@@ -97,10 +104,15 @@ func parseTownEntityPosition(data []byte) (townEntityPosition, bool) {
 	if uniqueID == 0 {
 		return townEntityPosition{}, false
 	}
+	x := binary.LittleEndian.Uint16(data[2:4])
+	y := binary.LittleEndian.Uint16(data[4:6])
+	if x > maxTownCoordinate || y > maxTownCoordinate {
+		return townEntityPosition{}, false
+	}
 	return townEntityPosition{
 		uniqueID: uniqueID,
-		x:        binary.LittleEndian.Uint16(data[2:4]),
-		y:        binary.LittleEndian.Uint16(data[4:6]),
+		x:        x,
+		y:        y,
 		moveType: data[6],
 		speed:    binary.LittleEndian.Uint16(data[7:9]),
 		seenAt:   time.Now(),
@@ -115,12 +127,17 @@ func parseTownEntityArea(data []byte) (townEntityArea, bool) {
 	if uniqueID == 0 {
 		return townEntityArea{}, false
 	}
+	x := binary.LittleEndian.Uint16(data[4:6])
+	y := binary.LittleEndian.Uint16(data[6:8])
+	if x > maxTownCoordinate || y > maxTownCoordinate {
+		return townEntityArea{}, false
+	}
 	return townEntityArea{
 		uniqueID: uniqueID,
 		village:  data[2],
 		area:     data[3],
-		x:        binary.LittleEndian.Uint16(data[4:6]),
-		y:        binary.LittleEndian.Uint16(data[6:8]),
+		x:        x,
+		y:        y,
 	}, true
 }
 
@@ -274,6 +291,15 @@ func (r *RobotVo) followPartyLeaderTownAreaUnsafe(area townEntityArea) bool {
 	if !ok || !r.partyLeaderTransportFreshUnsafe(leaderID, time.Now()) || area.uniqueID != leaderID || (r.CurVillage == area.village && r.CurArea == area.area) {
 		return false
 	}
+	// Private gate rooms have no shared area roster or departure broadcast.
+	// Stay in the public area so the leader's movement is visible on return.
+	if isPartyTownGate(area.village, area.area) {
+		if partyDebugEnabled() {
+			recordPartyDebugPacket(r.UID, 0, "--", "GAME", "TOWN_FOLLOW", "WAIT_OUTSIDE",
+				fmt.Sprintf("leader_unique=%d current=%d/%d private_gate=%d/%d", leaderID, r.CurVillage, r.CurArea, area.village, area.area), nil)
+		}
+		return false
+	}
 	r.setAreaFromLocked(area.village, area.area, area.x, area.y, uint16(r.CurVillage), uint16(r.CurArea))
 	return r.CurVillage == area.village && r.CurArea == area.area
 }
@@ -283,6 +309,11 @@ func (r *RobotVo) followPartyLeaderTownPositionUnsafe(position townEntityPositio
 		return false
 	}
 	leaderID, ok := r.partyLeaderUniqueIDUnsafe()
+	if os.Getenv("DNF_DEBUG_TOWN_FOLLOW") == "1" {
+		fresh := ok && r.partyLeaderTransportFreshUnsafe(leaderID, time.Now())
+		foundationlog.Robotf("[TOWN_FOLLOW_DIAG] uid=%d leaderID=%d ok=%t fresh=%t posID=%d cur=(%d,%d) want=(%d,%d)\n",
+			r.UID, leaderID, ok, fresh, position.uniqueID, r.CurX, r.CurY, position.x, position.y)
+	}
 	if !ok || !r.partyLeaderTransportFreshUnsafe(leaderID, time.Now()) || position.uniqueID != leaderID || (r.CurX == position.x && r.CurY == position.y) {
 		return false
 	}
@@ -312,7 +343,7 @@ type partyInviteFallbackState struct {
 
 func (r *RobotVo) partyActiveUnsafe() bool {
 	if r.partyPendingPeer != 0 && (r.partyPendingUntil.IsZero() || !time.Now().Before(r.partyPendingUntil)) {
-		recordPartyDebugPacket(r.UID, 0, "--", "GAME", "SNAPSHOT_WAIT", "TIMEOUT", fmt.Sprintf("peer_unique=%d wait=%s", r.partyPendingPeer, partyPendingTimeout), nil)
+		recordPartyDebugPacket(r.UID, 0, "--", "GAME", "SNAPSHOT_WAIT", "TIMEOUT", partyDebugNote("peer_unique=%d wait=%s", r.partyPendingPeer, partyPendingTimeout), nil)
 		foundationlog.Robotf("[PARTY_SNAPSHOT_TIMEOUT] uid=%d peer_unique_id=%d wait=%s\n", r.UID, r.partyPendingPeer, partyPendingTimeout)
 		r.clearPartyPendingUnsafe()
 	}
@@ -331,7 +362,7 @@ func (r *RobotVo) setPartyPendingUnsafe(uniqueID uint16) {
 	}
 	r.partyPendingPeer = uniqueID
 	r.partyPendingUntil = time.Now().Add(partyPendingTimeout)
-	recordPartyDebugPacket(r.UID, 0, "--", "CORE", "PARTY_PENDING", "OK", fmt.Sprintf("peer_unique=%d timeout=%s", uniqueID, partyPendingTimeout), nil)
+	recordPartyDebugPacket(r.UID, 0, "--", "CORE", "PARTY_PENDING", "OK", partyDebugNote("peer_unique=%d timeout=%s", uniqueID, partyPendingTimeout), nil)
 	r.ensurePartyUDPLoopUnsafe()
 	r.ensurePartySupervisorUnsafe()
 }

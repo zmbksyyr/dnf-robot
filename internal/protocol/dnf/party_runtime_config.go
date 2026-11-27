@@ -3,6 +3,8 @@ package dnf
 import (
 	"strings"
 	"sync/atomic"
+
+	"robot/internal/shared"
 )
 
 const (
@@ -16,6 +18,7 @@ type partyRuntimeConfig struct {
 	relayPort    int
 	accountStart uint32
 	accountEnd   uint32
+	townGates    map[shared.MapAreaKey]struct{}
 }
 
 var partyRuntimeConfigValue atomic.Pointer[partyRuntimeConfig]
@@ -57,6 +60,24 @@ func ConfigurePartyRobotAccountRange(start, end int) {
 		cfg.accountStart = uint32(start)
 		cfg.accountEnd = uint32(end)
 	})
+}
+
+// ConfigurePartyTownGates publishes the private room areas declared by the
+// current PVF. A follower waits outside these rooms: they do not broadcast
+// their occupants' departure to other clients.
+func ConfigurePartyTownGates(maps []shared.MapCatalogItem) {
+	gates := make(map[shared.MapAreaKey]struct{})
+	for _, area := range maps {
+		if area.Gate {
+			gates[shared.MapAreaKey{Village: area.Village, Area: area.Area}] = struct{}{}
+		}
+	}
+	updatePartyRuntimeConfig(func(cfg *partyRuntimeConfig) { cfg.townGates = gates })
+}
+
+func isPartyTownGate(village, area uint8) bool {
+	_, gate := partyRuntimeConfigValue.Load().townGates[shared.MapAreaKey{Village: int(village), Area: int(area)}]
+	return gate
 }
 
 func updatePartyRuntimeConfig(update func(*partyRuntimeConfig)) {

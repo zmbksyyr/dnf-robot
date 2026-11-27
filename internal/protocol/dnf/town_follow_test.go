@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"robot/internal/protocol/dnf/crypt"
+	"robot/internal/shared"
 )
 
 func TestParseTownEntityPackets(t *testing.T) {
@@ -93,7 +94,9 @@ func TestRobotFollowsPartyLeaderTownArea(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := mustPartyHex(t, "03018e03160100010300000000000000")
+	// Layout per the reference reader: village, area, x, y, z at 0..6, then the
+	// origin pair as shorts at 7 (village) and 9 (area).
+	want := mustPartyHex(t, "03018e03160100030000000000000000")
 	if !bytes.Equal(payload, want) {
 		t.Fatalf("payload = %x, want %x", payload, want)
 	}
@@ -111,6 +114,36 @@ func TestTownFollowRequiresSlotZeroLeader(t *testing.T) {
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 3, slot: 0, slotKnown: true}
 	if vo.followPartyLeaderTownPositionUnsafe(position) || vo.followPartyLeaderTownAreaUnsafe(area) {
 		t.Fatal("party member followed a non-leader")
+	}
+}
+
+func TestTownFollowWaitsOutsidePrivateRoomAndResumes(t *testing.T) {
+	previous := *partyRuntimeConfigValue.Load()
+	t.Cleanup(func() { partyRuntimeConfigValue.Store(&previous) })
+	// Deliberately use a different village/area from the observed failure.
+	ConfigurePartyTownGates([]shared.MapCatalogItem{{Village: 9, Area: 7, Gate: true}, {Village: 9, Area: 8}})
+	cipher := crypt.NewDNFCipher()
+	if err := cipher.Initialize(make([]byte, 334)); err != nil {
+		t.Fatal(err)
+	}
+	conn := &captureSessionConn{}
+	vo := &RobotVo{State: StateRun, Cipher: cipher, Conn: conn, PacketID: 11, CurVillage: 9, CurArea: 0, CurX: 100, CurY: 200}
+	vo.partySelfPeer = partyIPPeer{uniqueID: 1, slot: 1, slotKnown: true}
+	vo.partyPeers[0] = partyIPPeer{uniqueID: 2, slot: 0, slotKnown: true}
+	if vo.followPartyLeaderTownAreaUnsafe(townEntityArea{uniqueID: 2, village: 9, area: 7, x: 474, y: 234}) {
+		t.Fatal("follower entered the private room")
+	}
+	if len(conn.written) != 0 || vo.PacketID != 11 || vo.CurArea != 0 || vo.CurX != 100 || vo.CurY != 200 {
+		t.Fatalf("waiting changed follower state: packet=%d area=%d x=%d y=%d", vo.PacketID, vo.CurArea, vo.CurX, vo.CurY)
+	}
+	if !vo.followPartyLeaderTownPositionUnsafe(townEntityPosition{uniqueID: 2, x: 700, y: 250, seenAt: time.Now()}) {
+		t.Fatal("movement did not resume after leader returned")
+	}
+	if !vo.followPartyLeaderTownAreaUnsafe(townEntityArea{uniqueID: 2, village: 9, area: 8, x: 910, y: 278}) {
+		t.Fatal("follower did not continue to the next public area")
+	}
+	if vo.CurArea != 8 || vo.CurX != 910 || vo.CurY != 278 || vo.PacketID != 13 {
+		t.Fatalf("resumed state: packet=%d area=%d x=%d y=%d", vo.PacketID, vo.CurArea, vo.CurX, vo.CurY)
 	}
 }
 

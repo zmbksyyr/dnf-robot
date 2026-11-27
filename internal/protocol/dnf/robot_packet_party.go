@@ -7,22 +7,78 @@ import (
 	"time"
 
 	foundationlog "robot/internal/foundation/log"
+	"robot/internal/shared"
 )
 
 func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
+	// Command 7 keeps StateRun until the server replies. Late character
+	// notifications must not restart loading, follow or peer negotiation.
+	// Its response is consumed separately by handleReturnToSelectPacketUnsafe.
+	if r.ReturnSelectPending {
+		return
+	}
 	switch packet.typ {
 	case 28, 29:
 		if r.State != StateRun || packet.flag != 0 || packet.size < 15 {
 			return
 		}
+		var mapID uint32
+		if packet.typ == 29 {
+			body, ok := r.selectRoomLoadingBodyUnsafe(packet)
+			if !ok {
+				if partyDebugEnabled() {
+					recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "DUNGEON_NOTIFY", "FAIL",
+						"type=29 invalid-room-info", packet.data)
+				}
+				return
+			}
+			r.partyDungeonRoomAt = time.Now()
+			mapID, _ = roomMapID(body)
+		} else {
+			r.partyDungeonRoomAt = time.Time{}
+		}
 		r.markPartyDungeonEnteredUnsafe(time.Now())
+		if packet.typ == 28 {
+			// A new entry replaces the previous definition even when its body
+			// is unavailable or ambiguous. Room-map notices do not replace it.
+			r.partyDungeonIdentity = r.selectDungeonDefinitionIdentityUnsafe(packet)
+		}
+		if packet.typ == 29 {
+			r.partyDungeonWorld.objectives = shared.DungeonObjectsForMap(mapID)
+			foundationlog.Robotf("[PARTY_DUNGEON_ROOM] uid=%d map=%d objectives=%d\n", r.UID, mapID, len(r.partyDungeonWorld.objectives))
+		}
 		pkt, err := buildSendPacket(40, uint16(r.PacketID), buildFinishLoadingPayload(0, 0), r.Cipher)
 		r.PacketID++
 		if err != nil {
 			foundationlog.Robotf("[DUNGEON_FINISH_LOADING_BUILD_ERROR] uid=%d source_type=%d err=%v\n", r.UID, packet.typ, err)
 		} else if !r.sendRaw(pkt) {
 			foundationlog.Robotf("[DUNGEON_FINISH_LOADING_SEND_ERROR] uid=%d source_type=%d\n", r.UID, packet.typ)
+		} else if partyDebugEnabled() {
+			recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "DUNGEON_NOTIFY", "SENT", fmt.Sprintf("finish-loading source_type=%d command=40", packet.typ), pkt)
 		}
+
+	case 30:
+		if r.State != StateRun || packet.flag != 0 || packet.size < 15 || !r.partyDungeonLoading || r.partyDungeonEnteredAt.IsZero() {
+			return
+		}
+		if _, _, _, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti); err != nil {
+			return
+		}
+		r.partyDungeonLoading = false
+		r.partyDungeonLastAt = time.Now()
+		r.partySkillNextAt = r.partyDungeonLastAt.Add(r.partySkillDelayUnsafe(r.partyDungeonLastAt))
+
+	case 31:
+		if r.State != StateRun || packet.flag != 0 || packet.size < 15 || r.partyDungeonEnteredAt.IsZero() {
+			return
+		}
+		if _, _, _, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti); err != nil {
+			return
+		}
+		// The server has completed the dungeon. Remaining actor deltas may name
+		// summons or actors without a destroy notice; none may restart combat
+		// during rewards. Keep the party transport for the normal return to town.
+		r.clearPartyDungeonRuntimeUnsafe()
 
 	case 22:
 		if r.State != StateRun || packet.flag != 0 {
@@ -47,6 +103,9 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if r.State != StateRun || packet.flag != 0 || len(packet.data) <= 15 {
 			return
 		}
+		// A dungeon selection is only accepted once every member has reported its
+		// loading screen as finished, so a member that learns about the party reports it.
+		r.reportPartyLoadingUnsafe(time.Now())
 		clears, source, err := partyInfoPacketClearsParty(r.Cipher, packet.data, packet.isAnti)
 		if err != nil {
 			recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_INFO_PARSE", "FAIL", err.Error(), packet.data)
@@ -108,7 +167,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if r.State != StateRun || packet.flag != 0 {
 			return
 		}
-		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "REALTIME", "OBSERVED", fmt.Sprintf("type=153 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
+		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "REALTIME", "OBSERVED", partyDebugNote("type=153 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
 		identities, _, err := selectPartyRealtimeInfoPacket(r.Cipher, packet.data, packet.isAnti)
 		if err != nil {
 			recordPartyDebugPacket(r.UID, 0, "--", "GAME", "REALTIME_PARSE", "FAIL", err.Error(), nil)
@@ -139,7 +198,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if packet.flag != 0 || (r.State != StateLogin && r.State != StateRun) {
 			return
 		}
-		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_OPTION_SOURCE", "OBSERVED", fmt.Sprintf("type=173 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
+		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "PARTY_OPTION_SOURCE", "OBSERVED", partyDebugNote("type=173 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
 		_, _, decData, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti)
 		if err == nil {
 			optionData, ok := partyAcceptGameOptions(decData)
@@ -155,7 +214,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 		if packet.flag != 0 || r.State != StateRun {
 			return
 		}
-		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "INVITE", "OBSERVED", fmt.Sprintf("type=7 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
+		recordPartyDebugPacket(r.UID, 0, "RX", "GAME", "INVITE", "OBSERVED", partyDebugNote("type=7 anti=%t size=%d", packet.isAnti, packet.size), packet.data)
 		selected, alternate, err := selectPeerResponsePackets(r.Cipher, packet.data, packet.isAnti, r.partyRecvSource, r.partyConfirmedPeerUnsafe)
 		if err != nil {
 			recordPartyDebugPacket(r.UID, 0, "--", "GAME", "INVITE_PARSE", "FAIL", err.Error(), nil)
@@ -174,7 +233,7 @@ func (r *RobotVo) handlePartyPacketUnsafe(packet robotInboundPacket) {
 			pkt, err := buildSendPacket(11, uint16(r.PacketID), data, r.Cipher)
 			r.PacketID++
 			if err != nil {
-				recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "ACCEPT", "FAIL", fmt.Sprintf("build request_type=%d err=%v", typ, err), nil)
+				recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "ACCEPT", "FAIL", partyDebugNote("build request_type=%d err=%v", typ, err), nil)
 				foundationlog.Robotf("[PEER_RESPONSE_BUILD_ERROR] uid=%d type=%d err=%v\n", r.UID, typ, err)
 			}
 			if err == nil {
@@ -217,4 +276,21 @@ func tracePartyIPInfo(uid uint32, self partyIPPeer, peers []partyIPPeer) {
 	}
 	foundationlog.Robotf("[PARTY_IPINFO] uid=%d self_slot=%d self_acc=%d self_unique=%d self_port=%d peers=%s\n",
 		uid, self.slot, self.accID, self.uniqueID, self.port, peerText)
+}
+
+// reportPartyLoadingUnsafe tells the server this member has finished loading,
+// which is what the leader's dungeon selection waits for.
+func (r *RobotVo) reportPartyLoadingUnsafe(now time.Time) {
+	if now.Before(r.partyLoadingReportAt) {
+		return
+	}
+	r.partyLoadingReportAt = now.Add(2 * time.Second)
+	pkt, err := buildSendPacket(40, uint16(r.PacketID), buildFinishLoadingPayload(0, 0), r.Cipher)
+	if err != nil {
+		return
+	}
+	r.PacketID++
+	if r.sendRaw(pkt) {
+		foundationlog.Robotf("[PARTY_LOADING_REPORTED] uid=%d\n", r.UID)
+	}
 }

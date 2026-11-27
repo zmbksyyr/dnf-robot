@@ -12,9 +12,13 @@ func (s *RobotSupervisor) handleAutoGuards(now time.Time, rc robotconfig.Runtime
 	enabled := s.manager.autoEnabled
 	s.manager.autoMu.Unlock()
 	if !enabled || !rc.AutoActions {
-		end := s.manager.beginActorContainerOp("auto_disabled_converge")
-		s.stopAutoActors()
-		end()
+		// Manual actors can stay online while automation is disabled. Do not
+		// enter a container mutation every tick when none need auto cleanup.
+		if s.ledger.HasAutoActorsToDrain() {
+			end := s.manager.beginActorContainerOp("auto_disabled_converge")
+			s.stopAutoActors()
+			end()
+		}
 		s.updateGuardStatus(rc, signals, schedulerPolicyManual, schedulerReasonAutoDisabled)
 		s.updateMetrics(rc, signals)
 		return true

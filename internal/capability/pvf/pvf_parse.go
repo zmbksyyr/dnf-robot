@@ -535,20 +535,19 @@ type pvfListEntry struct {
 }
 
 func parsePVFList(text string) []pvfListEntry {
-	rawFields := strings.Fields(strings.ReplaceAll(text, "`", ""))
-	fields := make([]string, 0, len(rawFields))
-	for _, field := range rawFields {
-		if strings.EqualFold(field, "#PVF_File") {
-			continue
-		}
-		fields = append(fields, field)
+	// List paths are PVF literals and may contain whitespace. Removing the
+	// quotes before splitting shifts every following ID/path pair until a
+	// second whitespace-containing path happens to restore alignment.
+	fields, valid := textDefinitionTokens(text)
+	if !valid {
+		return nil
 	}
 	var out []pvfListEntry
 	for i := 0; i+1 < len(fields); i += 2 {
-		id, err := strconv.Atoi(fields[i])
-		path := normalizePVFPath(fields[i+1])
-		if err == nil && id >= 0 && path != "" {
-			out = append(out, pvfListEntry{ID: id, Path: path})
+		id, name := fields[i], fields[i+1]
+		path := normalizePVFPath(name.spelling)
+		if id.kind == 2 && id.value >= 0 && (name.kind == 7 || name.kind == 0) && path != "" {
+			out = append(out, pvfListEntry{ID: int(id.value), Path: path})
 		}
 	}
 	return out
@@ -595,6 +594,8 @@ func parseTownAreas(body string) []townArea {
 					kind = "pvp"
 				case strings.Contains(lowerBlock, "[gate]"):
 					kind = "gate"
+				case strings.Contains(lowerBlock, "[dungeon gate]"):
+					kind = "dungeon_gate"
 				case strings.Contains(lowerBlock, "[normal]"):
 					kind = "normal"
 				}

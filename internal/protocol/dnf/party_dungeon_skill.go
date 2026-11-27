@@ -1,11 +1,13 @@
 package dnf
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/binary"
 	"net"
 	"sort"
+	"sync"
 	"time"
 
 	foundationlog "robot/internal/foundation/log"
@@ -23,13 +25,19 @@ const (
 )
 
 type partySkillCandidate struct {
-	skillIndex byte
-	state      byte
-	level      int
-	name       string
-	stateData  []byte
-	risk       int
-	path       string
+	skillIndex        byte
+	state             byte
+	level             int
+	name              string
+	stateData         []byte
+	risk              int
+	path              string
+	cooldown          time.Duration
+	cooldownByLevelMS []int
+	baseMPByLevel     []int
+	mpRules           shared.SkillMPRules
+	itemCostFree      bool
+	materials         shared.SkillMaterialDefinition
 }
 
 type partySkillProfile struct {
@@ -52,6 +60,9 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
 		return
 	}
+	if partyDungeonFrameUsesLegacySkills(frame, peer.uniqueID) {
+		r.partyDungeonLegacySkills = true
+	}
 	strongActivity := partyDungeonFrameContainsCommand(frame, 0x0004) || partyDungeonFrameContainsCommand(frame, 0x0027)
 	if !strongActivity {
 		if !partyDungeonFrameContainsCommand(frame, 0x0051) || r.partyDungeonLastAt.IsZero() || now.Sub(r.partyDungeonLastAt) > partyDungeonActivityTimeout {
@@ -66,43 +77,82 @@ func (r *RobotVo) rememberPartyDungeonActivityUnsafe(frame []byte, route byte, p
 }
 
 func (r *RobotVo) markPartyDungeonEnteredUnsafe(now time.Time) {
+	// Loading changes the room's actors and coordinate system. Neither queued
+	// movement nor a reliable retry from the previous room may run in it.
+	r.cancelPartyDungeonReliableUnsafe(now)
+	r.partyDungeonFollow = nil
+	previous := r.partyDungeonWorld
+	from, known := previous.entryFrom, previous.entryFromKnown
+	if actor, ok := previous.actors[partyDungeonPlayerReference(r.partySelfPeer.uniqueID)]; ok && actor.position.known&3 == 3 {
+		from, known = actor.room, true
+	}
+	r.partyDungeonWorld = partyDungeonWorld{entryFrom: from, entryFromKnown: known}
+	r.partyDungeonFlags = 0
+	r.partyBasicAttackNextAt = time.Time{}
+	r.partyBasicAttackStep = 0
+	r.partyBasicAttackTarget = [4]byte{}
+	r.partyBasicProjectiles = nil
+	r.partySkillRecoverAt = time.Time{}
 	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
 		r.resetPartySkillProfileUnsafe()
 	}
 	r.partyDungeonEnteredAt = now
-	if r.partyDungeonLastAt.IsZero() {
-		r.partyDungeonLastAt = now
-	}
-	if r.partySkillNextAt.IsZero() {
-		r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
-	}
+	r.partyDungeonLoading = true
+	r.partyDungeonLastAt = now
+	r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
 }
 
 func (r *RobotVo) clearPartyDungeonRuntimeUnsafe() {
-	if r.partyDungeonEnteredAt.IsZero() && r.partyDungeonLastAt.IsZero() && r.partySkillNextAt.IsZero() && r.partySkillRecoverAt.IsZero() && len(r.partyDungeonFollow) == 0 {
+	r.partyDungeonIdentity = dungeonDefinitionIdentity{}
+	if r.partyDungeonEnteredAt.IsZero() && !r.partyDungeonLoading && r.partyDungeonLastAt.IsZero() && r.partySkillNextAt.IsZero() && r.partyBasicAttackNextAt.IsZero() && r.partySkillRecoverAt.IsZero() && len(r.partyDungeonFollow) == 0 {
 		return
 	}
 	r.cancelPartyDungeonReliableUnsafe(time.Now())
 	r.partyDungeonFollow = nil
 	r.partyDungeonEnteredAt = time.Time{}
+	r.partyDungeonLoading = false
+	r.partyDungeonRoomAt = time.Time{}
 	r.partyDungeonLastAt = time.Time{}
 	r.partyDungeonFlags = 0
+	r.partyDungeonWorld = partyDungeonWorld{}
+	r.partyBasicProjectiles = nil
+	r.partyDungeonLegacySkills = false
 	r.partySkillNextAt = time.Time{}
+	r.partyBasicAttackNextAt = time.Time{}
+	r.partyBasicAttackStep = 0
+	r.partyBasicAttackTarget = [4]byte{}
 	r.partySkillRecoverAt = time.Time{}
 	r.partySkillBlockedUntil = time.Time{}
 }
 
 func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time) {
+	enabled := shared.PartySkillEnabled()
+	if !enabled {
+		r.cancelPartySkillCastsUnsafe(now)
+		r.partyBasicProjectiles = nil
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
+		r.partyBasicAttackNextAt = time.Time{}
+		r.partySkillNextAt = time.Time{}
+	}
 	if r.partyDungeonEnteredAt.IsZero() || now.Sub(r.partyDungeonEnteredAt) > partyDungeonEntryTimeout {
 		r.clearPartyDungeonRuntimeUnsafe()
+		return
+	}
+	if r.partyDungeonLoading {
 		return
 	}
 	if r.partyDungeonLastAt.IsZero() {
 		r.partySkillNextAt = time.Time{}
 		r.partySkillRecoverAt = time.Time{}
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		return
 	}
 	if !r.partySkillRecoverAt.IsZero() && !now.Before(r.partySkillRecoverAt) {
+		// A late ACK must not resume an expired combo after recovery.
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		peer := r.partyPeerForSlotUnsafe(0)
 		if peer.slotKnown && r.partyReliablePurposePendingUnsafe(peer.slot, "skill-cast") {
 			r.partySkillRecoverAt = now.Add(partySkillRecoveryRetry)
@@ -118,8 +168,13 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		}
 		return
 	}
+	if !enabled {
+		return
+	}
 	idle := now.Sub(r.partyDungeonLastAt)
 	if idle > partyDungeonActivityTimeout {
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		r.partySkillNextAt = time.Time{}
 		if idle > partyDungeonActivityTimeout+partySkillRecoveryGrace {
 			r.partySkillRecoverAt = time.Time{}
@@ -127,17 +182,32 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		return
 	}
 	if now.Before(r.partySkillBlockedUntil) {
+		r.partyBasicAttackStep = 0
+		r.partyBasicAttackTarget = [4]byte{}
 		return
 	}
-	if !r.partySkillRecoverAt.IsZero() || r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
+	if !r.partySkillRecoverAt.IsZero() {
+		if r.partyBasicAttackStep != 0 {
+			r.tryPartyBasicAttackUnsafe(conn, now)
+		}
 		return
 	}
-	if len(r.partyDungeonFollow) > 0 {
-		r.partySkillNextAt = now.Add(time.Second)
+	if r.partySkillNextAt.IsZero() || now.Before(r.partySkillNextAt) {
+		r.tryPartyBasicAttackUnsafe(conn, now)
 		return
+	}
+	for _, pending := range r.partyDungeonFollow {
+		if !now.Before(pending.due) {
+			r.partySkillNextAt = now.Add(time.Second)
+			return
+		}
 	}
 	r.partySkillNextAt = now.Add(r.partySkillDelayUnsafe(now))
-	if !r.ensurePartySkillProfileUnsafe() || len(r.partySkillCandidates) == 0 {
+	if !r.ensurePartySkillProfileUnsafe() {
+		return
+	}
+	if len(r.partySkillCandidates) == 0 {
+		r.tryPartyBasicAttackUnsafe(conn, now)
 		return
 	}
 	peer := r.partyPeerForSlotUnsafe(0)
@@ -148,42 +218,120 @@ func (r *RobotVo) flushPartyDungeonSkillUnsafe(conn *net.UDPConn, now time.Time)
 		r.partySkillNextAt = now.Add(time.Second)
 		return
 	}
-	if r.partyReliablePendingCountUnsafe(peer.slot) > 0 {
-		r.partySkillNextAt = now.Add(time.Second)
+	// Follow traffic may occupy part of the reliable window continuously.
+	// The transport enforces its window; only another skill must finish first.
+	candidate, ready := r.nextPartySkillCandidateUnsafe(now)
+	if !ready {
+		r.tryPartyBasicAttackUnsafe(conn, now)
 		return
 	}
-	candidate := r.nextPartySkillCandidateUnsafe(now)
 	if r.sendPartySkillStateUnsafe(conn, now, candidate.state, candidate.stateData, "CAST") {
+		r.partySkillLastIndex = candidate.skillIndex
+		if cooldown := candidate.cooldownAtLevel(); cooldown > 0 {
+			if r.partySkillReadyAt == nil {
+				r.partySkillReadyAt = make(map[byte]time.Time)
+			}
+			r.partySkillReadyAt[candidate.skillIndex] = now.Add(cooldown)
+		}
 		r.partySkillRecoverAt = now.Add(partySkillRecoverDelay)
 		foundationlog.Robotf("[PARTY_DUNGEON_SKILL] uid=%d job=%d skill=%d state=%d level=%d name=%s data=%x risk=%d path=%s recover_in=%s\n", r.UID, r.partySkillJob, candidate.skillIndex, candidate.state, candidate.level, candidate.name, candidate.stateData, candidate.risk, candidate.path, r.partySkillRecoverAt.Sub(now))
 	}
 }
 
-func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) partySkillCandidate {
-	if len(r.partySkillCandidates) == 0 {
-		return partySkillCandidate{}
+func (c partySkillCandidate) cooldownAtLevel() time.Duration {
+	if len(c.cooldownByLevelMS) == 0 {
+		return c.cooldown
 	}
-	return r.partySkillCandidates[partySkillChoice(r.UID, now, len(r.partySkillCandidates))]
+	level := min(max(c.level, 1), len(c.cooldownByLevelMS))
+	return time.Duration(c.cooldownByLevelMS[level-1]) * time.Millisecond
+}
+
+func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandidate, bool) {
+	if len(r.partySkillCandidates) == 0 {
+		return partySkillCandidate{}, false
+	}
+	// Choose skills before their state aliases, so one skill with several
+	// registered states cannot crowd out the rest of a character's repertoire.
+	var seen [256]bool
+	var ready []byte
+	for _, candidate := range r.partySkillCandidates {
+		if candidate.itemCostFree && !now.Before(r.partySkillReadyAt[candidate.skillIndex]) && !seen[candidate.skillIndex] {
+			seen[candidate.skillIndex] = true
+			ready = append(ready, candidate.skillIndex)
+		}
+	}
+	if len(ready) == 0 {
+		return partySkillCandidate{}, false
+	}
+	if len(ready) > 1 {
+		for i, index := range ready {
+			if index == r.partySkillLastIndex {
+				ready = append(ready[:i], ready[i+1:]...)
+				break
+			}
+		}
+	}
+	selected := ready[partySkillChoice(r.UID, now, len(ready))]
+	var states []partySkillCandidate
+	for _, candidate := range r.partySkillCandidates {
+		if candidate.skillIndex == selected && candidate.itemCostFree {
+			states = append(states, candidate)
+		}
+	}
+	return states[partySkillChoice(r.UID^uint32(selected), now, len(states))], true
 }
 
 func (r *RobotVo) sendPartySkillStateUnsafe(conn *net.UDPConn, now time.Time, state byte, stateData []byte, reason string) bool {
+	if err := shared.ValidatePartySkillStateData(r.partySkillJob, int(state), stateData); err != nil {
+		foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d job=%d state=%d err=%v\n", reason, r.UID, r.partySkillJob, state, err)
+		return false
+	}
 	peer := r.partyPeerForSlotUnsafe(0)
 	if peer.uniqueID == 0 || r.partySelfPeer.uniqueID == 0 {
 		return false
 	}
 	body := buildPartySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
+	if r.partyDungeonLegacySkills {
+		body = buildPartyLegacySkillStateBody(r.partySelfPeer.uniqueID, state, stateData, partySkillToken(r.UID, now))
+	}
+	records := [][]byte{body}
+	var targetID [4]byte
+	if reason == "CAST" {
+		// These are combat casts. Empty rooms should leave the actor free to
+		// regroup; a target behind us must be faced before its skill state.
+		self := partyDungeonPlayerReference(r.partySelfPeer.uniqueID)
+		room, roomKnown := r.partyDungeonWorld.combatRoom(self, partyDungeonPlayerReference(peer.uniqueID))
+		if !roomKnown {
+			return false
+		}
+		position := r.partyDungeonWorld.actors[self].position
+		selected, target, ok := r.partyDungeonWorld.nearestTarget(self, position)
+		if !ok {
+			return false
+		}
+		face, ok := buildPartyAttackFacing(r.partySelfPeer.uniqueID, position, target, room)
+		if !ok {
+			return false
+		}
+		records = [][]byte{face, body}
+		targetID = selected
+	}
 	purpose := "skill-cast"
 	if reason == "RECOVER" {
 		purpose = "skill-recover"
 	}
 	route := r.partyRouteForPeerUnsafe(peer.slot)
-	destination, err := r.sendPartyReliableUnsafe(conn, peer, r.partyDungeonFlags, [][]byte{body}, purpose, now)
+	destination, err := r.sendPartyReliableUnsafe(conn, peer, r.partyDungeonFlags, records, purpose, now)
 	if err != nil {
 		if r.shouldLogPartyRuntimeErrorUnsafe(now) {
 			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_%s_ERROR] uid=%d state=%d data=%x route=%d destination=%s err=%v\n", reason, r.UID, state, stateData, route, destination, err)
 		}
 		return false
 	}
+	if reason == "CAST" {
+		r.partyDungeonWorld.noteTargetAttack(targetID, now)
+	}
+	r.recordPartyDungeonBodyUnsafe(peer.accID, "TX", body)
 	return true
 }
 
@@ -194,6 +342,15 @@ func (r *RobotVo) ensurePartySkillProfileUnsafe() bool {
 	}
 	if r.partySkillLoaded {
 		return true
+	}
+	if !r.partySkillInfoKnown {
+		// The learned-skill notification never parsed, so there is nothing to
+		// match the catalog against. Say so instead of failing silently.
+		if now := time.Now(); !now.Before(r.partySkillInfoDiagAt) {
+			r.partySkillInfoDiagAt = now.Add(10 * time.Second)
+			foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE_SKIP] uid=%d cid=%d reason=skill-info-unknown\n", r.UID, r.CID)
+		}
+		return false
 	}
 	if r.partySkillLoading {
 		return false
@@ -253,14 +410,27 @@ func (r *RobotVo) loadPartySkillProfile(generation, catalogGeneration uint64, ui
 	r.partySkillLoaded = true
 	r.partySkillCatalogGeneration = catalogGeneration
 	r.partySkillJob = profile.job
-	r.partySkillCandidates = profile.candidates
+	r.partySkillCandidates = profile.candidates[:0]
+	for _, candidate := range profile.candidates {
+		if learned := int(r.partySkillLevels[candidate.skillIndex]); learned > 0 {
+			// SET_STATE carries no cast-level override. Resolve resource tables
+			// from the character's learned level even when an older catalog
+			// entry declares a lower level.
+			candidate.level = learned
+			r.partySkillCandidates = append(r.partySkillCandidates, candidate)
+		}
+	}
 	if !r.partyDungeonEnteredAt.IsZero() && now.Sub(r.partyDungeonEnteredAt) <= partyDungeonEntryTimeout && !r.partyDungeonLastAt.IsZero() && now.Sub(r.partyDungeonLastAt) <= partyDungeonActivityTimeout {
 		r.partySkillNextAt = now
 	}
-	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d whitelist=%d pvf=%d pvf_matched=%d candidates=%d skipped_missing_pvf=%d skipped_path_mismatch=%d\n", uid, profile.cid, profile.job, profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, len(profile.candidates), profile.stats.SkippedMissingPVF, profile.stats.SkippedPathMismatch)
+	regen, regenKnown := r.characterBaseInfo.baseMPRegen(profile.job)
+	foundationlog.Robotf("[PARTY_DUNGEON_SKILL_PROFILE] uid=%d cid=%d job=%d auto=%t whitelist=%d pvf=%d pvf_matched=%d kept_without_pvf=%d learned_candidates=%d skipped_missing_pvf=%d skipped_path_mismatch=%d skipped_unknown_state_data=%d base_mp_regen=%d base_mp_regen_known=%t\n", uid, profile.cid, profile.job, shared.PartySkillAutoSelection(), profile.whitelistCount, profile.pvfCount, profile.stats.PVFMatched, profile.stats.KeptWithoutPVF, len(r.partySkillCandidates), profile.stats.SkippedMissingPVF, profile.stats.SkippedPathMismatch, profile.stats.SkippedUnknownStateData, regen, regenKnown)
 }
 
 func (r *RobotVo) resetPartySkillProfileUnsafe() {
+	r.partySkillLastIndex = 0
+	r.partyBasicAttackStep = 0
+	r.partyBasicAttackTarget = [4]byte{}
 	r.partySkillGeneration++
 	r.partySkillLoaded = false
 	r.partySkillLoading = false
@@ -269,34 +439,67 @@ func (r *RobotVo) resetPartySkillProfileUnsafe() {
 	r.partySkillCatalogGeneration = 0
 }
 
+// A character's job never changes, so the database row behind a skill profile is
+// immutable. Batch scheduling logs the same account in and out repeatedly, and
+// each login used to cost one query; remember the row for the process lifetime.
+type partySkillIdentity struct {
+	uid, cid int
+}
+
+var partySkillIdentityCache sync.Map // partySkillIdentity -> partySkillDBRow
+
+type partySkillDBRow struct {
+	cid, job int
+}
+
 func queryPartySkillProfile(db *sql.DB, uid uint32, cid int) (partySkillProfile, error) {
+	identity := partySkillIdentity{uid: int(uid), cid: cid}
+	if cached, ok := partySkillIdentityCache.Load(identity); ok {
+		return partySkillProfileFromRow(cached.(partySkillDBRow)), nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	var profile partySkillProfile
-	if err := db.QueryRowContext(ctx, "SELECT c.charac_no,c.job FROM taiwan_cain.charac_info c WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", uid, cid, cid).Scan(&profile.cid, &profile.job); err != nil {
+	var row partySkillDBRow
+	if err := db.QueryRowContext(ctx, "SELECT c.charac_no,c.job FROM taiwan_cain.charac_info c WHERE c.m_id=? AND (?=0 OR c.charac_no=?) AND c.delete_flag=0 ORDER BY c.charac_no LIMIT 1", uid, cid, cid).Scan(&row.cid, &row.job); err != nil {
 		return partySkillProfile{}, err
 	}
+	partySkillIdentityCache.Store(identity, row)
+	return partySkillProfileFromRow(row), nil
+}
+
+func partySkillProfileFromRow(row partySkillDBRow) partySkillProfile {
+	profile := partySkillProfile{cid: row.cid, job: row.job}
 	whitelist := shared.PartySkillStatesForJob(profile.job)
 	pvfStates := shared.SkillStatesForJob(profile.job)
 	profile.whitelistCount = len(whitelist)
 	profile.pvfCount = len(pvfStates)
 	profile.candidates, profile.stats = partySkillCandidatesFromCatalog(profile.job, whitelist, pvfStates)
-	return profile, nil
+	return profile
 }
 
 func partySkillCandidatesFromCatalog(job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
-	matches, stats := shared.MatchPartySkillStates(job, whitelist, pvfStates)
+	return partySkillCandidatesFromCatalogMode(shared.PartySkillAutoSelection(), job, whitelist, pvfStates)
+}
+
+func partySkillCandidatesFromCatalogMode(auto bool, job int, whitelist []shared.PartySkillState, pvfStates []shared.SkillState) ([]partySkillCandidate, partySkillCandidateStats) {
+	matches, stats := shared.MatchPartySkillStatesMode(auto, job, whitelist, pvfStates)
 	candidates := make([]partySkillCandidate, 0, len(matches))
 	for _, entry := range matches {
 		candidates = append(candidates, partySkillCandidate{
-			skillIndex: byte(entry.SkillIndex),
-			state:      byte(entry.State),
-			level:      entry.Level,
-			name:       entry.Name,
-			stateData:  append([]byte(nil), entry.StateData...),
-			risk:       entry.Risk,
-			path:       entry.ScriptPath,
+			skillIndex:        byte(entry.SkillIndex),
+			state:             byte(entry.State),
+			level:             entry.Level,
+			name:              entry.Name,
+			stateData:         bytes.Clone(entry.StateData),
+			risk:              entry.Risk,
+			path:              entry.ScriptPath,
+			cooldown:          time.Duration(entry.CooldownMS) * time.Millisecond,
+			cooldownByLevelMS: append([]int(nil), entry.CooldownByLevelMS...),
+			baseMPByLevel:     append([]int(nil), entry.BaseMPByLevel...),
+			mpRules:           entry.MPRules,
+			itemCostFree:      entry.ItemCostFree,
+			materials:         entry.Materials.Clone(),
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {

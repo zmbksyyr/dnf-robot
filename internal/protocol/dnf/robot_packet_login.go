@@ -15,6 +15,7 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 			return
 		}
 		if packet.flag == 1 {
+			r.sceneCategory = r.selectSceneCategoryUnsafe(packet)
 			if packet.size < 15 {
 				foundationlog.Robotf("[RobotVo] short encrypted packet uid=%d size=%d\n", r.UID, packet.size)
 				r.State = StateStop
@@ -24,16 +25,18 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 				}
 				return
 			}
-			_, _ = r.Cipher.DecryptLogin(packet.data[15:])
 			return
 		}
 		if packet.flag != 0 {
 			return
 		}
+		r.sceneCategory = sceneCategoryInfo{}
+		r.inventoryChecksumSeed, r.inventoryChecksumSeedKnown = 0, false
 		_, _, decData, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti)
 		if err == nil && len(decData) >= 334 {
 			errInit := r.Cipher.Initialize(decData[:334])
 			if errInit == nil {
+				r.inventoryChecksumSeed, r.inventoryChecksumSeedKnown = parseInventoryChecksumSeed(decData)
 				const loginBodySize = 400
 				if 8+int(r.TokenSize) > loginBodySize {
 					r.State = StateStop
@@ -98,9 +101,10 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 		r.setArea[1] = r.CurArea
 		binary.LittleEndian.PutUint16(r.setArea[2:4], r.CurX)
 		binary.LittleEndian.PutUint16(r.setArea[4:6], r.CurY)
-		r.setArea[7] = 0x01
-		binary.LittleEndian.PutUint16(r.setArea[8:10], uint16(r.CurVillage))
-		binary.LittleEndian.PutUint16(r.setArea[10:12], uint16(r.GateArea))
+		// The reference reads the origin pair right after the z byte: previous
+		// village at offset 7 and previous area at offset 9, both as shorts.
+		binary.LittleEndian.PutUint16(r.setArea[7:9], uint16(r.CurVillage))
+		binary.LittleEndian.PutUint16(r.setArea[9:11], uint16(r.GateArea))
 		pkt, err = buildSendPacket(38, 26, r.setArea[:], r.Cipher)
 		if err == nil {
 			r.sendRaw(pkt)
@@ -111,6 +115,13 @@ func (r *RobotVo) handleLoginPacketUnsafe(packet robotInboundPacket) {
 		pkt, err = buildSendPacket(37, 27, r.setPosStart[:], r.Cipher)
 		if err == nil {
 			if r.sendRaw(pkt) {
+				// The server keeps the user out of the dungeon-capable state
+				// until the client reports its loading screen as finished; without
+				// this a party member can never satisfy the all-members-loaded
+				// check that a dungeon selection performs.
+				if finish, finishErr := buildSendPacket(40, 28, buildFinishLoadingPayload(0, 0), r.Cipher); finishErr == nil {
+					r.sendRaw(finish)
+				}
 				r.PacketID = 29
 				r.State = StateRun
 				r.ConnCount = 0

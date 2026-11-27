@@ -595,7 +595,9 @@ func parseRecvPacket(cipher *crypt.DNFCipher, raw []byte, isAnti bool) (dataType
 	}
 
 	var decData []byte
-	if dataType == 1 {
+	if dataType == 1 && raw[0] == 0 {
+		// Only the initial type-1 notification uses the fixed handshake key.
+		// The flag-1 login reply uses the initialized session Rijndael key.
 		decData, err = cipher.DecryptLogin(encryptedData)
 	} else {
 		decData, err = cipher.Decrypt(dataType, encryptedData)

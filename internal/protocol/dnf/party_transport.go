@@ -8,6 +8,7 @@ import (
 	"time"
 
 	foundationlog "robot/internal/foundation/log"
+	"robot/internal/shared"
 )
 
 const (
@@ -82,16 +83,26 @@ func (r *RobotVo) sendNATInfoUpdateUnsafe(force bool) bool {
 		foundationlog.Robotf("[NAT_SEND_ERROR] uid=%d\n", r.UID)
 		return false
 	}
-	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "OK", fmt.Sprintf("ip=%s port=%d mtu=%d", udpAddr.IP, udpAddr.Port, mtu), pkt)
+	recordPartyDebugPacket(r.UID, 0, "TX", "GAME", "NAT_INFO", "OK", partyDebugNote("ip=%s port=%d mtu=%d", udpAddr.IP, udpAddr.Port, mtu), pkt)
 	r.natInfoSent = true
 	return true
 }
 
 func (r *RobotVo) flushPartyRuntimeUnsafe(conn *net.UDPConn, now time.Time) {
 	r.flushPartyTQOSRepliesUnsafe(conn, now)
+	// Drain transport ACKs while command 7 is pending, but keep actor frames
+	// and retries paused. Rejection preserves this character and resumes them;
+	// acceptance clears them through the normal return-to-selection cleanup.
+	if r.ReturnSelectPending {
+		return
+	}
+	if !shared.PartySkillEnabled() {
+		r.cancelPartySkillCastsUnsafe(now)
+	}
 	r.flushPartyReliableUnsafe(conn, now)
 	r.flushPartyDungeonFollowUnsafe(conn, now)
 	r.flushPartyDungeonSkillUnsafe(conn, now)
+	r.flushPartyBasicProjectilesUnsafe(conn, now)
 }
 
 func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, route byte, payload []byte) (string, error) {
@@ -118,7 +129,11 @@ func (r *RobotVo) sendPartyTransportUnsafe(conn *net.UDPConn, peer partyIPPeer, 
 		if err != nil {
 			decision = "FAIL"
 		}
-		recordPartyTransportFrames(r.UID, peer.accID, "TX", "UDP", route, decision, "dst="+remote.String()+" endpoint="+endpointSource, payload)
+		note := ""
+		if partyDebugEnabled() {
+			note = "dst=" + remote.String() + " endpoint=" + endpointSource
+		}
+		recordPartyTransportFrames(r.UID, peer.accID, "TX", "UDP", route, decision, note, payload)
 		if err != nil {
 			r.markPartyRouteFailureUnsafe(peer, route, time.Now(), err.Error())
 		}

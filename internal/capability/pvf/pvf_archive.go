@@ -390,6 +390,7 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 		}
 		if !stackable {
 			applyEquipmentPathJob(&item, pathJob)
+
 		}
 		if !stackable {
 			item.SetKey = deriveItemSetKey(itemPath, body, item)
@@ -445,7 +446,7 @@ func extractMapList(a *pvfArchive, listPath, prefix string) []shared.MapCatalogI
 			mapBody := a.townMapText(townMapArchivePath(area.MapPath))
 			rectangles := townMapMovableRectangles(mapBody)
 			xMin, xMax, yMin, yMax, coordinateReady := townMapMovableBounds(mapBody)
-			normalEligible := coordinateReady && area.Kind != "pvp"
+			normalEligible := coordinateReady && area.Kind != "pvp" && area.Kind != "gate" && area.Kind != "dungeon_gate"
 			storeEligible := coordinateReady && area.UsePrivateStore && area.Kind == "normal"
 			storeProbe := coordinateReady && area.UsePrivateStore && area.Kind == "other"
 			out = append(out, shared.MapCatalogItem{
@@ -476,7 +477,7 @@ func (a *pvfArchive) text(path string) string {
 	if len(f.Data) >= 2 && binary.LittleEndian.Uint16(f.Data[0:2]) == 0xd0b0 {
 		return a.decodeScript(f.Data)
 	}
-	return cleanPVFString(charset.DecodePVFBytes(f.Data))
+	return cleanPVFTableString(charset.DecodePVFBytes(f.Data))
 }
 
 func (a *pvfArchive) townMapText(path string) string {

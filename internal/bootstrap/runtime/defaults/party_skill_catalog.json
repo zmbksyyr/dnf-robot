@@ -1,7 +1,19 @@
 {
+  "mode": "auto",
   "enabled": false,
   "max_skill_level": 70,
   "skills": [
+    {
+      "enabled": false,
+      "job": 0,
+      "skill_index": 46,
+      "state": 28,
+      "level": 70,
+      "name": "upperslash",
+      "script_path": "skill/swordman/upperslash.skl",
+      "state_data": [2, 46],
+      "risk": 0
+    },
     {
       "enabled": false,
       "job": 6,
@@ -11,7 +23,9 @@
       "name": "thief_shiningcut",
       "script_path": "sqr/character/thief/1_rogue/shiningcut/shiningcut.nut",
       "state_data": [
-        3
+        3,
+        0,
+        0
       ],
       "risk": 0
     },

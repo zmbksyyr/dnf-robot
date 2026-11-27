@@ -66,7 +66,7 @@ func TestRestoreAutoNormalPositionSelectsEmptyMovableArea(t *testing.T) {
 	}
 }
 
-func TestRestoreAutoNormalPositionCanReturnToEmptyGateArea(t *testing.T) {
+func TestRestoreAutoNormalPositionSkipsPrivateGateArea(t *testing.T) {
 	env := &maintenanceTestEnv{
 		maps: []shared.MapCatalogItem{
 			{Village: 1, Area: 0, Use: true, Rectangles: []shared.MapRectangle{{XMin: 10, XMax: 20, YMin: 30, YMax: 40}}},
@@ -79,8 +79,8 @@ func TestRestoreAutoNormalPositionCanReturnToEmptyGateArea(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restore normal: %v", err)
 	}
-	if normal.Village != 1 || normal.Area != 1 || normal.X != 100 || normal.Y != 130 {
-		t.Fatalf("normal=%+v, want empty gate area", normal)
+	if normal.Village != 1 || normal.Area != 0 || normal.X != 10 || normal.Y != 30 {
+		t.Fatalf("normal=%+v, want public area instead of private gate", normal)
 	}
 }
 

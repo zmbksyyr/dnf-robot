@@ -12,7 +12,6 @@ import (
 
 func TestRobotRewritesCapturedDungeonEnvelopeIdentity(t *testing.T) {
 	tests := []string{
-		"015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000",
 		"0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff",
 	}
 	for _, captured := range tests {
@@ -188,6 +187,7 @@ func TestPartySkillCandidatesRequireWhitelistAndPVF(t *testing.T) {
 }
 
 func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
+	setPartyCombatTestEnabled(t)
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
@@ -201,18 +201,23 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	remote := receiver.LocalAddr().(*net.UDPAddr)
 	now := time.Unix(200, 0)
 	vo := &RobotVo{
-		UID:                   17000001,
-		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, slot: 2, slotKnown: true},
-		partyDungeonEnteredAt: now,
-		partyDungeonLastAt:    now,
-		partyDungeonFlags:     5,
-		partySkillNextAt:      now.Add(-time.Millisecond),
-		partySkillLoaded:      true,
-		partySkillJob:         8,
-		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{0x03, 0x00, 0x00}}},
+		UID:                         17000001,
+		partySelfPeer:               partyIPPeer{uniqueID: 0x2f3e, slot: 2, slotKnown: true},
+		partyDungeonEnteredAt:       now,
+		partyDungeonLastAt:          now,
+		partyDungeonFlags:           5,
+		partySkillNextAt:            now.Add(-time.Millisecond),
+		partySkillLoaded:            true,
+		partySkillCatalogGeneration: shared.PartySkillStateGeneration(),
+		partySkillJob:               8,
+		partySkillCandidates:        []partySkillCandidate{{itemCostFree: true, skillIndex: 3, state: 22, level: 2, stateData: []byte{0x03, 0x00, 0x00}, cooldownByLevelMS: []int{30000, 15000, 0}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+	vo.partyDungeonWorld = skillTargetTestWorld(vo.partySelfPeer.uniqueID, now)
 	vo.flushPartyDungeonSkillUnsafe(sender, now)
+	if vo.partySkillReadyAt[3] != now.Add(15*time.Second) {
+		t.Fatalf("successful cast cooldown = %s", vo.partySkillReadyAt[3])
+	}
 
 	buf := make([]byte, 4096)
 	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
@@ -224,10 +229,11 @@ func TestRobotSendsBoundedDungeonSkillState(t *testing.T) {
 	if packet[0] != 1 || binary.LittleEndian.Uint32(packet[1:5]) != 0 || packet[7] != 2 || packet[8] != 5 {
 		t.Fatalf("skill transport = %x", packet)
 	}
-	if vo.partyTQOSReliableSeq[0][1] != 1 || binary.LittleEndian.Uint16(packet[9:11]) != partySkillStateBodyBaseSize+3 {
+	bodies, ok := partyDungeonFrameBodies(packet)
+	if vo.partyTQOSReliableSeq[0][1] != 1 || !ok || len(bodies) != 2 || len(bodies[1]) != partySkillStateBodyBaseSize+3 {
 		t.Fatalf("skill sequence=%d packet=%x", vo.partyTQOSReliableSeq[0][1], packet)
 	}
-	body := packet[11:]
+	body := bodies[1]
 	if binary.LittleEndian.Uint16(body[partyDungeonEnvelopePayloadOffset+2:]) != 0x2f3e || body[partyDungeonEnvelopePayloadOffset+4] != 22 || !bytes.Equal(body[partyDungeonEnvelopePayloadOffset+7:partyDungeonEnvelopePayloadOffset+10], []byte{0x03, 0x00, 0x00}) {
 		t.Fatalf("skill state identity = %x", body)
 	}
@@ -282,16 +288,18 @@ func TestPartyDungeonFollowDelayIsShortWindow(t *testing.T) {
 }
 
 func TestPartySkillRecoveryFailureBacksOffAndBlocksCast(t *testing.T) {
+	setPartyCombatTestEnabled(t)
 	now := time.Unix(300, 0)
 	vo := &RobotVo{
-		UID:                   17000001,
-		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, slot: 1, slotKnown: true},
-		partyDungeonEnteredAt: now,
-		partyDungeonLastAt:    now,
-		partySkillRecoverAt:   now.Add(-time.Millisecond),
-		partySkillNextAt:      now.Add(-time.Millisecond),
-		partySkillLoaded:      true,
-		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+		UID:                         17000001,
+		partySelfPeer:               partyIPPeer{uniqueID: 0x2f3e, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt:       now,
+		partyDungeonLastAt:          now,
+		partySkillRecoverAt:         now.Add(-time.Millisecond),
+		partySkillNextAt:            now.Add(-time.Millisecond),
+		partySkillLoaded:            true,
+		partySkillCatalogGeneration: shared.PartySkillStateGeneration(),
+		partySkillCandidates:        []partySkillCandidate{{itemCostFree: true, skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, slot: 0, slotKnown: true, outerIP: net.IPv4(127, 0, 0, 1), port: 5063}
 
@@ -330,6 +338,7 @@ func flushQueuedDungeonFollow(t *testing.T, vo *RobotVo, frame []byte, peer part
 	vo.partyPeers[peer.slot] = peer
 	now := time.Unix(100, 0)
 	vo.markPartyDungeonEnteredUnsafe(now)
+	vo.partyDungeonLoading = false // The server has started this test room.
 	if !vo.queuePartyDungeonFollowUnsafe(frame, peer, now) {
 		t.Fatal("follow frame was not queued")
 	}
@@ -371,7 +380,7 @@ func TestPartyDungeonFollowCoalescesPendingFrames(t *testing.T) {
 		partySelfPeer: partyIPPeer{slot: 1, slotKnown: true, uniqueID: 0xee9f},
 	}
 	vo.markPartyDungeonEnteredUnsafe(now)
-	firstBody := mustPartyHex(t, "015100a12a3fca010700677716ec00010700677716ec11026003a1f4f10200000d000000ffffffffffffffff0000000000000000")
+	firstBody := mustPartyHex(t, "0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff")
 	secondBody := append([]byte(nil), firstBody...)
 	secondExpected, _, ok := rewritePartyDungeonBody(secondBody, peer.uniqueID, vo.partySelfPeer.uniqueID)
 	if !ok {
@@ -485,6 +494,7 @@ func TestPartyDungeonSkillAndFollowUseRecentRelayRoute(t *testing.T) {
 	if vo.partyTQOSReliableSeq[0][2] != 1 || vo.partyTQOSReliableSeq[0][1] != 0 {
 		t.Fatalf("skill route sequences=%+v", vo.partyTQOSReliableSeq[0])
 	}
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, 0), 2, vo.partyPeers[0])
 
 	vo.partyDungeonFollow = []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, body: []byte{1, 2, 3}}}
 	followPacket := make(chan []byte, 1)
@@ -496,7 +506,7 @@ func TestPartyDungeonSkillAndFollowUseRecentRelayRoute(t *testing.T) {
 	}
 }
 
-func TestReliableDungeonFollowDoesNotWaitForSkillRecovery(t *testing.T) {
+func TestReliableDungeonFollowWaitsForSkillRecovery(t *testing.T) {
 	relay, peerConn := net.Pipe()
 	defer relay.Close()
 	defer peerConn.Close()
@@ -511,28 +521,36 @@ func TestReliableDungeonFollowDoesNotWaitForSkillRecovery(t *testing.T) {
 	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
 	vo.partyDungeonFollow = []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, reliable: true, records: [][]byte{{1, 2, 3}}}}
 
+	vo.flushPartyDungeonFollowUnsafe(nil, now)
+	if len(vo.partyDungeonFollow) != 1 {
+		t.Fatal("reliable leader state interrupted skill recovery")
+	}
+	vo.partySkillRecoverAt = time.Time{}
 	followPacket := make(chan []byte, 1)
 	go func() { followPacket <- readPartyRelayPacket(t, peerConn) }()
 	vo.flushPartyDungeonFollowUnsafe(nil, now)
 	assertPartyRelayPayload(t, <-followPacket, vo.UID, vo.partyPeers[0].accID)
 	if len(vo.partyDungeonFollow) != 0 {
-		t.Fatalf("reliable follow was delayed by skill recovery: %+v", vo.partyDungeonFollow)
+		t.Fatalf("reliable follow did not resume after recovery: %+v", vo.partyDungeonFollow)
 	}
 }
 
 func TestPartyDungeonSkillYieldsToPendingFollow(t *testing.T) {
+	setPartyCombatTestEnabled(t)
 	now := time.Now()
 	vo := &RobotVo{
-		UID:                   17000001,
-		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
-		partyDungeonEnteredAt: now,
-		partyDungeonLastAt:    now,
-		partySkillNextAt:      now,
-		partySkillLoaded:      true,
-		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
-		partyDungeonFollow:    []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, body: []byte{1, 2, 3}}},
+		UID:                         17000001,
+		partySelfPeer:               partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt:       now,
+		partyDungeonLastAt:          now,
+		partySkillNextAt:            now,
+		partySkillLoaded:            true,
+		partySkillCatalogGeneration: shared.PartySkillStateGeneration(),
+		partySkillCandidates:        []partySkillCandidate{{itemCostFree: true, skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+		partyDungeonFollow:          []partyDungeonFollowPending{{due: now, peerSlot: 0, flags: 1, body: []byte{1, 2, 3}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.partyDungeonWorld = skillTargetTestWorld(vo.partySelfPeer.uniqueID, now)
 
 	vo.flushPartyDungeonSkillUnsafe(nil, now)
 	if vo.partyTQOSReliableSeq[0][1] != 0 || !vo.partySkillRecoverAt.IsZero() {
@@ -543,22 +561,84 @@ func TestPartyDungeonSkillYieldsToPendingFollow(t *testing.T) {
 	}
 }
 
+// A moving leader continuously replaces the delayed position in the follow
+// queue. That future position must not postpone a skill whose timer has fired.
+func TestPartyDungeonSkillDoesNotStarveBehindFutureMovement(t *testing.T) {
+	setPartyCombatTestEnabled(t)
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	remote := receiver.LocalAddr().(*net.UDPAddr)
+	now := time.Now()
+	vo := &RobotVo{
+		UID:                   18000001,
+		partySelfPeer:         partyIPPeer{uniqueID: 0xee9f, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt: now, partyDungeonLastAt: now,
+		partySkillNextAt: now, partySkillLoaded: true,
+		partySkillCatalogGeneration: shared.PartySkillStateGeneration(),
+		partySkillCandidates:        []partySkillCandidate{{itemCostFree: true, skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+	}
+	peer := partyIPPeer{uniqueID: 0xf4a1, slot: 0, slotKnown: true, outerIP: remote.IP, port: uint16(remote.Port)}
+	vo.partyPeers[0] = peer
+	vo.partyDungeonWorld = skillTargetTestWorld(vo.partySelfPeer.uniqueID, now)
+	body := mustPartyHex(t, "0151006635ba98010c0060cd648600010c0060cd64861101a1f4484e020000000000ffffffff")
+	if !vo.queuePartyDungeonFollowUnsafe(buildPartyUnreliablePacket(1, 0, 0, body), peer, now) {
+		t.Fatal("position not queued")
+	}
+	vo.flushPartyRuntimeUnsafe(sender, now)
+	if vo.partySkillRecoverAt.IsZero() {
+		t.Fatal("future leader movement starved due skill")
+	}
+	if len(vo.partyDungeonFollow) != 0 {
+		t.Fatal("independent combat did not supersede the leader position")
+	}
+	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 4096)
+	n, _, err := receiver.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := buf[:n]
+	if packet[0] != 1 || !partyDungeonFrameContainsCommand(packet, partyDungeonEnvelopeCommand) {
+		t.Fatalf("expected actual skill transport, got %x", packet)
+	}
+	vo.buildPartyTQOSRepliesUnsafe(buildPartyTQOSAck(0, binary.LittleEndian.Uint32(packet[1:5])), 1, peer)
+	if !vo.queuePartyDungeonFollowUnsafe(buildPartyUnreliablePacket(2, 0, 0, body), peer, now) {
+		t.Fatal("next leader position not queued")
+	}
+	// The queued leader state must not overwrite the cast before recovery.
+	vo.flushPartyRuntimeUnsafe(sender, now.Add(vo.partyDungeonFollowDelayUnsafe()))
+	if len(vo.partyDungeonFollow) != 1 {
+		t.Fatal("leader state interrupted active skill")
+	}
+}
+
 func TestPartyDungeonSkillSurvivesRandomDelayOnRelay(t *testing.T) {
+	setPartyCombatTestEnabled(t)
 	relay, peerConn := net.Pipe()
 	defer relay.Close()
 	defer peerConn.Close()
 	now := time.Now()
 	vo := &RobotVo{
-		UID:                   17000001,
-		partyRelayConn:        relay,
-		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
-		partyDungeonEnteredAt: now,
-		partyDungeonLastAt:    now.Add(-5 * time.Second),
-		partySkillNextAt:      now,
-		partySkillLoaded:      true,
-		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+		UID:                         17000001,
+		partyRelayConn:              relay,
+		partySelfPeer:               partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt:       now,
+		partyDungeonLastAt:          now.Add(-5 * time.Second),
+		partySkillNextAt:            now,
+		partySkillLoaded:            true,
+		partySkillCatalogGeneration: shared.PartySkillStateGeneration(),
+		partySkillCandidates:        []partySkillCandidate{{itemCostFree: true, skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.partyDungeonWorld = skillTargetTestWorld(vo.partySelfPeer.uniqueID, now)
 	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
 
 	skillPacket := make(chan []byte, 1)
@@ -571,21 +651,24 @@ func TestPartyDungeonSkillSurvivesRandomDelayOnRelay(t *testing.T) {
 }
 
 func TestPartyRelayOnlyLoopFlushesDungeonSkill(t *testing.T) {
+	setPartyCombatTestEnabled(t)
 	relay, peerConn := net.Pipe()
 	defer peerConn.Close()
 	now := time.Now()
 	vo := &RobotVo{
-		UID:                   17000001,
-		State:                 StateRun,
-		partyRelayConn:        relay,
-		partySelfPeer:         partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
-		partyDungeonEnteredAt: now,
-		partyDungeonLastAt:    now,
-		partySkillNextAt:      now.Add(-time.Millisecond),
-		partySkillLoaded:      true,
-		partySkillCandidates:  []partySkillCandidate{{skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
+		UID:                         17000001,
+		State:                       StateRun,
+		partyRelayConn:              relay,
+		partySelfPeer:               partyIPPeer{uniqueID: 0x2f3e, accID: 17000001, slot: 1, slotKnown: true},
+		partyDungeonEnteredAt:       now,
+		partyDungeonLastAt:          now,
+		partySkillNextAt:            now.Add(-time.Millisecond),
+		partySkillLoaded:            true,
+		partySkillCatalogGeneration: shared.PartySkillStateGeneration(),
+		partySkillCandidates:        []partySkillCandidate{{itemCostFree: true, skillIndex: 3, state: 22, stateData: []byte{3, 0, 0}}},
 	}
 	vo.partyPeers[0] = partyIPPeer{uniqueID: 0x1111, accID: 18000000, slot: 0, slotKnown: true}
+	vo.partyDungeonWorld = skillTargetTestWorld(vo.partySelfPeer.uniqueID, now)
 	vo.rememberPartyPeerRouteUnsafe(0, 2, now)
 	vo.mu.Lock()
 	vo.ensurePartySupervisorUnsafe()

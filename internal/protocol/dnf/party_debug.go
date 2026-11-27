@@ -229,6 +229,8 @@ func partyDebugSampleLimit(event partyDebugEvent) int {
 		return 3
 	}
 	switch event.kind {
+	case "DUNGEON_BODY", "DUNGEON_NOTIFY":
+		return 2
 	case "PARTY_OPTION_SOURCE", "PARTY_OPTION", "NAT_INFO", "PARTY_INFO", "REALTIME":
 		return 0
 	case "BASELINE":
@@ -259,7 +261,7 @@ func partyDebugSampleKey(event partyDebugEvent) string {
 }
 
 func partyDebugNeedsDistinctRaw(event partyDebugEvent) bool {
-	return event.decision == "FAIL" && len(event.raw) > 0
+	return (event.decision == "FAIL" || event.kind == "DUNGEON_BODY" || event.kind == "DUNGEON_NOTIFY") && len(event.raw) > 0
 }
 
 func partyDebugRawFingerprint(raw []byte) string {
@@ -318,6 +320,21 @@ func partyDebugSlotValue(slot *byte) string {
 
 func recordPartyDebugPacket(uid, peer uint32, direction, channel, kind, decision, note string, raw []byte) {
 	recordPartyDebug(partyDebugEvent{uid: uid, peer: peer, direction: direction, channel: channel, kind: kind, decision: decision, note: note, raw: raw})
+}
+
+// partyDebugEnabled reports whether a capture session is active. Callers on
+// hot packet paths use it to skip building diagnostic notes, which otherwise
+// allocate strings for every party packet even when nothing is recorded.
+func partyDebugEnabled() bool {
+	return globalPartyDebug.active.Load() != nil
+}
+
+// partyDebugNote formats a diagnostic note only while capturing.
+func partyDebugNote(format string, args ...interface{}) string {
+	if !partyDebugEnabled() {
+		return ""
+	}
+	return fmt.Sprintf(format, args...)
 }
 
 func recordPartyDebugTransport(uid, peer uint32, direction, channel string, route byte, decision, note string, raw []byte) {
@@ -506,6 +523,8 @@ func buildPartyDebugReport(status shared.PartyDebugStatus, events []partyDebugEv
 	lines = append(lines, partyDebugMemberLines(status, critical, 4)...)
 	lines = append(lines, "PKTS: ID FIRST..LAST UID>PEER DIR/CH KIND N LEN DEC NOTE DATA")
 	lines = append(lines, compactPartyDebugEvents(status, critical, attempts)...)
+	started, _ := time.Parse(time.RFC3339Nano, status.StartedAt)
+	lines = append(lines, partyDebugDungeonLines(started, critical)...)
 	lines = append(lines, buildPartyDebugChecks(status, critical, attempts)...)
 	return lines
 }
@@ -989,7 +1008,7 @@ func partyDebugReportRaw(event partyDebugEvent) string {
 		return "B64=-"
 	}
 	limit := partyDebugNormalRaw
-	if event.decision == "FAIL" || event.decision == "TIMEOUT" {
+	if event.decision == "FAIL" || event.decision == "TIMEOUT" || event.kind == "DUNGEON_BODY" || event.kind == "DUNGEON_NOTIFY" {
 		limit = partyDebugRawLimit
 	}
 	if len(event.raw) <= limit {

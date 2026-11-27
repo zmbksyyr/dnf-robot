@@ -12,6 +12,7 @@ import (
 	"time"
 
 	runtimeinit "robot/internal/bootstrap/runtime"
+	"robot/internal/capability/catalog"
 	"robot/internal/capability/keypair"
 	"robot/internal/capability/mailnotify"
 	"robot/internal/capability/marketapp"
@@ -159,6 +160,7 @@ func runRobot(configOverride, readyEvent string, stopCh <-chan struct{}) (status
 	}
 	dnf.ConfigurePartyRelayHost(cfg.RelayHost)
 	dnf.ConfigurePartyRelayPort(cfg.RelayPort)
+	dnf.ConfigurePartyTownGates(catalog.ViewMaps(paths.PVF))
 	route0Sink, err := dnf.StartPartyRoute0Sink(cfg.PartyRoute0Port)
 	if err != nil {
 		dnf.LogString(fmt.Sprintf("PARTY_ROUTE0_SINK_FAILED addr=0.0.0.0:%d err=%v\n", cfg.PartyRoute0Port, err))

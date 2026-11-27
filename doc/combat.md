@@ -1,0 +1,47 @@
+# 状态包战斗
+
+## 当前实现
+
+Robot 接收真实队伍广播，维护当前房间的角色、怪物、位置和 HP；依据这些状态追击、朝向和选招，通过已有 UDP / relay 可靠传输发送动作与攻击对象。真人客户端的怪物控制方执行碰撞并产生伤害、死亡上报。
+
+| 环节 | 源码入口 |
+| --- | --- |
+| 561 解封及通知分派 | `internal/protocol/dnf/robot_packets.go`、`crypt/anti_cipher.go` |
+| 房间和怪物状态 | `party_dungeon_world.go`、`party_dungeon_motion.go` |
+| 跟随、追击和目标选择 | `party_dungeon_follow.go`、`party_dungeon_navigation.go` |
+| 技能状态、冷却与随机轮换 | `party_dungeon_skill.go`、`party_dungeon_skill_wire.go` |
+| 普攻与男法攻击对象 | `party_dungeon_attack.go`、`party_dungeon_projectile.go` |
+| PVF 技能与初始参数 | `internal/capability/pvf/pvf_skill*.go` |
+| 创建角色时点满职业技能 | `internal/scheduler/repository/repository_robot_skills.go` |
+
+561 是服务端 Anti 加密外包，内含选图、进房等通知；它不等同于队伍技能动作。已实现 1–19 类算法、尾部处理和 CRC 校验，真实 27 / 28 / 29 通知已有解密对照。解密实现是当前路线的必要依赖。
+
+男法普攻在 state8 后按采集到的四个关键帧发送 24202 对象创建，命中或超时后销毁。其余职业不能仅替换对象编号就视为已支持。
+
+新角色按 PVF 的职业、转职和技能等级上限初始化两套技能树，覆盖 11 个职业目录。运行时只选择已学会、参数已知、材料消耗为空且冷却就绪的候选；先随机选技能，再随机选该技能的状态，存在其他选择时避免连续重复。
+
+## 已验证与待完成
+
+2026-11-27 Windows 真人客户端 + Go Robot：
+
+- 男法 Robot 自动击杀首房 8 / 8 怪物，真人未按攻击键；八次 TCP42 死亡报告与 TCP37 回复对应。
+- 换房后 Robot 继续追击、普攻和造成伤害，随后撤退回城。
+- 已验证新角色写入本职业满级技能树，并接收到服务端规范化的技能列表。
+
+尚未完成：全职业全技能实际效果、Robot 受击与 HP / MP 结算同步、完整地下城通关、当前路线的 Linux 实战对照。普通攻击本身不消耗 MP。
+
+已采到 SET_HP(12)、SET_MP(13)、HIT(19)、HP_DAMAGE(20)、USE_SKILL(25)。真人有受击记录，Robot 受击链尚未接通；不能据此宣称 Robot 资源已正确结算。
+
+证据在工作区 `x/acceptance-20261127`：
+
+| 目录 | 内容 |
+| --- | --- |
+| `state-packet-cycle1` | 双真人客户端从进图到出图的完整状态包 |
+| `state-combat-live1` | Robot 普攻实战原始包、`receipt.json`、`live-outcomes.json` |
+| `state-combat-skills1` | 满技能初始化和随机选招阶段记录 |
+
+后续先推进 Windows 的实际击杀和资源链，再做 Linux 对照。已通过的资格、冷却等行为直接引用既有结果，过程细节只放阶段 REPORT。
+
+## 废弃路线
+
+协议探针、合成队长帧和直接死亡上报没有建立真实战斗闭环。完整原客户端、支援角色及 skillhost 原函数执行宿主依赖过重，已停止采用；未接入当前战斗的装备资格、护甲和材料结算模型一并移除。保留当前状态包链及其有效性能优化。

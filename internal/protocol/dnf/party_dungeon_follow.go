@@ -2,6 +2,7 @@ package dnf
 
 import (
 	"encoding/binary"
+	"math"
 	"net"
 	"time"
 
@@ -54,6 +55,18 @@ func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, 
 	default:
 		return false
 	}
+	// Coalescing can replace the room's first full position with a later
+	// retain-only update before either is sent. Carry the observed leader
+	// coordinates into retained position fields so the follower can initialize
+	// its own position even when that first update was superseded.
+	position := r.partyDungeonWorld.actors[partyDungeonPlayerReference(peer.uniqueID)].position
+	if pending.reliable {
+		for i, body := range pending.records {
+			pending.records[i] = snapshotPartyDungeonFollowMotion(body, position)
+		}
+	} else {
+		pending.body = snapshotPartyDungeonFollowMotion(pending.body, position)
+	}
 	if len(r.partyDungeonFollow) >= 2048 {
 		r.partyDungeonFollow = nil
 		return false
@@ -71,11 +84,48 @@ func (r *RobotVo) queuePartyDungeonFollowUnsafe(frame []byte, peer partyIPPeer, 
 	return true
 }
 
+func snapshotPartyDungeonFollowMotion(body []byte, position partyDungeonPosition) []byte {
+	entries, ok := decodePartyDungeonMotion(body)
+	if !ok {
+		return body
+	}
+	changed := false
+	for i := range entries {
+		for axis, value := range [...]float32{position.x, position.y, position.z} {
+			field := 9 + axis
+			if position.known&(1<<axis) != 0 && entries[i].mode(field) == 2 {
+				entries[i].modes &^= 3 << uint(2*field)
+				entries[i].values[field] = math.Float32bits(value)
+				changed = true
+			}
+		}
+	}
+	if changed {
+		if snapshot, valid := buildPartyDungeonMotion(entries); valid {
+			return snapshot
+		}
+	}
+	return body
+}
+
 func (r *RobotVo) partyDungeonFollowDelayUnsafe() time.Duration {
 	return time.Duration(300+int(r.UID%701)) * time.Millisecond
 }
 
 func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time) {
+	// Peer state can arrive during loading. Retain it, but do not act on the
+	// room until the server confirms every member has finished loading.
+	if r.partyDungeonLoading {
+		return
+	}
+	// Replayed leader states can cancel our own cast. Keep the latest position
+	// queued until the cast and its recovery have both been acknowledged.
+	if !r.partySkillRecoverAt.IsZero() || r.partyReliablePurposePendingUnsafe(0, "skill-") {
+		return
+	}
+	if r.navigatePartyDungeonUnsafe(conn, now) {
+		return
+	}
 	for len(r.partyDungeonFollow) > 0 && !now.Before(r.partyDungeonFollow[0].due) {
 		pending := r.partyDungeonFollow[0]
 		peer := r.partyPeerForSlotUnsafe(pending.peerSlot)
@@ -119,6 +169,13 @@ func (r *RobotVo) flushPartyDungeonFollowUnsafe(conn *net.UDPConn, now time.Time
 		if !now.Before(r.partyDungeonFollowDiagAt) {
 			r.partyDungeonFollowDiagAt = now.Add(5 * time.Second)
 			foundationlog.Robotf("[PARTY_DUNGEON_FOLLOW] uid=%d peer=%d slot=%d route=%d reliable=%t queued=%d delay=%s\n", r.UID, peer.accID, pending.peerSlot, route, pending.reliable, len(r.partyDungeonFollow), r.partyDungeonFollowDelayUnsafe())
+		}
+		if pending.reliable {
+			for _, body := range pending.records {
+				r.partyDungeonWorld.observe(body, now)
+			}
+		} else {
+			r.partyDungeonWorld.observe(pending.body, now)
 		}
 		r.partyDungeonFollow = r.partyDungeonFollow[1:]
 	}

@@ -14,6 +14,22 @@ const (
 
 var partyDungeonEnvelopeChecksumOffsets = [...]int{10, 18}
 
+func decodePartyDungeonEnvelope(body []byte) (uint16, []byte, bool) {
+	if len(body) < partyDungeonEnvelopeMinBodySize || (body[0] != 1 && body[0] != 2) || binary.LittleEndian.Uint16(body[1:3]) != partyDungeonEnvelopeCommand {
+		return 0, nil, false
+	}
+	outer := partyPayloadChecksum(body[7:])
+	if body[3] != outer[0] || body[0] == 1 && !bytes.Equal(body[3:7], outer[:]) || body[14] != 0 || !bytes.Equal(body[7:14], body[15:22]) {
+		return 0, nil, false
+	}
+	payload := body[partyDungeonEnvelopePayloadOffset:]
+	inner := partyPayloadChecksum(payload)
+	if !bytes.Equal(body[10:14], inner[:]) {
+		return 0, nil, false
+	}
+	return binary.LittleEndian.Uint16(body[8:10]), payload, true
+}
+
 func rewritePartyDungeonBody(body []byte, sourceUniqueID, targetUniqueID uint16) ([]byte, uint16, bool) {
 	if len(body) < 7 || body[0] != 1 || sourceUniqueID == 0 || targetUniqueID == 0 || sourceUniqueID == targetUniqueID {
 		return nil, 0, false
@@ -44,11 +60,36 @@ func rewritePartyDungeonBody(body []byte, sourceUniqueID, targetUniqueID uint16)
 			copy(followBody[offset:offset+len(innerChecksum)], innerChecksum[:])
 		}
 	case partyDungeonStateCommand:
+		if entries, ok := decodePartyDungeonMotion(body); ok {
+			source := partyDungeonPlayerReference(sourceUniqueID)
+			target := partyDungeonPlayerReference(targetUniqueID)
+			selected := entries[:0]
+			for _, entry := range entries {
+				if entry.entity != source {
+					continue
+				}
+				entry.entity = target
+				if entry.controller == source {
+					entry.controller = target
+				}
+				selected = append(selected, entry)
+			}
+			if len(selected) != 0 {
+				follow, valid := buildPartyDungeonMotion(selected)
+				return follow, command, valid
+			}
+		}
 		plain := followBody[7:]
 		for index := range plain {
 			plain[index] ^= 0x7e
 		}
 		checksum = partyPayloadChecksum(plain)
+		// The older 0x0081 actor reference has a separate captured layout.
+		// Preserve its single-actor handling; a malformed modern record must
+		// not fall back to fixed-offset identity replacement.
+		if len(plain) < 15 || plain[1] != 0x81 || plain[2] != 0 {
+			return nil, 0, false
+		}
 		if !bytes.Equal(body[3:7], checksum[:]) || rewritePartyDungeonStateIdentity(plain, sourceUniqueID, targetUniqueID) == 0 {
 			return nil, 0, false
 		}
@@ -87,23 +128,21 @@ func rewritePartyDungeonRecords(body []byte, sourceUniqueID, targetUniqueID uint
 }
 
 func rewritePartyDungeonEnvelopeIdentity(payload []byte, sourceUniqueID, targetUniqueID uint16) int {
-	if len(payload) < 6 {
+	// The first reference is the actor. A later reference may be its controller
+	// (for example a monster owned by the leader), not another player identity.
+	if len(payload) < 6 || payload[0] != 0x11 || payload[1] != 0x01 || binary.LittleEndian.Uint16(payload[2:4]) != sourceUniqueID {
 		return 0
 	}
-	replacements := 0
-	for _, offset := range [...]int{2, 4} {
-		if binary.LittleEndian.Uint16(payload[offset:]) != sourceUniqueID {
-			continue
-		}
-		binary.LittleEndian.PutUint16(payload[offset:], targetUniqueID)
-		replacements++
-	}
-	return replacements
+	binary.LittleEndian.PutUint16(payload[2:4], targetUniqueID)
+	return 1
 }
 
 func rewritePartyDungeonStateIdentity(payload []byte, sourceUniqueID, targetUniqueID uint16) int {
 	const singleStateHeaderSize = 15
-	if len(payload) < singleStateHeaderSize || payload[0] != 1 {
+	if len(payload) < singleStateHeaderSize || payload[0] != 1 || binary.LittleEndian.Uint16(payload[3:5]) != sourceUniqueID {
+		return 0
+	}
+	if (payload[1] != 0x11 || payload[2] != 1) && (payload[1] != 0x81 || payload[2] != 0) {
 		return 0
 	}
 	replacements := 0

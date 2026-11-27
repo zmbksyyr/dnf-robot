@@ -2,6 +2,8 @@ package crypt
 
 import (
 	"encoding/binary"
+	"fmt"
+	"hash/crc32"
 )
 
 type DNFCipher struct {
@@ -115,7 +117,7 @@ func (c *DNFCipher) DecryptAnti(data []byte) ([]byte, error) {
 	if len(data) <= 17 {
 		return nil, ErrInvalidBlockSize
 	}
-	packetSize, keySeed, cryptoType, ok := antiEnvelopeHeader(data)
+	packetSize, keySeed, cryptoType, checksum, ok := antiEnvelopeHeader(data)
 	if !ok {
 		return nil, ErrInvalidBlockSize
 	}
@@ -127,8 +129,12 @@ func (c *DNFCipher) DecryptAnti(data []byte) ([]byte, error) {
 	antiDataBuf := make([]byte, antiDataSize)
 	copy(antiDataBuf, data[17:packetSize])
 
-	pbyKey := GenKey(int(cryptoType), keySeed)
-	GeneNew(pbyKey, false, antiDataBuf, antiDataSize)
+	if err := decryptAntiPayload(cryptoType, keySeed, antiDataBuf); err != nil {
+		return nil, err
+	}
+	if crc32.ChecksumIEEE(antiDataBuf) != checksum {
+		return nil, fmt.Errorf("anti checksum mismatch: type=%d", cryptoType)
+	}
 
 	offset := 4 + 4 + 1 + int(antiDataBuf[8])
 	if offset >= antiDataSize {
@@ -154,7 +160,7 @@ func (c *DNFCipher) DecryptAnti(data []byte) ([]byte, error) {
 	return antiDataBuf[offset:], nil
 }
 
-func antiEnvelopeHeader(data []byte) (packetSize int, keySeed, cryptoType uint32, ok bool) {
+func antiEnvelopeHeader(data []byte) (packetSize int, keySeed, cryptoType, checksum uint32, ok bool) {
 	// DPROTO deployments exist with both network-order and host-order envelope
 	// fields. Validate the complete header before accepting either representation.
 	for _, order := range []binary.ByteOrder{binary.BigEndian, binary.LittleEndian} {
@@ -164,9 +170,9 @@ func antiEnvelopeHeader(data []byte) (packetSize int, keySeed, cryptoType uint32
 		if size <= 17 || size > len(data) || protocolType != 17 || candidateCryptoType > maxAntiCryptoType {
 			continue
 		}
-		return size, order.Uint32(data[5:9]), candidateCryptoType, true
+		return size, order.Uint32(data[5:9]), candidateCryptoType, order.Uint32(data[13:17]), true
 	}
-	return 0, 0, 0, false
+	return 0, 0, 0, 0, false
 }
 
 func (c *DNFCipher) GetTotalKeyLength() int {

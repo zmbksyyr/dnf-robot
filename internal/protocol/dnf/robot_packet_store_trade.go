@@ -78,45 +78,10 @@ func (r *RobotVo) handleStoreTradePacketUnsafe(packet robotInboundPacket) {
 			}
 		}
 
-	case 13:
-		if packet.flag != 0 || (r.State != StateRun && r.State != StateLogin) {
-			return
-		}
-		_, _, decData, err := parseRecvPacket(r.Cipher, packet.data, packet.isAnti)
-		if err == nil && len(decData) >= 5 {
-			itemNumber := binary.LittleEndian.Uint16(decData[3:5])
-			required := 5 + int(itemNumber)*25
-			// CMD 13 is also used by this protocol for short, unrelated variants.
-			// Only a complete inventory-list body may replace the last good snapshot;
-			// otherwise a 7/9-byte variant would erase the slots needed by CMD 90.
-			if len(decData) < required {
-				return
-			}
-			// During CMD 20 inventory discovery, some DFGamer variants first send a
-			// valid empty CMD 13 and follow it with the complete inventory. Treating
-			// that placeholder as completion erases the last good snapshot and starts
-			// CMD 90 before the seven prepared items are available.
-			if itemNumber == 0 && r.IsWaitingItemList {
-				return
-			}
-			inventory := make(map[int]Transaction, itemNumber)
-			pBuf := decData[5:required]
-			for i := uint16(0); i < itemNumber; i++ {
-				itemID := int32(binary.LittleEndian.Uint32(pBuf[2:6]))
-				itemPos := int16(binary.LittleEndian.Uint16(pBuf[0:2]))
-				itemNum := int32(binary.LittleEndian.Uint32(pBuf[6:10]))
-				pBuf = pBuf[25:]
-				// Keep every server-reported slot. The same item can occupy multiple
-				// inventory slots, and collapsing by item ID can make CMD 90 refer to
-				// an arbitrary or stale stack.
-				inventory[int(itemPos)] = Transaction{ItemPos: itemPos, ItemId: itemID, ItemNum: itemNum}
-			}
-			r.InfanMap = inventory
-			r.storeInventoryVersion++
-			r.IsWaitingItemList = false
-		} else {
-			foundationlog.Robotf("[STORE_CMD13_ERROR] uid=%d err=%v bytes=%d\n", r.UID, err, len(decData))
-		}
+	case 13, 14:
+		r.handleInventoryPacketUnsafe(packet)
+	case 18:
+		r.handleInventoryDeleteReplyUnsafe(packet)
 	case 15:
 		if packet.flag != 0 || r.State != StateRun {
 			return

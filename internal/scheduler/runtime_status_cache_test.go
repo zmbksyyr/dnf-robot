@@ -24,6 +24,22 @@ type mapStatusRuntime struct {
 
 type storeStartingRuntime struct{ mapStatusRuntime }
 
+func TestActorDoesNotPauseRetryUsingCachedLoginRejection(t *testing.T) {
+	const uid = 17000001
+	doll := &mapStatusRuntime{statuses: map[int]robotcap.RuntimeStatus{
+		uid: {UID: uid, StateName: robotcap.RuntimeStateWrong, DisconnectReason: 36},
+	}}
+	manager := NewRobotManager(nil, nil, doll)
+	runtime := NewRobotRuntime(manager)
+	if st, ok := runtime.Status(uid); !ok || st.StateName != robotcap.RuntimeStateWrong {
+		t.Fatal("initial login rejection missing")
+	}
+	delete(doll.statuses, uid)
+	if st, ok := runtime.Status(uid); ok {
+		t.Fatalf("explicit logout's removed session remains rejected in actor cache: %+v", st)
+	}
+}
+
 func (r *storeStartingRuntime) ResetPrivateStore(uid int) bool {
 	st := r.statuses[uid]
 	st.RobotType = 0

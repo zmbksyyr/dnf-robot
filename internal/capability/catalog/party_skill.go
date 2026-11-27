@@ -18,6 +18,15 @@ import (
 
 const maxSafePartySkillLevel = 70
 
+// Party skill casting has two selection modes. "manual" keeps the historical
+// per-skill switches. "auto" (the shipped default) selects entries with known
+// state parameters unless explicitly disabled. A single top-level switch is
+// enough; the current PVF supplies automatically resolved parameters.
+const (
+	partySkillModeManual = "manual"
+	partySkillModeAuto   = "auto"
+)
+
 type partySkillCatalogEntry struct {
 	ID         string          `json:"id,omitempty"`
 	Enabled    bool            `json:"enabled"`
@@ -34,6 +43,7 @@ type partySkillCatalogEntry struct {
 }
 
 type partySkillCatalogDocument struct {
+	Mode          *string            `json:"mode,omitempty"`
 	Enabled       *bool              `json:"enabled"`
 	MaxSkillLevel *int               `json:"max_skill_level"`
 	Skills        *[]json.RawMessage `json:"skills"`
@@ -64,12 +74,14 @@ type PartySkillCatalogIssue struct {
 
 type PartySkillCatalogReport struct {
 	Enabled                 bool
+	Mode                    string
 	Entries                 []shared.PartySkillState
 	Issues                  []PartySkillCatalogIssue
 	SourceCount             int
 	DisabledCount           int
 	SwitchOffCount          int
 	OverLevelCount          int
+	UnknownStateDataCount   int
 	ConfiguredMaxSkillLevel int
 	EffectiveMaxSkillLevel  int
 }
@@ -94,6 +106,11 @@ func (e *PartySkillCatalogValidationError) Error() string {
 	return fmt.Sprintf("party skill catalog has %d invalid entries: %s%s", len(e.Issues), strings.Join(details, "; "), suffix)
 }
 
+// Auto reports whether the catalog was loaded in automatic selection mode.
+func (r PartySkillCatalogReport) Auto() bool {
+	return r.Enabled && r.Mode == partySkillModeAuto
+}
+
 func LoadPartySkills(configDir string) error {
 	if strings.TrimSpace(configDir) == "" {
 		return fmt.Errorf("empty party skill catalog directory")
@@ -105,11 +122,7 @@ func LoadPartySkills(configDir string) error {
 	if len(report.Issues) > 0 {
 		return &PartySkillCatalogValidationError{Issues: report.Issues}
 	}
-	if !report.Enabled {
-		shared.SetPartySkillStates(nil)
-		return nil
-	}
-	shared.SetPartySkillStates(report.Entries)
+	shared.SetPartySkillRuntime(report.Entries, report.Enabled, report.Auto())
 	return nil
 }
 
@@ -130,9 +143,11 @@ func parsePartySkillCatalog(data []byte) (PartySkillCatalogReport, error) {
 	if err != nil {
 		return PartySkillCatalogReport{}, err
 	}
+	mode := resolvePartySkillMode(raw.Mode)
 
 	report := PartySkillCatalogReport{
 		Enabled:                 *raw.Enabled,
+		Mode:                    mode,
 		SourceCount:             len(*raw.Skills),
 		ConfiguredMaxSkillLevel: *raw.MaxSkillLevel,
 		EffectiveMaxSkillLevel:  *raw.MaxSkillLevel,
@@ -161,8 +176,28 @@ func parsePartySkillCatalog(data []byte) (PartySkillCatalogReport, error) {
 			report.DisabledCount++
 			continue
 		}
+		// In auto mode the top-level switch is the only user control: every
+		// entry that is not explicitly disabled is a candidate, then the
+		// runtime narrows it to the character's job, learned skills and the
+		// current PVF. Manual mode keeps the historical per-skill switches.
 		if !entry.Enabled {
-			report.SwitchOffCount++
+			if mode == partySkillModeAuto {
+				entry.Enabled = true
+			} else {
+				report.SwitchOffCount++
+				continue
+			}
+		}
+		// A registered state is not evidence that it takes an empty vector.
+		// Script entries with dynamic/unresolved parameters remain unknown.
+		// Explicit [] still represents a known empty vector; old manual
+		// catalogs retain their historical omitted-parameter behavior.
+		if mode == partySkillModeAuto && values == nil {
+			report.UnknownStateDataCount++
+			continue
+		}
+		if err := shared.ValidatePartySkillStateData(entry.Job, entry.State, stateData); err != nil {
+			report.addPartySkillIssue(index, entry, err.Error())
 			continue
 		}
 		if entry.Level > report.EffectiveMaxSkillLevel {
@@ -216,6 +251,7 @@ func SyncPartySkillCatalog(path, pvfPath string) (bool, error) {
 
 	entries := make([]partySkillCatalogEntry, 0, len(pvfStates))
 	seen := make(map[string]struct{}, len(pvfStates))
+	mode := resolvePartySkillMode(raw.Mode)
 	for _, state := range pvfStates {
 		key := partySkillRuntimeKey(state.Job, state.SkillIndex, state.State, state.ScriptPath)
 		if _, duplicate := seen[key]; duplicate {
@@ -225,11 +261,24 @@ func SyncPartySkillCatalog(path, pvfPath string) (bool, error) {
 		entry, ok := existing[key]
 		if !ok {
 			entry = partySkillCatalogEntry{
-				Enabled: false,
+				// Auto selection needs no per-skill switch, so a newly discovered
+				// state starts active there and only manual mode starts it off.
+				Enabled: mode == partySkillModeAuto,
 				Job:     state.Job, SkillIndex: state.SkillIndex, State: state.State,
 				Level: maxSafePartySkillLevel, ScriptPath: state.ScriptPath,
 				Name: partySkillDisplayName(state.ScriptPath), Risk: 2,
 			}
+		}
+		// Upgrade generated entries as well as new ones. Nil means the PVF
+		// exporter could not establish a vector; a non-nil empty slice is a
+		// known empty vector. Explicit user vectors, including [], retain their
+		// existing meaning.
+		if state.StateData != nil && (len(entry.StateData) == 0 || bytes.Equal(bytes.TrimSpace(entry.StateData), []byte("null"))) {
+			data, err := json.Marshal(state.StateData)
+			if err != nil {
+				return false, fmt.Errorf("encode original skill parameters: %w", err)
+			}
+			entry.StateData = json.RawMessage(data)
 		}
 		entry.ID = key
 		entry.JobLabel = partySkillJobLabel(state.Job)
@@ -246,6 +295,42 @@ func SyncPartySkillCatalog(path, pvfPath string) (bool, error) {
 		}
 		entries = append(entries, entry)
 	}
+	// The PVF exporter only registers the load_state entries it can parse, so
+	// rebuilding from it alone would delete the captured protocol vectors that
+	// make automatic selection possible for the other jobs. Keep an entry that
+	// still carries captured state data but has no current registration; drop
+	// entries without data because nothing can verify them any more.
+	leftovers := make([]partySkillCatalogEntry, 0)
+	for key, entry := range existing {
+		if _, registered := seen[key]; registered {
+			continue
+		}
+		if len(entry.StateData) == 0 {
+			continue
+		}
+		entry.ID = key
+		entry.JobLabel = partySkillJobLabel(entry.Job)
+		if strings.TrimSpace(entry.Name) == "" {
+			entry.Name = partySkillDisplayName(entry.ScriptPath)
+		}
+		if entry.Level <= 0 || entry.Level > maxSafePartySkillLevel {
+			entry.Level = maxSafePartySkillLevel
+		}
+		leftovers = append(leftovers, entry)
+	}
+	sort.Slice(leftovers, func(i, j int) bool {
+		if leftovers[i].Job != leftovers[j].Job {
+			return leftovers[i].Job < leftovers[j].Job
+		}
+		if leftovers[i].SkillIndex != leftovers[j].SkillIndex {
+			return leftovers[i].SkillIndex < leftovers[j].SkillIndex
+		}
+		if leftovers[i].State != leftovers[j].State {
+			return leftovers[i].State < leftovers[j].State
+		}
+		return leftovers[i].ScriptPath < leftovers[j].ScriptPath
+	})
+	entries = append(entries, leftovers...)
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Job != entries[j].Job {
 			return entries[i].Job < entries[j].Job
@@ -260,10 +345,11 @@ func SyncPartySkillCatalog(path, pvfPath string) (bool, error) {
 	})
 
 	out, err := json.MarshalIndent(struct {
+		Mode          string                   `json:"mode"`
 		Enabled       bool                     `json:"enabled"`
 		MaxSkillLevel int                      `json:"max_skill_level"`
 		Skills        []partySkillCatalogEntry `json:"skills"`
-	}{Enabled: *raw.Enabled, MaxSkillLevel: *raw.MaxSkillLevel, Skills: entries}, "", "  ")
+	}{Mode: mode, Enabled: *raw.Enabled, MaxSkillLevel: *raw.MaxSkillLevel, Skills: entries}, "", "  ")
 	if err != nil {
 		return false, err
 	}
@@ -320,7 +406,26 @@ func decodePartySkillCatalogDocument(data []byte) (partySkillCatalogDocument, er
 	if *raw.MaxSkillLevel < 1 || *raw.MaxSkillLevel > maxSafePartySkillLevel {
 		return partySkillCatalogDocument{}, fmt.Errorf("party skill catalog max_skill_level must be between 1 and %d", maxSafePartySkillLevel)
 	}
+	if raw.Mode != nil {
+		switch strings.ToLower(strings.TrimSpace(*raw.Mode)) {
+		case partySkillModeAuto, partySkillModeManual:
+		default:
+			return partySkillCatalogDocument{}, fmt.Errorf("party skill catalog mode must be %q or %q", partySkillModeAuto, partySkillModeManual)
+		}
+	}
 	return raw, nil
+}
+
+// resolvePartySkillMode keeps files written before the mode field existed on
+// the historical per-skill switches. New installs ship mode=auto.
+func resolvePartySkillMode(mode *string) string {
+	if mode == nil {
+		return partySkillModeManual
+	}
+	if strings.ToLower(strings.TrimSpace(*mode)) == partySkillModeAuto {
+		return partySkillModeAuto
+	}
+	return partySkillModeManual
 }
 
 func decodePartySkillCatalogEntry(index int, data []byte) (partySkillCatalogEntry, error) {
@@ -413,15 +518,29 @@ func decodePartySkillStateData(raw json.RawMessage) ([]int, error) {
 }
 
 func partySkillStateData(values []int) ([]byte, error) {
-	if len(values) > 3 {
-		return nil, fmt.Errorf("state_data has %d values, maximum is 3", len(values))
+	if len(values) > shared.MaxPartySkillStateDataSize {
+		return nil, fmt.Errorf("state_data has %d values, encoded size exceeds %d bytes", len(values), shared.MaxPartySkillStateDataSize)
 	}
-	data := make([]byte, 0, len(values)*3)
+	data := make([]byte, 0, len(values))
 	for _, value := range values {
-		if value < 0 || value > 0xffffff {
-			return nil, fmt.Errorf("state_data value %d is outside 0..16777215", value)
+		if int64(value) < -2147483648 || int64(value) > 2147483647 {
+			return nil, fmt.Errorf("state_data value %d is outside int32", value)
 		}
-		data = append(data, byte(value), byte(value>>8), byte(value>>16))
+		// Native 0x879c30/0x876ab0 encode each int32 bit pattern as an
+		// unsigned base-128 value, most significant group first. Its decoder
+		// 0x8759c0 restores the same 32 bits, including negative sentinels.
+		bits := uint32(int32(value))
+		shift := 0
+		for bits>>(shift+7) != 0 {
+			shift += 7
+		}
+		if len(data)+shift/7+1 > shared.MaxPartySkillStateDataSize {
+			return nil, fmt.Errorf("state_data encoded size exceeds %d bytes", shared.MaxPartySkillStateDataSize)
+		}
+		for ; shift > 0; shift -= 7 {
+			data = append(data, byte(bits>>shift)&0x7f|0x80)
+		}
+		data = append(data, byte(bits)&0x7f)
 	}
 	return data, nil
 }

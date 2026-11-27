@@ -160,6 +160,22 @@ func TestParseTownAreasMarksExplicitPVP(t *testing.T) {
 	}
 }
 
+func TestDungeonEntrancesAreNotOrdinarySpawnOrStoreAreas(t *testing.T) {
+	a := &pvfArchive{files: map[string]*pvfFile{
+		"town/town.lst":                    {Data: []byte("3 `WestCoast.twn`")},
+		"town/westcoast.twn":               {Data: []byte("[area]\n10 `HendonMyre/West2Stranger.map` `[dungeon gate]` 10\n[/area]\n")},
+		"map/hendonmyre/west2stranger.map": {Data: []byte("[virtual movable area]\n7 192 871 128\n[/virtual movable area]\n")},
+	}}
+	areas := parseTownAreas(a.text("town/westcoast.twn"))
+	if len(areas) != 1 || areas[0].Kind != "dungeon_gate" || areas[0].Gate {
+		t.Fatalf("dungeon entrance confused with public or private area: %+v", areas)
+	}
+	maps := extractMapList(a, "town/town.lst", "town/")
+	if len(maps) != 1 || !maps[0].Use || maps[0].NormalEligible == nil || *maps[0].NormalEligible || maps[0].StoreEligible == nil || *maps[0].StoreEligible || maps[0].StoreProbe == nil || *maps[0].StoreProbe {
+		t.Fatalf("entrance must retain geometry without ordinary spawn/store eligibility: %+v", maps)
+	}
+}
+
 func TestExtractMapListHonorsPrivateStoreFlag(t *testing.T) {
 	for _, tc := range []struct {
 		name, flag, kind string
@@ -268,7 +284,7 @@ func TestExtractMapListNeverFabricatesAreasOrCoordinates(t *testing.T) {
 	if !maps[3].Gate || !maps[3].Use || maps[3].XMin != 50 || maps[3].XMax != 450 {
 		t.Fatalf("gate map with virtual geometry was not exported: %+v", maps[3])
 	}
-	if maps[3].NormalEligible == nil || !*maps[3].NormalEligible || maps[3].StoreEligible == nil || *maps[3].StoreEligible || maps[3].StoreProbe == nil || *maps[3].StoreProbe {
+	if maps[3].NormalEligible == nil || *maps[3].NormalEligible || maps[3].StoreEligible == nil || *maps[3].StoreEligible || maps[3].StoreProbe == nil || *maps[3].StoreProbe {
 		t.Fatalf("gate eligibility was not split: %+v", maps[3])
 	}
 	if !maps[4].Gate || maps[4].Use {

@@ -13,6 +13,9 @@ func (r *RobotVo) handleSessionPacketUnsafe(packet robotInboundPacket) {
 	switch packet.typ {
 	case 0:
 		var checksums [8]byte
+		if checksum, known := r.inventoryChecksumUnsafe(); known {
+			binary.LittleEndian.PutUint32(checksums[:4], checksum)
+		}
 		pkt, err := buildSendPacket(0, uint16(r.PacketID), checksums[:], r.Cipher)
 		if err != nil {
 			foundationlog.Robotf("[SESSION_CHECK_RESPONSE_ERROR] uid=%d stage=build err=%v\n", r.UID, err)
