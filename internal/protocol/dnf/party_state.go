@@ -348,7 +348,11 @@ func (r *RobotVo) stepTownFollowUnsafe(position townEntityPosition, now time.Tim
 	distance := math.Hypot(dx, dy)
 	spacing := float64(50 + r.UID%21)
 	if distance <= spacing+2 || !r.townFollowMoving && distance < spacing+24 {
+		wasMoving := r.townFollowMoving
 		r.townFollowMoving = false
+		if wasMoving {
+			return r.setPositionUnsafe(r.CurX, r.CurY, 0, 0)
+		}
 		return false
 	}
 	r.townFollowMoving = true
@@ -358,9 +362,9 @@ func (r *RobotVo) stepTownFollowUnsafe(position townEntityPosition, now time.Tim
 	step = math.Min(step, distance-spacing)
 	x := uint16(math.Round(float64(r.CurX) + dx*step/distance))
 	y := uint16(math.Round(float64(r.CurY) + dy*step/distance))
-	moveType := position.moveType
-	if moveType == 0 {
-		moveType = 5
+	moveType := byte(5)
+	if dx < 0 {
+		moveType = 6
 	}
 	speed := position.speed
 	if speed == 0 {

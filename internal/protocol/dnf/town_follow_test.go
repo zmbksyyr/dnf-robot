@@ -58,11 +58,31 @@ func TestRobotFollowsCachedPartyLeaderTownPosition(t *testing.T) {
 		t.Fatal(err)
 	}
 	x, y := binary.LittleEndian.Uint16(payload), binary.LittleEndian.Uint16(payload[2:])
-	if x <= 100 || math.Hypot(float64(x)-100, float64(y)-200) > 24.8 || payload[4] != 6 {
+	if x <= 100 || math.Hypot(float64(x)-100, float64(y)-200) > 24.8 || payload[4] != 5 {
 		t.Fatalf("follow must send a walking step, got %x", payload)
 	}
-	if vo.PacketID != 8 || vo.CurX != x || vo.CurY != y || vo.MoveType != 6 {
+	if vo.PacketID != 8 || vo.CurX != x || vo.CurY != y || vo.MoveType != 5 {
 		t.Fatalf("state packet=%d x=%d y=%d type=%d", vo.PacketID, vo.CurX, vo.CurY, vo.MoveType)
+	}
+	// Arrival must stop the remote walking animation, including when the
+	// leader's last position still carries a moving state.
+	vo.CurX, vo.CurY = 860, 278
+	go func() {
+		buf := make([]byte, 21)
+		_, _ = io.ReadFull(peerConn, buf)
+		gotCh <- buf
+	}()
+	now := time.Now().Add(time.Second)
+	position := vo.townEntityPositions[0x9692]
+	if !vo.stepTownFollowUnsafe(position, now) {
+		t.Fatal("arrival did not send a stop")
+	}
+	payload, err = cipher.Decrypt(37, (<-gotCh)[13:])
+	if err != nil || payload[4] != 0 || binary.LittleEndian.Uint16(payload[5:7]) != 0 {
+		t.Fatalf("arrival stop=%x err=%v", payload, err)
+	}
+	if vo.stepTownFollowUnsafe(position, now.Add(time.Second)) || vo.PacketID != 9 {
+		t.Fatal("idle follow repeated a movement packet")
 	}
 }
 
