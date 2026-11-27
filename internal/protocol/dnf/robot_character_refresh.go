@@ -101,6 +101,7 @@ func (r *RobotVo) finishReturnToSelectUnsafe() {
 	r.partyDungeonReturnPending = false
 	r.characterUniqueID = 0
 	r.characterBaseInfo = characterBasicInfo{}
+	r.characterResources = characterResourcePool{}
 	r.characterLevel = characterLevelInfo{}
 	r.clearCharacterInventoryUnsafe()
 	r.partySkillInfoKnown = false

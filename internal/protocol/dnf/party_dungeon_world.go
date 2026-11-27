@@ -105,6 +105,7 @@ func (r *RobotVo) observePartyDungeonFrameUnsafe(frame []byte, peer partyIPPeer,
 		r.recordPartyDungeonBodyUnsafe(peer.accID, "RX", payload)
 		r.observePartyProjectileHitUnsafe(payload, now)
 		r.partyDungeonWorld.observe(payload, now)
+		r.rememberPartyResourcesUnsafe()
 		return
 	}
 	if frame[0] != 1 {
@@ -119,6 +120,7 @@ func (r *RobotVo) observePartyDungeonFrameUnsafe(frame []byte, peer partyIPPeer,
 		r.recordPartyDungeonBodyUnsafe(peer.accID, "RX", payload[:size])
 		r.observePartyProjectileHitUnsafe(payload[:size], now)
 		r.partyDungeonWorld.observe(payload[:size], now)
+		r.rememberPartyResourcesUnsafe()
 		payload = payload[size:]
 	}
 }

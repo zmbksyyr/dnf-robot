@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"net"
 	"time"
+
+	foundationlog "robot/internal/foundation/log"
 )
 
 // USE_SKILL carries the resulting MP, not the amount consumed. Put it before
@@ -25,8 +27,10 @@ func buildPartyUseSkillBody(unique uint16, skill, level byte, mp int32) []byte {
 }
 
 func (r *RobotVo) sendPartySkillCastUnsafe(conn *net.UDPConn, now time.Time, candidate partySkillCandidate) bool {
+	r.seedPartyResourcesUnsafe()
 	self := partyDungeonPlayerReference(r.partySelfPeer.uniqueID)
 	actor := r.partyDungeonWorld.actors[self]
+	previousMP := actor.mp
 	var use []byte
 	var paidMP int32
 	if actor.mpKnown && len(candidate.baseMPByLevel) > 0 {
@@ -46,6 +50,8 @@ func (r *RobotVo) sendPartySkillCastUnsafe(conn *net.UDPConn, now time.Time, can
 		actor.mp = paidMP
 		actor.lastSkill, actor.skillLevel, actor.lastSkillAt = candidate.skillIndex, byte(candidate.level), now
 		r.partyDungeonWorld.actors[self] = actor
+		r.rememberPartyResourcesUnsafe()
+		foundationlog.Robotf("[PARTY_SKILL_MP] uid=%d cid=%d skill=%d level=%d before=%d after=%d\n", r.UID, r.CID, candidate.skillIndex, candidate.level, previousMP, actor.mp)
 	}
 	return true
 }

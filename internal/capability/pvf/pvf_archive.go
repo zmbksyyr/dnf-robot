@@ -390,7 +390,7 @@ func extractItemList(a *pvfArchive, listPath, prefix string, stackable bool) []s
 		}
 		if !stackable {
 			applyEquipmentPathJob(&item, pathJob)
-
+			item.Resources = equipmentResources(body)
 		}
 		if !stackable {
 			item.SetKey = deriveItemSetKey(itemPath, body, item)

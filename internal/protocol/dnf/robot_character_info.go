@@ -121,6 +121,7 @@ func (r *RobotVo) handleCharacterInfoUnsafe(packet robotInboundPacket) {
 			r.clearCharacterInventoryUnsafe()
 			r.characterUniqueID = selected
 			r.characterBaseInfo = characterBasicInfo{}
+			r.characterResources = characterResourcePool{}
 			r.characterLevel = characterLevelInfo{}
 		}
 		return

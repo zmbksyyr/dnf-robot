@@ -21,5 +21,6 @@ func loadInventoryItemKinds(pvfDir string) error {
 		}
 	}
 	shared.SetInventoryItemKinds(catalogs[0], catalogs[1])
+	shared.SetResourceEquipment(catalogs[0])
 	return nil
 }

@@ -116,6 +116,7 @@ type RobotVo struct {
 	SelectCharacSent     bool
 	characterUniqueID    uint16
 	characterBaseInfo    characterBasicInfo
+	characterResources   characterResourcePool
 	characterLevel       characterLevelInfo
 	sceneCategory        sceneCategoryInfo
 	ReturnSelectPending  bool
@@ -437,6 +438,7 @@ func (r *RobotVo) Load(info UserLoginInfo) {
 	r.inventoryChecksumSeed, r.inventoryChecksumSeedKnown = 0, false
 	r.characterUniqueID = 0
 	r.characterBaseInfo = characterBasicInfo{}
+	r.characterResources = characterResourcePool{}
 	r.characterLevel = characterLevelInfo{}
 	r.sceneCategory = sceneCategoryInfo{}
 	r.partySkillInfoKnown = false
@@ -519,6 +521,7 @@ func (r *RobotVo) closeOutUnsafe() {
 	r.inventoryChecksumSeed, r.inventoryChecksumSeedKnown = 0, false
 	r.characterUniqueID = 0
 	r.characterBaseInfo = characterBasicInfo{}
+	r.characterResources = characterResourcePool{}
 	r.characterLevel = characterLevelInfo{}
 	r.sceneCategory = sceneCategoryInfo{}
 	r.logPartyTransportClearedUnsafe("session closed")

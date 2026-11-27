@@ -483,6 +483,7 @@ func (r *RobotVo) loadPartySkillProfile(generation, catalogGeneration uint64, ui
 	r.partySkillLoaded = true
 	r.partySkillCatalogGeneration = catalogGeneration
 	r.partySkillJob = profile.job
+	r.seedPartyResourcesUnsafe()
 	r.partySkillCandidates = profile.candidates[:0]
 	for _, candidate := range profile.candidates {
 		if learned := int(r.partySkillLevels[candidate.skillIndex]); learned > 0 {
