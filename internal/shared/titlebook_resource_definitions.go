@@ -100,3 +100,52 @@ func TitlebookCollectionDefinition(category int) (TitlebookCategoryResources, bo
 	}
 	return cloneTitlebookCategory(snapshot.collection[category]), true
 }
+
+// TitlebookResourceEffects returns the nominal attribute effects in native
+// application order. Nil occupancy means unknown, not empty. Without all four
+// lists, only default effects are returned and collectionKnown stays false.
+// Mode/map exclusions and passive/runtime modifiers are not evaluated here.
+func TitlebookResourceEffects(occupied [4][]bool, equippedTitle uint32) (effects []ResourceEffect, defaultKnown, collectionKnown bool) {
+	snapshot := characterResourceDefinitions.Load()
+	if snapshot == nil || !snapshot.defaultKnown {
+		return nil, false, false
+	}
+	effects = slices.Clone(snapshot.defaultEffects)
+	if !snapshot.collectionKnown {
+		return effects, true, false
+	}
+	for category, definition := range snapshot.collection {
+		if len(occupied[category]) < len(definition.Elements) {
+			return effects, true, false
+		}
+	}
+	for category, definition := range snapshot.collection {
+		complete := make([]bool, len(definition.Elements))
+		equippedMatched := false
+		for slot, element := range definition.Elements {
+			// Native ffbd30 leaves slots with no title definitions untouched.
+			if len(element.Titles) == 0 {
+				continue
+			}
+			if occupied[category][slot] {
+				complete[slot] = true
+			} else if !equippedMatched && equippedTitle != 0 {
+				for _, title := range element.Titles {
+					if title > 0 && uint32(title) == equippedTitle {
+						complete[slot], equippedMatched = true, true
+						break
+					}
+				}
+			}
+		}
+		for _, section := range definition.Sections {
+			// Empty ranges produce NaN in ff9f20; ffbaa0's comparison enables
+			// them too. Keep the same result without dividing by zero.
+			if slices.Contains(complete[section.Start:section.End], false) {
+				continue
+			}
+			effects = append(effects, section.Effects...)
+		}
+	}
+	return effects, true, true
+}

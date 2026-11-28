@@ -13,38 +13,41 @@ import (
 // USE_SKILL payment. The equipment bank is an intermediate calculation: it
 // excludes passive/runtime modifiers and cannot initialize current HP/MP.
 type characterResourcePool struct {
-	hp, mp                int32
-	equipmentHP           int32
-	equipmentMP           int32
-	definitionHP          int32
-	definitionMP          int32
-	titlebookDefaultKnown bool
-	titlebook             characterTitlebookInfo
-	definitionGeneration  uint64
-	hpObserved            bool
-	mpObserved            bool
-	vitality, spirit      int32
-	hpRate, mpRate        float32
-	mpRegen               int32
-	mpRegenKnown          bool
-	weaponType            int
-	weaponTypeKnown       bool
-	equipmentComplete     bool
-	equipmentSource       characterBasicInfo
-	equipmentLevel        characterLevelInfo
-	equipmentJob          int
-	syncPending           bool
+	hp, mp                      int32
+	equipmentHP                 int32
+	equipmentMP                 int32
+	definitionHP                int32
+	definitionMP                int32
+	titlebookDefaultKnown       bool
+	titlebookCollectionKnown    bool
+	titlebook                   characterTitlebookInfo
+	definitionGeneration        uint64
+	definitionTitlebookRevision uint64
+	hpObserved                  bool
+	mpObserved                  bool
+	vitality, spirit            int32
+	hpRate, mpRate              float32
+	mpRegen                     int32
+	mpRegenKnown                bool
+	weaponType                  int
+	weaponTypeKnown             bool
+	equipmentComplete           bool
+	equipmentSource             characterBasicInfo
+	equipmentLevel              characterLevelInfo
+	equipmentJob                int
+	syncPending                 bool
 }
 
 func (r *RobotVo) initializeCharacterResourcesUnsafe() {
 	info := r.characterBaseInfo
 	pool := &r.characterResources
 	generation := shared.CharacterResourceGeneration()
-	if pool.equipmentComplete && pool.equipmentSource == info && pool.equipmentLevel == r.characterLevel && pool.equipmentJob == r.partySkillJob && pool.definitionGeneration == generation && r.partySkillLoaded {
+	if pool.equipmentComplete && pool.equipmentSource == info && pool.equipmentLevel == r.characterLevel && pool.equipmentJob == r.partySkillJob && pool.definitionGeneration == generation && pool.definitionTitlebookRevision == pool.titlebook.revision && r.partySkillLoaded {
 		return
 	}
 	pool.equipmentComplete, pool.weaponTypeKnown = false, false
 	pool.titlebookDefaultKnown = false
+	pool.titlebookCollectionKnown = false
 	pool.definitionHP, pool.definitionMP = 0, 0
 	if !info.known || !info.equipment.known || !r.characterLevel.known || !r.partySkillLoaded {
 		return
@@ -164,19 +167,54 @@ func (r *RobotVo) initializeCharacterResourcesUnsafe() {
 	pool.equipmentComplete = true
 	pool.equipmentSource, pool.equipmentLevel, pool.equipmentJob = info, r.characterLevel, r.partySkillJob
 	pool.definitionGeneration = generation
-	if bonus, known := shared.TitlebookDefaultResourceBonus(); known {
-		// Default rewards apply even to empty title collections. Collection,
-		// passive and runtime effects remain separate inputs, so this bank is
-		// still not a final pool or a source of current HP/MP.
-		vit := max(0, int32(float32(int32(vitality)+bonus.Vitality)*float32(1+bonus.VitalityRate)))
-		spi := max(0, int32(float32(int32(spirit)+bonus.Spirit)*float32(1+bonus.SpiritRate)))
-		finalHPRate := float32(hpRate+bonus.HPRate) + float32(float32(vit)/250)
-		finalMPRate := float32(mpRate+bonus.MPRate) + float32(float32(spi)/250)
-		pool.definitionHP = max(1, int32(float32(int32(hp)+bonus.HP)*finalHPRate))
-		pool.definitionMP = max(1, int32(float32(int32(mp)+bonus.MP)*finalMPRate))
-		pool.titlebookDefaultKnown = true
+	pool.definitionTitlebookRevision = pool.titlebook.revision
+	var occupied [4][]bool
+	for category, collection := range pool.titlebook.categories {
+		if collection.known {
+			occupied[category] = make([]bool, characterTitlebookCapacities[category])
+			for slot := range collection.slots {
+				occupied[category][slot] = true
+			}
+		}
 	}
-	foundationlog.Robotf("[CHARACTER_RESOURCE_EQUIPMENT] uid=%d cid=%d source=pvf_equipment hp=%d mp=%d vitality=%d spirit=%d hp_rate=%g mp_rate=%g weapon_type=%d mp_regen=%d mp_regen_known=%t titlebook_default_known=%t definition_hp=%d definition_mp=%d final_resources_known=false\n", r.UID, r.CID, maxHP, maxMP, vitality, spirit, hpRate, mpRate, weaponType, regen, regenKnown, pool.titlebookDefaultKnown, pool.definitionHP, pool.definitionMP)
+	// USERINFO ordinary-equipment slot 11 is the title (global slot 21).
+	effects, defaultKnown, collectionKnown := shared.TitlebookResourceEffects(occupied, info.equipment.itemID(21))
+	pool.titlebookDefaultKnown, pool.titlebookCollectionKnown = defaultKnown, collectionKnown
+	if defaultKnown {
+		// Apply percentages sequentially, starting with the existing bank's
+		// rates. Aggregating -90% and +10% first changes float32 rounding.
+		definitionHP, definitionMP, vit, spi := hp, mp, vitality, spirit
+		hpMultiplier, mpMultiplier := hpRate, mpRate
+		vitMultiplier, spiMultiplier := float32(1), float32(1)
+		for _, effect := range effects {
+			var flat *int
+			var rate *float32
+			switch effect.Stat {
+			case 13:
+				flat, rate = &definitionHP, &hpMultiplier
+			case 48:
+				flat, rate = &definitionMP, &mpMultiplier
+			case 3:
+				flat, rate = &vit, &vitMultiplier
+			case 2:
+				flat, rate = &spi, &spiMultiplier
+			default:
+				continue
+			}
+			if effect.Percent {
+				*rate += float32(effect.Value * float32(0.01))
+			} else {
+				*flat += int(effect.Value)
+			}
+		}
+		finalVit := max(0, int32(float32(vit)*vitMultiplier))
+		finalSpi := max(0, int32(float32(spi)*spiMultiplier))
+		finalHPRate := hpMultiplier + float32(float32(finalVit)/250)
+		finalMPRate := mpMultiplier + float32(float32(finalSpi)/250)
+		pool.definitionHP = max(1, int32(float32(definitionHP)*finalHPRate))
+		pool.definitionMP = max(1, int32(float32(definitionMP)*finalMPRate))
+	}
+	foundationlog.Robotf("[CHARACTER_RESOURCE_EQUIPMENT] uid=%d cid=%d source=pvf_equipment hp=%d mp=%d vitality=%d spirit=%d hp_rate=%g mp_rate=%g weapon_type=%d mp_regen=%d mp_regen_known=%t titlebook_default_known=%t titlebook_collection_known=%t definition_hp=%d definition_mp=%d final_resources_known=false\n", r.UID, r.CID, maxHP, maxMP, vitality, spirit, hpRate, mpRate, weaponType, regen, regenKnown, pool.titlebookDefaultKnown, pool.titlebookCollectionKnown, pool.definitionHP, pool.definitionMP)
 }
 
 func (r *RobotVo) seedPartyResourcesUnsafe() {

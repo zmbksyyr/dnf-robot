@@ -3,6 +3,7 @@ package shared
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sync/atomic"
 )
 
@@ -37,6 +38,7 @@ type ResourceBonus struct {
 type characterResourceDefinitionsSnapshot struct {
 	defaultKnown    bool
 	defaultBonus    ResourceBonus
+	defaultEffects  []ResourceEffect
 	weapons         map[int][][4]float32
 	collectionKnown bool
 	collection      [4]TitlebookCategoryResources
@@ -84,6 +86,7 @@ func SetCharacterResourceDefinitions(definitions *CharacterResourceDefinitions) 
 			*flat += int32(effect.Value)
 		}
 	}
+	snapshot.defaultEffects = slices.Clone(definitions.TitlebookDefault)
 	for _, weapon := range definitions.Weapons {
 		if weapon.Job < 0 || weapon.Job > 10 || len(weapon.SkillInfo) == 0 || len(weapon.SkillInfo) > 256 {
 			return fmt.Errorf("invalid character weapon table job=%d rows=%d", weapon.Job, len(weapon.SkillInfo))

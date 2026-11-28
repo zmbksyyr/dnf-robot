@@ -28,10 +28,11 @@ type characterTitlebookCategory struct {
 	slots map[uint16][characterTitlebookRecordSize]byte
 }
 
-// These are observed inputs, not applied collection rewards. The achievement
+// These are observed inputs to the nominal titlebook projection. The achievement
 // words are remaining trigger counts: native stAchievement::isComplete tests
 // all three for zero. Slot occupancy is a separate input.
 type characterTitlebookInfo struct {
+	revision          uint64
 	categories        [4]characterTitlebookCategory
 	achievementsKnown bool
 	achievements      map[uint32][3]uint16
@@ -260,7 +261,9 @@ func (r *RobotVo) handleCharacterTitlebookUnsafe(packet robotInboundPacket) {
 		info.categories[category] = characterTitlebookCategory{}
 	}
 	if changed {
+		info.revision++
+		r.initializeCharacterResourcesUnsafe()
 		categories, titles, achievements, completed := info.summary()
-		foundationlog.Robotf("[CHARACTER_TITLEBOOK] uid=%d cid=%d source_type=%d categories_known=%d titles=%d achievements_known=%t achievements=%d completed=%d collection_rewards_applied=false\n", r.UID, r.CID, packet.typ, categories, titles, info.achievementsKnown, achievements, completed)
+		foundationlog.Robotf("[CHARACTER_TITLEBOOK] uid=%d cid=%d source_type=%d categories_known=%d titles=%d achievements_known=%t achievements=%d completed=%d collection_projection_known=%t final_resources_known=false\n", r.UID, r.CID, packet.typ, categories, titles, info.achievementsKnown, achievements, completed, r.characterResources.titlebookCollectionKnown)
 	}
 }
