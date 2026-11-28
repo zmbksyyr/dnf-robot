@@ -41,6 +41,7 @@ func SetResourceEquipment(items []EquipmentCatalogItem) {
 		index[item.ID] = item
 	}
 	resourceEquipmentSnapshot.Store(&index)
+	characterResourceGeneration.Add(1)
 }
 
 func ResourceEquipment(id int) (EquipmentCatalogItem, bool) {

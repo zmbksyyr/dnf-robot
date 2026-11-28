@@ -58,6 +58,7 @@ func TestEquipmentBankDoesNotSeedCurrentResourcesAndObservedPaymentSurvivesRooms
 }
 
 func TestPartySkillMPCostUsesPVFWeaponRateAndRejectsUnknownWeapon(t *testing.T) {
+	setSwordmanWeaponResourceTestDefinition(t)
 	weapon := make([]byte, 23)
 	weapon[0] = 10
 	binary.LittleEndian.PutUint32(weapon[1:5], 9001)
@@ -130,6 +131,7 @@ func TestPostLoginUnknownSkillInputsDoNotCast(t *testing.T) {
 }
 
 func TestWeaponReducedCostIsUsedForSkillAndStateSelection(t *testing.T) {
+	setSwordmanWeaponResourceTestDefinition(t)
 	now := time.Now()
 	r, self, _ := basicAttackTestRobot(t, now)
 	r.characterBaseInfo = characterBasicInfo{known: true, equipment: characterEquipmentInfo{known: true}}
@@ -165,6 +167,79 @@ func TestWeaponReducedCostIsUsedForSkillAndStateSelection(t *testing.T) {
 	r.partySkillJob = 8
 	if _, known := r.partySkillMPCostUnsafe(r.partySkillCandidates[0]); known {
 		t.Fatal("swordman weapon rates were reused for another job")
+	}
+}
+
+func setSwordmanWeaponResourceTestDefinition(t *testing.T) {
+	t.Helper()
+	if err := shared.SetCharacterResourceDefinitions(&shared.CharacterResourceDefinitions{Version: 1,
+		Weapons: []shared.CharacterWeaponResources{{Job: 0, SkillInfo: [][4]float32{{1, 1, 1.15, 1.05}, {.95, .95, 1.05, 1}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = shared.SetCharacterResourceDefinitions(nil) })
+}
+
+func TestTitlebookDefaultProjectionMatchesRecordedNativePoolAndRefreshes(t *testing.T) {
+	definitions := shared.CharacterResourceDefinitions{Version: 1, TitlebookDefaultKnown: true,
+		TitlebookDefault: []shared.ResourceEffect{{Stat: 13, Percent: true, Value: 100}, {Stat: 48, Percent: true, Value: 100}, {Stat: 3, Percent: true, Value: -90}, {Stat: 2, Percent: true, Value: -90}}}
+	if err := shared.SetCharacterResourceDefinitions(&definitions); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = shared.SetCharacterResourceDefinitions(nil) })
+	r := &RobotVo{partySkillLoaded: true, characterLevel: characterLevelInfo{known: true, level: 20},
+		characterBaseInfo: characterBasicInfo{known: true, equipment: characterEquipmentInfo{known: true}}}
+	// Original Windows Lv20 bank before its 17 titlebook effects: 1035/615,
+	// vitality 98, spirit 84. The recorded full pool was 2107/1249.
+	binary.LittleEndian.PutUint32(r.characterBaseInfo.stats[0:4], 10350)
+	binary.LittleEndian.PutUint32(r.characterBaseInfo.stats[4:8], 6150)
+	binary.LittleEndian.PutUint16(r.characterBaseInfo.stats[0xa:0xc], 980)
+	binary.LittleEndian.PutUint16(r.characterBaseInfo.stats[0xe:0x10], 840)
+	r.initializeCharacterResourcesUnsafe()
+	if pool := r.characterResources; !pool.titlebookDefaultKnown || pool.definitionHP != 2107 || pool.definitionMP != 1249 || pool.hpObserved || pool.mpObserved {
+		t.Fatalf("recorded native titlebook projection=%+v", pool)
+	}
+	definitions.TitlebookDefault[0].Value = 0
+	if err := shared.SetCharacterResourceDefinitions(&definitions); err != nil {
+		t.Fatal(err)
+	}
+	r.initializeCharacterResourcesUnsafe()
+	if r.characterResources.definitionHP != 1072 {
+		t.Fatalf("catalog reload reused previous projection: %+v", r.characterResources)
+	}
+	_ = shared.SetCharacterResourceDefinitions(nil)
+	r.initializeCharacterResourcesUnsafe()
+	if r.characterResources.titlebookDefaultKnown || r.characterResources.definitionHP != 0 {
+		t.Fatal("missing titlebook definition retained a known projection")
+	}
+}
+
+func TestWeaponCostUsesJobSpecificCatalogAndReload(t *testing.T) {
+	r := &RobotVo{partySkillLoaded: true, partySkillJob: 8, characterLevel: characterLevelInfo{known: true, level: 1},
+		characterBaseInfo: characterBasicInfo{known: true, equipment: characterEquipmentInfo{known: true}}}
+	definitions := shared.CharacterResourceDefinitions{Version: 1,
+		Weapons: []shared.CharacterWeaponResources{{Job: 8, SkillInfo: [][4]float32{{1.2, 1, .7, 1}}}}}
+	if err := shared.SetCharacterResourceDefinitions(&definitions); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = shared.SetCharacterResourceDefinitions(nil) })
+	candidate := partySkillCandidate{level: 1, baseMPByLevel: []int{10}, mpRules: shared.SkillMPRules{Known: true, WeaponEffect: 1}}
+	if cost, known := r.partySkillMPCostUnsafe(candidate); !known || cost != 12 {
+		t.Fatalf("job-specific physical cost=%d known=%t", cost, known)
+	}
+	candidate.mpRules.WeaponEffect = 2
+	if cost, known := r.partySkillMPCostUnsafe(candidate); !known || cost != 7 {
+		t.Fatalf("job-specific magical cost=%d known=%t", cost, known)
+	}
+	definitions.Weapons[0].SkillInfo[0][2] = .5
+	if err := shared.SetCharacterResourceDefinitions(&definitions); err != nil {
+		t.Fatal(err)
+	}
+	if cost, known := r.partySkillMPCostUnsafe(candidate); !known || cost != 5 {
+		t.Fatalf("catalog reload cost=%d known=%t", cost, known)
+	}
+	_ = shared.SetCharacterResourceDefinitions(nil)
+	if _, known := r.partySkillMPCostUnsafe(candidate); known {
+		t.Fatal("missing catalog fell back to a hardcoded weapon rate")
 	}
 }
 

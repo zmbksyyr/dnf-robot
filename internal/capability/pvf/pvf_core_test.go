@@ -82,13 +82,14 @@ func TestExtractPVFLevelExpStopsAtFirstDecrease(t *testing.T) {
 func TestPVFExportsCurrentInvalidatesOldSchemas(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string][]byte{
-		"equipment_catalog.json":   []byte(`[{"item_type": 20}]`),
-		"stackable_catalog.json":   []byte(`[{"id": 1}]`),
-		"map_catalog.json":         []byte(`[{"normal_eligible":true,"store_eligible":true,"store_probe_eligible":false}]`),
-		pvfSkillStateExportName:    []byte(`[{"job": 1}]`),
-		pvfLevelExpExportName:      []byte(`[0,0,1000]`),
-		pvfDungeonObjectExportName: []byte(`{"version":1,"objects":[]}`),
-		pvfItemInfoExportName:      []byte("iteminfo"),
+		"equipment_catalog.json":       []byte(`[{"item_type": 20}]`),
+		"stackable_catalog.json":       []byte(`[{"id": 1}]`),
+		"map_catalog.json":             []byte(`[{"normal_eligible":true,"store_eligible":true,"store_probe_eligible":false}]`),
+		pvfSkillStateExportName:        []byte(`[{"job": 1}]`),
+		pvfLevelExpExportName:          []byte(`[0,0,1000]`),
+		pvfDungeonObjectExportName:     []byte(`{"version":1,"objects":[]}`),
+		pvfItemInfoExportName:          []byte("iteminfo"),
+		pvfCharacterResourceExportName: []byte(`{"version":1,"titlebook_default_known":false}`),
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
@@ -121,6 +122,12 @@ func TestPVFExportsCurrentInvalidatesOldSchemas(t *testing.T) {
 	}
 	if !pvfExportsCurrent(manifestPath, want, dir) {
 		t.Fatal("matching skill state schema was not current")
+	}
+	if err := os.Remove(filepath.Join(dir, pvfCharacterResourceExportName)); err != nil {
+		t.Fatal(err)
+	}
+	if pvfExportsCurrent(manifestPath, want, dir) {
+		t.Fatal("missing character resource catalog was treated as current")
 	}
 
 }
@@ -337,13 +344,14 @@ func BenchmarkPVFExportsCurrentStreaming(b *testing.B) {
 	dir := b.TempDir()
 	large := bytes.Repeat([]byte{' '}, 2*1024*1024)
 	files := map[string][]byte{
-		pvfEquipmentExportName:     append([]byte(`{"item_type": 20}`), large...),
-		pvfStackableExportName:     append([]byte(`[{"id":1}]`), large...),
-		pvfMapExportName:           append([]byte(`{"normal_eligible":true,"store_eligible":true,"store_probe_eligible":false}`), large...),
-		pvfSkillStateExportName:    []byte(`[{"job":1}]`),
-		pvfLevelExpExportName:      []byte(`[0,0,1000]`),
-		pvfDungeonObjectExportName: []byte(`{"version":1,"objects":[]}`),
-		pvfItemInfoExportName:      []byte("iteminfo"),
+		pvfEquipmentExportName:         append([]byte(`{"item_type": 20}`), large...),
+		pvfStackableExportName:         append([]byte(`[{"id":1}]`), large...),
+		pvfMapExportName:               append([]byte(`{"normal_eligible":true,"store_eligible":true,"store_probe_eligible":false}`), large...),
+		pvfSkillStateExportName:        []byte(`[{"job":1}]`),
+		pvfLevelExpExportName:          []byte(`[0,0,1000]`),
+		pvfDungeonObjectExportName:     []byte(`{"version":1,"objects":[]}`),
+		pvfItemInfoExportName:          []byte("iteminfo"),
+		pvfCharacterResourceExportName: []byte(`{"version":1,"titlebook_default_known":false}`),
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
@@ -367,13 +375,14 @@ func BenchmarkPVFExportsCurrentStreaming(b *testing.B) {
 func writeCurrentPVFExportFiles(t *testing.T, dir string) {
 	t.Helper()
 	files := map[string][]byte{
-		"equipment_catalog.json":   []byte(`[{"item_type": 20}]`),
-		"stackable_catalog.json":   []byte(`[{"id": 1}]`),
-		"map_catalog.json":         []byte(`[{"normal_eligible":true,"store_eligible":true,"store_probe_eligible":false}]`),
-		pvfSkillStateExportName:    []byte(`[{"job": 1, "skill_index": 1, "state": 1}]`),
-		pvfLevelExpExportName:      []byte(`[0,0,1000]`),
-		pvfDungeonObjectExportName: []byte(`{"version":1,"objects":[]}`),
-		pvfItemInfoExportName:      []byte("iteminfo"),
+		"equipment_catalog.json":       []byte(`[{"item_type": 20}]`),
+		"stackable_catalog.json":       []byte(`[{"id": 1}]`),
+		"map_catalog.json":             []byte(`[{"normal_eligible":true,"store_eligible":true,"store_probe_eligible":false}]`),
+		pvfSkillStateExportName:        []byte(`[{"job": 1, "skill_index": 1, "state": 1}]`),
+		pvfLevelExpExportName:          []byte(`[0,0,1000]`),
+		pvfDungeonObjectExportName:     []byte(`{"version":1,"objects":[]}`),
+		pvfItemInfoExportName:          []byte("iteminfo"),
+		pvfCharacterResourceExportName: []byte(`{"version":1,"titlebook_default_known":false}`),
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {

@@ -29,8 +29,8 @@ type pvfManifest struct {
 	Runtime           interface{} `json:"runtime,omitempty"`
 }
 
-// Version 27 preserves actual PVF levels in auction search metadata.
-const pvfExportVersion = 27
+// Version 28 adds source-derived character weapon rates and titlebook defaults.
+const pvfExportVersion = 28
 
 // Version 13 preserves known empty initial vectors separately from unknown ones.
 const pvfSkillStateExportVersion = 16
@@ -74,6 +74,8 @@ func ensureExports(dfGameR, pvfDir, tempDir string) error {
 	setSkillStateCatalog(nil)
 	shared.SetSkillLearningDefinitions(nil)
 	shared.SetInventoryItemKinds(nil, nil)
+	shared.SetResourceEquipment(nil)
+	_ = shared.SetCharacterResourceDefinitions(nil)
 	if pvfDir == "" {
 		return nil
 	}
@@ -84,12 +86,14 @@ func ensureExports(dfGameR, pvfDir, tempDir string) error {
 	learningCatalogPath := filepath.Join(pvfDir, pvfSkillLearningExportName)
 	levelExpPath := filepath.Join(pvfDir, pvfLevelExpExportName)
 	dungeonObjectPath := filepath.Join(pvfDir, pvfDungeonObjectExportName)
+	characterResourcePath := filepath.Join(pvfDir, pvfCharacterResourceExportName)
 	if dfGameR == "" {
 		_ = loadInventoryItemKinds(pvfDir)
 		_ = loadSkillStateCatalog(skillCatalogPath)
 		_ = loadSkillLearningCatalog(learningCatalogPath)
 		_ = loadLevelExpCatalog(levelExpPath)
 		_ = loadDungeonObjectCatalog(dungeonObjectPath)
+		_ = loadCharacterResourceCatalog(characterResourcePath)
 		return nil
 	}
 	pvfPath := filepath.Join(filepath.Dir(dfGameR), "Script.pvf")
@@ -100,6 +104,7 @@ func ensureExports(dfGameR, pvfDir, tempDir string) error {
 		_ = loadSkillLearningCatalog(learningCatalogPath)
 		_ = loadLevelExpCatalog(levelExpPath)
 		_ = loadDungeonObjectCatalog(dungeonObjectPath)
+		_ = loadCharacterResourceCatalog(characterResourcePath)
 		return nil
 	}
 	manifestPath := filepath.Join(pvfDir, pvfManifestName)
@@ -108,7 +113,7 @@ func ensureExports(dfGameR, pvfDir, tempDir string) error {
 		return err
 	}
 	if pvfExportsCurrent(manifestPath, manifest, pvfDir) {
-		if err := loadSkillStateCatalog(skillCatalogPath); err == nil && loadSkillLearningCatalog(learningCatalogPath) == nil && loadLevelExpCatalog(levelExpPath) == nil && loadDungeonObjectCatalog(dungeonObjectPath) == nil && loadInventoryItemKinds(pvfDir) == nil {
+		if err := loadSkillStateCatalog(skillCatalogPath); err == nil && loadSkillLearningCatalog(learningCatalogPath) == nil && loadLevelExpCatalog(levelExpPath) == nil && loadDungeonObjectCatalog(dungeonObjectPath) == nil && loadInventoryItemKinds(pvfDir) == nil && loadCharacterResourceCatalog(characterResourcePath) == nil {
 			return nil
 		}
 	}
@@ -142,6 +147,9 @@ func ensureExports(dfGameR, pvfDir, tempDir string) error {
 	if err := WriteJSON(filepath.Join(stageDir, pvfDungeonObjectExportName), dungeonObjectCatalog{Version: 1, Objects: extractDungeonObjects(archive)}); err != nil {
 		return err
 	}
+	if err := WriteJSON(filepath.Join(stageDir, pvfCharacterResourceExportName), extractCharacterResources(archive)); err != nil {
+		return err
+	}
 	skillStates := extractSkillStateCatalog(archive)
 	if err := WriteJSON(filepath.Join(stageDir, pvfSkillStateExportName), skillStates); err != nil {
 		return err
@@ -172,6 +180,9 @@ func ensureExports(dfGameR, pvfDir, tempDir string) error {
 	}
 	if err := loadInventoryItemKinds(pvfDir); err != nil {
 		return fmt.Errorf("load published PVF inventory item identities: %w", err)
+	}
+	if err := loadCharacterResourceCatalog(characterResourcePath); err != nil {
+		return fmt.Errorf("load published PVF character resources: %w", err)
 	}
 	return nil
 }
@@ -288,13 +299,13 @@ func pvfExportsCurrent(manifestPath string, want pvfManifest, configDir string) 
 	}
 
 	markerScratch := make([]byte, pvfMarkerScanChunk+pvfMarkerScanOverlap)
-	for _, name := range []string{pvfEquipmentExportName, pvfStackableExportName, pvfMapExportName, pvfSkillStateExportName, pvfLevelExpExportName, pvfDungeonObjectExportName, pvfItemInfoExportName} {
+	for _, name := range []string{pvfEquipmentExportName, pvfStackableExportName, pvfMapExportName, pvfSkillStateExportName, pvfLevelExpExportName, pvfDungeonObjectExportName, pvfCharacterResourceExportName, pvfItemInfoExportName} {
 		path := filepath.Join(configDir, name)
 		stat, err := os.Stat(path)
 		if err != nil || stat.Size() <= 5 {
 			return false
 		}
-		if name == pvfItemInfoExportName || name == pvfSkillStateExportName || name == pvfLevelExpExportName || name == pvfDungeonObjectExportName {
+		if name == pvfItemInfoExportName || name == pvfSkillStateExportName || name == pvfLevelExpExportName || name == pvfDungeonObjectExportName || name == pvfCharacterResourceExportName {
 			continue
 		}
 		var required [][]byte

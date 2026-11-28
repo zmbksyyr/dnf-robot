@@ -10,6 +10,7 @@ import (
 
 func loadInventoryItemKinds(pvfDir string) error {
 	shared.SetInventoryItemKinds(nil, nil)
+	shared.SetResourceEquipment(nil)
 	var catalogs [2][]shared.EquipmentCatalogItem
 	for i, name := range []string{pvfEquipmentExportName, pvfStackableExportName} {
 		data, err := os.ReadFile(filepath.Join(pvfDir, name))
