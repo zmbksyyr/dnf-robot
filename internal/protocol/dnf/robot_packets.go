@@ -79,6 +79,8 @@ func (r *RobotVo) parsePacket(inBuf []byte) {
 		fmt.Fprintln(os.Stderr, line)
 	}
 	switch packet.typ {
+	case characterTitlebookList, characterAchievementList, characterAchievementComplete, characterTitlebookPut, characterTitlebookGet, characterAchievementTrigger:
+		r.handleCharacterTitlebookUnsafe(packet)
 	case 2, 4, 33, 37:
 		r.handleCharacterInfoUnsafe(packet)
 	case 19:

@@ -19,6 +19,7 @@ type characterResourcePool struct {
 	definitionHP          int32
 	definitionMP          int32
 	titlebookDefaultKnown bool
+	titlebook             characterTitlebookInfo
 	definitionGeneration  uint64
 	hpObserved            bool
 	mpObserved            bool
