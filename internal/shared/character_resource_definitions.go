@@ -19,10 +19,12 @@ type CharacterWeaponResources struct {
 }
 
 type CharacterResourceDefinitions struct {
-	Version               int                        `json:"version"`
-	TitlebookDefaultKnown bool                       `json:"titlebook_default_known"`
-	TitlebookDefault      []ResourceEffect           `json:"titlebook_default"`
-	Weapons               []CharacterWeaponResources `json:"weapons"`
+	Version                  int                          `json:"version"`
+	TitlebookDefaultKnown    bool                         `json:"titlebook_default_known"`
+	TitlebookDefault         []ResourceEffect             `json:"titlebook_default"`
+	TitlebookCollectionKnown bool                         `json:"titlebook_collection_known"`
+	TitlebookCollection      []TitlebookCategoryResources `json:"titlebook_collection"`
+	Weapons                  []CharacterWeaponResources   `json:"weapons"`
 }
 
 // ResourceBonus contains only HP/MP and the primary attributes that feed them.
@@ -33,9 +35,11 @@ type ResourceBonus struct {
 }
 
 type characterResourceDefinitionsSnapshot struct {
-	defaultKnown bool
-	defaultBonus ResourceBonus
-	weapons      map[int][][4]float32
+	defaultKnown    bool
+	defaultBonus    ResourceBonus
+	weapons         map[int][][4]float32
+	collectionKnown bool
+	collection      [4]TitlebookCategoryResources
 }
 
 var characterResourceDefinitions atomic.Pointer[characterResourceDefinitionsSnapshot]
@@ -53,8 +57,11 @@ func SetCharacterResourceDefinitions(definitions *CharacterResourceDefinitions) 
 		return fmt.Errorf("unsupported character resource catalog version %d", definitions.Version)
 	}
 	snapshot := &characterResourceDefinitionsSnapshot{defaultKnown: definitions.TitlebookDefaultKnown, weapons: make(map[int][][4]float32)}
+	if err := snapshot.setTitlebookCollection(definitions); err != nil {
+		return err
+	}
 	for _, effect := range definitions.TitlebookDefault {
-		if effect.Stat < 0 || effect.Stat > 63 || math.IsNaN(float64(effect.Value)) || math.IsInf(float64(effect.Value), 0) {
+		if !validResourceEffect(effect) {
 			return fmt.Errorf("invalid titlebook resource effect %+v", effect)
 		}
 		var flat *int32
@@ -96,6 +103,10 @@ func SetCharacterResourceDefinitions(definitions *CharacterResourceDefinitions) 
 	characterResourceDefinitions.Store(snapshot)
 	characterResourceGeneration.Add(1)
 	return nil
+}
+
+func validResourceEffect(effect ResourceEffect) bool {
+	return effect.Stat >= 0 && effect.Stat <= 63 && !math.IsNaN(float64(effect.Value)) && !math.IsInf(float64(effect.Value), 0)
 }
 
 func TitlebookDefaultResourceBonus() (ResourceBonus, bool) {

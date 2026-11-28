@@ -29,8 +29,8 @@ type pvfManifest struct {
 	Runtime           interface{} `json:"runtime,omitempty"`
 }
 
-// Version 28 adds source-derived character weapon rates and titlebook defaults.
-const pvfExportVersion = 28
+// Version 29 adds titlebook collection slots and section resource definitions.
+const pvfExportVersion = 29
 
 // Version 13 preserves known empty initial vectors separately from unknown ones.
 const pvfSkillStateExportVersion = 16

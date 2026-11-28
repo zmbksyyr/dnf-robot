@@ -11,6 +11,13 @@ import (
 
 const pvfCharacterResourceExportName = "character_resource_catalog.json"
 
+var titlebookResourceStats = map[string]int{
+	"[hp max]": 13, "[mp max]": 48, "[stuck]": 27, "[good hit]": 33,
+	"[move speed]": 11, "[attack speed]": 10, "[cast speed]": 12, "[village moving speed]": 63,
+	"[physical attack]": 0, "[physical defense]": 3, "[magical attack]": 1, "[magical defense]": 2,
+	"[all element]": 24, "[all element attack]": 46, "[separate attack]": 53, "[mp regen rate]": 29, "[hit recovery]": 30,
+}
+
 func loadCharacterResourceCatalog(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -28,6 +35,7 @@ func extractCharacterResources(archive *pvfArchive) shared.CharacterResourceDefi
 	if file := archive.files["etc/titlebook.etc"]; file != nil {
 		if tokens, valid := archive.definitionTokens(file.Data); valid {
 			out.TitlebookDefault, out.TitlebookDefaultKnown = parseTitlebookDefaultResources(tokens)
+			out.TitlebookCollection, out.TitlebookCollectionKnown = parseTitlebookCollectionResources(tokens)
 		}
 	}
 	for job, path := range []string{
@@ -79,21 +87,28 @@ func parseTitlebookDefaultResources(tokens []pvfDefinitionToken) ([]shared.Resou
 	if !known || len(section)%3 != 0 {
 		return nil, false
 	}
-	stats := map[string]int{"[hp max]": 13, "[mp max]": 48, "[stuck]": 27, "[good hit]": 33,
-		"[move speed]": 11, "[attack speed]": 10, "[cast speed]": 12, "[village moving speed]": 63,
-		"[physical attack]": 0, "[physical defense]": 3, "[magical attack]": 1, "[magical defense]": 2,
-		"[all element]": 24, "[all element attack]": 46, "[separate attack]": 53, "[mp regen rate]": 29, "[hit recovery]": 30}
 	out := make([]shared.ResourceEffect, 0, len(section)/3)
 	for len(section) > 0 {
-		tag, mode, value := section[0], section[1], section[2]
-		stat, recognized := stats[tag.text]
-		if tag.kind != 5 || !recognized || mode.kind != 7 || mode.text != "+" && mode.text != "%" || value.kind != 2 {
+		effect, valid := parseTitlebookResourceEffect(section[:3])
+		if !valid {
 			return nil, false
 		}
-		out = append(out, shared.ResourceEffect{Stat: stat, Percent: mode.text == "%", Value: float32(value.value)})
+		out = append(out, effect)
 		section = section[3:]
 	}
 	return out, true
+}
+
+func parseTitlebookResourceEffect(tokens []pvfDefinitionToken) (shared.ResourceEffect, bool) {
+	if len(tokens) != 3 {
+		return shared.ResourceEffect{}, false
+	}
+	tag, mode, value := tokens[0], tokens[1], tokens[2]
+	stat, recognized := titlebookResourceStats[tag.text]
+	if tag.kind != 5 || !recognized || mode.kind != 7 || mode.text != "+" && mode.text != "%" || value.kind != 2 {
+		return shared.ResourceEffect{}, false
+	}
+	return shared.ResourceEffect{Stat: stat, Percent: mode.text == "%", Value: float32(value.value)}, true
 }
 
 func parseWeaponResourceRows(tokens []pvfDefinitionToken) ([][4]float32, bool) {
