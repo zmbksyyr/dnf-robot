@@ -3,6 +3,8 @@ package webadmin
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,12 +17,12 @@ import (
 
 func newMailboxGuardMemory(t *testing.T) (*os.File, mailboxGuardLayout) {
 	t.Helper()
-	layout := mailboxGuardLayout{invalidItemScanSite: 64, streamListEmptySite: 160}
+	layout := mailboxGuardLayout{invalidItemScanSite: 64, streamListEmptySite: 160, initBranchSite: 256}
 	file, err := os.CreateTemp(t.TempDir(), "mailbox-guard-mem")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Truncate(layout.streamListEmptySite + 64); err != nil {
+	if err := file.Truncate(layout.initBranchSite + 256); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := file.WriteAt(mailboxInvalidItemScanPrefix, layout.invalidItemScanSite-int64(len(mailboxInvalidItemScanPrefix))); err != nil {
@@ -40,6 +42,15 @@ func newMailboxGuardMemory(t *testing.T) (*os.File, mailboxGuardLayout) {
 	}
 	if _, err := file.WriteAt(mailboxStreamListEmptySuffix, layout.streamListEmptySite+int64(len(mailboxStreamListEmptyOriginal))); err != nil {
 		t.Fatal(err)
+	}
+	for _, part := range []memoryRestore{
+		{address: layout.initBranchSite - int64(len(mailboxInitBranchPrefix)), value: mailboxInitBranchPrefix},
+		{address: layout.initBranchSite, value: mailboxInitBranchOriginal},
+		{address: layout.initBranchSite + 0xa9, value: mailboxInitResetPrefix},
+	} {
+		if _, err := file.WriteAt(part.value, part.address); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() { _ = file.Close() })
 	return file, layout
@@ -171,6 +182,91 @@ func TestMailboxGuardRejectsPartialPatch(t *testing.T) {
 	}
 	if _, err := inspectMailboxGuardMemory(mem, layout); err == nil || !strings.Contains(err.Error(), "partially applied") {
 		t.Fatalf("partial patch error = %v", err)
+	}
+}
+
+func TestMailboxGuardReconcilesEveryKnownCombination(t *testing.T) {
+	for mask := 0; mask < 8; mask++ {
+		for _, enable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("mask%d/enable%t", mask, enable), func(t *testing.T) {
+				mem, layout := newMailboxGuardMemory(t)
+				for i, patch := range []memoryRestore{
+					{address: layout.invalidItemScanSite, value: mailboxInvalidItemScanPatched},
+					{address: layout.streamListEmptySite, value: mailboxStreamListEmptyPatched},
+					{address: layout.initBranchSite, value: mailboxInitBranchPatched},
+				} {
+					if mask&(1<<i) != 0 {
+						if _, err := mem.WriteAt(patch.value, patch.address); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if _, err := inspectMailboxGuardMemory(mem, layout); mask != 0 && mask != 7 && !errors.Is(err, errMailboxGuardPartial) {
+					t.Fatalf("mixed state inspection error = %v", err)
+				}
+				// mask 3 is a running server patched by the previous Robot version.
+				changed, err := setMailboxGuardMemory(mem, layout, enable)
+				wantChanged := (enable && mask != 7) || (!enable && mask != 0)
+				if err != nil || changed != wantChanged {
+					t.Fatalf("changed=%t want=%t err=%v", changed, wantChanged, err)
+				}
+				actual, err := inspectMailboxGuardMemory(mem, layout)
+				if err != nil || actual != enable {
+					t.Fatalf("enabled=%t want=%t err=%v", actual, enable, err)
+				}
+			})
+		}
+	}
+}
+
+func TestMailboxGuardRejectsUnknownInitWithoutWriting(t *testing.T) {
+	for _, offset := range []int64{-1, 0, 0xa9} {
+		t.Run(fmt.Sprint(offset), func(t *testing.T) {
+			mem, layout := newMailboxGuardMemory(t)
+			if _, err := mem.WriteAt([]byte{0xcc}, layout.initBranchSite+offset); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(mem.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := setMailboxGuardMemory(mem, layout, true); !errors.Is(err, errMailboxGuardUnsupported) {
+				t.Fatalf("unknown Init error = %v", err)
+			}
+			after, err := os.ReadFile(mem.Name())
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("unknown target changed: err=%v", err)
+			}
+		})
+	}
+}
+
+func TestMailboxGuardRollsBackEverySiteOnFailure(t *testing.T) {
+	for _, enable := range []bool{false, true} {
+		for index := 0; index < 3; index++ {
+			t.Run(fmt.Sprintf("enable%t/site%d", enable, index), func(t *testing.T) {
+				file, layout := newMailboxGuardMemory(t)
+				if !enable {
+					if _, err := setMailboxGuardMemory(file, layout, true); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before, err := os.ReadFile(file.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				sites := []int64{layout.streamListEmptySite, layout.initBranchSite, layout.invalidItemScanSite}
+				injected := errors.New("injected mailbox write failure")
+				mem := &scheduledWriteFailure{memoryReadWriter: file, fail: map[int64]map[int]error{sites[index]: {1: injected}}}
+				if _, err := setMailboxGuardMemory(mem, layout, enable); !errors.Is(err, injected) {
+					t.Fatalf("patch error = %v", err)
+				}
+				after, err := os.ReadFile(file.Name())
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("rollback did not restore all bytes: err=%v", err)
+				}
+			})
+		}
 	}
 }
 

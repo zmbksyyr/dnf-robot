@@ -68,7 +68,7 @@ func (s *Server) reconcileMailboxGuard(cfg mailboxGuardConfig) {
 		foundationlog.Robotf("[MAILBOX_GUARD] transient_inspect_failed pid=%d err=%s\n", status.PID, status.Message)
 		return
 	}
-	if status.Enabled == cfg.Enabled {
+	if status.State != "partial" && status.Enabled == cfg.Enabled {
 		return
 	}
 	updated, err := setMailboxGuard(s.cfg.RobotGamePort, cfg.Enabled)
