@@ -28,7 +28,11 @@ Robot 接收真实队伍广播，维护当前房间的角色、怪物、位置�
 - 换房后 Robot 继续追击、普攻和造成伤害，随后撤退回城。
 - 已验证新角色写入本职业满级技能树，并接收到服务端规范化的技能列表。
 
-尚未完成：全职业全技能实际效果、Robot 受击与 HP / MP 结算同步、完整地下城通关、当前路线的 Linux 实战对照。普通攻击本身不消耗 MP。
+2026-11-28 Windows Native 与 Linux 原 ELF 各完成一次真人 + 剑士 Robot（job0 / Lv20）洛兰通关及回城。真人仅移动、选图和操作结束菜单，未按攻击键；两端均收到真实 type31 通关通知。Windows 保留首领 HP 161→0、成绩和奖励画面；Linux 保留 command81 内外校验通过的 HP_DAMAGE、首领倒地和通关菜单。Linux 诊断汇总省略了部分早期记录，不能据此给出整图逐怪明细。
+
+Linux 跨宿主组队需公告可路由的 STUN / relay 地址，Robot TCP 本地地址也用于绑定队伍 UDP。真实 STUN 返回地址与 TCP 来源不同时，原游戏可能触发代理账号检查；本次以原有 `allow_proxy_user` 表仅授权测试真人账号，未伪造 NAT 状态。修改前值和数据库均已备份。
+
+尚未完成：全职业全技能实际效果、Robot 受击与真实 HP / MP 结算同步、完整组队准备和异常边界。`PARTY_SIM_HURT` / `RECOVER` 仍是近似模拟，不作为实际资源结算通过。普通攻击本身不消耗 MP。旧 Windows 客户端崩溃尚无转储和根因，不能因本轮通关而称已修复。
 
 已采到 SET_HP(12)、SET_MP(13)、HIT(19)、HP_DAMAGE(20)、USE_SKILL(25)。真人有受击记录，Robot 受击链尚未接通；不能据此宣称 Robot 资源已正确结算。
 
@@ -40,7 +44,7 @@ Robot 接收真实队伍广播，维护当前房间的角色、怪物、位置�
 | `state-combat-live1` | Robot 普攻实战原始包、`receipt.json`、`live-outcomes.json` |
 | `state-combat-skills1` | 满技能初始化和随机选招阶段记录 |
 
-后续先推进 Windows 的实际击杀和资源链，再做 Linux 对照。已通过的资格、冷却等行为直接引用既有结果，过程细节只放阶段 REPORT。
+本次双端通关证据在工作区 `x/evidence/V-61_win_*`、`V-61_linux_network_*`，汇总见 `x/report.md`。后续推进真实资源链及全职业对照；已通过的资格、冷却等行为引用既有结果。
 
 ## 废弃路线
 
