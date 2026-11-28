@@ -13,7 +13,9 @@ func TestBuildRobotRestartScriptKeepsOtherBoundedLogSinks(t *testing.T) {
 	script := buildRobotRestartScript("/root/robot", "/root/config")
 	for _, want := range []string{
 		`[ "$mode" = "--web-admin" ]`,
+		`[ "$mode" = "--config-dir" ] && [ "$sink" = "$config_dir" ]`,
 		`[ "$mode" = "--bounded-log-sink" ] && [ "$sink" = "$log_path" ]`,
+		"config_dir=" + shellQuote("/root/config"),
 		"log_path=" + shellQuote(filepath.Join("/root/config", "logs", "stdout.log")),
 	} {
 		if !strings.Contains(script, want) {
