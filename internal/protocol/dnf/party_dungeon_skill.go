@@ -298,27 +298,23 @@ func (c partySkillCandidate) cooldownAtLevel() time.Duration {
 	return time.Duration(c.cooldownByLevelMS[level-1]) * time.Millisecond
 }
 
-func (c partySkillCandidate) canUseObservedMP(actor partyDungeonActor) bool {
-	if !actor.mpKnown || len(c.baseMPByLevel) == 0 {
-		return true
-	}
-	level := min(max(c.level, 1), len(c.baseMPByLevel))
-	// Resource notifications report current MP. Use the same definition cost
-	// as payment so an unaffordable skill cannot crowd out a usable attack.
-	return c.baseMPByLevel[level-1] == 0 || int64(actor.mp) >= int64(c.baseMPByLevel[level-1])
+func (r *RobotVo) canUsePartySkillMPUnsafe(candidate partySkillCandidate, actor partyDungeonActor) bool {
+	cost, known := r.partySkillMPCostUnsafe(candidate)
+	return known && !(r.characterBaseInfo.known && !actor.mpKnown && cost > 0) && (!actor.mpKnown || actor.mp >= cost)
 }
 
 func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandidate, bool) {
 	if len(r.partySkillCandidates) == 0 {
 		return partySkillCandidate{}, false
 	}
+	r.seedPartyResourcesUnsafe()
 	// Choose skills before their state aliases, so one skill with several
 	// registered states cannot crowd out the rest of a character's repertoire.
 	var seen [256]bool
 	var ready []byte
 	self := r.partyDungeonWorld.actors[partyDungeonPlayerReference(r.partySelfPeer.uniqueID)]
 	for _, candidate := range r.partySkillCandidates {
-		if candidate.itemCostFree && candidate.canUseObservedMP(self) && (!self.mpKnown || self.mp >= candidate.simulatedMPCost(r.characterResources.maxMP)) && !now.Before(r.partySkillReadyAt[candidate.skillIndex]) && !seen[candidate.skillIndex] {
+		if candidate.itemCostFree && r.canUsePartySkillMPUnsafe(candidate, self) && !now.Before(r.partySkillReadyAt[candidate.skillIndex]) && !seen[candidate.skillIndex] {
 			seen[candidate.skillIndex] = true
 			ready = append(ready, candidate.skillIndex)
 		}
@@ -337,7 +333,7 @@ func (r *RobotVo) nextPartySkillCandidateUnsafe(now time.Time) (partySkillCandid
 	selected := ready[partySkillChoice(r.UID, now, len(ready))]
 	var states []partySkillCandidate
 	for _, candidate := range r.partySkillCandidates {
-		if candidate.skillIndex == selected && candidate.itemCostFree && candidate.canUseObservedMP(self) {
+		if candidate.skillIndex == selected && candidate.itemCostFree && r.canUsePartySkillMPUnsafe(candidate, self) {
 			states = append(states, candidate)
 		}
 	}
